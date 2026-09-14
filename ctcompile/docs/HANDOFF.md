@@ -46,7 +46,8 @@ mixed/undefined writes, deletion through aliases, escaped receivers and forwarde
 parameters retain refusals. Stored methods still need a complete callable-use proof.
 
 Final focused **4/4 lit in 25.22s / 3/3 CTests in 0.36s PASS**, including the rebuilt
-type-inference binary; measured drivers pass **2/2 lit in 24.67s**. Stable formatting passes **825 C++ / 99 Python / 33 web**;
+type-inference binary; measured drivers pass **2/2 lit in 24.67s**. Stable formatting
+passes **825 C++ / 99 Python / 33 web**;
 the required pinned formatter retains the byte-identical preceding **nine-file /
 26-diagnostic** baseline. Generated class C++ was inspected: ordinary local structs,
 borrowed receiver pointers and free function calls, with no Script/VM dependency.
@@ -57,18 +58,25 @@ presence now gives numeric fields `double`, while the stored method still needs
 nullable storage. **3c05e67f** preserves the JavaScript body byte-for-byte and checks
 the exact two template instantiations, parameter types and shared receiver addresses.
 Its focused gate passed in **0.04s**. No production code changed after the full run.
-The **complete CTest lit retry is running**; do not call this a full-suite pass yet.
-All **1,438 final frozen inputs** match local source; the only first-to-final change
-is that structural test. Evidence is in `/tmp/ctcompile-method-chains/{full.log,
-full-last-test.log,correction.log,retry.log,measured.json,frozen-inputs.json}`.
+The **complete CTest lit retry passed 1/1 in 867.19s**, including **176/176 lit in
+867.11s**. The other **599 CTests** passed on unchanged inputs, covering both browser
+and compiler suites. All **1,438 final frozen inputs** match local source and the
+tested devbox; the only first-to-final change is that structural test. The failed
+first run and successful retry remain separate in `/tmp/ctcompile-method-chains/
+{full.log,full-last-test.log,correction.log,retry.log,retry-last-test.log,measured.json,
+first-frozen-inputs.json,frozen-inputs.json}`.
 
-Fresh full Bootstrap remains **19/574 native**, with no skipped or pruned functions.
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions.
 Original DOM Data remains **7/7 functions / 23 calls / 19 observations / five alias
 partitions** (**59.25s**). The complete escape oracle remains **222 functions / 861
 claims / 895 sites / 35 unclaimed / zero violations / precision 40/172**. Dense length
 stays **178 rows / 5,031 cutoffs**; structured contents stays **43 rows / 2,228 cutoffs**.
-Ownership passed in **361.75s**. No vendor admission gain is inferred from these local
-class and field changes. Final combined measurement capture remains pending.
+Ownership passed in **361.75s**, owned DOM in **80.44s**, and Data in **52.03s**.
+Original Button remains **16,194 bytes / 4 of 86 native**, with **22 Node lifecycle
+observations** and its uncaught interpreter failure preserved (**0.59s**). No vendor
+admission gain is inferred from these local class and field changes. The combined
+measurements and both source snapshots are captured in the evidence above.
 
 **Exact next Bootstrap boundary:** methods must be available before constructor
 bodies execute, and constructor receiver origins must be seeded without circularly
