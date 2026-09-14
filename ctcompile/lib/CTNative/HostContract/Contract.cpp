@@ -314,18 +314,21 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         closest,
         string,
         boolean,
-        undefined,
-        declaration
+        undefined
     };
     std::vector<ctjs::GetPropertyOp> provedTokens;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
     // ponytail: straight-line entry only; extend with a checked SSA join when
     // an actual browser action needs branches, never with report attributes.
-    for (ctjs::FuncOp function : {declaration, target}) {
-        if (!function) { continue; }
-        auto & block = function.getBody().front();
-        const bool wrapper = function == declaration;
+    if (declaration && !host_detail::isInertEntryDeclaration(declaration, target, spend)) {
+        if (refusal.empty()) {
+            refusal = "DOM entry wrapper contains observable source operations";
+        }
+        return;
+    }
+    {
+        auto & block = target.getBody().front();
         llvm::DenseMap<mlir::Value, Kind> values;
         for (mlir::BlockArgument argument : block.getArguments()) {
             if (!spend()) { return; }
@@ -341,8 +344,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             return found != values.end() && found->second == kind;
         };
         mlir::Value frame;
-        ctjs::CreateClosureOp closure;
-        bool entered = false, published = false, returned = false;
+        bool entered = false, returned = false;
         for (mlir::Operation & operation : block) {
             if (!spend()) { return; }
             if (operation.getNumRegions() != 0 || operation.getNumSuccessors() != 0 || returned) {
@@ -395,39 +397,13 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
             if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (frame || (!hasKind(result.getValue(), Kind::undefined) &&
-                              (wrapper || (!hasKind(result.getValue(), Kind::boolean) &&
-                                           !hasKind(result.getValue(), Kind::string))))) {
+                              !hasKind(result.getValue(), Kind::boolean) &&
+                              !hasKind(result.getValue(), Kind::string))) {
                     refusal = "DOM entry return must be a scalar with no borrowed browser handle";
                     return;
                 }
                 returned = true;
                 continue;
-            }
-            if (wrapper) {
-                if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
-                    const auto index = functionIndex(target);
-                    if (closure || !index || made.getFunction() < 0 ||
-                        static_cast<unsigned>(made.getFunction()) != *index ||
-                        made.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
-                        (made.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
-                         !hasKind(made.getEnclosingThis(), Kind::undefined)) ||
-                        !made.getUpvalues().empty()) {
-                        refusal = "DOM entry wrapper does not declare the exact uncaptured entry";
-                        return;
-                    }
-                    closure = made;
-                    values[made.getResult()] = Kind::declaration;
-                    continue;
-                }
-                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
-                    store && !published && closure && store.getValue() == closure.getResult() &&
-                    store.getName() != "undefined" &&
-                    store.getName() == target.getSymName().rsplit('$').first) {
-                    published = true;
-                    continue;
-                }
-                refusal = "DOM entry wrapper contains observable source operations";
-                return;
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
                 load && load.getName() == "undefined") {
@@ -567,7 +543,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                           .str();
             return;
         }
-        if (!returned || (wrapper && (!closure || !published))) {
+        if (!returned) {
             refusal = "DOM entry requires a complete return and exact source declaration";
             return;
         }
@@ -612,6 +588,81 @@ const HostDOMCall * DOMEntryAnalysis::call(ctjs::CallOp operation) const {
 } // namespace ctcompile::ctnative
 
 namespace ctcompile::ctnative::host_detail {
+
+// Only this complete local declaration may be omitted by a native entry provider.
+// The caller must also exclude every source reference to the published binding.
+bool isInertEntryDeclaration(ctjs::FuncOp wrapper, ctjs::FuncOp target,
+                             llvm::function_ref<bool()> spend) {
+    if (!spend() || wrapper == target || functionIndex(wrapper) != 0 ||
+        !llvm::hasSingleElement(wrapper.getBody()) || wrapper.getUpvalueCount() != 0 ||
+        wrapper->hasAttr("ctjs.skipped") || wrapper->getParentOp() != target->getParentOp()) {
+        return false;
+    }
+    auto & block = wrapper.getBody().front();
+    const auto index = functionIndex(target);
+    if (!index || *index == 0 || block.getNumArguments() != ctjs::implicit_arguments) {
+        return false;
+    }
+    llvm::DenseSet<mlir::Value> values, undefined;
+    for (mlir::BlockArgument argument : block.getArguments()) {
+        if (!spend() || !llvm::isa<ctjs::ValueType>(argument.getType())) { return false; }
+        values.insert(argument);
+    }
+    mlir::Value frame;
+    ctjs::CreateClosureOp closure;
+    bool entered = false, published = false, returned = false;
+    for (mlir::Operation & operation : block) {
+        if (!spend() || operation.getNumRegions() || operation.getNumSuccessors() || returned) {
+            return false;
+        }
+        for (mlir::Value operand : operation.getOperands()) {
+            if (!spend() || (!values.contains(operand) && operand != frame)) { return false; }
+        }
+        if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
+            if (!llvm::isa<ctjs::StringAttr, ctjs::BooleanAttr, ctjs::UndefinedAttr>(
+                    constant.getValue())) {
+                return false;
+            }
+            values.insert(constant.getResult());
+            if (llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
+                undefined.insert(constant.getResult());
+            }
+        } else if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
+            if (entered) { return false; }
+            entered = true;
+            frame = enter.getContext();
+        } else if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
+            if (!frame || root.getContext() != frame) { return false; }
+        } else if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
+            if (!frame || exit.getContext() != frame) { return false; }
+            frame = {};
+        } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+            if (frame || !undefined.contains(result.getValue())) { return false; }
+            returned = true;
+        } else if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
+            if (closure || made.getFunction() < 0 ||
+                static_cast<unsigned>(made.getFunction()) != *index ||
+                made.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
+                (made.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
+                 !undefined.contains(made.getEnclosingThis())) ||
+                !made.getUpvalues().empty()) {
+                return false;
+            }
+            closure = made;
+            values.insert(made.getResult());
+        } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
+            if (published || !closure || store.getValue() != closure.getResult() ||
+                store.getName() == "undefined" ||
+                store.getName() != target.getSymName().rsplit('$').first) {
+                return false;
+            }
+            published = true;
+        } else {
+            return false;
+        }
+    }
+    return returned && closure && published;
+}
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract) {
     if ((contract.provider != HostContract::Provider::closedSource &&

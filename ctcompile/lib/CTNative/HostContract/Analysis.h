@@ -4,6 +4,7 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <optional>
@@ -47,6 +48,7 @@ struct analyzer {
     bool exhausted = false;
     bool ambiguousFunctions = false;
     ctjs::FuncOp entry;
+    ctjs::FuncOp declaration;
     mlir::DominanceInfo dominance;
     llvm::StringMap<llvm::SmallVector<ctjs::StoreGlobalOp>> globals;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> callers;
@@ -103,6 +105,9 @@ struct analyzer {
     std::string environmentProblem();
     HostSlotReport slot(const HostRootRequest & root, llvm::StringRef key);
 };
+
+bool isInertEntryDeclaration(ctjs::FuncOp wrapper, ctjs::FuncOp target,
+                             llvm::function_ref<bool()> spend);
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract);
 

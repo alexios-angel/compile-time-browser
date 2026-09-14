@@ -521,6 +521,7 @@ std::string analyzer::environmentProblem() {
                 }
             }
         }
+        if (declaration && operation->getParentOfType<ctjs::FuncOp>() == declaration) { return; }
         if (!active(operation)) { return; }
         if (capturedOperations.contains(operation)) { return; }
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
@@ -675,15 +676,59 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
             return;
         }
         const auto declarations = module.walk([&](ctjs::CreateClosureOp closure) {
-            if (!analysis.step() || analysis.callable(closure.getResult()) == analysis.entry) {
+            if (!analysis.step()) { return mlir::WalkResult::interrupt(); }
+            if (analysis.callable(closure.getResult()) != analysis.entry) {
+                return mlir::WalkResult::advance();
+            }
+            auto scope = closure->getParentOfType<ctjs::FuncOp>();
+            if (analysis.declaration || !analysis.callers[scope].empty() ||
+                !host_detail::isInertEntryDeclaration(scope, analysis.entry,
+                                                      [&] { return analysis.step(); })) {
                 return mlir::WalkResult::interrupt();
             }
+            analysis.declaration = scope;
             return mlir::WalkResult::advance();
         });
         if (declarations.wasInterrupted()) {
             refusal = analysis.exhausted ? "host contract analysis work budget exhausted"
                                          : "DOM Data entry cannot be a source callable";
             return;
+        }
+        if (analysis.declaration) {
+            const auto binding = analysis.entry.getSymName().rsplit('$').first;
+            if (llvm::is_contained(contract.observations, binding)) {
+                refusal = "DOM Data entry declaration cannot be an observation";
+                return;
+            }
+            // The publication is inert only while nothing in the complete source
+            // reads, rewrites, deletes or invokes it, including inactive arms.
+            const auto uses = module.walk([&](mlir::Operation * operation) {
+                if (!analysis.step()) { return mlir::WalkResult::interrupt(); }
+                if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+                    made && analysis.callable(made.getResult()) == analysis.declaration) {
+                    return mlir::WalkResult::interrupt();
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+                    load && load.getName() == binding) {
+                    return mlir::WalkResult::interrupt();
+                }
+                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
+                    store && store.getName() == binding &&
+                    store->getParentOp() != analysis.declaration) {
+                    return mlir::WalkResult::interrupt();
+                }
+                // An unmodelled deletion/property path could observe or replace
+                // the global declaration. The provider has no such authority.
+                if (llvm::isa<ctjs::DeleteNamedOp, ctjs::DeletePropertyOp>(operation)) {
+                    return mlir::WalkResult::interrupt();
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (uses.wasInterrupted()) {
+                refusal = analysis.exhausted ? "host contract analysis work budget exhausted"
+                                             : "DOM Data source observes its entry declaration";
+                return;
+            }
         }
         for (mlir::BlockArgument argument :
              analysis.entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
@@ -701,6 +746,33 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
     }
     refusal = analysis.environmentProblem();
     if (domData && refusal.empty()) {
+        // Every returned table use must be one of the completed family calls.
+        // Checking only a called getter misses a second, extracted method read
+        // or an alias of the entire table, which could retain its DOM keys.
+        for (const HostSlotReport & report : reports) {
+            for (ctjs::GetPropertyOp table : report.reads) {
+                for (mlir::OpOperand & use : table.getResult().getUses()) {
+                    if (!analysis.step()) { break; }
+                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                    bool checked = false;
+                    for (const HostCallableEdge & edge : analysis.checkedCalls) {
+                        if (!analysis.step()) { break; }
+                        auto read = edge.read;
+                        if (!edge.capturedMap || read.getObject() != table.getResult()) {
+                            continue;
+                        }
+                        const unsigned receiver =
+                            llvm::isa<ctjs::CallDirectOp>(edge.call) ? 0u : 1u;
+                        checked |=
+                            (use.getOwner() == edge.read && use.getOperandNumber() == 0) ||
+                            (use.getOwner() == edge.call && use.getOperandNumber() == receiver);
+                    }
+                    if (!checked) {
+                        refusal = "DOM Data table has an escaping or uncalled method use";
+                    }
+                }
+            }
+        }
         for (mlir::BlockArgument input :
              analysis.entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
             bool found = false;
@@ -786,6 +858,7 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
     }
     if (refusal.empty()) {
+        checkedWrapper = analysis.declaration;
         checkedCalls = std::move(analysis.checkedCalls);
         checkedScalarReads = std::move(scalarReads);
         checkedObjectReads = std::move(objectReads);

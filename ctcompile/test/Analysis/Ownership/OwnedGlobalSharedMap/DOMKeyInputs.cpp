@@ -21,6 +21,7 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         auto contract = contractFor(module);
         contract.provider = HostContract::Provider::ctbrowserDOMDataSession;
         contract.initialIntrinsics = {"Map", "Array"};
+        if (module.lookupSymbol<ctjs::FuncOp>("dataEntry$9")) { contract.entry = "dataEntry$9"; }
         auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
         for (unsigned index = 3; index < entry.getBody().front().getNumArguments(); ++index) {
             contract.elementParameters.push_back(index - 3);
@@ -69,7 +70,8 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
             check(complete,
                   "every call retains separate explicit DOM origins and complete family roles");
         } else if (!expected) {
-            check(host.callables().empty(), "failed DOM provenance publishes no partial family");
+            check(host.callables().empty() && !host.wrapper(),
+                  "failed DOM provenance publishes no partial family or declaration");
         }
         check(hostContractFingerprint(*module) == contract.moduleSha256,
               "DOM provenance preserves the actual source arguments and operations");
@@ -136,6 +138,14 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
     variant(replaced(normal, observation,
                      "    ctjs.store_global \"extracted\", %getter\n" + observation),
             false, "a DOM method family cannot publish an extracted callable");
+    variant(replaced(normal, observation,
+                     "    %detached = ctjs.get_property %owned[%key]\n"
+                     "    ctjs.store_global \"extracted\", %detached\n" +
+                         observation),
+            false, "a second uncalled getter cannot publish a retained DOM method");
+    variant(replaced(normal, observation,
+                     "    ctjs.store_global \"escapedTable\", %owned\n" + observation),
+            false, "an alias of the whole table cannot retain borrowed DOM keys");
     const std::string snapshot = R"MLIR(
     %array = ctjs.load_global "Array"
     %fromKey = ctjs.constant #ctjs.string<"from">
@@ -186,6 +196,62 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         }
         check(observed, different ? "distinct external inputs may alias and may miss the prior set"
                                   : "reusing one DOM input finds the preceding scalar insertion");
+    }
+
+    const std::string declaration = R"MLIR(
+  ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)
+      -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 1
+    %u = ctjs.constant #ctjs.undefined
+    %declared = ctjs.create_closure %callee[9] this %this
+    ctjs.root %declared in %frame
+    ctjs.store_global "dataEntry", %declared
+    ctjs.frame_exit %frame
+    ctjs.return %u
+  }
+)MLIR";
+    const auto wrapped = replaced(replaced(normal, "@script$0(", "@dataEntry$9("), "module {",
+                                  "module {" + declaration);
+    variant(wrapped, true, "an inert imported declaration preserves the DOM Data input proof");
+    variant(replaced(wrapped, "this %this", "this %u"), true,
+            "a normalized undefined receiver preserves the exact declaration");
+    variant(replaced(wrapped, "ctjs.store_global \"dataEntry\", %declared",
+                     "ctjs.store_global \"wrongName\", %declared"),
+            false, "declaration publication must name the exact entry binding");
+    variant(replaced(wrapped, "ctjs.frame_exit %frame",
+                     "ctjs.store_global \"sideEffect\", %u\n    ctjs.frame_exit %frame"),
+            false, "source effects beside the declaration cannot be omitted");
+    variant(replaced(wrapped, observation,
+                     "    %published = ctjs.load_global \"dataEntry\"\n" + observation),
+            false, "even an unused source read observes the entry publication");
+    variant(
+        replaced(wrapped, observation, "    ctjs.store_global \"dataEntry\", %u\n" + observation),
+        false, "entry publication cannot be replaced later in source");
+    variant(replaced(wrapped, "%callee[9] this %this", "%callee[9] this %this captures %u"), false,
+            "a wrapper cannot capture another activation for the DOM entry");
+    variant(replaced(wrapped, observation,
+                     "    %redeclare = ctjs.create_closure %callee[9] this %u\n" + observation),
+            false, "the complete source has exactly one declaration of its host entry");
+    variant(replaced(wrapped, observation,
+                     "    %script = ctjs.create_closure %callee[0] this %u\n" + observation),
+            false, "the omitted wrapper cannot itself become a source callable");
+    auto declared = mlir::parseSourceString<mlir::ModuleOp>(wrapped, &context);
+    if (declared) {
+        const auto manifest = requested(*declared);
+        HostContractAnalysis query(*declared, manifest);
+        check(query.proved() && query.wrapper() == declared->lookupSymbol<ctjs::FuncOp>("script$0"),
+              "only the complete proof exposes the exact inert wrapper");
+        if (query.proved()) {
+            for (unsigned budget : {0u, 1u, query.steps() / 2, query.steps() - 1}) {
+                HostContractAnalysis partial(*declared, manifest, budget);
+                check(!partial.proved() && partial.exhausted() && !partial.wrapper() &&
+                          partial.callables().empty() && partial.steps() <= budget,
+                      "an incomplete declaration/family proof publishes no removable wrapper");
+            }
+            HostContractAnalysis exact(*declared, manifest, query.steps());
+            check(exact.proved() && exact.wrapper() == query.wrapper(),
+                  "the exact declaration work budget preserves complete evidence");
+        }
     }
 
     auto module = mlir::parseSourceString<mlir::ModuleOp>(normal, &context);

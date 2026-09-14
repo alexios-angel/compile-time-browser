@@ -353,6 +353,8 @@ public:
     HostContractAnalysis(mlir::ModuleOp module, const HostContract & contract,
                          unsigned maxSteps = 100000);
 
+    // Exact inert source declaration, available only after complete live proof.
+    [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
     [[nodiscard]] bool proved() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
     // Bounded proof work, available to consumers sharing one analysis budget.
@@ -374,6 +376,7 @@ public:
 
 private:
     std::string refusal;
+    ctjs::FuncOp checkedWrapper;
     std::vector<HostSlotReport> reports;
     std::vector<ctjs::StoreGlobalOp> observed;
     std::vector<HostCallableEdge> checkedCalls;
