@@ -31,6 +31,72 @@ struct DOMSource {
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
     }
 
+    bool resolveMethods(ctjs::CreateObjectOp object, llvm::DenseSet<mlir::Operation *> & methods) {
+        llvm::DenseMap<mlir::Attribute, ctjs::SetPropertyOp> slots;
+        llvm::SmallVector<ctjs::GetPropertyOp> reads;
+        const auto key = [](mlir::Value value) {
+            auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+            return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                            : ctjs::StringAttr{};
+        };
+        // The isolated DOM provider starts with standard Object.prototype.
+        // Every remaining source effect must still pass the complete DOM
+        // proof: no prototype mutation, unknown calls or script reentry.
+        // Only __proto__ has an inherited setter in that initial object.
+        for (mlir::OpOperand & use : object.getResult().getUses()) {
+            if (!step()) { return false; }
+            auto * operation = use.getOwner();
+            if (operation->getBlock() != object->getBlock() ||
+                !object->isBeforeInBlock(operation)) {
+                return refuse("DOM helper object has nonlocal or unordered uses");
+            }
+            if (llvm::isa<ctjs::RootOp>(operation)) { continue; }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                auto name = key(store.getKey());
+                auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                if (use.getOperandNumber() != 0 || !name || name.getValue() == "__proto__" ||
+                    !closure || closure->getBlock() != object->getBlock() ||
+                    !closure->isBeforeInBlock(store) || !slots.try_emplace(name, store).second) {
+                    return refuse("DOM helper object requires unique own callable slots");
+                }
+            } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                       read && use.getOperandNumber() == 0) {
+                reads.push_back(read);
+            } else {
+                auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                mlir::Value callee;
+                if (call && use.getOperandNumber() == 1) { callee = call.getCallee(); }
+                if (direct && use.getOperandNumber() == 0) { callee = direct.getCalleeValue(); }
+                auto methodRead =
+                    callee ? callee.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+                if (!methodRead || methodRead.getObject() != object.getResult() ||
+                    methodRead->getBlock() != object->getBlock() ||
+                    !methodRead->isBeforeInBlock(operation)) {
+                    return refuse("DOM helper object escapes or observes its identity");
+                }
+                methods.insert(operation);
+            }
+        }
+        if (slots.empty()) { return refuse("DOM helper object has no callable slots"); }
+        for (ctjs::GetPropertyOp read : reads) {
+            if (!step()) { return false; }
+            auto name = key(read.getKey());
+            auto store = name ? slots.lookup(name) : ctjs::SetPropertyOp{};
+            if (!store || !store->isBeforeInBlock(read)) {
+                return refuse("DOM helper object read lacks a preceding own callable slot");
+            }
+            read.getResult().replaceAllUsesWith(store.getValue());
+            read.erase();
+        }
+        for (auto [name, store] : slots) {
+            (void)name;
+            if (!step()) { return false; }
+            store.erase();
+        }
+        return true;
+    }
+
     bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false) {
         if (!step()) { return false; }
         if (expanded.contains(function)) { return true; }
@@ -42,6 +108,7 @@ struct DOMSource {
         auto & block = function.getBody().front();
         llvm::DenseSet<mlir::Value> values;
         llvm::SmallVector<ctjs::CreateClosureOp> closures;
+        llvm::SmallVector<ctjs::CreateObjectOp> objects;
         for (mlir::BlockArgument argument : block.getArguments()) {
             if (!step()) { return false; }
             values.insert(argument);
@@ -97,8 +164,15 @@ struct DOMSource {
                 }
                 closures.push_back(closure);
             }
+            if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
+                objects.push_back(object);
+            }
         }
         if (!returned) { return refuse("DOM helper has no complete return"); }
+        llvm::DenseSet<mlir::Operation *> methods;
+        for (ctjs::CreateObjectOp object : objects) {
+            if (!resolveMethods(object, methods)) { return false; }
+        }
         for (ctjs::CreateClosureOp closure : closures) {
             auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
             if (!target) { return refuse("DOM helper closure target is missing"); }
@@ -116,12 +190,13 @@ struct DOMSource {
                     auto * operation = use.getOwner();
                     mlir::ValueRange arguments;
                     if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-                        call && use.getOperandNumber() == 0 && undefined(call.getReceiver())) {
+                        call && use.getOperandNumber() == 0 &&
+                        (undefined(call.getReceiver()) || methods.contains(operation))) {
                         arguments = call.getArgs();
                     } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
                                direct && use.getOperandNumber() == 2 &&
                                direct.getCallee() == target.getSymName() &&
-                               undefined(direct.getReceiver()) &&
+                               (undefined(direct.getReceiver()) || methods.contains(operation)) &&
                                undefined(direct.getNewTarget())) {
                         arguments = direct.getArgs();
                     } else {
@@ -163,6 +238,15 @@ struct DOMSource {
             }
             for (ctjs::RootOp root : roots) { root.erase(); }
             closure.erase();
+        }
+        for (ctjs::CreateObjectOp object : objects) {
+            while (!object.getResult().use_empty()) {
+                if (!step()) { return false; }
+                auto root = llvm::dyn_cast<ctjs::RootOp>(*object.getResult().getUsers().begin());
+                if (!root) { return refuse("DOM helper object has an unexpanded use"); }
+                root.erase();
+            }
+            object.erase();
         }
         active.erase(function);
         expanded.insert(function);

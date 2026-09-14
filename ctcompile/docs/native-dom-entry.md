@@ -59,6 +59,14 @@ bounded by `host-max-steps` and 64 frames. Recursion, uncalled helper bodies and
 observed callable identities refuse. The expanded private clone must pass the
 complete DOM proof before it replaces any source.
 
+Local fresh objects may hold these helpers in unique, constant String slots.
+Every slot write, read and call must have an exact local identity and source order;
+method receivers must be that same holder, and helpers must not observe `this`.
+Extracted local calls may use an undefined receiver. Duplicate writes, missing or
+inherited reads, `__proto__`, object/callable escapes and unknown uses refuse.
+The holder is compiler-only evidence and disappears after all its calls are proved;
+no callable table or dynamic dispatch is emitted.
+
 Only its checked, inert function-declaration wrapper may otherwise be omitted. Skipped
 source, additional initialization effects, calls to the entry from JavaScript,
 captures, borrowed returns, handle retention, prototype or method writes,
@@ -97,9 +105,12 @@ are not implicitly coerced into names or values. Loose equality, global `Boolean
 calls, numeric conversion, branches and property storage still refuse. No generic
 nullable carrier is emitted.
 
-The provider starts with the standard `undefined` binding, independently of
-external script state. Complete source discovery rejects replacement (including
-a declaration named `undefined`) and script reentry. Preparation replaces only
+The provider starts with the standard `undefined` binding and initially unmodified
+`Object.prototype`, independently of external script state, as in the isolated
+closed-source provider. Complete source discovery rejects replacement (including
+a declaration named `undefined`), prototype mutation and script reentry. This
+object premise proves that unique local callable writes create own data slots;
+`__proto__` remains excluded because its standard inherited setter is observable. Preparation replaces only
 those proved global reads with constants in a private clone and reproves it
 before publication. This does not claim that the VM makes its globals immutable.
 
@@ -128,13 +139,14 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **105** copied-value and Boolean
+The `ctcompile_native_dom_strings` CTest compares **145** copied-value and Boolean
 observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
 across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-**136** source refusals for unsupported coercion, control flow, handles and retention,
-**41** provenance/depth refusals and four work-budget/fingerprint controls. Helper
+**224** source refusals for unsupported coercion, control flow, handles and retention,
+**41** provenance/depth refusals, **24** method provenance checks and four
+work-budget/fingerprint controls. Helper
 cases preserve argument evaluation order, saved String values, repeated calls and
 nested name construction. These clients link DOM/Core only and reject Script symbols
 or generic nullable value helpers in the generated code.

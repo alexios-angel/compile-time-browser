@@ -118,6 +118,70 @@ HELPER_CASES = {
   read(element); return true;""",
         "1111",
     ),
+    "helper_object_method": (
+        """const helpers = {read(target, key) { return target.getAttribute(key); }};
+  return helpers.read(element, 'x') === null;""",
+        "1000",
+    ),
+    "helper_object_function": (
+        """const helpers = {read: function(target, key) { return target.getAttribute(key); }};
+  return helpers.read(element, 'x') === null;""",
+        "1000",
+    ),
+    "helper_object_shorthand": (
+        """function read(target, key) { return target.getAttribute(key); }
+  const helpers = {read};
+  return helpers.read(element, 'x') === null;""",
+        "1000",
+    ),
+    "helper_object_extracted": (
+        """const helpers = {read(target, key) { return target.getAttribute(key); }};
+  const read = helpers.read;
+  return read(element, 'x') === null;""",
+        "1000",
+    ),
+    "helper_object_literal_alias": (
+        """const helpers = {'read-name': function(target, key) { return target.getAttribute(key); }};
+  const alias = helpers;
+  return alias['read-name'](element, 'x') === null;""",
+        "1000",
+    ),
+    "helper_object_repeated": (
+        """const helpers = {read(target, key) { return target.getAttribute(key); }};
+  return helpers.read(element, 'x') === helpers.read(element, 'missing');""",
+        "1000",
+    ),
+    "helper_object_multiple": (
+        """const helpers = {
+    read(target, key) { return target.getAttribute(key); },
+    name(value) { return 'data-' + value; }
+  };
+  element.setAttribute('data-config', 'value');
+  return helpers.read(element, helpers.name('config')) === 'value';""",
+        "1111",
+    ),
+    "helper_object_nested": (
+        """function read(target, key) {
+    const helpers = {name(value) { return 'data-' + value; }};
+    return target.getAttribute(helpers.name(key));
+  }
+  element.setAttribute('data-config', 'value');
+  return read(element, 'config') === 'value';""",
+        "1111",
+    ),
+    "helper_object_order": (
+        r"""const helpers = {change(target, saved) {
+    target.setAttribute('x', 'a\0b');
+    return saved === target.getAttribute('x');
+  }};
+  return helpers.change(element, element.getAttribute('x'));""",
+        "0010",
+    ),
+    "helper_object_own_prototype_name": (
+        """const helpers = {toString(target) { return target.getAttribute('x'); }};
+  return helpers.toString(element) === null;""",
+        "1000",
+    ),
 }
 BOOLEAN_CASES.update(HELPER_CASES)
 BOOLEAN_SOURCES = tuple(
@@ -155,6 +219,9 @@ BOOLEAN_OBSERVATIONS = "\n".join(
 BOOLEAN_CHECKS = {
     "helper_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_nested": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
+    "helper_object_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "helper_object_multiple": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
+    "helper_object_nested": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "saved_equality": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "comparison_force": 'assert(doc.read().has_attribute(node, atoms.intern("data-force")) == result);',
     "computed": """assert(!doc.read().has_attribute(node, atoms.intern("data-copy")));
@@ -445,6 +512,28 @@ HELPER_REFUSALS = {
     "helper_mutation": "function read(target) { return target.getAttribute('x'); } read.name = 'other'; return read(element);",
     "helper_optional_name": "function read(target, key) { return target.getAttribute(key); } return read(element, element.getAttribute('x'));",
     "helper_regex": "const F = t => t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); return element.getAttribute('data-bs-' + F('config'));",
+    "helper_object_overwrite": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.read = function(target) { return target.getAttribute('y'); }; return helpers.read(element);",
+    "helper_object_duplicate": "const helpers = {read(target) { return target.getAttribute('x'); }, read(target) { return target.getAttribute('y'); }}; return helpers.read(element);",
+    "helper_object_read_before_write": "const helpers = {}; const read = helpers.read; helpers.read = function(target) { return target.getAttribute('x'); }; return read(element);",
+    "helper_object_missing": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.read(element); return helpers.missing(element);",
+    "helper_object_prototype": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.read(element); return helpers.toString();",
+    "helper_object_proto_key": "const helpers = {__proto__(target) { return target.getAttribute('x'); }}; return helpers.__proto__(element);",
+    "helper_object_escape": "const helpers = {read(target) { return target.getAttribute('x'); }}; escaped = helpers; return helpers.read(element);",
+    "helper_object_return": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.read(element); return helpers;",
+    "helper_object_argument": "function invoke(target, holder) { return holder.read(target); } const helpers = {read(target) { return target.getAttribute('x'); }}; return invoke(element, helpers);",
+    "helper_object_this": "const helpers = {read(target) { this.saved = target; return target.getAttribute('x'); }}; return helpers.read(element);",
+    "helper_object_this_read": "const helpers = {read(target) { target.getAttribute('x'); return this === target; }}; return helpers.read(element);",
+    "helper_object_getter": "const helpers = {get read() { return function(target) { return target.getAttribute('x'); }; }}; return helpers.read(element);",
+    "helper_object_dynamic_key": "const helpers = {read(target) { return target.getAttribute('x'); }}; return helpers[element.getAttribute('key')](element);",
+    "helper_object_short": "const helpers = {read(target, key) { return target.getAttribute(key); }}; return helpers.read(element);",
+    "helper_object_extra": "const helpers = {read(target) { return target.getAttribute('x'); }}; return helpers.read(element, 'x');",
+    "helper_object_recursive": "const helpers = {read(target) { target.getAttribute('x'); return helpers.read(target); }}; return helpers.read(element);",
+    "helper_object_call_receiver": "const helpers = {read(target) { return target.getAttribute('x'); }}; return helpers.read.call(element, element);",
+    "helper_object_delete": "const helpers = {read(target) { return target.getAttribute('x'); }}; delete helpers.read; return helpers.read(element);",
+    "helper_object_unrelated_write": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.saved = element; return helpers.read(element);",
+    "helper_object_prototype_write": "Object.prototype.read = element; const helpers = {read(target) { return target.getAttribute('x'); }}; return helpers.read(element);",
+    "helper_object_unknown_effect": "const helpers = {read(target) { return target.getAttribute('x'); }}; sideEffect(); return helpers.read(element);",
+    "helper_object_nested_receiver": "const helpers = {read(target) { const observe = () => this; observe(); return target.getAttribute('x'); }}; return helpers.read(element);",
 }
 REFUSALS.update(HELPER_REFUSALS)
 
@@ -581,6 +670,64 @@ def helper_provenance_refusals(args, ir, contract):
     if "error: native DOM source: DOM helper call tree is recursive or too deep" not in diagnostic:
         raise RuntimeError(f"helper depth: wrong refusal\n{diagnostic}")
     return len(variants) * 4 + 1
+
+
+def method_provenance_checks(args, ir, contract):
+    original = ir.read_text()
+    call = "ctjs.call %6(%1, %arg3, %7)"
+    direct = "ctjs.call_direct @fn$2(%1, %2, %6, %arg3, %7)"
+    helper = re.search(r"^  ctjs\.func @fn\$2[^\n]+\n.*?^  }\n", original, re.M | re.S)
+    if original.count(call) != 1 or not helper:
+        raise RuntimeError("object helper provenance anchors changed")
+    exact = original.replace(call, direct)
+    call_shape = "DOM helper callable escapes or its call shape is unsupported"
+    alternative = helper[0].replace("@fn$2(", "@alternative$3(")
+    variants = {
+        "direct": (exact, None),
+        "direct-target": (
+            exact.replace(helper[0], helper[0] + alternative).replace(
+                direct, direct.replace("@fn$2(", "@alternative$3(")
+            ),
+            call_shape,
+        ),
+        "direct-new-target": (
+            exact.replace(direct, direct.replace(", %2,", ", %arg3,")),
+            call_shape,
+        ),
+        "foreign-receiver": (original.replace(call, call.replace("(%1,", "(%arg3,")), call_shape),
+        "foreign-callee": (
+            original.replace(call, call.replace("%6(", "%arg3(")),
+            "DOM helper object escapes or observes its identity",
+        ),
+        "observed-receiver": (
+            original.replace(
+                helper[0], helper[0].replace("ctjs.get_property %arg3[", "ctjs.get_property %arg0[")
+            ),
+            "DOM helper observes an implicit argument",
+        ),
+    }
+    for name, (text, reason) in variants.items():
+        mutated = args.work / f"method-provenance-{name}.mlir"
+        mutated.write_text(text)
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                label = f"method-provenance-{name}-{provider}-{optimize}"
+                result = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    label,
+                    optimize=optimize,
+                    success=reason is None,
+                )
+                if reason is None:
+                    cpp, _ = emitted(args, result, label)
+                    if "ctjs.call" in cpp or "script::" in cpp:
+                        raise RuntimeError(f"{label}: direct method retained dynamic dispatch")
+                elif f"error: native DOM source: {reason}" not in result:
+                    raise RuntimeError(f"{label}: wrong refusal\n{result}")
+    return len(variants) * 4
 
 
 def main():
@@ -788,10 +935,14 @@ function makeElement(value) {
         raise RuntimeError("DOM helper preparation accepted a stale source fingerprint")
     _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_read")
     provenance_checks = helper_provenance_refusals(args, helper_ir, helper_contract)
+    _, method_ir, method_contract = next(
+        row for row in prepared if row[0] == "helper_object_method"
+    )
+    method_checks = method_provenance_checks(args, method_ir, method_contract)
     print(
         f"native DOM Strings: {9 + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {len(REFUSALS) * 4} source refusal checks, "
-        f"{provenance_checks} provenance/depth refusal checks"
+        f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks"
     )
 
 
