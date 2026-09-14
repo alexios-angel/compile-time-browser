@@ -534,6 +534,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     module.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
         if (operation == module.getOperation()) { return mlir::WalkResult::advance(); }
+        // HostContract has censused the complete declaration, including all
+        // source references to it. It is not a second Data activation. Keep
+        // charging its body so a truncated ownership query publishes nothing.
+        if (host.wrapper() && (operation == host.wrapper().getOperation() ||
+                               operation->getParentOfType<ctjs::FuncOp>() == host.wrapper())) {
+            return mlir::WalkResult::advance();
+        }
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
             ++functions;
             if ((function != entry && function != factory && !methodFunctions.contains(function) &&
@@ -970,6 +977,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             roots.push_back(std::move(root));
         }
     }
+    llvm::SmallVector<mlir::BlockArgument> domInputs;
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        for (unsigned index : contract.elementParameters) {
+            if (!spend()) { return; }
+            domInputs.push_back(entry.getBody().front().getArgument(3 + index));
+        }
+    }
     checked = std::move(roots);
     edges = std::move(committed);
     checkedScalarReads = std::move(scalarReads);
@@ -977,6 +991,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     checkedObjectReads = std::move(objectReads);
     objectEdges = std::move(objectIndex);
     returnedScalarEdges = std::move(returnedScalars);
+    checkedDOMInputs = std::move(domInputs);
+    declarationWrapper = host.wrapper();
 }
 
 } // namespace ctcompile::ctnative

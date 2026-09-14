@@ -17,10 +17,6 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
         refusal = host.reason().str();
         return;
     }
-    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        refusal = "DOM Data requires storage confined to its document owner";
-        return;
-    }
     const auto spend = [&] {
         if (workSteps == maxSteps) {
             budgetExhausted = true;

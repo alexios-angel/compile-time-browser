@@ -55,6 +55,11 @@ public:
     [[nodiscard]] bool proved() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
     [[nodiscard]] llvm::ArrayRef<OwnedGlobalRoot> roots() const { return checked; }
+    // Only the complete DOM Data source proof may omit its inert declaration.
+    // Root/table edges still require storage confined to the document owner;
+    // they do not authorize ordinary shared native carriers.
+    [[nodiscard]] ctjs::FuncOp wrapper() const { return declarationWrapper; }
+    [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> domInputs() const { return checkedDOMInputs; }
     // Covers the allocation, global initialization/loads and field write/reads.
     [[nodiscard]] const OwnedGlobalRoot * lookup(mlir::Operation * operation) const;
     // Separate from object ownership: a saved scalar cannot authorize an
@@ -87,6 +92,8 @@ private:
     llvm::SmallVector<HostObjectGlobalRead> checkedObjectReads;
     llvm::DenseMap<mlir::Operation *, unsigned> objectEdges;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> returnedScalarEdges;
+    ctjs::FuncOp declarationWrapper;
+    llvm::SmallVector<mlir::BlockArgument> checkedDOMInputs;
     std::string refusal;
     unsigned workSteps = 0;
     bool budgetExhausted = false;

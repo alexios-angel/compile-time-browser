@@ -540,7 +540,9 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
-    const mlir::Type type = domEntry_ && domEntry_->isElement(value)
+    const bool domInput =
+        ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
+    const mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
                                 ? mlir::Type(DOMElementType::get(value.getContext()))
                                 : mlir::Type(BoxedType::get(value.getContext()));
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));

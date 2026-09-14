@@ -1,5 +1,9 @@
 #include "Tests.h"
 
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
+#include "ctcompile/CTNative/IR/CTNativeDialect.h"
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "llvm/Support/Error.h"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -43,16 +47,40 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
                          rows, host.reason().str().c_str());
         }
         OwnedGlobalRoots owner(*module, contract);
-        check(!owner.proved() && empty(*module, owner),
-              "DOM key provenance does not authorize shared table storage");
+        check(owner.proved() == expected, "DOM Data revalidates the complete source owner");
+        if (owner.proved() != expected) {
+            std::fprintf(stderr, "DOM source owner row %u: %s\n", rows,
+                         owner.reason().str().c_str());
+        }
         if (expected && host.proved()) {
-            check(
-                owner.reason().contains("DOM Data requires storage confined to its document owner"),
-                "DOM Data reports the missing confined storage boundary");
+            check(owner.roots().size() == 1 && owner.roots().front().methodTable &&
+                      owner.roots().front().methodTable->capturedMap &&
+                      owner.roots().front().methodTable->calls.size() == calls &&
+                      owner.wrapper() == host.wrapper(),
+                  "DOM source ownership retains the exact allocation and complete call family");
             auto entry = module->lookupSymbol<ctjs::FuncOp>(contract.entry);
             std::vector<mlir::BlockArgument> expectedInputs;
             for (unsigned index = 0; index < inputs; ++index) {
                 expectedInputs.push_back(entry.getBody().front().getArgument(3 + index));
+            }
+            check(llvm::equal(owner.domInputs(), expectedInputs),
+                  "DOM source ownership publishes only the actual external input origins");
+            if (rows == 1 && owner.proved()) {
+                using namespace ctcompile::ctnative;
+                context.getOrLoadDialect<CTNativeDialect>();
+                for (const bool authorized : {false, true}) {
+                    mlir::DataFlowSolver solver;
+                    solver.load<mlir::dataflow::DeadCodeAnalysis>();
+                    solver.load<mlir::dataflow::SparseConstantPropagation>();
+                    solver.load<TypeInference>(authorized ? &owner : nullptr);
+                    check(succeeded(solver.initializeAndRun(*module)),
+                          "DOM input type inference converges");
+                    const auto * lattice = solver.lookupState<TypeLattice>(expectedInputs.front());
+                    check(lattice && !lattice->getValue().isUninitialized() &&
+                              llvm::isa<DOMElementType>(lattice->getValue().getType()) ==
+                                  authorized,
+                          "only the complete owner proof seeds an external DOM input type");
+                }
             }
             bool complete = host.callables().size() == calls;
             for (const auto & edge : host.callables()) {
@@ -70,6 +98,8 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
             check(complete,
                   "every call retains separate explicit DOM origins and complete family roles");
         } else if (!expected) {
+            check(empty(*module, owner) && !owner.wrapper() && owner.domInputs().empty(),
+                  "a failed DOM source owner exposes no storage or declaration evidence");
             check(host.callables().empty() && !host.wrapper(),
                   "failed DOM provenance publishes no partial family or declaration");
         }
@@ -242,6 +272,19 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         check(query.proved() && query.wrapper() == declared->lookupSymbol<ctjs::FuncOp>("script$0"),
               "only the complete proof exposes the exact inert wrapper");
         if (query.proved()) {
+            OwnedGlobalRoots owner(*declared, manifest);
+            check(owner.proved() && owner.wrapper() == query.wrapper(),
+                  "complete ownership retains the inert declaration separately from Data");
+            if (owner.proved()) {
+                for (unsigned budget : {0u, query.steps(), owner.steps() - 1}) {
+                    OwnedGlobalRoots partial(*declared, manifest, budget);
+                    check(!partial.proved() && partial.exhausted() && empty(*declared, partial) &&
+                              !partial.wrapper() && partial.domInputs().empty(),
+                          "partial DOM ownership exposes no wrapper or storage evidence");
+                }
+                check(OwnedGlobalRoots(*declared, manifest, owner.steps()).proved(),
+                      "the exact DOM source ownership budget completes");
+            }
             for (unsigned budget : {0u, 1u, query.steps() / 2, query.steps() - 1}) {
                 HostContractAnalysis partial(*declared, manifest, budget);
                 check(!partial.proved() && partial.exhausted() && !partial.wrapper() &&
