@@ -127,7 +127,7 @@ null/String comparisons, optional String truthiness and definite String + String
 names/values. Missing and empty are both false in Boolean observations; saved reads
 keep their copied value after mutation. These operations do not admit source
 helper calls or nullable-to-String coercion.
-Bootstrap's original `getDataAttribute` (vendor line **264**) computes its name
+Bootstrap's original `getDataAttribute` (vendor line **263**) computes its name
 through `F` and feeds the optional result to `M`. `F` still requires regex replace,
 its callback and `toLowerCase`; `M` still requires source branches, `Number`,
 `toString`, `typeof`, URI decoding, JSON parsing and exceptions. Prove those source

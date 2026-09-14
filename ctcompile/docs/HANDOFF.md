@@ -47,7 +47,7 @@ oracle still reports **zero violations / precision 40/172**. No browser/runtime
 files or WPT/test262 expectations changed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** original Bootstrap `getDataAttribute` at vendor line
-**264** still calls `F` (regex replace, callback, `toLowerCase`) and `M` (branches,
+**263** still calls `F` (regex replace, callback, `toLowerCase`) and `M` (branches,
 `Number`, `toString`, `typeof`, URI decoding, JSON and exceptions). The new primitive
 observations are prerequisites; they do not admit either complete helper or their
 composition. Begin with `_mergeConfigObj`'s literal `"config"` key and determine
