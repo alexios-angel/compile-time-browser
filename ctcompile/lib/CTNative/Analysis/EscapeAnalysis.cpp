@@ -1777,12 +1777,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
                     const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
                     if (name && name.getValue() == "length") {
-                        const mlir::Value value = origin(store.getValue());
+                        const ContentsValue target = held(store.getValue());
+                        const mlir::Value value = target.origin();
                         auto literal =
                             value ? value.getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-                        auto wanted = literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())
-                                          ? ownArrayIndex(value)
-                                          : std::nullopt;
+                        auto wanted = target.integerNumber;
+                        if (!wanted && literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())) {
+                            wanted = ownArrayIndex(value);
+                        }
                         // The importer spells source -0 as neg(Number(0)) when
                         // folding is disabled. Either zero sign means length 0;
                         // retain the original expression everywhere else.
@@ -1798,9 +1800,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                             return refuse(ArrayContentsFailure::MissingElement, &op);
                         }
                         // Fresh dense arrays own writable length and configurable
-                        // elements; an original Number runs no coercion hook. Keep
+                        // elements; an exact Number runs no coercion hook. Keep
                         // saved origins/lengths and every historical cycle edge.
-                        // ponytail: literal shrink only; growth needs hole evidence.
+                        // ponytail: non-growing lengths only; growth needs hole evidence.
                         if (!spend(elements.size() - *wanted)) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
