@@ -6,6 +6,79 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Explicit DOM keys across the Data family, 2026-09-14 UTC
+
+Clean start at **8a8e876f**. The 06:22:24 AGENT-SYNC journal and both commit
+histories confirmed the prior recovery was gated and committed; the September 7
+WIP was already an ancestor. Continued the promised DOM/Data actual-origin
+boundary. Three agents surveyed proof, emission and array aliases; one contributed
+the input test matrix before all three reached service limits. Root integrated,
+reviewed, gated and committed the work. A fourth agent independently reviewed
+both commits and found no concrete defects. No browser files changed.
+
+**add342fa** adds the analysis-only `ctbrowser-dom-data-session-v1` contract.
+Its explicit entry arguments remain original JS values, with separate
+`HostMethodArgument.element` and canonical `HostCapturedMap.outerKeyInputs`
+evidence. Every actual use must pass that input to a completed outer-key formal.
+The source cannot reference/invoke the entry, extract its methods, retain inputs
+as payloads/child keys, snapshot outer keys, publish global aliases or return them.
+No source allocation is synthesized for a DOM input. Both original and prepared
+method families are checked, including stale/forged declarations and work budgets.
+
+Entry replay shares the stable-key check between mutations and saved state.
+Same-input readback preserves its scalar insertion. Different input parameters
+may alias, so their readback gets no invocation category here; it is not proved
+to match or miss. The initial focused gate failed only two new assertions that
+required a finite Number/Undefined union. The corrected assertions allow unknown
+while rejecting either false certainty. The source and analysis were preserved.
+
+**0f319a9c** reports the actual host provider and separate external-key count,
+and gates CLI refusal. Native lowering and `OwnedGlobalRoots` reject this provider
+until Data storage is confined to its document owner; prefix specialization also
+refuses it. This is input provenance, not native DOM-backed Data emission.
+
+Corrected focused gate: **71-step build / 2/2 lit PASS in 1.46s / 2/2 CTests
+PASS in 236.30s** (shared-Map **236.29s**, unchanged Data **31.00s**). The new
+IR matrix has **20 rows in each source/prepared form**, plus contract, live-mutation
+and budget controls. Stable formatter **824 C++ / 90 Python / 33 web PASS**;
+the required pinned check is byte-identical to the prior nine-file / 26-diagnostic
+baseline. The initial failed focused run remains in `focused.log`; corrected
+evidence is `focused-fixed.log` and `focused-last-test.log`.
+
+Final standard devbox gate: **285-step build / 573/573 CTests PASS in
+1222.57s**, including **169/169 lit in 871.80s**. All **1,419 frozen inputs**
+match the tested devbox files and local source. Shared-Map ownership passes in
+**350.75s**, native DOM in **272.22s**, owned DOM in **83.60s** and Data in
+**51.84s**. Full evidence and fresh measurements are in
+`/tmp/ctcompile-dom-data/{full.log,full-last-test.log,measured.json}`.
+
+Fresh full Bootstrap stays **19/574 native / 0 of 43 globals**, both policies,
+with no skips/prunes. Existing Data remains **3,218 source bytes / 7/7 functions /
+23 calls / 19 observations / three source outer keys**, both policies/layouts
+and GCC/Clang. Native DOM remains **18 entries / 42 refusals**; owned DOM remains
+**three sources / five retention refusals**, with lifetime sanitizers passing.
+Structured contents remains **43 rows / 2,228 budget cutoffs**; the unchanged
+escape oracle remains **222 functions / 861 claims / 895 observed sites /
+35 unclaimed / zero violations / precision 40 of 172**. No browser/runtime edits,
+WPT/test262 score remeasurement or push.
+
+**Exact next native boundary:** consume and revalidate the complete DOM input
+family in a nonescaping owner. The existing shared table/global carriers,
+`capture_map()` accessor and shared-pointer session helper cannot safely borrow
+its document. Own atoms, document, then private Data storage; preserve document
+plus node identity and reject every foreign domain before validation or effects.
+Test retained/detached keys and teardown, and a no-snapshot source exercising the
+associative comparator as well as Data's insertion-order representation.
+The current input matrix starts from IR; an imported entry's inert declaration
+wrapper also needs a source proof before omission. Original component
+construction/disposal, retained callbacks and the application driver follow. Full
+native Bootstrap startup remains unfinished.
+
+**Next escape:** broader alias ownership/native consumers and a preserved vendor
+admission gain. The parallel survey found that CFG/SCF vector aliases need a
+reference/ownership plan before by-value retyping; no unsafe alias relaxation or
+new escape gain landed this session. Keep duplicate/passthrough loop rewrites refused.
+
 ## Outer-key formals and imported-loop normalization, 2026-09-14 UTC
 
 Clean start at **b33f91b8**; the 05:07:54 AGENT-SYNC journal confirmed previous

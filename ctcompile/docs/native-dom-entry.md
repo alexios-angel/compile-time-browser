@@ -129,23 +129,40 @@ checks for teardown and dangling foreign pointers. This provider still refuses
 handle returns, retention in Data or properties, and browser callbacks. It does
 not reinterpret source-created ordinary objects as DOM elements.
 
-Next is retained DOM-backed Data ownership: the document must outlive every
-stored key, not merely one call. The document itself borrows an atom table.
-The generated owner must therefore destroy Data/component state first, then
-its document, then its atom table. The current Data contract allows extracted
-callables to outlive their table/root; it cannot safely borrow this entry's DOM
-handles. The owning DOM entry now supplies the document lifetime, and the separate
-Data session supplies direct/member calls. Connecting them requires explicit DOM
-input provenance across the complete Data method family, conservative aliasing
-between different inputs, and Data storage that cannot outlive the document.
-The existing shared table/global carriers do not provide that final guarantee.
-The live `HostCapturedMap.outerKeyParameters` proof now separates each method's
-outer-key-only formals from caller allocation ownership. It does not identify an
-external DOM origin or imply that two input parameters differ. The entry and
-call-argument proofs still require source-created objects; explicit DOM inputs
-must extend those proofs without pretending that borrowed handles are fresh allocations.
-Retained DOM keys are not admitted yet.
-Then admit the original Button receiver/action
-and its BaseComponent/Config construction, prototype/static getters and disposal.
-This standalone probe does not change the untouched Bootstrap bundle's admission
-denominator or complete the native application driver.
+## Data input provenance
+
+`ctbrowser-dom-data-session-v1` is currently an **analysis-only** contract. It uses
+the closed-source contract fields (`roots`, `observations`, initial bindings and
+intrinsics) plus the same ordered, nonempty `element_parameters` declaration.
+`--ctnative-host-contract` checks the actual input arguments across the complete
+Data method family. The entry must be unreferenced by source code, uncaptured,
+and declare every explicit parameter as an original JavaScript value.
+The current tests supply explicit IR entry arguments; adapting an imported
+function's inert declaration wrapper to this contract is still separate work.
+
+Each checked call records `HostMethodArgument.element`, separate from an owning
+source allocation. `HostCapturedMap.outerKeyInputs` lists these inputs in parameter
+order. Every non-root use must pass the exact input to a proved outer-key formal.
+Payloads, child keys, outer snapshots (including fluent receivers), returns, global
+aliases, arbitrary properties and extracted callables refuse. Reports expose
+`outer_key_inputs`; their counts never authorize a later query.
+
+Entry-order Map facts preserve these exact input origins without inventing fresh
+objects. A set followed by a get with the same input retains its scalar value;
+using a different input retains the possibility of either a match or a miss.
+This is provenance evidence, not proof of a document domain or a retained lifetime.
+Native lowering and `OwnedGlobalRoots` still refuse with
+`DOM Data requires storage confined to its document owner`; source-prefix
+specialization also refuses this provider.
+
+Next, attach private Data storage to the nonmovable DOM owner. It must destroy
+Data before the document, then the borrowed atom table. The current shared
+table/global carriers and `capture_map()` accessor do not establish that lifetime.
+Revalidate the complete input family before typing/emission, preserve document plus
+node identity, and check every document domain before dereferencing any input or
+performing effects. Gate a source without Map snapshots too: its associative Map
+needs an element-key comparator, whereas Data's child snapshot selects ordered
+storage and hides that path. Retained native DOM keys remain unimplemented.
+
+Original Button/BaseComponent construction, prototype/static getters, disposal,
+retained callbacks and the native application driver follow this ownership step.

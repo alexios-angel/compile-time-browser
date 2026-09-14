@@ -64,6 +64,13 @@ caller allocation roles (**23d360db**). A getter's parameter can retain its role
 when the caller also passes that same object as a sibling payload. DOM origins,
 conservative input aliases and nonescaping storage must still be proved separately.
 
+The subsequent `ctbrowser-dom-data-session-v1` contract now proves explicit DOM
+actual origins across that family, separately from source allocations. Inputs may
+alias: the entry replay preserves both match and miss possibilities for different
+parameters. This contract is analysis-only; native ownership/emission and source
+prefix specialization still refuse it until Data storage is confined to the
+document owner. See [Data input provenance](native-dom-entry.md#data-input-provenance).
+
 The preserved `array-overwrite-loop.js` now improves **0/2 → 2/2 native**, both
 policies, through **c4b7cf8c**. Exact `1/0` guard recovery exposes the existing
 header/body contents certificate; checked upstream SCF while patterns remove
@@ -125,14 +132,14 @@ show only each function's first failure; fixing one exposes its downstream failu
    is destroyed first. Keep this distinct from the existing owning Data-callable
    contract, and give DOM keys their own provenance instead of treating them as
    source-created ordinary objects.
-   The closed-source Data script-entry proof accepts only three implicit arguments, and
-   its actual-object census requires source allocations. An owned-session input
-   contract must supply DOM origins explicitly. The existing `objectKeys` category
-   permits both keys and payloads. Match explicit DOM origins to the new
-   `outerKeyParameters` roles, initially refusing payloads, child keys, snapshots
-   and returns. Revalidate that role across the full method family before type
-   inference or emission. Distinct external parameters may denote the same node;
-   do not reuse the distinct-source-allocation proof for them. Compare
+   The new analysis-only Data contract supplies explicit DOM origins and matches
+   them to `outerKeyParameters` across the full method family. Its separate
+   `HostMethodArgument.element` and `outerKeyInputs` evidence rejects payloads,
+   child keys, outer snapshots, returns and input aliases through globals.
+   Consume and revalidate that live evidence before type inference or emission;
+   the ordinary `objectKeys` category also permits owning payloads and cannot
+   authorize DOM storage. Distinct external parameters may denote the same node;
+   the entry replay conservatively retains that uncertainty. Compare
    foreign document ownership before validation dereferences the owner pointer.
    Reuse `ctbrowser::document` and `node_id` from the public DOM API. Bind their
    identity, ownership and permitted calls through the existing HostContract,
@@ -147,6 +154,12 @@ show only each function's first failure; fixing one exposes its downstream failu
    key ordering as well as the insertion-order representation. Test a source with
    no Map snapshots too: Bootstrap Data's child-key snapshot selects insertion-order
    storage module-wide and would otherwise hide that comparator path.
+   The remaining implementation spans `OwnedGlobalRoots`, DOM input seeding in
+   `TypeInference`, `LoweringSupport.cpp`'s Map/table carriers, and EmitC
+   `OwnedGlobals.cpp`, `MethodTables.cpp` and `DOM.cpp`. Replacing only the outer
+   Map leaves shared ownership in the table and global root. The current input
+   tests are an IR matrix; an imported entry's inert declaration wrapper also
+   needs its own source proof before the driver can omit it.
    This is a **Data + DOM** milestone with its own denominator.
 2. **Compile a real Button action, then its construction and lifetime.**
    [Button.toggle](../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js#L424) toggles
