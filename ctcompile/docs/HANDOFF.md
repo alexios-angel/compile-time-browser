@@ -6,6 +6,90 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original Bootstrap Data with DOM inputs, 2026-09-14 UTC
+
+Resumed clean **1c9f2b18** and the interrupted **10:05:18 AGENT-SYNC**
+recorder/payload thread, explicitly abandoned at **10:06:39**. Both histories and
+unmerged branches were checked; the September 7 WIP is absent and old lens
+alternatives remain superseded. Three agents split the original-source gate,
+ownership review and independent escape survey. Root completed the gate after
+two agents reached service limits; the remaining agent implemented and reviewed
+alias replay and its direct proof regression. No browser/runtime files changed.
+
+**f017e1ea** confines Bootstrap's recorder root and payload alias to the
+nonmovable DOM session. Local cell/unused receiver normalization is reused in a
+fingerprint-checked private clone before both complete source-owner proofs.
+Each root uses its own by-value storage; the payload keeps its actual identity,
+and the private recorder callback binds to its owner. **dcd213d3** shares exact
+primitive-set typing between admission and scalar-global census. Checked
+extraction from the getter's broader return carrier preserves null tags without
+object coercion or changing the reusable method ABI.
+
+**1772fc4f** replays every canonical alias partition of the explicit DOM
+inputs under the shared work budget. Exact returned leaves are intersected;
+scalar alternatives are joined. No provisional partition result authorizes
+storage. Source/prepared tests require exact Number-or-Null evidence and empty
+scalar/leaf/input evidence at budget cutoffs.
+
+**523e631d** preserves the original **3,218-byte Bootstrap Data program**
+(the unchanged `80a6fd87…` source pin), replacing only its three synthetic
+probe keys with direct DOM inputs. All **7/7 functions, 23 direct Data calls and
+19 observations** pass against Node and the interpreter across all **five alias partitions**. Both
+policies/layouts/GCC/Clang, recorder/payload isolation, reentry/interleaving,
+domain-first rejection, invalid nodes, retained/detached keys, private-access and
+missing-reset controls, and generated-client ASan/UBSan pass. Native lowering
+passes at a host work budget of **796,817**; **796,816** refuses. An unsafe final payload set
+to another potentially distinct input still refuses. Focused CTest: **36.35s**.
+
+**dec877ca** updates two preserved recorder cases after the first full gate
+exposed their new nullable-store admission. The later object-valued store still
+refuses. The complete recorder group passes **12 native programs / 30 refusals /
+434 typed observations / 13 distinguishing mutations**, including saved-callable
+and reentry lifetime checks. No fixture source bytes changed.
+
+Final standard devbox gate: **599/599 CTests PASS in 1235.81s**, including
+**172/172 lit in 868.28s**. The initial **277-step build** passed;
+the final build had no work after the expectation-only correction. Final original
+Bootstrap DOM **58.40s**, ownership **367.50s**, flat DOM Data **46.68s**, existing
+Data **51.66s**. The direct DOM input matrix is **33 source / 33 prepared rows**. All **1,428 frozen non-Markdown inputs** match
+the tested devbox and local source. Stable formatting: **824 C++ / 94 Python /
+33 web PASS**. The required pinned check remains byte-identical to the previous
+**nine-file / 26-diagnostic** baseline. Full evidence:
+`/tmp/ctcompile-bootstrap-dom/{full.log,full-last-test.log,measured.json}`.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped/pruned functions. The complete escape oracle remains **222
+functions / 861 claims / 895 observed sites / 35 unclaimed / zero violations /
+precision 40 of 172**. Dense length remains **178 rows / 5,031 cutoffs** and
+structured contents **43 rows / 2,228 cutoffs**. Both browser and compiler suites
+passed; the new Data result does not imply full native Bootstrap startup.
+
+**Exact next native boundary:** preserve the original Button constructor call
+from `test/Analysis/Types/bootstrap-driver.js:59` as a progress probe; its current
+`attempt` wrapper hides exceptions and never disposes the component. Keep original
+Config/BaseComponent/Button bodies (`W/B/U`) and live helpers. Stage 60A's closed
+prototype/inherited receiver proof is the first structural dependency: resume
+`Lowering/ClosureLifting/Constructors.cpp` and the `prototype-written.js` /
+`unwritten-key.js` splits in `constructor-refusals.mlir`. Do not relax those guards
+without preserving inherited constructor, static getter, new.target and super
+semantics. Config next needs real attribute/dataset reads; disposal reaches a
+mutating event registry even with no listeners. The refreshed
+`bootstrap-native-next.md` records these seams and the public DOM extraction path.
+A single-invocation lifecycle can preserve current source resets. Persistent
+initialization/actions, retained events and the application driver need separate
+proof; full native Bootstrap startup remains unfinished.
+
+**Independent escape continuation:** the preserved 165-byte `alias.js` split in
+`Lowering/Objects/array-shrink.mlir` selects one of two local numeric arrays and
+shrinks it. Node observes 2 for both flags; merely relaxing the source-use guard
+would copy vectors and observe 4. Prove an entry-scope borrowed vector selection
+with a complete use/lifetime census, then carry its address through SCF. An
+unequal-length witness must distinguish the selected arm. Existing contents
+evidence does not establish that ownership permission. No escape code or new
+vendor admission was claimed for this survey.
+Evidence and the two bounded continuation surveys are under
+`/tmp/ctcompile-bootstrap-dom/`. No push or WPT/test262 score remeasurement.
+
 ## Private DOM Data storage, 2026-09-14 UTC
 
 Started clean at **993c58d9**. The **09:15:18 AGENT-SYNC** journal and both

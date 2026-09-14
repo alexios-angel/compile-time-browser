@@ -1,5 +1,49 @@
 # What native Bootstrap needs next
 
+## Current boundary, 2026-09-14
+
+**f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
+Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
+23 calls and 19 observations**. The nonmovable document session privately owns
+Data, the recorder and the payload alias. All five input-alias partitions pass
+Node/interpreter comparison, both policies/layouts/compilers, lifetime sanitizers
+and mutation/privacy controls. See [HANDOFF](HANDOFF.md) for the final gate and
+full-bundle measurements. The earlier survey below records superseded Data steps.
+
+The next compiler step is to preserve an **original Button construction probe**,
+then prove its immutable prototype chain and inherited receiver semantics
+(plan 24, Stage 60A). The existing call in
+`test/Analysis/Types/bootstrap-driver.js:59` catches exceptions and never disposes
+Button; it is not a lifecycle success gate. The hand-written native toggle test
+also does not exercise the original constructor.
+
+Keep the vendor `W` (Config), `B extends W` (BaseComponent), and `U extends B`
+(Button) bodies and their live dependencies. Resume
+`lib/CTNative/Lowering/ClosureLifting/Constructors.cpp` and the preserved
+`prototype-written.js` / `unwritten-key.js` refusals in
+`test/CTNative/Lowering/Objects/constructor-refusals.mlir`. Default derived
+construction forwards through `super`; inherited getters and `p.constructor`
+cannot be replaced by missing own fields. Measure the new probe's actual refusal
+before broadening the constructor path. Its component payload also retains
+`_element` and `_config`, beyond Data's current scalar-field leaf proof.
+
+Config still reads attributes and dataset when defaults are empty. Public DOM
+attribute access exists; dataset behavior can be lifted from
+`ctbrowser/lib/Shell/bindings/element/dataset.cpp` into the DOM public API, with
+the binding becoming an adapter under the shared-file worktree/merge protocol.
+Keep Bootstrap's parsing and config merge in its source. Disposal calls `P.off`,
+which writes `uidEvent` and initializes registry state even without listeners;
+it cannot be omitted. Retained events will need a plain platform callback seam.
+
+A construct/toggle/dispose lifecycle can run entirely within one entry call.
+The current entry recreates its Data/recorder/payload on every invocation, as
+the source does. Persistent initialization followed by later actions requires a
+separate ownership proof; deleting the existing resets changes the program.
+Full native Bootstrap startup, components, retained callbacks and the application
+driver remain unfinished.
+
+## Earlier boundary survey
+
 Surveyed on 2026-09-13 at `a4458ae1`; shared DOM token extraction landed as
 `1e71c6ad` after the browser and compiler gates described in HANDOFF. Bootstrap is
 **5.3.8**, **133,701 bytes**, SHA256
