@@ -25,6 +25,7 @@ OBSERVATIONS = {
     "mutable-class-helper": 1,
     "new-target": 7,
     "constructor-argument": 7,
+    "arrow-constructor": 7,
 }
 SCALARS = {
     "prototype-written": 2,
@@ -109,9 +110,12 @@ def main():
     for name, expected in observations.items():
         source = args.fixtures / f"{name}.js"
         node_expected = 0 if name == "mutable-class-helper" else expected
-        node = run([args.node, "-e", NODE, str(source)])
+        node = run([args.node, "-e", NODE, str(source)], success=name != "arrow-constructor")
         reference = run([args.reference, str(source)])
-        if node.stdout != f"a={node_expected}\n" or node.stderr:
+        if name == "arrow-constructor":
+            if "TypeError" not in node.stderr or node.stdout:
+                raise RuntimeError(f"{name}: Node did not throw TypeError")
+        elif node.stdout != f"a={node_expected}\n" or node.stderr:
             raise RuntimeError(f"{name}: Node observation changed\n{node.stdout}{node.stderr}")
         if reference.stdout != f"a={expected}\n":
             raise RuntimeError(
@@ -154,6 +158,11 @@ def main():
                 raise RuntimeError(f"{name}/{optimize}: lost native refusal boundary\n{text}")
             if name == "mutable-class-helper":
                 check_mutable_helper(text)
+            if (
+                name == "arrow-constructor"
+                and "cannot be constructed even without lexical this reads" not in text
+            ):
+                raise RuntimeError("the constructor proof lost its unconditional arrow refusal")
             refusals += 1
     print(
         f"constructor controls: {len(observations)} source observations, {checked} native executions, {refusals} refusals"
