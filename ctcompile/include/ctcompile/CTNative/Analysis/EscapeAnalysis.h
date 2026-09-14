@@ -453,7 +453,9 @@ struct ArrayContentsEvidence {
 /// holes, calls, throws, publication, unsupported regions, prototypes and accessors refuse.
 /// Single-block scf.if arms keep separate exact states; scf.yield transports
 /// all result facts simultaneously, including aliases and scalar snapshots.
-/// An implicit empty else preserves its incoming state. Structured loops refuse.
+/// An implicit empty else preserves its incoming state. Single-block scf.while
+/// uses the read-only zero/+1 own-length certificate described below; init,
+/// condition and yield operands preserve simultaneous aliases and scalar facts.
 /// Every conditional/switch edge is explored, including default and statically
 /// untaken cases. Switch flags must have an independently known origin. Strict
 /// equality, ToBoolean and logical negation produce independent, noncapturing
@@ -547,7 +549,7 @@ struct ArrayContentsEvidence {
 /// and these noncapturing tests separately from known origins. They never authorize
 /// unknown roots, stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
 /// path snapshots are charged to the same work budget. Other unknown forwarded
-/// values refuse. A certified read-only header/body loop may replay with literal
+/// values refuse. A certified read-only CFG or scf.while header/body loop may replay with literal
 /// zero/+1 induction under a strict current own-array length guard, within the
 /// same work budget. Allocation, mutation and nested control in that loop refuse.
 /// Other repeated blocks refuse. Unvisited ordinary blocks are unreachable

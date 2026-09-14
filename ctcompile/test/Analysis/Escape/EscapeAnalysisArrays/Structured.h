@@ -18,7 +18,7 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                "    scf.yield %b : !ctjs.value\n"
                                "  }\n";
     const std::string done = "  ctjs.return %zero\n";
-    const std::vector<contents_row> rows = {
+    std::vector<contents_row> rows = {
         {.what = "structured aliases retain separate strong-update targets",
          .body = values +
                  "  %b = ctjs.create_array [%y] {storage_test_id = \"b\"}\n"
@@ -109,7 +109,7 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                  "  ctjs.store_global \"held\", %a\n" +
                  done,
          .failure = ArrayContentsFailure::UnsupportedOperation},
-        {.what = "structured loops remain outside the single-pass alias proof",
+        {.what = "an arbitrary structured loop has no finite own-length certificate",
          .body = values +
                  "  %loop = scf.while (%before = %a) : (!ctjs.value) -> !ctjs.value {\n"
                  "    scf.condition(%flag) %before : !ctjs.value\n"
@@ -118,6 +118,124 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                  done,
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
     };
+    const std::string loop =
+        "  %finalIndex, %result, %finalArray = scf.while "
+        "(%array = %a, %index = %zero, %saved = %zero) : "
+        "(!ctjs.value, !ctjs.value, !ctjs.value) -> "
+        "(!ctjs.value, !ctjs.value, !ctjs.value) {\n"
+        "    %key = ctjs.constant #ctjs.string<\"length\">\n"
+        "    %length = ctjs.get_property %array[%key]\n"
+        "    %less = ctjs.compare lt %index, %length\n"
+        "    %continue = ctjs.truthy %less\n"
+        "    scf.condition(%continue) %index, %saved, %array : "
+        "!ctjs.value, !ctjs.value, !ctjs.value\n"
+        "  } do {\n"
+        "  ^body(%i: !ctjs.value, %last: !ctjs.value, %base: !ctjs.value):\n"
+        "    %read = ctjs.get_property %base[%i]\n"
+        "    %step = ctjs.binary_static add %i, %one\n"
+        "    scf.yield %base, %step, %read : !ctjs.value, !ctjs.value, !ctjs.value\n"
+        "  }\n";
+    const std::string prefix = values + "  ctjs.append %y to %a\n";
+    const std::string original = prefix + loop + "  ctjs.return %result\n";
+    const auto replace = [](std::string source, const std::string & before,
+                            const std::string & after) {
+        const std::size_t position = source.find(before);
+        assert(position != std::string::npos);
+        source.replace(position, before.size(), after);
+        return source;
+    };
+    rows.push_back({.what = "structured induction preserves reordered condition and yield aliases",
+                    .body = original,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back(
+        {.what = "a zero-trip structured loop returns its initial scalar",
+         .body = replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+         .arrays = "a:[]",
+         .exit = "zero -> {}"});
+    rows.push_back({.what = "a one-trip structured loop reads exactly one own element",
+                    .body = replace(original, "  ctjs.append %y to %a\n", ""),
+                    .arrays = "a:[x]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "a structured loop result retains its read-time Number after mutation",
+                    .body = prefix + loop +
+                            "  ctjs.append %zero to %finalArray\n"
+                            "  %after = ctjs.get_property %finalArray[%finalIndex]\n"
+                            "  ctjs.return %after\n",
+                    .arrays = "a:[x,y,zero]",
+                    .reads = "a[0]=x; a[1]=y; a[2]=zero",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "a structured loop result transports its saved child into CFG",
+                    .body = prefix + loop +
+                            "  cf.br ^exit(%result : !ctjs.value)\n"
+                            "^exit(%child: !ctjs.value):\n  ctjs.return %child\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured induction resumes an enclosing if yield on each path",
+                    .body = prefix + "  %selected = scf.if %flag -> (!ctjs.value) {\n" + loop +
+                            "    scf.yield %result : !ctjs.value\n"
+                            "  } else {\n    scf.yield %x : !ctjs.value\n  }\n"
+                            "  ctjs.return %selected\n",
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; x -> {x}"});
+    rows.push_back({.what = "a later structured loop has a fresh guard and exact contents",
+                    .body = prefix + loop +
+                            replace(replace(replace(loop, "%finalIndex, %result, %finalArray",
+                                                    "%nextIndex, %nextResult, %nextArray"),
+                                            "%array = %a", "%array = %finalArray"),
+                                    "%saved = %zero", "%saved = %result") +
+                            "  ctjs.return %nextResult\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    const auto reject = [&](const char * what, std::string body,
+                            ArrayContentsFailure failure =
+                                ArrayContentsFailure::UnsupportedControlFlow) {
+        rows.push_back({.what = what, .body = std::move(body), .failure = failure});
+    };
+    reject("a structured inclusive guard does not prove an own index",
+           replace(original, "compare lt", "compare le"));
+    reject("a structured guard must read the current array length",
+           replace(original, "compare lt %index, %length", "compare lt %index, %one"));
+    reject("a structured loop cannot start with an unknown Number",
+           replace(original, "%index = %zero", "%index = %p"));
+    reject("a structured zero step does not prove termination",
+           replace(original, "binary_static add %i, %one", "binary_static add %i, %zero"));
+    reject("a structured dynamic step does not borrow static Number induction",
+           replace(original, "binary_static add %i, %one", "binary add %i, %one"));
+    reject("an opaque structured backedge cannot reuse a prior exact Number",
+           replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
+    reject("a structured array backedge must preserve its certified formal",
+           replace(original, "scf.yield %base, %step, %read", "scf.yield %a, %step, %read"));
+    reject("a reordered structured condition must still supply the induction formal",
+           replace(original, "scf.condition(%continue) %index, %saved, %array",
+                   "scf.condition(%continue) %saved, %index, %array"));
+    reject("structured loop mutation refuses before replay",
+           replace(original, "    %read =", "    ctjs.set_property %base[%i], %zero\n    %read ="));
+    reject("structured loop allocation cannot collapse repeated instances",
+           replace(original, "    %read =", "    %fresh = ctjs.create_array []\n    %read ="));
+    reject("structured nested control needs a separate lifetime proof",
+           replace(original, "    %read =", "    scf.if %flag {\n    }\n    %read ="));
+    reject("a structured zero-trip body cannot conceal publication",
+           replace(replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+                   "    %read =", "    ctjs.store_global \"held\", %base\n    %read ="));
+    reject("a structured offset read must stay within the guard array on every iteration",
+           replace(original, "    %read = ctjs.get_property %base[%i]",
+                   "    %offset = ctjs.binary_static add %i, %one\n"
+                   "    %read = ctjs.get_property %base[%offset]"),
+           ArrayContentsFailure::MissingElement);
+    reject("effects after structured induction discard all earlier exact reads",
+           replace(original, "  ctjs.return %result",
+                   "  ctjs.store_global \"held\", %result\n  ctjs.return %result"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("opaque carried contents cannot borrow a prior structured scalar fact",
+           replace(replace(original, "%base[%i]", "%base[%last]"), "scf.yield %base, %step, %read",
+                   "scf.yield %base, %step, %p"),
+           ArrayContentsFailure::UnknownIndex);
     std::size_t budgets = 0;
     for (const auto & expected : rows) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
