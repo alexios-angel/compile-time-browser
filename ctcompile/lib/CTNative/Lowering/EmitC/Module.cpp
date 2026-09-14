@@ -66,12 +66,22 @@ void lowering::finish() {
                                                       ownedGlobals.keys().end());
         llvm::sort(ownerNames);
         for (llvm::StringRef name : ownerNames) {
+            if (!domDataSession.empty()) {
+                const auto & storage = ownedGlobalStoragePlans.front();
+                ec::VerbatimOp::create(b, module.getLoc(),
+                                       b.getStringAttr(storage.className + " g_" + name.str() +
+                                                       "{};\n" + storage.className + " * reset_g_" +
+                                                       name.str() + "() { g_" + name.str() +
+                                                       " = {}; return &g_" + name.str() + "; }\n"));
+                continue;
+            }
             auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
                                                ownedGlobals.lookup(name), mlir::Attribute{}, false,
                                                true, false);
             global->setAttr("ctnative.provenance", b.getStringAttr("owning global " + name.str()));
         }
         for (ec::FuncOp f : lowered) {
+            if (!domDataSession.empty()) { continue; }
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
         }
@@ -81,6 +91,44 @@ void lowering::finish() {
         for (const std::string & builder : callableBuilders) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(builder));
         }
+    }
+    if (!domDataSession.empty()) {
+        std::string text;
+        llvm::raw_string_ostream out(text);
+        out << "public:\n    " << domDataSession << "() = default;\n"
+            << "    " << domDataSession << "(const " << domDataSession << " &) = delete;\n"
+            << "    " << domDataSession << " & operator=(const " << domDataSession
+            << " &) = delete;\n"
+            << "    " << domDataSession << "(" << domDataSession << " &&) = delete;\n"
+            << "    " << domDataSession << " & operator=(" << domDataSession << " &&) = delete;\n"
+            << "    ctbrowser::document & document() { return document_; }\n"
+            << "    auto invoke(";
+        for (unsigned i = 0; i < domParameters.size(); ++i) {
+            if (i) { out << ", "; }
+            out << "ctbrowser::element_ref element" << i;
+        }
+        out << ") {\n        if (";
+        for (unsigned i = 0; i < domParameters.size(); ++i) {
+            if (i) { out << " || "; }
+            out << "element" << i << ".owner != &document_";
+        }
+        out << ") { throw std::invalid_argument(\"DOM element belongs to another session\"); }\n"
+            << "        return " << domDataEntry << "(";
+        for (unsigned i = 0; i < domParameters.size(); ++i) {
+            if (i) { out << ", "; }
+            out << "element" << i;
+        }
+        out << ");\n    }\n";
+        llvm::SmallVector<llvm::StringRef> observed(observations.keys().begin(),
+                                                    observations.keys().end());
+        llvm::sort(observed);
+        for (auto name : observed) {
+            out << "    auto observe_" << cIdentifier(name) << "() const { return g_" << name
+                << "; }\n";
+        }
+        out << "};\n";
+        mlir::OpBuilder b = mlir::OpBuilder::atBlockEnd(module.getBody());
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(text));
     }
     for (ctjs::FuncOp fn : shells) {
         if (!mlir::SymbolTable::symbolKnownUseEmpty(fn.getOperation(), module)) {
@@ -115,7 +163,7 @@ void lowering::declareGlobals() {
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
     ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
     if (needsDOM) {
-        if (!domSessionDefinition.empty()) {
+        if (!domSessionDefinition.empty() || !domDataSession.empty()) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("stdexcept"),
                                   b.getUnitAttr());
         }
@@ -245,6 +293,9 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
         ec::VerbatimOp::create(b, module.getLoc(),
                                b.getStringAttr(needsMapOrder ? kNativeOrderedMapStorage
                                                              : kNativeAssociativeMapStorage));
+        if (needsDOM && !needsMapOrder) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeDOMMapKeys));
+        }
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
         if (needsNullableString) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeStringMapHelpers));
@@ -256,7 +307,8 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectMapHelpers));
         }
     }
-    if (!methodTables.empty() || !callableBuilders.empty() || !callableBodies.empty()) {
+    if (domDataSession.empty() &&
+        (!methodTables.empty() || !callableBuilders.empty() || !callableBodies.empty())) {
         for (llvm::StringRef header : {"functional", "memory", "utility"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }
@@ -271,16 +323,19 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
     for (const std::string & definition : methodTables) {
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
     }
+    if (!domDataSession.empty()) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(domDataDefinition()));
+    }
     llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
     llvm::sort(names);
     for (llvm::StringRef name : names) {
         // Default tagged storage is undefined until the first generated
         // store. Each observation checks its exact tag, so a missing store
         // cannot imitate a computed NaN, false or an empty String.
-        auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
-                                           globalStorageType(name), mlir::Attribute{},
-                                           /*extern_specifier=*/false, /*static_specifier=*/true,
-                                           /*const_specifier=*/false);
+        auto global = ec::GlobalOp::create(
+            b, module.getLoc(), ("g_" + name).str(), globalStorageType(name), mlir::Attribute{},
+            /*extern_specifier=*/false, /*static_specifier=*/domDataSession.empty(),
+            /*const_specifier=*/false);
         global->setAttr("ctnative.provenance", b.getStringAttr("global " + name.str()));
     }
 }

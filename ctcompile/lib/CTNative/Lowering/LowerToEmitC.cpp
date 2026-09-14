@@ -140,10 +140,30 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
             hostContract = std::move(*parsed);
         }
-        if (hostContract &&
-            hostContract->provider == HostContract::Provider::ctbrowserDOMDataSession) {
-            module.emitError() << "native DOM Data requires storage confined to its document owner";
-            return signalPassFailure();
+        const bool domData = hostContract && hostContract->provider ==
+                                                 HostContract::Provider::ctbrowserDOMDataSession;
+        if (domData) {
+            const OwnedGlobalRoots source(module, *hostContract, hostMaxSteps);
+            if (!source.proved()) {
+                module.emitError() << "native DOM Data source: " << source.reason();
+                return signalPassFailure();
+            }
+            mlir::OwningOpRef<mlir::ModuleOp> prepared(llvm::cast<mlir::ModuleOp>(module->clone()));
+            if (auto wrapper = source.wrapper()) {
+                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+            }
+            prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+            prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
+            HostContract transformed = *hostContract;
+            transformed.moduleSha256 = hostContractFingerprint(*prepared);
+            const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
+            if (!checked.proved()) {
+                module.emitError() << "native DOM Data preparation: " << checked.reason();
+                return signalPassFailure();
+            }
+            module->setAttrs((*prepared)->getAttrs());
+            module.getBodyRegion().takeBody(prepared->getBodyRegion());
+            hostContract = std::move(transformed);
         }
 
         std::unique_ptr<DOMEntryAnalysis> domEntry;
@@ -583,6 +603,20 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
 
         lowering lower{solver, &getContext(), module};
         lower.groups = &groups;
+        if (domData) {
+            if (!admittedGlobals || !admittedGlobals->proved() ||
+                accepted.size() != functions.size() || admittedGlobals->roots().size() != 1 ||
+                !admittedGlobals->objectReads().empty()) {
+                module.emitError("native DOM Data requires complete family admission");
+                return signalPassFailure();
+            }
+            lower.domDataEntry = cIdentifier(hostContract->entry);
+            lower.domDataSession = lower.domDataEntry + "_session";
+            lower.needsDOM = true;
+            for (auto parameter : admittedGlobals->domInputs()) {
+                lower.domParameters.insert(parameter);
+            }
+        }
         if (admittedGlobals && admittedGlobals->proved()) {
             lower.explicitObservations = true;
             for (const auto & name : hostContract->observations) {
@@ -590,8 +624,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
         for (ctjs::FuncOp fn : accepted) {
-            lower.names[fn.getSymName()] =
-                !admittedDOM && isScriptEntry(fn) ? "main" : cIdentifier(fn.getSymName());
+            lower.names[fn.getSymName()] = !admittedDOM && !domData && isScriptEntry(fn)
+                                               ? "main"
+                                               : cIdentifier(fn.getSymName());
         }
 
         // THE GLOBAL CENSUS, over the whole accepted set and BEFORE any
@@ -686,6 +721,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
         lower.censusScalars(accepted, admittedGlobals.get());
+        if (domData && !lower.censusSession(*admittedGlobals, accepted)) {
+            module.emitError("native DOM Data requires a private captured Map table");
+            return signalPassFailure();
+        }
         lower.censusShapes(accepted);
         if (admittedGlobals) { lower.censusOwnedGlobals(*admittedGlobals, accepted); }
         lower.censusIdentityFields(accepted);

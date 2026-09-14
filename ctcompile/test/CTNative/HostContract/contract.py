@@ -198,8 +198,8 @@ def main():
             ],
             success=False,
         )
-        if "requires storage confined to its document owner" not in result.stderr:
-            raise RuntimeError("DOM Data lowering did not explain the missing lifetime proof")
+        if "native DOM Data source:" not in result.stderr or report["reason"] not in result.stderr:
+            raise RuntimeError("DOM Data lowering did not explain the missing source input proof")
         if emitted.exists() and emitted.read_text():
             raise RuntimeError("DOM Data storage refusal emitted a partial native module")
     extra_claim = dict(contract, nonthrowing=True)

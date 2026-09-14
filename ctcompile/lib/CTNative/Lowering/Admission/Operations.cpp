@@ -410,6 +410,8 @@ bool admission::op(mlir::Operation * o) {
                 continue;
             }
             if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
+                !(carrierOf(typeOf(operands[i])) == carrier::domElement && ownedGlobals &&
+                  ownedGlobals->proved() && !ownedGlobals->domInputs().empty()) &&
                 !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
                 carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&

@@ -64,6 +64,7 @@ bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
         case carrier::nullableString:
         case carrier::objectValue:
         case carrier::objectIdentity:
+        case carrier::domElement:
         case carrier::map: return true;
         default: return false;
         }
@@ -89,6 +90,7 @@ std::string lowering::callableTypeSpelling(mlir::Type type) {
     case carrier::nullableString: needsNullableString = true; return kNullableStringType.str();
     case carrier::objectValue: needsObjectValue = true; return kObjectValueType.str();
     case carrier::objectIdentity: needsObjectIdentity = true; return kObjectIdentityType.str();
+    case carrier::domElement: needsDOM = true; return kDOMElementType.str();
     case carrier::map: {
         needsMap = true;
         const auto map = llvm::cast<MapType>(type);
@@ -205,7 +207,7 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
         }
         auto allocation = table.capturedMap->allocation;
         auto map = llvm::dyn_cast_or_null<MapType>(typeOf(allocation.getResult()));
-        if (map && llvm::isa<MapType>(map.getValueType())) {
+        if (map && (!domDataSession.empty() || llvm::isa<MapType>(map.getValueType()))) {
             auto object = table.table;
             if (allocation->getBlock() != object->getBlock()) { return false; }
             const auto mapName = "ctnative::map_storage<" + mapKeySpelling(map.getKeyType()).str() +
@@ -215,6 +217,7 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
             sessionMaps.push_back({"ctnative::method_" + cIdentifier(site), mapName, borrowed, {}});
             sessionAllocations[allocation] = index;
             sessionAllocations[object] = index;
+            if (!domDataSession.empty()) { needsMap = true; }
             llvm::SmallVector<mlir::Value> aliases{allocation.getResult()};
             for (const auto & method : table.methods) {
                 auto closure = method.closure;
@@ -258,16 +261,23 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
             // The source proof admits this read only as the exact call's callee.
             // Its emitted value is the table receiver, never an extracted callable.
             ownedObjectTypes[read.getResult()] =
-                methodTableCarrierType(llvm::cast<MethodTableType>(typeOf(read.getObject())));
+                tableType(llvm::cast<MethodTableType>(typeOf(read.getObject())));
         }
+        if (!domDataSession.empty() && !sessionAllocations.contains(table.table)) { return false; }
     }
-    return !sessionTables.empty();
+    return !sessionTables.empty() && (domDataSession.empty() || sessionMaps.size() == 1);
 }
 
 void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp made) {
             const auto site = methodTableName(made);
+            if (!domDataSession.empty() && sessionTables.contains(site)) {
+                const auto & storage = sessionMaps[sessionAllocations.lookup(made)];
+                methodTables.push_back("namespace ctnative {\nstruct method_" + cIdentifier(site) +
+                                       " {\n  " + storage.mapName + " captured_map;\n};\n}\n");
+                return;
+            }
             if (site.empty()) { return; }
             const bool session = sessionTables.contains(site);
             std::vector<std::pair<std::string, std::string>> fields;
@@ -354,9 +364,15 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
         storage.owner =
             callWithConstValueOperands(
                 at, where,
-                mlir::TypeRange{
-                    ec::OpaqueType::get(context, "std::shared_ptr<" + storage.tableName + ">")},
-                at.getStringAttr("std::make_shared<" + storage.tableName + ">"), mlir::ValueRange{})
+                mlir::TypeRange{domDataSession.empty()
+                                    ? mlir::Type(ec::OpaqueType::get(
+                                          context, "std::shared_ptr<" + storage.tableName + ">"))
+                                    : mlir::Type(ec::PointerType::get(
+                                          ec::OpaqueType::get(context, storage.tableName)))},
+                at.getStringAttr(domDataSession.empty()
+                                     ? "std::make_shared<" + storage.tableName + ">"
+                                     : "reset_data_table_" + std::to_string(found->second)),
+                mlir::ValueRange{})
                 .getResult(0);
     }
     mlir::Value value = storage.owner;
@@ -370,11 +386,14 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
             sessionAllocations.erase(found);
             return true;
         }
-        value = callWithConstValueOperands(at, where, mlir::TypeRange{storage.borrowedType},
-                                           at.getStringAttr("ctnative::invoke_session<&" +
-                                                            storage.tableName + "::capture_map>"),
-                                           mlir::ValueRange{storage.owner})
-                    .getResult(0);
+        value =
+            callWithConstValueOperands(
+                at, where, mlir::TypeRange{storage.borrowedType},
+                at.getStringAttr(domDataSession.empty() ? "ctnative::invoke_session<&" +
+                                                              storage.tableName + "::capture_map>"
+                                                        : "ctnative::data_map"),
+                mlir::ValueRange{storage.owner})
+                .getResult(0);
     }
     operation->getResult(0).replaceAllUsesWith(value);
     sessionAllocations.erase(found);
@@ -391,6 +410,21 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         llvm::SmallVector<mlir::Value> args{call.getCalleeValue()};
         llvm::append_range(args, op->getOperands().drop_front(3 + static_cast<size_t>(captures)));
         const auto session = sessionCalls.find(op);
+        if (!domDataSession.empty() && session != sessionCalls.end()) {
+            // The complete family proves this callee and its sole Map capture.
+            // Borrow the private table's Map for the direct member call.
+            const auto mapType = sessionMaps.front().borrowedType;
+            args.front() = callWithConstValueOperands(at, op->getLoc(), mlir::TypeRange{mapType},
+                                                      at.getStringAttr("ctnative::data_map"),
+                                                      mlir::ValueRange{call.getCalleeValue()})
+                               .getResult(0);
+            auto invoked = callWithConstValueOperands(
+                at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
+                at.getStringAttr(names.lookup(call.getCallee())), args);
+            call.getResult().replaceAllUsesWith(invoked.getResult(0));
+            eraseIfUnused(op);
+            return true;
+        }
         auto invoked = callWithConstValueOperands(
             at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
             at.getStringAttr(session == sessionCalls.end() ? "ctnative::invoke_callable"

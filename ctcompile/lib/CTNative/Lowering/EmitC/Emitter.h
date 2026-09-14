@@ -57,6 +57,10 @@ struct lowering {
     llvm::DenseMap<mlir::Value, mlir::Value> domStyles;
     bool needsDOM = false;
     std::string domSessionDefinition;
+    std::string domDataSession;
+    std::string domDataEntry;
+    mlir::Type tableType(MethodTableType type) const;
+    std::string domDataDefinition() const;
     bool needsDOMToggle = false;
     bool needsDOMAttributes = false;
     bool needsDOMAttributeToggle = false;

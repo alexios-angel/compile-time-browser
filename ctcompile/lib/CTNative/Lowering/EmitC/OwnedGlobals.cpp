@@ -9,7 +9,10 @@ void lowering::censusOwnedGlobals(const OwnedGlobalRoots & roots,
         auto owner = root.owner;
         if (!llvm::is_contained(accepted, owner->getParentOfType<ctjs::FuncOp>())) { continue; }
         const std::string name = spelling(shapeAt(owner.getResult()));
-        const auto type = ec::OpaqueType::get(context, "std::shared_ptr<" + name + ">");
+        const mlir::Type type =
+            domDataSession.empty()
+                ? mlir::Type(ec::OpaqueType::get(context, "std::shared_ptr<" + name + ">"))
+                : mlir::Type(ec::PointerType::get(ec::OpaqueType::get(context, name)));
         auto field = root.fieldInitialization;
         const unsigned index = static_cast<unsigned>(ownedGlobalStoragePlans.size());
         ownedGlobalStoragePlans.push_back(
@@ -55,17 +58,25 @@ bool lowering::replaceOwnedGlobal(mlir::Operation * operation) {
     const auto where = operation->getLoc();
     mlir::Value result;
     if (llvm::isa<ctjs::CreateObjectOp>(operation)) {
-        result =
-            callWithConstValueOperands(
-                at, where, mlir::TypeRange{storage.type},
-                at.getStringAttr("std::make_shared<" + storage.className + ">"), mlir::ValueRange{})
-                .getResult(0);
+        result = callWithConstValueOperands(
+                     at, where, mlir::TypeRange{storage.type},
+                     at.getStringAttr(domDataSession.empty()
+                                          ? "std::make_shared<" + storage.className + ">"
+                                          : "reset_g_" + storage.binding),
+                     mlir::ValueRange{})
+                     .getResult(0);
     } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
-        ec::AssignOp::create(at, where, lvalueOfGlobal(at, where, storage.binding),
-                             store.getValue());
+        if (domDataSession.empty()) {
+            ec::AssignOp::create(at, where, lvalueOfGlobal(at, where, storage.binding),
+                                 store.getValue());
+        }
     } else if (llvm::isa<ctjs::LoadGlobalOp>(operation)) {
-        result =
-            ec::LoadOp::create(at, where, storage.type, lvalueOfGlobal(at, where, storage.binding));
+        if (domDataSession.empty()) {
+            result = ec::LoadOp::create(at, where, storage.type,
+                                        lvalueOfGlobal(at, where, storage.binding));
+        } else {
+            result = ec::LiteralOp::create(at, where, storage.type, "&g_" + storage.binding);
+        }
     } else {
         const auto member = "<&" + storage.className + "::" + storage.field + ">";
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove imported DOM Data inputs while native storage remains explicitly refused."""
+"""Prove imported DOM Data inputs and revalidate their private native storage."""
 
 import argparse
 import json
@@ -98,7 +98,7 @@ def check_report(args, ir, requested, name, proved, *, options=""):
     return report, output
 
 
-def native_refusal(args, ir, requested, name):
+def native_storage(args, ir, requested, name, *, proved=True):
     config = args.work / f"{name}.json"
     config.write_text(json.dumps(requested, indent=2) + "\n")
     for optimize in (False, True):
@@ -112,11 +112,15 @@ def native_refusal(args, ir, requested, name):
                 "-o",
                 str(output),
             ],
-            success=False,
+            success=proved,
         )
-        if "requires storage confined to its document owner" not in result.stderr:
-            raise RuntimeError(f"{name}: missing native lifetime diagnostic")
-        if output.exists() and output.read_text():
+        if proved:
+            text = output.read_text()
+            if len(re.findall(r"\bemitc.func @", text)) != 6 or FUNCTION.search(text):
+                raise RuntimeError(f"{name}: incomplete native Data source family")
+        elif "native DOM Data source:" not in result.stderr:
+            raise RuntimeError(f"{name}: missing native source diagnostic")
+        elif output.exists() and output.read_text():
             raise RuntimeError(f"{name}: native refusal emitted a partial module")
 
 
@@ -131,7 +135,7 @@ def main():
     if count != 7:
         raise RuntimeError(f"expected seven complete source functions, got {count}")
     report, annotated = check_report(args, ir, requested, "proved", True)
-    native_refusal(args, ir, requested, "native-refused")
+    native_storage(args, ir, requested, "native-storage")
 
     # Observe a separate harness. The compiler's input retains the uninvoked
     # declaration, its complete method family and every source allocation.
@@ -146,6 +150,7 @@ def main():
     refused, _ = check_report(args, ir, stale, "stale", False)
     if "fingerprint mismatch" not in refused["reason"]:
         raise RuntimeError("stale input proof lost its fingerprint diagnostic")
+    native_storage(args, ir, stale, "stale-native", proved=False)
     refused, _ = check_report(args, ir, requested, "budget", False, options="max-steps=0")
     if "budget" not in refused["reason"]:
         raise RuntimeError("an incomplete input census exposed proof")
@@ -162,7 +167,7 @@ def main():
     rechecked, _ = check_report(args, forged, fresh, "forged-fresh", True)
     if rechecked != report:
         raise RuntimeError("forged reports changed the live source proof")
-    native_refusal(args, forged, fresh, "forged-native-refused")
+    native_storage(args, forged, fresh, "forged-native-storage")
 
     sources = {
         "wrapper-effect": "traceOutside = 1;\n" + SOURCE,
@@ -190,10 +195,11 @@ def main():
     for name, source in sources.items():
         _, subject, fresh, _ = prepare(args, name, source)
         check_report(args, subject, fresh, name + "-proof", False)
+        native_storage(args, subject, fresh, name + "-native", proved=False)
     print(
         "DOM Data inputs: seven imported functions, two external keys, zero synthetic objects; "
         "Node/VM alias and source-allocation reset observations; eleven source refusals, "
-        "stale/budget/forged controls; native storage refused under both policies"
+        "stale/budget/forged controls; private native storage revalidated under both policies"
     )
 
 

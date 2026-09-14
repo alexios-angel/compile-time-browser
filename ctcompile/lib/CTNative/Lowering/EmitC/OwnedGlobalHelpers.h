@@ -13,6 +13,12 @@ template <auto Field, class T, class V>
 void owned_global_set(std::shared_ptr<T> const & object, V value) {
     object.get()->*Field = value;
 }
+template <auto Field, class T>
+auto owned_global_get(T * object) { return object->*Field; }
+template <auto Field, class T, class V>
+void owned_global_set(T * object, V value) { object->*Field = value; }
+template <class Table>
+auto data_map(Table * table) { return &table->captured_map; }
 } // namespace ctnative
 )cpp";
 } // namespace ctcompile::ctnative::lowering_detail

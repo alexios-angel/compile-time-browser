@@ -2,6 +2,27 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+mlir::Type lowering::tableType(MethodTableType type) const {
+    if (domDataSession.empty()) { return methodTableCarrierType(type); }
+    return ec::PointerType::get(
+        ec::OpaqueType::get(context, "ctnative::method_" + cIdentifier(type.getSite())));
+}
+
+std::string lowering::domDataDefinition() const {
+    std::string text;
+    llvm::raw_string_ostream out(text);
+    out << "class " << domDataSession << " {\n"
+        << "    ctbrowser::atom_table atoms_;\n"
+        << "    ctbrowser::document document_{atoms_};\n";
+    for (auto [i, storage] : llvm::enumerate(sessionMaps)) {
+        out << "    " << storage.tableName << " data_table_" << i << ";\n"
+            << "    " << storage.tableName << " * reset_data_table_" << i << "() { data_table_" << i
+            << " = {}; return &data_table_" << i << "; }\n";
+    }
+    // Function bodies and source globals follow as private ordinary members.
+    return text;
+}
+
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     needsDOM = true;

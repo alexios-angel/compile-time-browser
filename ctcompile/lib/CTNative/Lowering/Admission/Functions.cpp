@@ -1,4 +1,5 @@
 // Admission/Functions.cpp - native lowering implementation.
+#include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
@@ -101,7 +102,9 @@ bool admission::function(ctjs::FuncOp fn) {
         const auto supported = [&](mlir::Value value) {
             const auto c = carrierOf(typeOf(value));
             return isScalarCarrier(c) || c == carrier::string || c == carrier::nullableString ||
-                   c == carrier::map || isObjectCarrier(c);
+                   c == carrier::map || isObjectCarrier(c) ||
+                   (c == carrier::domElement && ownedGlobals && ownedGlobals->proved() &&
+                    !ownedGlobals->domInputs().empty());
         };
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             if (!supported(entry.getArgument(i))) {

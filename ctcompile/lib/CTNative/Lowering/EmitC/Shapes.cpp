@@ -8,6 +8,9 @@ namespace ctcompile::ctnative::lowering_detail {
 // a checked method-table slot carries the existing owning shared pointer.
 // A template argument needs text where a field's type is an mlir::Type.
 std::string lowering::spelled(mlir::Type type) {
+    if (auto pointer = llvm::dyn_cast_or_null<ec::PointerType>(type)) {
+        return spelled(pointer.getPointee()) + " *";
+    }
     if (isNullableCarrier(type)) { return "ctnative::nullable_scalar"; }
     if (llvm::isa<mlir::Float64Type>(type)) { return "double"; }
     if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type);
@@ -106,9 +109,7 @@ const lowering::siteShape & lowering::shapeAt(mlir::Value object) const {
 llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::Value object) {
     const auto carried = [&](mlir::Value v) {
         auto type = typeOf(v);
-        if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) {
-            return methodTableCarrierType(table);
-        }
+        if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) { return tableType(table); }
         if (auto closure = llvm::dyn_cast_or_null<ClosureType>(type)) {
             return closureCarrierType(closure);
         }

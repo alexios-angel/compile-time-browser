@@ -72,7 +72,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         if (c == carrier::methodTable) {
-            v.setType(methodTableCarrierType(llvm::cast<MethodTableType>(typeOf(v))));
+            v.setType(tableType(llvm::cast<MethodTableType>(typeOf(v))));
             return;
         }
         if (c == carrier::closure) {
