@@ -992,7 +992,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             }
         }
     }
-    if (exhausted) { return {}; }
+    if (exhausted || !capturedMapOuterKeys(prepared, familyCalls, result)) { return {}; }
     // Only the completed whole-family proof supplies entry expression facts.
     // The invocation worklist above uses its own map, so provisional or cyclic
     // dependencies cannot borrow these published facts to prove themselves.

@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Transforms/Passes.h"
 
 #include "mlir/IR/Builders.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
@@ -78,6 +79,16 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
                  static_cast<std::int64_t>(analysis.proved() ? slot.edges.size() : 0)},
                 {"reason", slot.reason}});
         }
+        llvm::DenseSet<mlir::Operation *> outerKeyObjects;
+        for (const auto & edge : analysis.callables()) {
+            if (!edge.capturedMap) { continue; }
+            for (ctjs::CreateObjectOp object : edge.capturedMap->outerKeyObjects) {
+                outerKeyObjects.insert(object);
+            }
+        }
+        const auto outerKeyCount = static_cast<std::int64_t>(outerKeyObjects.size());
+        module->setAttr("ctnative.host_outer_key_objects",
+                        builder.getI64IntegerAttr(outerKeyCount));
         module->setAttr("ctnative.host_proved", builder.getBoolAttr(analysis.proved()));
         module->setAttr("ctnative.host_reason", builder.getStringAttr(analysis.reason()));
         module->setAttr("ctnative.host_slots", builder.getArrayAttr(slots));
@@ -96,6 +107,7 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
                 {"entry", contract->entry},
                 {"proved", analysis.proved()},
                 {"reason", analysis.reason().str()},
+                {"outer_key_objects", outerKeyCount},
                 {"observation_stores", static_cast<std::int64_t>(analysis.observations().size())},
                 {"slots", std::move(jsonSlots)}};
             stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(document)));

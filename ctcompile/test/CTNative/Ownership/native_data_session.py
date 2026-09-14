@@ -49,11 +49,19 @@ def main():
     source, _, _ = umd_source()
     expected_calls = re.findall(r"globalThis\.bootstrap\.(set|get|remove)\(", source)
     config = configure(args, subject, "session", values)
+
+    def check_keys(ir):
+        if "ctnative.host_outer_key_objects = 3 : i64" not in ir.read_text():
+            raise RuntimeError(
+                "Data must separate element/other/absent keys from its object payload"
+            )
+
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         name = "session-" + policy
         flags = options + " host-max-steps=1000000"
         output = owned.lower(args, subject, name, config, options=flags)
         methods.census(output, 7, name, admitted=7)
+        check_keys(output)
         deduced = args.work / f"{name}.deduced.mlir"
         host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
         for mode, ir in (("explicit", output), ("deduced", deduced)):
@@ -188,11 +196,20 @@ int main() {
 
         refuse(subject, config, name + "-budget", options + " host-max-steps=0")
         forged = args.work / f"{name}.forged.mlir"
-        forged.write_text(forge_leaf_evidence(subject.read_text()))
+        forged_text, count = re.subn(
+            r"\bmodule attributes \{",
+            "module attributes {ctnative.host_outer_key_objects = 99 : i64, ",
+            forge_leaf_evidence(subject.read_text()),
+            count=1,
+        )
+        if count != 1:
+            raise RuntimeError("missing module for forged outer-key evidence control")
+        forged.write_text(forged_text)
         refuse(forged, config, name + "-stale")
         fresh = configure(args, forged, name + "-fresh", values)
         checked = owned.lower(args, forged, name + "-fresh", fresh, options=flags)
         methods.census(checked, 7, name + "-fresh", admitted=7)
+        check_keys(checked)
         if comparable_provenance(
             host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout, forged
         ) != comparable_provenance(
@@ -220,7 +237,8 @@ int main() {
         refuse(escaped, fresh, name + "-escaped")
     print(
         "Data session: pinned 3218-byte source, 7/7 functions, 23 direct calls, 19 observations; "
-        "both policies/layouts/GCC/Clang; by-value outer Map, direct member captures, "
+        "3 source-derived outer-key objects; both policies/layouts/GCC/Clang; "
+        "by-value outer Map, direct member captures, "
         "nonmovable member ABI and ASan/UBSan saved-child/payload lifetimes; "
         "budget/stale/callable-escape refuse"
     )

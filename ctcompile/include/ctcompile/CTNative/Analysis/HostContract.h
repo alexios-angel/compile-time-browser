@@ -264,6 +264,11 @@ struct HostCapturedMap {
     std::vector<HostScalarCallback> scalarCallbacks{};
     std::vector<HostReturnedLeaf> returnedLeaves{};
     std::vector<HostReturnedScalar> returnedScalars{};
+    // Caller allocations used only as outer Map keys across every family call.
+    // Payloads, child keys, parameter transport and outer key snapshots exclude
+    // an allocation. This is source-use evidence, not DOM provenance or permission
+    // to borrow an external object; objectKeys retains its ordinary owning contract.
+    std::vector<ctjs::CreateObjectOp> outerKeyObjects{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

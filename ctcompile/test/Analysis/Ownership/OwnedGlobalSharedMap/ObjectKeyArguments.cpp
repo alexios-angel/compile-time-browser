@@ -7,11 +7,11 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     const auto requested = [](mlir::ModuleOp module) {
         auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        contract.initialIntrinsics = {"Map", "Array"};
         return contract;
     };
     const auto evidence = [&](mlir::ModuleOp module, const HostContractAnalysis & host,
-                              const OwnedGlobalRoots & owner, unsigned calls) {
+                              const OwnedGlobalRoots & owner, unsigned calls, unsigned outerKeys) {
         check(owner.roots().size() == 1 && owner.roots().front().methodTable &&
                   owner.roots().front().methodTable->capturedMap,
               "object arguments retain one ordinary published Map owner");
@@ -27,6 +27,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                         host.callables().size() == calls &&
                         table.capturedMap->parameters.size() == 1 &&
                         table.capturedMap->leafObjects.empty() &&
+                        table.capturedMap->outerKeyObjects.size() == outerKeys &&
                         table.capturedMap->childScalarContents == Alternatives{};
         mlir::Operation * previous = nullptr;
         for (const auto & edge : table.calls) {
@@ -55,14 +56,17 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                 family.objectKeys == std::vector{parameter} &&
                 family.alternatives == std::vector{Alternatives{}} &&
                 edge.capturedMap->allocation == table.capturedMap->allocation &&
-                edge.capturedMap->parameters == table.capturedMap->parameters;
+                edge.capturedMap->parameters == table.capturedMap->parameters &&
+                checked->capturedMap &&
+                checked->capturedMap->outerKeyObjects == table.capturedMap->outerKeyObjects &&
+                edge.capturedMap->outerKeyObjects == table.capturedMap->outerKeyObjects;
         }
         check(complete, "object actuals retain their exact allocations; mixed scalar calls gain "
                         "no object identity, primitive formal category or child contents");
     };
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message,
-                             unsigned calls = 1) {
+                             unsigned calls = 1, unsigned outerKeys = 1) {
         ++rows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "object-key source/prepared fixture parses");
@@ -79,7 +83,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                          owner.reason().str().c_str());
         }
         if (expected && host.proved() && owner.proved()) {
-            evidence(*module, host, owner, calls);
+            evidence(*module, host, owner, calls, outerKeys);
         } else if (!expected) {
             check(host.callables().empty() && empty(*module, owner),
                   "an unproved object argument exposes no partial callable or owner");
@@ -102,17 +106,17 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     variant(source, true, "an empty fresh object can be borrowed by captured Map.has");
     variant(repeat("%actual", ""), true, "repeated calls retain the same actual identity", 2);
     variant(repeat("%other", "    %other = ctjs.create_object\n"), true,
-            "distinct empty actuals keep separate identities in one complete object census", 2);
+            "distinct empty actuals keep separate identities in one complete object census", 2, 2);
     variant(repeat("%other", "    %other = ctjs.constant #ctjs.number<0>\n"), true,
             "a later Number actual retains no object or primitive formal proof", 2);
     variant(replaced(repeat("%other", "    %other = ctjs.create_object\n"), allocation,
                      "    %actual = ctjs.constant #ctjs.number<0>\n"),
             true, "an earlier Number actual cannot authorize a later object actual", 2);
     variant(replaced(source, allocation, allocation + "    ctjs.set_property %actual[%key], %u\n"),
-            true, "a scalar own field participates in the complete caller argument proof");
+            true, "a scalar own field participates in the complete caller argument proof", 1, 0);
     variant(
         replaced(source, observation, "    ctjs.set_property %actual[%key], %u\n" + observation),
-        true, "a later scalar object mutation participates in the complete use census");
+        true, "a later scalar object mutation participates in the complete use census", 1, 0);
     variant(
         replaced(source, allocation, allocation + "    ctjs.store_global \"namedKey\", %actual\n"),
         false, "a named global object needs an independent ordinary owner");
@@ -140,7 +144,8 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                            "    %stored = ctjs.call %method(%state, " +
                                std::string(key ? "%entryKey, %zero" : "%zero, %entryKey") +
                                ")\n    %found = ctjs.constant #ctjs.boolean<false>\n");
-        variant(storing, true, "checked empty objects may be retained as Map keys or payloads");
+        variant(storing, true, "checked empty objects may be retained as Map keys or payloads", 1,
+                key ? 1 : 0);
     }
     const std::string retain = "    %setKey = ctjs.constant #ctjs.string<\"set\">\n"
                                "    %setter = ctjs.get_property %state[%setKey]\n"
@@ -148,13 +153,34 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                                "    %stored = ctjs.call %setter(%state, %entryKey, %one)\n";
     variant(replaced(source, has, retain + has), true,
             "retaining an object key preserves its identity for the later has");
+    const std::string snapshot = R"MLIR(
+    %array = ctjs.load_global "Array"
+    %fromKey = ctjs.constant #ctjs.string<"from">
+    %from = ctjs.get_property %array[%fromKey]
+    %keysKey = ctjs.constant #ctjs.string<"keys">
+    %keys = ctjs.get_property %state[%keysKey]
+    %iterator = ctjs.call %keys(%state)
+    %copy = ctjs.call %from(%array, %iterator)
+)MLIR";
+    variant(replaced(source, has, retain + snapshot + has), true,
+            "an outer snapshot withholds key-only evidence without rejecting ordinary ownership", 1,
+            0);
+    variant(replaced(source, has,
+                     retain + replaced(snapshot, "%state[%keysKey]", "%stored[%keysKey]") + has),
+            false, "a snapshot must retain the exact fluent receiver");
+    variant(replaced(source, has,
+                     retain +
+                         replaced(replaced(snapshot, "%state[%keysKey]", "%stored[%keysKey]"),
+                                  "%keys(%state)", "%keys(%stored)") +
+                         has),
+            true, "a fluent outer Map snapshot also withholds the narrow key role", 1, 0);
     variant(replaced(replaced(source, has, retain + has), "#ctjs.string<\"has\">",
                      "#ctjs.string<\"get\">"),
             true, "a read after set keeps the exact object key's scalar payload");
     variant(replaced(repeat("%actual", ""), has, retain + has), true,
             "later calls may overwrite a retained key without creating an ownership cycle", 2);
     variant(replaced(repeat("%other", "    %other = ctjs.create_object\n"), has, retain + has),
-            true, "separate object actuals remain distinct retained Map keys", 2);
+            true, "separate object actuals remain distinct retained Map keys", 2, 2);
     variant(replaced(source, has,
                      "    %unknown = ctjs.load_global \"unknown\"\n"
                      "    %escaped = ctjs.call %unknown(%state, %entryKey)\n" +
@@ -221,7 +247,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     OwnedGlobalRoots exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact object argument budget reproduces the complete source owner");
-    if (exact.proved()) { evidence(*module, host, exact, 1); }
+    if (exact.proved()) { evidence(*module, host, exact, 1, 1); }
     std::printf("object-key owner %s: %u rows and all %u incomplete budgets checked\n",
                 prepared ? "prepared" : "source", rows, completion);
 }

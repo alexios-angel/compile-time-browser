@@ -11,7 +11,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
         return contract;
     };
     const auto variant = [&](const std::string & text, bool expected, const char * message,
-                             unsigned fields = 0) {
+                             unsigned fields = 0, unsigned outerKeys = 1) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "retained sibling key fixture parses");
         if (!module) { return; }
@@ -31,7 +31,8 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
             const auto & table = *owner.roots().front().methodTable;
             check(table.methods.size() == 2 && table.calls.size() == 2 && table.capturedMap &&
                       table.capturedMap->parameters.size() == 2 &&
-                      table.capturedMap->leafWrites.size() == fields,
+                      table.capturedMap->leafWrites.size() == fields &&
+                      table.capturedMap->outerKeyObjects.size() == outerKeys,
                   "the complete two-method family owns one captured Map");
             if (table.calls.size() == 2) {
                 const auto & first = table.calls[0].arguments;
@@ -40,6 +41,11 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
                           second[0].object && first[0].alternatives == PrimitiveAlternatives{} &&
                           second[0].alternatives == PrimitiveAlternatives{},
                       "both siblings independently prove their actual object identity");
+                for (const auto & call : host.callables()) {
+                    check(call.capturedMap && call.capturedMap->outerKeyObjects ==
+                                                  table.capturedMap->outerKeyObjects,
+                          "every sibling exposes the same complete outer-key allocation role");
+                }
                 if (fields == 1 && table.capturedMap && table.capturedMap->leafWrites.size() == 1 &&
                     first.size() == 1) {
                     auto write = table.capturedMap->leafWrites.front();
@@ -59,12 +65,22 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     const std::string observation = "    ctjs.store_global \"trace\", %answer\n";
     variant(
         replaced(source, observation, "    ctjs.set_property %actual[%key], %u\n" + observation),
-        true, "a later scalar key field write participates in the complete family owner", 1);
+        true, "a later scalar key field write participates in the complete family owner", 1, 0);
     variant(replaced(source, observation,
                      "    ctjs.store_global \"escapedKey\", %actual\n" + observation),
             false, "a named object still requires a separate global owner");
     variant(replaced(source, "%state, %entryKey, %value)", "%state, %entryKey, %entryKey)"), true,
-            "the complete family may retain the checked empty object as both key and payload");
+            "the complete family may retain the checked empty object as both key and payload", 0,
+            0);
+    variant(replaced(source, "    %u = ctjs.constant #ctjs.undefined\n    ctjs.return %u", R"MLIR(
+    %map = ctjs.load_global "Map"
+    %child = ctjs.construct %map(%map)
+    %childSet = ctjs.get_property %child[%setKey]
+    %childWritten = ctjs.call %childSet(%child, %entryKey, %value)
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u)MLIR"),
+            true, "one sibling child-key use withholds the allocation role for the whole family", 0,
+            0);
     variant(replaced(source, "    ctjs.return %u\n  }\n}\n",
                      "    ctjs.set_property %entryKey[%setKey], %state\n"
                      "    ctjs.return %u\n  }\n}\n"),
@@ -93,7 +109,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     check(!OwnedGlobalRoots(*module, contract, completion - 1).proved() &&
               OwnedGlobalRoots(*module, contract, completion).proved(),
           "the exact sibling owner completion budget is required");
-    std::printf("retained sibling key %s: 5 rows, live edit and budget boundary %u checked\n",
+    std::printf("retained sibling key %s: 6 rows, live edit and budget boundary %u checked\n",
                 prepared ? "prepared" : "source", completion);
 }
 

@@ -87,6 +87,9 @@ struct analyzer {
                          const HostMethodParameters & parameters, HostCapturedMap & result,
                          PrimitiveAlternatives & returnAlternatives,
                          CapturedMapInvocation * invocation = nullptr);
+    bool capturedMapOuterKeys(bool prepared,
+                              llvm::ArrayRef<llvm::SmallVector<mlir::Operation *>> familyCalls,
+                              HostCapturedMap & result);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);
     mlir::Attribute primitive(mlir::Value value, unsigned depth = 0);
     std::optional<bool> truth(mlir::Value value, unsigned depth = 0);

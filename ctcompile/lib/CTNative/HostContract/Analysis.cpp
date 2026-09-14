@@ -271,6 +271,118 @@ bool analyzer::capturedMapParameters(
     return true;
 }
 
+bool analyzer::capturedMapOuterKeys(
+    bool prepared, llvm::ArrayRef<llvm::SmallVector<mlir::Operation *>> familyCalls,
+    HostCapturedMap & result) {
+    llvm::DenseSet<mlir::Operation *> checked(result.calls.begin(), result.calls.end());
+    llvm::DenseSet<mlir::Value> outerValues;
+    if (prepared) {
+        for (auto parameters : result.parameters) {
+            if (!step()) { return false; }
+            outerValues.insert(parameters.function.getBody().front().getArgument(3));
+        }
+    } else {
+        for (ctjs::LoadUpvalueOp load : result.upvalues) {
+            if (!step()) { return false; }
+            outerValues.insert(load.getResult());
+        }
+    }
+    const auto outer = [&](mlir::Value value) {
+        while (step()) {
+            if (outerValues.contains(value)) { return true; }
+            auto call = value.getDefiningOp<ctjs::CallOp>();
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!read || !checked.contains(call) || ctjs::constantKey(read.getKey()) != "set") {
+                return false;
+            }
+            value = call.getReceiver();
+        }
+        return false;
+    };
+    llvm::DenseSet<mlir::Operation *> keyCalls;
+    for (ctjs::CallOp call : result.calls) {
+        if (!step()) { return false; }
+        if (!outer(call.getReceiver())) { continue; }
+        auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        const auto action = read ? ctjs::constantKey(read.getKey()) : llvm::StringRef{};
+        // Even an unused outer snapshot can carry these identities away from
+        // the direct formal. Child snapshots do not contain outer keys.
+        if (action == "keys") { return !exhausted; }
+        if (action == "set" || action == "get" || action == "has" || action == "delete") {
+            keyCalls.insert(call);
+        }
+    }
+    llvm::DenseSet<mlir::OpOperand *> keyUses;
+    llvm::DenseSet<mlir::Operation *> candidates;
+    for (auto [index, parameters] : llvm::enumerate(result.parameters)) {
+        for (mlir::BlockArgument parameter : parameters.objectKeys) {
+            if (!step()) { return false; }
+            bool onlyKeys = true, usedKey = false;
+            for (mlir::OpOperand & use : parameter.getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                const bool key = keyCalls.contains(use.getOwner()) && use.getOperandNumber() == 2;
+                onlyKeys &= key;
+                usedKey |= key;
+            }
+            for (mlir::Operation * operation : familyCalls[index]) {
+                if (!step()) { return false; }
+                const unsigned position =
+                    parameter.getArgNumber() - (llvm::isa<ctjs::CallDirectOp>(operation) ? 0u : 1u);
+                mlir::OpOperand & use = operation->getOpOperand(position);
+                auto made = use.get().getDefiningOp<ctjs::CreateObjectOp>();
+                if (auto read = use.get().getDefiningOp<ctjs::LoadGlobalOp>()) {
+                    const auto edge = objectGlobalRead(read);
+                    if (edge) { made = edge->object; }
+                }
+                if (!made) { continue; }
+                candidates.insert(made);
+                if (onlyKeys && usedKey) { keyUses.insert(&use); }
+            }
+        }
+    }
+    // Source order gives every family invocation the same evidence. All uses
+    // of each allocation and every named alias must satisfy the narrower role;
+    // one sibling payload/child-key use removes it without rejecting ownership.
+    const auto census = entry.walk([&](ctjs::CreateObjectOp made) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (!candidates.contains(made)) { return mlir::WalkResult::advance(); }
+        llvm::SmallVector<mlir::Value> aliases{made.getResult()};
+        llvm::DenseSet<mlir::Operation *> initializations;
+        bool named = false;
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            named |= llvm::isa<ctjs::StoreGlobalOp>(use.getOwner());
+        }
+        std::vector<HostObjectGlobalRead> reads;
+        if (named) {
+            const auto found = objectGlobalReads(made);
+            if (!found) { return mlir::WalkResult::advance(); }
+            reads = *found;
+        }
+        for (const auto & edge : reads) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            auto read = edge.read;
+            aliases.push_back(read.getResult());
+            initializations.insert(edge.initialization);
+        }
+        for (mlir::Value alias : aliases) {
+            for (mlir::OpOperand & use : alias.getUses()) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner()) || keyUses.contains(&use) ||
+                    (initializations.contains(use.getOwner()) && use.getOperandNumber() == 0)) {
+                    continue;
+                }
+                return mlir::WalkResult::advance();
+            }
+        }
+        result.outerKeyObjects.push_back(made);
+        return mlir::WalkResult::advance();
+    });
+    return !census.wasInterrupted() && !exhausted;
+}
+
 std::string analyzer::environmentProblem() {
     std::string reason;
     const auto reject = [&](llvm::StringRef why) {

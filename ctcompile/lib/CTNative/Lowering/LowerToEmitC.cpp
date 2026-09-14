@@ -454,6 +454,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             return signalPassFailure();
         }
         if (admittedGlobals) {
+            std::int64_t outerKeyObjects = 0;
+            for (const auto & root : admittedGlobals->roots()) {
+                if (root.methodTable && root.methodTable->capturedMap) {
+                    outerKeyObjects += static_cast<std::int64_t>(
+                        root.methodTable->capturedMap->outerKeyObjects.size());
+                }
+            }
+            module->setAttr(
+                "ctnative.host_outer_key_objects",
+                mlir::IntegerAttr::get(mlir::IntegerType::get(&getContext(), 64), outerKeyObjects));
             module->setAttr("ctnative.host_owner_proved",
                             mlir::BoolAttr::get(&getContext(), admittedGlobals->proved()));
             module->setAttr("ctnative.host_owner_reason",
