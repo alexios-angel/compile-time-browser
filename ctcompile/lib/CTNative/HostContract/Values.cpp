@@ -309,17 +309,27 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             const auto parameter = function.getBody().front().getArgument(3 + offset + index);
             const auto actual = arguments[offset + index];
             ctjs::CreateObjectOp made;
+            mlir::BlockArgument element;
             if (llvm::is_contained(parameters->objectKeys, parameter) &&
                 !entryCategories(actual, capturedResults, operation).known) {
+                element = elementInput(actual);
                 made = actual.getDefiningOp<ctjs::CreateObjectOp>();
                 if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
                     const auto global = objectGlobalRead(load);
                     if (!global) { return {}; }
                     made = global->object;
                 }
-                if (!made) { return {}; }
+                if (element) {
+                    if (!llvm::is_contained(capture->outerKeyInputs, element) ||
+                        !llvm::is_contained(capture->outerKeyParameters, parameter)) {
+                        return {};
+                    }
+                } else if (!made) {
+                    return {};
+                }
             }
-            edge.arguments.push_back({parameter, actual, parameters->alternatives[index], made});
+            edge.arguments.push_back(
+                {parameter, actual, parameters->alternatives[index], made, element});
         }
     }
     edge.capturedMap = std::move(capture);
@@ -559,7 +569,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             for (mlir::Operation * invocation : familyCalls[index]) {
                 if (!step()) { return mlir::WalkResult::interrupt(); }
                 const auto actual = explicitArgument(invocation, payload.getArgNumber());
-                if (actual.getDefiningOp<ctjs::CreateObjectOp>()) { primitiveContents = false; }
+                if (actual.getDefiningOp<ctjs::CreateObjectOp>() || elementInput(actual)) {
+                    primitiveContents = false;
+                }
                 if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>();
                     load && objectGlobalRead(load)) {
                     primitiveContents = false;

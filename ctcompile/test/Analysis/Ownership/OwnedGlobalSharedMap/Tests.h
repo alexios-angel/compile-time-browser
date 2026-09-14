@@ -35,6 +35,8 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                              bool prepared);
 void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string & source,
                                   bool prepared);
+void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
+                       const std::string & family, bool prepared);
 void checkSharedMap(mlir::MLIRContext & context);
 
 } // namespace ctcompile::test::owned_global_shared_map

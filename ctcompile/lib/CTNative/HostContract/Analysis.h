@@ -62,6 +62,7 @@ struct analyzer {
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
+    mlir::BlockArgument elementInput(mlir::Value value) const;
     ctjs::FuncOp target(mlir::Operation * call) const;
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);
     ctjs::SetPropertyOp currentWrite(ctjs::GetPropertyOp read, unsigned depth = 0);

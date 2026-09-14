@@ -138,6 +138,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         }
         return value;
     };
+    // A method-local SSA producer is not stable across calls. Explicit entry
+    // inputs are stable origins, but different parameters may alias each other.
+    const auto stableKey = [&](mlir::Value key) {
+        return elementInput(key) || key.getDefiningOp<ctjs::ConstantOp>() ||
+               (key.getDefiningOp() && key.getDefiningOp()->getParentOp() == entry);
+    };
     const auto keyRelation = [&](mlir::Value left, mlir::Value right,
                                  PrimitiveMapKeyEvidence leftEvidence = {},
                                  PrimitiveMapKeyEvidence rightEvidence = {}) {
@@ -252,10 +258,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                             PrimitiveAlternatives payload = {}, mlir::Value object = {},
                             CapturedMapOrigin child = {}) {
         key = actualKey(key);
-        if (invocation && !key.getDefiningOp<ctjs::ConstantOp>() &&
-            (!key.getDefiningOp() || key.getDefiningOp()->getParentOp() != entry)) {
-            return false;
-        }
+        if (invocation && !stableKey(key)) { return false; }
         auto nextSize = state.currentSize;
         state.currentSize.reset();
         // Read membership before changing the entries. A possible overwrite
@@ -1176,12 +1179,6 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         if (!chargeStates(mapStates)) { return false; }
         for (auto & [origin, state] : mapStates) {
             (void)origin;
-            // A local producer's source SSA identity is not stable across
-            // calls. Persist only source literals and canonical entry actuals.
-            const auto stableKey = [&](mlir::Value key) {
-                return key.getDefiningOp<ctjs::ConstantOp>() ||
-                       (key.getDefiningOp() && key.getDefiningOp()->getParentOp() == entry);
-            };
             for (const auto & fact : state.entries) {
                 if (!step() || !stableKey(fact.key)) { return false; }
             }

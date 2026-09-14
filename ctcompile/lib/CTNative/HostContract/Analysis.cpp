@@ -5,6 +5,22 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+mlir::BlockArgument analyzer::elementInput(mlir::Value value) const {
+    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+    auto function = entry;
+    if (contract.provider != HostContract::Provider::ctbrowserDOMDataSession || !argument ||
+        !function || function.getBody().empty() ||
+        argument.getOwner() != &function.getBody().front() ||
+        argument.getArgNumber() < ctjs::implicit_arguments ||
+        !llvm::isa<ctjs::ValueType>(argument.getType())) {
+        return {};
+    }
+    const unsigned index = argument.getArgNumber() - ctjs::implicit_arguments;
+    return index < contract.elementParameters.size() && contract.elementParameters[index] == index
+               ? argument
+               : mlir::BlockArgument{};
+}
+
 std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read) {
     // ponytail: repeated chain walks are quadratic; cache origins if the shared budget limits them.
     ctjs::StoreGlobalOp initialization;
@@ -122,6 +138,21 @@ bool analyzer::capturedMapParameters(
             if (!step()) { return false; }
             const auto categories = entryCategories(actual, results, operation);
             if (!categories.known || !(categories.truthy | categories.falsy)) {
+                if (elementInput(actual)) {
+                    if (operation->getParentOp() != entry ||
+                        !dominance.dominates(actual, operation)) {
+                        return false;
+                    }
+                    // Provisional object-capable formal only. The completed
+                    // family must prove every input use is an outer Map key.
+                    const auto parameter = function.getBody().front().getArgument(
+                        (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size()));
+                    if (!llvm::is_contained(objectKeys, parameter)) {
+                        objectKeys.push_back(parameter);
+                    }
+                    tags.push_back(categories);
+                    continue;
+                }
                 auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
                 std::optional<HostObjectGlobalRead> global;
                 if (auto read = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
@@ -301,6 +332,7 @@ bool analyzer::capturedMapOuterKeys(
         return false;
     };
     llvm::DenseSet<mlir::Operation *> keyCalls;
+    bool outerSnapshot = false;
     for (ctjs::CallOp call : result.calls) {
         if (!step()) { return false; }
         if (!outer(call.getReceiver())) { continue; }
@@ -308,17 +340,18 @@ bool analyzer::capturedMapOuterKeys(
         const auto action = read ? ctjs::constantKey(read.getKey()) : llvm::StringRef{};
         // Even an unused outer snapshot can carry these identities away from
         // the direct formal. Child snapshots do not contain outer keys.
-        if (action == "keys") { return !exhausted; }
+        if (action == "keys") { outerSnapshot = true; }
         if (action == "set" || action == "get" || action == "has" || action == "delete") {
             keyCalls.insert(call);
         }
     }
     llvm::DenseSet<mlir::OpOperand *> keyUses;
     llvm::DenseSet<mlir::Operation *> candidates;
+    llvm::DenseSet<mlir::Value> inputs;
     for (auto [index, parameters] : llvm::enumerate(result.parameters)) {
         for (mlir::BlockArgument parameter : parameters.objectKeys) {
             if (!step()) { return false; }
-            bool onlyKeys = true, usedKey = false;
+            bool onlyKeys = !outerSnapshot, usedKey = false;
             for (mlir::OpOperand & use : parameter.getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
@@ -332,6 +365,11 @@ bool analyzer::capturedMapOuterKeys(
                 const unsigned position =
                     parameter.getArgNumber() - (llvm::isa<ctjs::CallDirectOp>(operation) ? 0u : 1u);
                 mlir::OpOperand & use = operation->getOpOperand(position);
+                if (auto input = elementInput(use.get())) {
+                    inputs.insert(input);
+                    if (onlyKeys && usedKey) { keyUses.insert(&use); }
+                    continue;
+                }
                 auto made = use.get().getDefiningOp<ctjs::CreateObjectOp>();
                 if (auto read = use.get().getDefiningOp<ctjs::LoadGlobalOp>()) {
                     const auto edge = objectGlobalRead(read);
@@ -342,6 +380,20 @@ bool analyzer::capturedMapOuterKeys(
                 if (onlyKeys && usedKey) { keyUses.insert(&use); }
             }
         }
+    }
+    // External identities cannot be published, returned, snapshotted, coerced,
+    // passed as child keys/payloads or transported through another binding.
+    // Canonical input order is independent of call visitation order.
+    for (mlir::BlockArgument input : entry.getBody().front().getArguments()) {
+        if (!step()) { return false; }
+        if (!inputs.contains(input)) { continue; }
+        for (mlir::OpOperand & use : input.getUses()) {
+            if (!step() || !dominance.dominates(input, use.getOwner())) { return false; }
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) && !keyUses.contains(&use)) {
+                return false;
+            }
+        }
+        result.outerKeyInputs.push_back(input);
     }
     // Source order gives every family invocation the same evidence. All uses
     // of each allocation and every named alias must satisfy the narrower role;
@@ -609,10 +661,38 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         refusal = "host contract script entry is missing or external";
         return;
     }
-    if (analysis.entry.getBody().front().getNumArguments() != 3 ||
+    const bool domData = contract.provider == HostContract::Provider::ctbrowserDOMDataSession;
+    const unsigned arguments = analysis.entry.getBody().front().getNumArguments();
+    if (arguments < ctjs::implicit_arguments ||
+        arguments - ctjs::implicit_arguments != (domData ? contract.elementParameters.size() : 0) ||
         analysis.entry.getUpvalueCount() != 0) {
         refusal = "closed-source script entry cannot take host arguments or captures";
         return;
+    }
+    if (domData) {
+        if (contract.elementParameters.empty() || !analysis.callers[analysis.entry].empty()) {
+            refusal = "DOM Data requires an unreferenced entry with explicit element inputs";
+            return;
+        }
+        const auto declarations = module.walk([&](ctjs::CreateClosureOp closure) {
+            if (!analysis.step() || analysis.callable(closure.getResult()) == analysis.entry) {
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (declarations.wasInterrupted()) {
+            refusal = analysis.exhausted ? "host contract analysis work budget exhausted"
+                                         : "DOM Data entry cannot be a source callable";
+            return;
+        }
+        for (mlir::BlockArgument argument :
+             analysis.entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            if (!analysis.step() || !analysis.elementInput(argument)) {
+                refusal = analysis.exhausted ? "host contract analysis work budget exhausted"
+                                             : "DOM Data entry has an invalid element input";
+                return;
+            }
+        }
     }
     for (const auto & root : contract.roots) {
         for (const std::string & key : root.properties) {
@@ -620,6 +700,24 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         }
     }
     refusal = analysis.environmentProblem();
+    if (domData && refusal.empty()) {
+        for (mlir::BlockArgument input :
+             analysis.entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            bool found = false;
+            for (const HostCallableEdge & edge : analysis.checkedCalls) {
+                if (!analysis.step()) { break; }
+                if (edge.capturedMap &&
+                    llvm::is_contained(edge.capturedMap->outerKeyInputs, input)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                refusal = "DOM Data input lacks a complete outer Map key family";
+                break;
+            }
+        }
+    }
     for (const std::string & name : contract.observations) {
         const auto & stores = analysis.globals[name];
         if (stores.empty() && refusal.empty()) {

@@ -140,6 +140,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
             hostContract = std::move(*parsed);
         }
+        if (hostContract &&
+            hostContract->provider == HostContract::Provider::ctbrowserDOMDataSession) {
+            module.emitError() << "native DOM Data requires storage confined to its document owner";
+            return signalPassFailure();
+        }
 
         std::unique_ptr<DOMEntryAnalysis> domEntry;
         if (hostContract &&

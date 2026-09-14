@@ -33,15 +33,21 @@ struct HostContract {
         // The same synchronous source proof with a nonmovable native owner
         // of the atom table, document and (when needed) selector engine.
         // Data retention and browser callbacks still require separate proofs.
-        ctbrowserDOMSession
+        ctbrowserDOMSession,
+        // Explicit DOM inputs may be retained only as outer Data Map keys.
+        // The host proof establishes provenance, not document lifetime;
+        // native ownership refuses until storage is confined to that owner.
+        ctbrowserDOMDataSession
     };
     Provider provider = Provider::closedSource;
     std::string moduleSha256;
     std::string entry;
-    // Both DOM providers invoke one ordinary function with borrowed elements.
+    // DOM providers invoke one ordinary function with borrowed elements.
     // Indices name explicit JS parameters, excluding the three implicit ones.
     // The document owns each node and must outlive this synchronous invocation;
     // ctbrowser-dom-session-v1 generates that nonmovable document owner.
+    // The Data provider proves only complete-family outer-key uses for now;
+    // these declarations cannot authorize its retained native storage.
     // identity includes the document, not just the node_id's bits.
     // The provider starts with the standard undefined binding. The complete
     // source proof excludes replacement and external script reentry.
@@ -135,10 +141,11 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
-// Finite primitive categories or caller leaf arguments, proved over the
+// Finite primitive categories or caller object arguments, proved over the
 // complete current call census. Positions that may receive objects have no primitive alternatives;
 // their actual allocation and allowed uses are checked independently. The
-// captured Map may retain them as keys or payloads; their own fields contain only scalars.
+// captured Map may retain source leaves as keys or payloads; their own fields
+// contain only scalars. Explicit DOM inputs require the narrower outer-key proof.
 struct HostMethodParameters {
     ctjs::FuncOp function;
     std::vector<PrimitiveAlternatives> alternatives;
@@ -154,6 +161,9 @@ struct HostMethodArgument {
     mlir::Value actual;
     PrimitiveAlternatives alternatives;
     ctjs::CreateObjectOp object{};
+    // Exact external entry input, never an owning source allocation. Distinct
+    // inputs may denote the same element; only identity with itself is known.
+    mlir::BlockArgument element{};
 };
 
 struct HostChildMapEntry {
@@ -280,6 +290,9 @@ struct HostCapturedMap {
     // an allocation. This is source-use evidence, not DOM provenance or permission
     // to borrow an external object; objectKeys retains its ordinary owning contract.
     std::vector<ctjs::CreateObjectOp> outerKeyObjects{};
+    // Explicit DOM entry inputs used exclusively through the outer-key formals
+    // above. Complete source/use evidence only; no retained lifetime authority.
+    std::vector<mlir::BlockArgument> outerKeyInputs{};
 };
 
 // Evidence for this actual call, not a promise about future exported callers

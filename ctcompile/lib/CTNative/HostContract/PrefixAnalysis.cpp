@@ -256,6 +256,10 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(
         refusal = "host prefix module fingerprint mismatch";
         return;
     }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        refusal = "host prefix does not support DOM Data input contracts";
+        return;
+    }
     host_detail::prefixAnalysis analysis(
         module, contract, maxSteps, followPublication, followProviderReads, followProviderMutations,
         followProviderDiagnostics, followProviderCallbacks, followProviderObjects);

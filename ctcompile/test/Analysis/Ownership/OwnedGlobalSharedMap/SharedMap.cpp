@@ -774,6 +774,8 @@ void checkSharedMap(mlir::MLIRContext & context) {
         replaced(retained, "ctjs.call %getter(%owned)", "ctjs.call %getter(%owned, %actual)");
     for (const bool prepared : {false, true}) {
         checkRetainedObjectKeyFamily(context, prepared ? prepare(retained) : retained, prepared);
+        checkDOMKeyInputs(context, prepared ? prepare(objectKey) : objectKey,
+                          prepared ? prepare(retained) : retained, prepared);
     }
     auto three = replaced(source, "    ctjs.return %table",
                           "    %hasMethod = ctjs.create_closure %callee[5] this %u captures %cell\n"

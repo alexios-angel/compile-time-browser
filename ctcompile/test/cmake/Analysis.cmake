@@ -442,6 +442,7 @@ if(CTCOMPILE_ENABLE_MLIR)
     Analysis/Ownership/OwnedGlobalSharedMap/NestedCalls.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/ObjectKeyArguments.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/DOMKeyInputs.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/SharedMap.cpp)
   target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-shared-map)

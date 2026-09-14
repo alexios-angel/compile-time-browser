@@ -73,16 +73,20 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     if (object->getInteger("version") != 1) { return error("unsupported host contract version"); }
     const bool domSession = object->getString("provider") == "ctbrowser-dom-session-v1";
     const bool dom = domSession || object->getString("provider") == "ctbrowser-dom-v1";
+    const bool domData = object->getString("provider") == "ctbrowser-dom-data-session-v1";
     const bool session = object->getString("provider") == "closed-source-session-v1";
-    if (!dom && !session && object->getString("provider") != "closed-source-v1") {
+    if (!dom && !domData && !session && object->getString("provider") != "closed-source-v1") {
         return error("unsupported host provider; expected closed-source-v1, "
-                     "closed-source-session-v1, ctbrowser-dom-v1 or ctbrowser-dom-session-v1");
+                     "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1 or "
+                     "ctbrowser-dom-data-session-v1");
     }
     if (dom ? !keys(*object,
                     {"version", "provider", "module_sha256", "entry", "element_parameters"})
-            : !keys(*object, {"version", "provider", "module_sha256", "entry", "roots",
-                              "observations", "absent_bindings", "undefined_bindings",
-                              "initial_intrinsics", "realm_global_this", "entry_receiver"})) {
+            : !keys(*object,
+                    {"version", "provider", "module_sha256", "entry", "roots", "observations",
+                     "absent_bindings", "undefined_bindings", "initial_intrinsics",
+                     "realm_global_this", "entry_receiver", "element_parameters"}) ||
+                  (!dom && !domData && object->get("element_parameters"))) {
         return error("host contract must be an object with only supported fields");
     }
     const auto digest = object->getString("module_sha256");
@@ -98,9 +102,10 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     if (session) { result.provider = HostContract::Provider::closedSourceSession; }
     result.moduleSha256 = digest->str();
     result.entry = entry->str();
-    if (dom) {
-        result.provider = domSession ? HostContract::Provider::ctbrowserDOMSession
-                                     : HostContract::Provider::ctbrowserDOM;
+    if (dom || domData) {
+        result.provider = domData      ? HostContract::Provider::ctbrowserDOMDataSession
+                          : domSession ? HostContract::Provider::ctbrowserDOMSession
+                                       : HostContract::Provider::ctbrowserDOM;
         const auto * parameters = object->getArray("element_parameters");
         if (!parameters || parameters->empty()) {
             return error("DOM entry requires nonempty element_parameters");
@@ -114,7 +119,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             }
             result.elementParameters.push_back(static_cast<unsigned>(*index));
         }
-        return result;
+        if (dom) { return result; }
     }
     if (auto failure = names(*object, "observations", result.observations, false)) {
         return std::move(failure);
@@ -610,8 +615,10 @@ namespace ctcompile::ctnative::host_detail {
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract) {
     if ((contract.provider != HostContract::Provider::closedSource &&
-         contract.provider != HostContract::Provider::closedSourceSession) ||
-        !contract.elementParameters.empty()) {
+         contract.provider != HostContract::Provider::closedSourceSession &&
+         contract.provider != HostContract::Provider::ctbrowserDOMDataSession) ||
+        (contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
+         !contract.elementParameters.empty())) {
         return "closed-source analysis requires a closed-source host provider";
     }
     std::string reason = realmReceiverProblem(contract);
