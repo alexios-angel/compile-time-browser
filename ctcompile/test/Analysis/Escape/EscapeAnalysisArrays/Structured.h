@@ -236,6 +236,57 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(original, "%base[%i]", "%base[%last]"), "scf.yield %base, %step, %read",
                    "scf.yield %base, %step, %p"),
            ArrayContentsFailure::UnknownIndex);
+    const std::string directLoop =
+        "  %finalIndex, %result = scf.while (%index = %zero, %saved = %zero) : "
+        "(!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {\n"
+        "    %key = ctjs.constant #ctjs.string<\"length\">\n"
+        "    %length = ctjs.get_property %a[%key]\n"
+        "    %less = ctjs.compare lt %index, %length\n"
+        "    %continue = ctjs.truthy %less\n"
+        "    scf.condition(%continue) %index, %saved : !ctjs.value, !ctjs.value\n"
+        "  } do {\n  ^body(%i: !ctjs.value, %last: !ctjs.value):\n"
+        "    %read = ctjs.get_property %a[%i]\n"
+        "    %step = ctjs.binary_static add %i, %one\n"
+        "    scf.yield %step, %read : !ctjs.value, !ctjs.value\n  }\n";
+    const std::string direct = prefix + directLoop + "  ctjs.return %result\n";
+    rows.push_back({.what = "SCF may remove an invariant dominating array parameter",
+                    .body = direct,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "direct structured arrays retain preceding own overwrites",
+                    .body = prefix + "  ctjs.set_property %a[%one], %x\n" + directLoop +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,x]",
+                    .reads = "a[0]=x; a[1]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "a direct empty array proves zero trips",
+                    .body = replace(replace(direct, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+                    .arrays = "a:[]",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "direct arrays retain their identity inside an enclosing branch",
+                    .body = prefix + "  %chosen = scf.if %flag -> (!ctjs.value) {\n" + directLoop +
+                            "    scf.yield %result : !ctjs.value\n"
+                            "  } else {\n    scf.yield %x : !ctjs.value\n  }\n"
+                            "  ctjs.return %chosen\n",
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; x -> {x}"});
+    reject("an outer opaque parameter is not a dominating direct array",
+           replace(direct, "%length = ctjs.get_property %a", "%length = ctjs.get_property %p"));
+    reject("direct arrays still require zero initial induction",
+           replace(direct, "%index = %zero", "%index = %one"));
+    reject("direct array induction cannot hide a mutation",
+           replace(direct, "    %read =", "    ctjs.set_property %a[%zero], %y\n    %read ="));
+    reject("direct array length cannot certify another shorter array",
+           replace(replace(direct, "  %finalIndex,", "  %b = ctjs.create_array []\n  %finalIndex,"),
+                   "%read = ctjs.get_property %a", "%read = ctjs.get_property %b"),
+           ArrayContentsFailure::MissingElement);
+    reject("direct array offset reads retain own-bound checks",
+           replace(direct, "    %read = ctjs.get_property %a[%i]",
+                   "    %offset = ctjs.binary_static add %i, %one\n"
+                   "    %read = ctjs.get_property %a[%offset]"),
+           ArrayContentsFailure::MissingElement);
     std::size_t budgets = 0;
     for (const auto & expected : rows) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(

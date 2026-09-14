@@ -1031,9 +1031,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         auto index = llvm::dyn_cast<mlir::BlockArgument>(compare.getLhs());
         auto length = compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>();
-        auto array = length ? llvm::dyn_cast<mlir::BlockArgument>(length.getObject())
-                            : mlir::BlockArgument{};
-        if (!index || index.getOwner() != header || !array || array.getOwner() != header ||
+        const mlir::Value array = length ? length.getObject() : mlir::Value{};
+        auto carriedArray = llvm::dyn_cast_if_present<mlir::BlockArgument>(array);
+        auto directArray =
+            array ? array.getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
+        if (!index || index.getOwner() != header ||
+            (!(carriedArray && carriedArray.getOwner() == header) && !directArray) ||
             length->getBlock() != header ||
             ownObjectKey(length->getOperand(1)) !=
                 mlir::StringAttr::get(function.getContext(), "length") ||
@@ -1049,7 +1052,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         auto step = backedge[index.getArgNumber()].getDefiningOp<ctjs::BinaryStaticOp>();
         if (!step || step->getBlock() != body || step.getKind() != ctjs::BinaryKind::Add ||
             fromHeader(step.getLhs()) != index || boundedNumber(step.getRhs()) != 1 ||
-            fromHeader(backedge[array.getArgNumber()]) != array) {
+            (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
         }
         // ponytail: one read-only header/body pair; nested control, allocation
@@ -1067,6 +1070,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
         }
         const mlir::Value base = origin(array);
+        // SCF can eliminate an invariant array parameter. A direct allocation
+        // already executed on this exact path needs no backedge transport;
+        // the read-only body census above still excludes repeated allocation.
+        if (directArray && (base != array || directArray->getBlock() == header ||
+                            directArray->getBlock() == body)) {
+            return unsupported;
+        }
         auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
         if (found == state.arrays.end() || found->second.size() > 4294967295ULL ||
             boundedNumber(origin(index)) != 0) {
