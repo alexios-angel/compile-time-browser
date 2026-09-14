@@ -6,6 +6,60 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Owned DOM sessions and direct arrays, 2026-09-14 UTC
+
+**Owned synchronous DOM sessions and direct-array contents, 2026-09-14 UTC.**
+Clean start at **5070d4aa**; the 04:27 UTC journal confirmed the interrupted
+outer-key/loop recovery was already landed. **f4089b65** adds
+`ctbrowser-dom-session-v1`, using the existing explicit element-parameter proof
+and generating a nonmovable owner of atoms, document and optional live Style
+engine. Every input domain is checked before any validation or source effect.
+The owner gate passes **3 sources / 5 retention refusals**, both policies/layouts,
+GCC13.3/Clang24 and generated-client ASan/UBSan; focused **1/1 in 49.61s**. Existing
+DOM entries pass in **178.07s**. Browser libraries are the ordinary devbox build.
+
+**956b33bd** recognizes an already-executed direct array in the bounded counted
+contents certificate after SCF removes an invariant array parameter. Nine new
+matrix rows pass with the complete escape oracle (**0.67s / 1.19s**); the preserved
+called overwrite-loop source passes its refusal lit (**0.04s**). Its measured
+admission remains **0/2 before and after**, both policies: the importer places
+an `scf.if` inside the loop header, with poison/arith flag transport. That shape
+still needs proof; no native emission or vendor coverage gain is claimed.
+
+Final standard devbox gate: **295-step build / 563/563 CTests PASS in 1217.73s**,
+including **169/169 lit in 862.71s**. All **1418 frozen inputs** match local/devbox.
+The structured matrix now covers **43 rows / 2228 budget cutoffs**. Under full
+load, owned DOM takes **84.03s**, ordinary DOM **278.06s**, Data **55.17s**, and
+exhaustive shared-Map ownership **354.99s**. Stable format **823 C++ / 90 Python /
+33 web PASS**; the required pinned check matches the existing nine-file /
+26-diagnostic baseline exactly. Evidence: `/tmp/ctcompile-dom-input/`, including
+`measured.json`, full/focused logs, generated owner/client and before/after loop IR.
+No browser source/runtime changes, WPT/test262 score remeasurement or push.
+
+Fresh full Bootstrap stays **19/574 native / 0 of 43 globals**, both policies,
+no skipped/pruned functions. Existing DOM remains **18 entries / 42 refusals**.
+The pinned Data source remains **3218 bytes / 7/7 functions / 23 direct calls /
+19 observations / 3 outer-key objects**. The unchanged complete escape source and
+snapshot remain **222 functions / 861 claims / 895 observed sites / 35 unclaimed /
+zero violations / 40 of 172 precision**. The separate called loop source is pinned
+at SHA256 `3d926af84da7a76e3080257dade46e5d59ad603ba0231dff7d24f97de2f81cbf`.
+Three agents split implementation and surveys; two reached service limits before
+edits, and root completed both implementations. Independent owner and escape
+reviews found no actionable defects.
+
+**Next native:** connect the owned DOM session to source-proved Data with explicit
+DOM origins across its complete method family, conservative aliasing of distinct
+input parameters, and Data/table storage that cannot outlive the document. The
+current shared table/global carriers and source-only object census are insufficient.
+Outer-key-only source allocations still cannot authorize external DOM handles.
+Then component construction/disposal, retained callbacks and the application driver.
+**Next escape:** normalize or certify the preserved imported header branch and
+its poison/arith transport before consuming the whole-function contents proof.
+Use the preserved source in `CTNative/Fixtures/Objects/array-overwrite-loop.js`;
+`LiftToSCF.cpp` documents why arbitrary CTJS canonicalization is unsafe.
+Keep all paths, mutation refusals and budgets; broader alias ownership and a vendor
+emission gain remain separate. DOM-backed Data and full Bootstrap startup are absent.
+
 ## Outer-key provenance and structured-loop recovery, 2026-09-14 UTC
 
 Resumed six dirty compiler files at **ef764cf8**, identified in the 03:39:01

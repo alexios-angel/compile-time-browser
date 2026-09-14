@@ -46,10 +46,26 @@ payload. This is source-use evidence, not DOM provenance or permission to retain
 an externally supplied handle. Recovery commits `722ddd82` and `cb76be27` passed
 the full **562/562 CTest / 168/168 lit** gate on 2026-09-14. The generated Data
 probe remains byte-identical, and full Bootstrap admission remains **19/574**.
-The next boundary remains explicit DOM inputs and the atoms/document/Data lifetime
-owner. Independent escape work should recognize direct arrays after SCF removes
-invariant array parameters, then measure a preserved overwrite/read-only-loop
-fixture through the existing consumer before widening alias ownership.
+The combined Data/DOM boundary still requires explicit DOM origins across the
+Data family and Data storage attached to the document lifetime. The subsequent
+owning action and direct-array milestones below narrow the remaining work.
+
+The separate `ctbrowser-dom-session-v1` action provider now owns atoms, its document
+and an optional live Style engine in a nonmovable C++ class. Explicit element inputs
+must belong to that document; all owner comparisons precede handle validation and
+source effects. This completes the synchronous DOM owner, with no retained Data
+keys or callbacks. Connecting it to Data still requires actual DOM origins in the
+complete family proof and removal of escaping shared table/global ownership for
+that mode. Distinct input parameters can alias the same node and must not be
+assumed unequal. See [native-dom-entry.md](native-dom-entry.md) for the entry API.
+
+The direct-array counted contents certificate has also landed. The preserved
+`array-overwrite-loop.js` still measures **0/2 native**, both policies before/after:
+the imported loop has a branch inside its header and poison/arith flag transport.
+Proving that complete shape is next; recognizing the direct array alone did not
+produce an emission gain.
+Both milestones passed the full **563/563 CTest / 169/169 lit** gate; all **1418
+frozen inputs** match the devbox. Full Bootstrap stays **19/574**, both policies.
 
 ## What is measured
 
