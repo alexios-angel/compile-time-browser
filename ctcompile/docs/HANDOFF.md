@@ -50,12 +50,25 @@ type-inference binary; measured drivers pass **2/2 lit in 24.67s**. Stable forma
 the required pinned formatter retains the byte-identical preceding **nine-file /
 26-diagnostic** baseline. Generated class C++ was inspected: ordinary local structs,
 borrowed receiver pointers and free function calls, with no Script/VM dependency.
-The complete standard devbox gate is **running**, against **1,438 frozen non-Markdown
-inputs**. Do not treat this checkpoint as a full-suite pass. Evidence is in
-`/tmp/ctcompile-method-chains/{full.log,measured-focus.log,measured.json,frozen-inputs.json}`.
-The last complete full-Bootstrap measurement remains **19/574 native / 0 of 43
-globals**, original DOM Data **7/7**, original Button **4/86**, and escape precision
-**40/172 with zero violations**; this session's fresh full measurements are pending.
+The standard devbox **280-step build passed**. Its first complete run passed
+**599/600 CTests in 1241.34s / 175/176 lit in 879.50s**. The sole failure was an
+obsolete field-carrier expectation in `object-argument-lift.mlir`: exact direct-call
+presence now gives numeric fields `double`, while the stored method still needs
+nullable storage. **3c05e67f** preserves the JavaScript body byte-for-byte and checks
+the exact two template instantiations, parameter types and shared receiver addresses.
+Its focused gate passed in **0.04s**. No production code changed after the full run.
+The **complete CTest lit retry is running**; do not call this a full-suite pass yet.
+All **1,438 final frozen inputs** match local source; the only first-to-final change
+is that structural test. Evidence is in `/tmp/ctcompile-method-chains/{full.log,
+full-last-test.log,correction.log,retry.log,measured.json,frozen-inputs.json}`.
+
+Fresh full Bootstrap remains **19/574 native**, with no skipped or pruned functions.
+Original DOM Data remains **7/7 functions / 23 calls / 19 observations / five alias
+partitions** (**59.25s**). The complete escape oracle remains **222 functions / 861
+claims / 895 sites / 35 unclaimed / zero violations / precision 40/172**. Dense length
+stays **178 rows / 5,031 cutoffs**; structured contents stays **43 rows / 2,228 cutoffs**.
+Ownership passed in **361.75s**. No vendor admission gain is inferred from these local
+class and field changes. Final combined measurement capture remains pending.
 
 **Exact next Bootstrap boundary:** methods must be available before constructor
 bodies execute, and constructor receiver origins must be seeded without circularly
