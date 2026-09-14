@@ -6,6 +6,65 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## DOM Data source ownership and native array shrink, 2026-09-14 UTC
+
+Resumed the **08:13:37 / 08:29:58 AGENT-SYNC** source-owner and array-shrink
+thread from 15 dirty paths at **d9fce324**, explicitly abandoned at 08:31:43.
+The September 7 WIP was already landed. Three agents split array recovery,
+lifetime testing and ownership review; two reached service limits. Root finished
+the patches and gates; the remaining agent independently reviewed source ownership
+and the signed-zero repair. No browser files changed.
+
+**f4cd2f64** completes DOM Data source ownership. `OwnedGlobalRoots` revalidates
+the complete family, preserves the exact external input origins and inert imported
+declaration, and publishes them only after all owner/budget checks succeed.
+`TypeInference` seeds `DOMElementType` only from this complete evidence. The
+existing matrix checks **31 source + 31 prepared rows**, failed queries, live
+mutations and exact/cutoff budgets. Native DOM Data emission still explicitly
+refuses: this source proof does not authorize the existing shared storage.
+Focused owner/type/Data gate: **3/3 CTests PASS in 237.24s** (ownership **237.23s**,
+types **0.24s**, existing Data **30.17s**).
+
+**e1f575a7** consumes complete array contents evidence for non-growing literal
+length writes, emitting ordinary `std::vector<double>::resize` on the original
+local storage. Length values do not enter the element schema. The original
+four-function fixture preserves retained reads, clearing, unchanged length and
+signed-zero elements. The first gate exposed unoptimized source `-0` as
+`neg(Number(0))`; the shared contents proof now recognizes that exact length-only
+case, with an extra budget charge. Original expressions remain unchanged;
+String/BigInt coercions, growth, unknown lengths, missing reads, aliases and later
+unknown calls still refuse. The old growth fixture keeps its source/refusal with
+a diagnostic naming the missing non-growing proof.
+
+Corrected array gate: **13-step build / 3/3 lit PASS in 0.80s / 13/13 CTests
+PASS in 7.06s**, both optimization policies, explicit/deduced output, GCC/Clang,
+VM comparisons and wrong-observation controls. Independent Node observations are
+**35 / 8 / -Infinity**. Dense length now checks **178 rows / 33 live states /
+5,031 retention cutoffs**; structured contents stays **43 rows / 2,228 cutoffs**.
+Stable formatter **824 C++ / 91 Python / 33 web PASS**; the required pinned check
+retains the byte-identical prior nine-file / 26-diagnostic baseline.
+
+The frozen full standard devbox gate is **running**, with **1,424 source inputs**.
+Evidence is under `/tmp/ctcompile-dom-owner-complete/`. The last completed full
+Bootstrap measurement remains **19/574 native / 0 of 43 globals**; no fresh vendor
+or full-suite result is claimed yet.
+
+**Exact next native boundary:** integrate the complete owner/input proof into
+private Data storage inside the nonmovable atoms/document owner. In
+`LowerToEmitC.cpp`, omit only the proved inert wrapper in a private clone and
+reprove its transformed fingerprint. Replace the shared root/table/capture
+carriers from `OwnedGlobals.cpp` and `MethodTables.cpp`; do not just remove the
+provider refusal. Admit exact element-key carriers and ordering, keep every
+owner domain check before any node validation/effect, and keep scalar observations
+private to each session. Preserve source allocation/reset on every invocation.
+Then run the real-document alias, retained/detached-key, foreign/dangling-owner,
+interleaving and teardown gate, including the no-snapshot associative case.
+Original nested Bootstrap Data, components, callbacks and the driver follow.
+Full native Bootstrap startup remains unfinished.
+
+**Next escape:** broader alias ownership/native consumers and a preserved vendor
+admission gain. This change grants no vector alias transport permission.
+
 ## Imported DOM Data declarations and exact array reads, 2026-09-14 UTC
 
 Resumed the interrupted **07:11:44 AGENT-SYNC** owner/wrapper/lifecycle thread,
