@@ -40,8 +40,10 @@ def CTNativeSpecializeClassInitialization : Pass<"ctnative-specialize-class-init
     Require the declared class-definition intrinsic, closed source calls, and
     an immutable local constructor/prototype census. Only then remove the
     unused descriptor helper and unobservable prototype/constructor/home edges.
-    Methods, inheritance, field initializer closures, reflection and unknown
-    source effects remain refused. This grants no native ownership or field
+    Immutable local methods retain their prototype until constructor lowering;
+    closed scalar static getters expand at their exact reads after a bounded
+    dependency proof. Inheritance, field initializer closures, reflection and
+    unknown source effects remain refused. This grants no native ownership or field
     admission; normal constructor lowering must prove those independently.
   }];
   let options = [

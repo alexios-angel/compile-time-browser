@@ -13,8 +13,8 @@ from CTNative.harness import find_compilers, run
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 from Target.Cpp.harness import FLAGS
 
-# The implementation hook and inherited static getter have separate Node/VM
-# observations. A native refusal is not permission to equate the two engines.
+# The implementation hook, inherited static getter and function metadata have
+# separate Node/VM observations. A refusal cannot equate the two engines.
 OBSERVATIONS = {
     "empty": (7, 7),
     "number": (92, 92),
@@ -60,6 +60,31 @@ OBSERVATIONS = {
     "static-getter": (1, 0),
     "constructor-identity": (1, 1),
     "descriptor": (0, 0),
+    "static-constant": (7, 7),
+    "static-chain": (1, 1),
+    "static-methods": (192, 192),
+    "static-setter": (7, 7),
+    "static-duplicate": (9, 9),
+    "static-write": (9, 9),
+    "static-alias-write": (11, 11),
+    "static-effect": (79, 79),
+    "static-identity": (1, 1),
+    "static-descriptor": (0, 0),
+    "static-receiver": (1, 1),
+    "static-foreign-receiver": (11, 11),
+    "static-captured": (7, 7),
+    "static-dynamic": (7, 7),
+    "static-cycle": (7, 7),
+    "static-repeated": (11, 11),
+    "static-global-effect": (73, 73),
+    "static-forward-chain": (1, 1),
+    "static-order": (1323, 1323),
+    "static-unused-setter": (7, 7),
+    "static-name": (1, 0),
+    "static-length": (7, 0),
+    "static-home": (1, 0),
+    "static-caller": (1, 1),
+    "static-arguments": (1, 1),
 }
 POSITIVES = {
     "empty",
@@ -75,6 +100,12 @@ POSITIVES = {
     "method-constructor-order",
     "method-constructor-chain",
     "method-constructor-constant",
+    "static-constant",
+    "static-chain",
+    "static-methods",
+    "static-repeated",
+    "static-forward-chain",
+    "static-order",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 
@@ -251,6 +282,60 @@ def check_proof_inputs(args, source, manifest, prepared, name):
     return high
 
 
+def check_overflow_input(args, source):
+    # This malformed closure index is rejected by the parser, before the host
+    # fingerprint or preparation proof can inspect it.
+    overflow = args.work / "overflow-closure.mlir"
+    changed, count = re.subn(
+        r"(ctjs.create_closure %\w+\[)\d+(\])",
+        r"\g<1>4294967297\2",
+        source.read_text(),
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError("overflow closure control could not find its creation")
+    overflow.write_text(changed)
+    output = args.work / "overflow-parsed.mlir"
+    result = run([args.opt, str(overflow), "-o", str(output)], success=False)
+    if (
+        result.returncode != 1
+        or "integer constant out of range for attribute" not in result.stderr
+        or (output.exists() and output.read_text())
+    ):
+        raise RuntimeError("overflow closure index escaped its parser refusal")
+
+
+def check_getter_parent(args, source, manifest):
+    # A numeric function index is insufficient: make_closure requires the
+    # current function's closure, not an arbitrary value of the same IR type.
+    forged = args.work / "getter-enclosing-closure.mlir"
+    changed, count = re.subn(
+        r"(?P<prefix>(?P<getter>%\w+) = ctjs.create_closure )%arg2"
+        r"(?P<index>\[\d+\] this )(?P<undefined>%\w+)"
+        r"(?P<tail>\n[ \t]*%\w+ = ctjs.constant #ctjs.undefined\n"
+        r'[ \t]*ctjs.define_accessor "NAME" on %\w+ get (?P=getter) set %\w+)',
+        lambda match: (
+            match["prefix"]
+            + match["undefined"]
+            + match["index"]
+            + match["undefined"]
+            + match["tail"]
+        ),
+        source.read_text(),
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError("getter closure control could not find its NAME definition")
+    forged.write_text(changed)
+    prepare(
+        args,
+        "getter-enclosing-closure",
+        forged,
+        dict(manifest, module_sha256=host.fingerprint(args.opt, forged)),
+        success=False,
+    )
+
+
 def check_executable(args, name, native, expected):
     text = native.read_text()
     if any(token in text for token in ("ctjs.func", "ctnative.not_native", "ctjs.skipped")):
@@ -301,7 +386,10 @@ def main():
         reference = run([args.reference, str(source)])
         if node.stdout != f"a={node_expected}\n" or node.stderr:
             raise RuntimeError(f"{name}: Node observation changed\n{node.stdout}{node.stderr}")
-        if reference.stdout != f"a={reference_expected}\n":
+        reference_output = f"a={reference_expected}\n"
+        if name == "static-global-effect":
+            reference_output += "count=3\n"
+        if reference.stdout != reference_output:
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
             )
@@ -329,7 +417,11 @@ def main():
         )
         prepared = prepare(args, name, structured, manifest, success=name in POSITIVES)
         preparation_refusals += name not in POSITIVES
+        if name == "static-chain":
+            check_getter_parent(args, structured, manifest)
+            preparation_refusals += 1
         if name == "empty":
+            check_overflow_input(args, structured)
             for label, control, options in (
                 ("no-authority", dict(manifest, initial_intrinsics=[]), ""),
                 ("stale", dict(manifest, module_sha256="0" * 64), ""),
@@ -337,7 +429,15 @@ def main():
             ):
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
-        if name in ("empty", "method", "method-chain-order", "method-constructor-order"):
+        if name in (
+            "empty",
+            "method",
+            "method-chain-order",
+            "method-constructor-order",
+            "static-chain",
+            "static-repeated",
+            "static-forward-chain",
+        ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         for optimize in (False, True):

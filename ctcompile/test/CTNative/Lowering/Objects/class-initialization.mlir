@@ -596,3 +596,264 @@ function method_constructor_self_replace() {
     return new Shape().n;
 }
 var a = method_constructor_self_replace();
+
+// Static reads retain their exact constructor receiver without exposing it.
+//--- static-constant.js
+function static_constant() {
+    class Shape { static get n() { return 7; } }
+    var instance = new Shape();
+    return Shape.n;
+}
+var a = static_constant();
+
+// Bootstrap's NAME/DATA_KEY dependency starts with an ordinary base receiver.
+//--- static-chain.js
+function static_chain() {
+    class Shape {
+        static get NAME() { return "button"; }
+        static get DATA_KEY() { return "bs." + this.NAME; }
+    }
+    var instance = new Shape();
+    return (Shape.DATA_KEY === "bs.button") * 1;
+}
+var a = static_chain();
+
+// Constructor accessors coexist with distinct mutable instance fields/methods.
+//--- static-methods.js
+function static_methods() {
+    class Shape {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        static get NAME() { return "button"; }
+        static get DATA_KEY() { return "bs." + this.NAME; }
+    }
+    var first = new Shape(7), second = new Shape(2);
+    first.n = 9;
+    return (Shape.DATA_KEY === "bs.button") * 100 + first.read() * 10 + second.read();
+}
+var a = static_methods();
+
+// A setter is executable behavior, even when it leaves the getter unchanged.
+//--- static-setter.js
+function static_setter() {
+    class Shape {
+        static get n() { return 7; }
+        static set n(value) {}
+    }
+    var instance = new Shape();
+    Shape.n = 9;
+    return Shape.n;
+}
+var a = static_setter();
+
+//--- static-duplicate.js
+function static_duplicate() {
+    class Shape { static get n() { return 7; } static get n() { return 9; } }
+    var instance = new Shape();
+    return Shape.n;
+}
+var a = static_duplicate();
+
+// Mutable constructor fields need a separate initialization/use proof.
+//--- static-write.js
+function static_write() {
+    class Shape { static get n() { return this.value; } }
+    var instance = new Shape();
+    Shape.value = 9;
+    return Shape.n;
+}
+var a = static_write();
+
+//--- static-alias-write.js
+function static_alias_write() {
+    class Shape { static get n() { return this.value; } }
+    var instance = new Shape(), alias = Shape;
+    alias.value = 11;
+    return Shape.n;
+}
+var a = static_alias_write();
+
+// Repeated getter evaluation must not be folded to a saved first result.
+//--- static-effect.js
+function static_effect() {
+    class Shape {
+        static get n() { var before = this.value; this.value = before + 2; return before; }
+    }
+    var instance = new Shape();
+    Shape.value = 7;
+    return Shape.n * 10 + Shape.n;
+}
+var a = static_effect();
+
+//--- static-identity.js
+function static_identity() {
+    class Shape { static get n() { return 7; } }
+    var instance = new Shape();
+    var getter = Object.getOwnPropertyDescriptor(Shape, "n").get;
+    return (getter === Object.getOwnPropertyDescriptor(Shape, "n").get) * 1;
+}
+var a = static_identity();
+
+//--- static-descriptor.js
+function static_descriptor() {
+    class Shape { static get n() { return 7; } }
+    var instance = new Shape();
+    return Object.keys(Shape).length;
+}
+var a = static_descriptor();
+
+// Returning the constructor cannot be justified by a scalar accessor read.
+//--- static-receiver.js
+function static_receiver() {
+    class Shape { static get SELF() { return this; } }
+    var instance = new Shape();
+    return (Shape.SELF === Shape) * 1;
+}
+var a = static_receiver();
+
+// An extracted getter receives the call site's object, not its lexical class.
+//--- static-foreign-receiver.js
+function static_foreign_receiver() {
+    class Shape { static get n() { return this.value; } }
+    var instance = new Shape();
+    var getter = Object.getOwnPropertyDescriptor(Shape, "n").get;
+    return getter.call({value: 11});
+}
+var a = static_foreign_receiver();
+
+//--- static-captured.js
+function static_captured() {
+    var value = 7;
+    class Shape { static get n() { return value; } }
+    var instance = new Shape();
+    return Shape.n;
+}
+var a = static_captured();
+
+// The preparation pass must establish the property from its current IR.
+//--- static-dynamic.js
+function static_dynamic() {
+    class Shape {
+        static get NAME() { return 7; }
+        static get n() { return this["NA" + "ME"]; }
+    }
+    var instance = new Shape();
+    return Shape.n;
+}
+var a = static_dynamic();
+
+// Uncalled cyclic getters still cannot supply an acyclic receiver proof.
+//--- static-cycle.js
+function static_cycle() {
+    class Shape {
+        static get first() { return this.second; }
+        static get second() { return this.first; }
+    }
+    var instance = new Shape();
+    return 7;
+}
+var a = static_cycle();
+
+// Repeated reads must preserve the whole acyclic dependency expression.
+//--- static-repeated.js
+function static_repeated() {
+    class Shape {
+        static get NAME() { return "button"; }
+        static get DATA_KEY() { return "bs." + this.NAME; }
+    }
+    var instance = new Shape();
+    var first = Shape.DATA_KEY, second = Shape.DATA_KEY;
+    return (first === "bs.button") * 10 + (second === first);
+}
+var a = static_repeated();
+
+// Even unobserved getter bodies cannot acquire a pure-expression proof.
+//--- static-global-effect.js
+var count = 0;
+function static_global_effect() {
+    class Shape { static get n() { count = 3; return 7; } }
+    var instance = new Shape();
+    return Shape.n * 10 + count;
+}
+var a = static_global_effect();
+
+// Dependency order comes from reads, including diamonds, not declaration order.
+//--- static-forward-chain.js
+function static_forward_chain() {
+    class Shape {
+        static get COMPLETE() { return this.DATA_KEY + "." + this.NAME; }
+        static get DATA_KEY() { return "bs." + this.NAME; }
+        static get NAME() { return "button"; }
+    }
+    var instance = new Shape();
+    return (Shape.COMPLETE === "bs.button.button") * 1;
+}
+var a = static_forward_chain();
+
+// Scalar getter expansion must preserve surrounding instance call order.
+//--- static-order.js
+function static_order() {
+    class Shape {
+        constructor() { this.n = 1; }
+        write(n) { this.n = this.n * 10 + n; return this.n; }
+        static get n() { return 2; }
+    }
+    var instance = new Shape();
+    var first = instance.write(Shape.n);
+    return first * 100 + instance.write(Shape.n + 1);
+}
+var a = static_order();
+
+// A setter is outside the scalar getter proof even without an assignment.
+//--- static-unused-setter.js
+function static_unused_setter() {
+    class Shape {
+        static get n() { return 7; }
+        static set n(value) {}
+    }
+    var instance = new Shape();
+    return Shape.n;
+}
+var a = static_unused_setter();
+
+// The VM reads function metadata before own accessors; preserve the discrepancy.
+//--- static-name.js
+function static_name() {
+    class Shape { static get name() { return "replacement"; } }
+    var instance = new Shape();
+    return (Shape.name === "replacement") * 1;
+}
+var a = static_name();
+
+//--- static-length.js
+function static_length() {
+    class Shape { static get length() { return 7; } }
+    var instance = new Shape();
+    return Shape.length;
+}
+var a = static_length();
+
+// Internal home storage precedes the accessor in the current interpreter.
+//--- static-home.js
+function static_home() {
+    class Shape { static get __home() { return 7; } }
+    var instance = new Shape();
+    return (Shape.__home === 7) * 1;
+}
+var a = static_home();
+
+//--- static-caller.js
+function static_caller() {
+    class Shape { static get caller() { return 7; } }
+    var instance = new Shape();
+    return (Shape.caller === 7) * 1;
+}
+var a = static_caller();
+
+//--- static-arguments.js
+function static_arguments() {
+    class Shape { static get arguments() { return 7; } }
+    var instance = new Shape();
+    return (Shape.arguments === 7) * 1;
+}
+var a = static_arguments();
