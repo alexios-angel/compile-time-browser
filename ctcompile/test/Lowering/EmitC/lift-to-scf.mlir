@@ -279,6 +279,37 @@ ctjs.func @duplicate_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %result#0
 }
 
+// A do-while can compute its next value before the guard. Moving that value
+// directly to an after-region use would violate sibling-region dominance.
+// CHECK-LABEL: ctjs.func @header_passthrough_guard
+// CHECK: scf.while
+// CHECK: ctjs.unary neg
+// CHECK: scf.if
+// CHECK: arith.trunci
+// CHECK: scf.condition
+// CHECK: scf.yield
+ctjs.func @header_passthrough_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                                  %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %result = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %step = ctjs.unary neg %value
+    %guard = ctjs.truthy %step
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      scf.yield %step, %one : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  ctjs.return %result
+}
+
 // Normalizing one loop must not visit an unrelated already-Boolean loop.
 // CHECK-LABEL: ctjs.func @unrelated_duplicate_guard
 // CHECK: scf.while

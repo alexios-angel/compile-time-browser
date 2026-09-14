@@ -50,9 +50,10 @@ function scale(x) { return x * 2; }
 // CHECK-NOT: ctjs.
 // CHECK: scf.while
 // CHECK: cmp lt,
+// CHECK: scf.condition
+// CHECK: do {
 // CHECK: mul
 // CHECK: add
-// CHECK: scf.condition
 // CHECK: div
 // CHECK: unary_minus
 // `**` is emitted as its guard and then the call: NaN when the base has

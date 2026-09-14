@@ -162,8 +162,17 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
 // move nested loops, so guard each pattern application on the current IR.
 bool safeWhileInputs(mlir::scf::WhileOp loop) {
     llvm::DenseSet<mlir::Value> forwarded;
-    for (mlir::Value value : loop.getConditionOp().getArgs()) {
-        if (value.getDefiningOp<mlir::scf::IfOp>() && !forwarded.insert(value).second) {
+    for (auto [index, value] : llvm::enumerate(loop.getConditionOp().getArgs())) {
+        auto branch = value.getDefiningOp<mlir::scf::IfOp>();
+        if (!branch) { continue; }
+        if (!forwarded.insert(value).second) { return false; }
+        // Upstream also replaces after arguments with then-yielded values
+        // before remapping captures, but only remaps uses inside then. A
+        // before-local value would escape directly into the sibling after.
+        auto yielded =
+            branch.thenYield().getOperand(llvm::cast<mlir::OpResult>(value).getResultNumber());
+        if (yielded.getParentRegion() == &loop.getBefore() &&
+            !loop.getAfterArguments()[index].use_empty()) {
             return false;
         }
     }
@@ -316,7 +325,10 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 mlir::IRRewriter rewriter{&getContext()};
                 (void)mlir::simplifyRegions(rewriter, body->getRegions());
 
-                auto & dominance = getAnalysis<mlir::DominanceInfo>();
+                // Normalization can erase regions whose addresses a later
+                // function reuses. Do not retain their dominance trees across
+                // functions, even though pass analysis invalidation is at exit.
+                mlir::DominanceInfo dominance;
                 for (mlir::Region & region : body->getRegions()) {
                     // THE TRIVIAL PHIS GO BEFORE THE LIFT SEES THEM: after
                     // simplifyRegions has dropped the single-predecessor
