@@ -57,13 +57,22 @@ borrowed constructor pointers and no Script symbols. Stable formatting passes
 **825 C++ / 99 Python / 33 web**; the required pinned formatter retains the
 byte-identical prior **nine-file / 26-diagnostic** baseline.
 
-**Full-gate checkpoint:** the standard **276-step build passed**, and the
-**600-test CTest gate is running** against **1,438 frozen non-Markdown inputs**.
-Do not claim final full-suite or fresh vendor/escape results until
-`/tmp/ctcompile-class-initialization/full.log` and `measured.json` finish. The
-preceding full snapshot was Bootstrap **19/574**, original DOM Data **7/7**, Button
-**4/86**, and escape precision **40/172** with zero violations; those are previous
-measurements at this checkpoint, not an admission gain from these local probes.
+Final standard devbox gate: **276 build steps / 600/600 CTests PASS in
+1241.79s**, including **176/176 lit in 875.61s**. All **1,438 frozen non-Markdown
+inputs** match the tested devbox and local source. Both browser and compiler suites
+passed. Evidence: `/tmp/ctcompile-class-initialization/{full.log,full-last-test.log,
+measured.json,frozen-inputs.json}` and the final class/String C++ samples.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+without skipped/pruned functions. Original DOM Data remains **7/7 functions / 23
+calls / 19 observations / five alias partitions** (**59.38s**). Original Button
+remains **16,194 bytes / 4 of 86 native**, with its **22 Node observations** and
+uncaught interpreter failure preserved (**0.64s**). The complete escape oracle
+remains **222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
+precision 40 of 172**. Dense length stays **178 rows / 5,031 cutoffs**; structured
+contents stays **43 rows / 2,228 cutoffs**. Ownership passed in **366.15s** and owned
+DOM in **78.32s**. No full-Bootstrap admission gain is inferred from the local class
+and String fixtures. No runtime/WPT semantics changed and nothing was pushed.
 
 **Exact next Bootstrap boundary:** extend the checked local class proof to
 immutable prototype methods and inherited receiver/static-getter semantics,
