@@ -50,7 +50,16 @@ translation. The existing host-contract and prefix analyses for
 entry and a fresh live source proof, never printed proof attributes.
 
 The emitted translation unit exports the selected function without a launcher.
-Only its checked, inert function-declaration wrapper may be omitted. Skipped
+Local capture-free, straight-line helpers may be expanded at their original call
+sites. Their exact closure identities, direct-call targets, unused implicit
+arguments, arity and complete source census are checked first. Nested helpers,
+String/Boolean/element arguments and local returned element aliases use the same
+proof; every explicit entry parameter must still be an element. The call tree is
+bounded by `host-max-steps` and 64 frames. Recursion, uncalled helper bodies and
+observed callable identities refuse. The expanded private clone must pass the
+complete DOM proof before it replaces any source.
+
+Only its checked, inert function-declaration wrapper may otherwise be omitted. Skipped
 source, additional initialization effects, calls to the entry from JavaScript,
 captures, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, and nested control flow refuse. Current operations are
@@ -119,12 +128,15 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **81** copied-value and Boolean
+The `ctcompile_native_dom_strings` CTest compares **105** copied-value and Boolean
 observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
 across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-**80** source refusals for unsupported coercion, control flow, handles and retention. These clients link DOM/Core only and reject Script symbols
+**136** source refusals for unsupported coercion, control flow, handles and retention,
+**41** provenance/depth refusals and four work-budget/fingerprint controls. Helper
+cases preserve argument evaluation order, saved String values, repeated calls and
+nested name construction. These clients link DOM/Core only and reject Script symbols
 or generic nullable value helpers in the generated code.
 
 ## Owned synchronous sessions

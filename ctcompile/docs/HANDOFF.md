@@ -6,6 +6,49 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native local DOM helper calls, 2026-09-14 UTC
+
+Continued the completed **3013a8f0 / e1367f3d** thread from HANDOFF and the
+**22:24 AGENT-SYNC** journal. Both histories and unmerged branches were checked;
+the tree was clean, with no interrupted source or gate remaining. Two agents hit
+service limits; root completed their regression work. A third agent reviewed the
+proof and supplied the synthetic provenance controls.
+
+**0aa8dd47** expands closed, capture-free, straight-line local helpers at their
+original call sites before native DOM admission. It checks unique function indices,
+closure provenance, exact direct targets/arity, unobserved implicit arguments and
+the complete source call tree. Argument expressions run once, before the helper's
+effects; repeated calls receive independent mappings. Every extra function must be
+visited. Expansion is bounded by work and 64 frames. The original fingerprint and
+inert declaration wrapper are checked; the expanded private clone must then pass
+the complete DOM proof. No printed report authorizes a transformation. Native
+output retains ordinary borrowed element handles and owning optional Strings.
+
+Measured: **4/4 focused CTests in 21.14s**, followed by the final **3/3 DOM CTests
+in 179.05s**: entry **179.04s**, session **51.12s**, Strings **22.95s**. The String
+gate preserves **105 Node/VM observations / eight GCC-Clang binaries**, with
+**136 source refusals / 41 provenance-depth refusals / four budget-fingerprint
+controls** across the existing providers, policies and layouts. The guard controls
+caught a test extraction mistake and prompted explicit signed-index rejection;
+the final gate passes. Stable formatting passes **829 C++ / 100 Python / 33 web**;
+the required pinned formatter's existing **nine-file / 26-diagnostic** baseline is
+byte-identical. Evidence is in `/tmp/ctcompile-dom-helpers-20260914/`.
+
+The complete default devbox build and **602-test CTest gate are running**, with
+four CTest jobs and **1,443 frozen source inputs**. No full-suite pass is claimed
+yet. No browser/runtime files or WPT/test262 expectations changed.
+
+**Exact next boundary:** original Bootstrap's outer-scope and object-held helper
+graph remains beyond this local capture-free proof. `F('config')` can only lose its
+regex callback after proving standard String replacement and RegExp replacement,
+execution and property lookup, plus no intervening mutation/reentry. The DOM
+manifest supplies none of those intrinsic identities; the unchanged regex helper
+is still a source refusal. `M` still normalizes the live attribute value through
+branches, Number/toString, typeof, URI decoding, JSON and exceptions. Dataset
+iteration/prototype fallback, inherited class receivers, retained DOM/config,
+callbacks and the application driver remain unfinished. No whole-Bootstrap
+admission gain or escape-analysis precision gain is claimed.
+
 ## Native DOM String observations, 2026-09-14 UTC
 
 Continued **54082ea6 / e856a6ad**, the completed attribute-read thread named in

@@ -125,8 +125,12 @@ The source gate checks both DOM providers, printing layouts and optimization
 policies with Node, the VM, GCC and Clang. **a41b3bc3** adds strict
 null/String comparisons, optional String truthiness and definite String + String
 names/values. Missing and empty are both false in Boolean observations; saved reads
-keep their copied value after mutation. These operations do not admit source
-helper calls or nullable-to-String coercion.
+keep their copied value after mutation. **0aa8dd47** expands
+closed, capture-free straight-line calls at their original call sites, then
+rechecks the entire DOM body. Nested name construction, repeated calls and saved
+reads pass **105 Node/VM observations / eight GCC-Clang binaries**. Callable
+identity, captures, recursion and unsupported effects remain refusals; this adds
+no nullable-to-String coercion.
 Bootstrap's original `getDataAttribute` (vendor line **263**) computes its name
 through `F` and feeds the optional result to `M`. `F` still requires regex replace,
 its callback and `toLowerCase`; `M` still requires source branches, `Number`,
@@ -134,9 +138,14 @@ its callback and `toLowerCase`; `M` still requires source branches, `Number`,
 operations and their composition with the DOM entry. Start with `_mergeConfigObj`'s
 actual `H.getDataAttribute(e, "config")` call: the key is constant, so checked source
 specialization may discharge `F` before a general runtime regex backend is needed.
-The DOM provider still admits only one source function and declares every explicit
-parameter as an element; helper expansion and mixed parameter types are not supplied
-by String concatenation support. Preserve the normalization source instead of
+The exported entry still declares every explicit parameter as an element; local
+helpers receive their proved actual arguments. Original Bootstrap's outer-scope
+and object-held helper graph is beyond the new local capture-free proof.
+For `F('config')`, a no-match fold must prove standard String replacement and
+RegExp replacement/execution/property lookup, plus absence of source mutation or
+reentry. The current DOM manifest supplies none of those intrinsic identities.
+The original regex helper remains a source refusal in the gate. `M` still consumes
+the live optional attribute value: preserve its normalization source instead of
 replacing it with browser helper code.
 
 The compiler still refuses dataset operations. Bootstrap's original
