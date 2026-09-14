@@ -2,71 +2,11 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/dom/dataset.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
-
-namespace {
-
-// `data-foo-bar` -> `fooBar`. HTML's dataset mangling in the direction that
-// decides which properties EXIST: the supported property names of a
-// DOMStringMap are computed from the attributes, never from the key a page
-// asks about, which is why `el.dataset['-foo']` is undefined on an element
-// carrying `data--foo` - that attribute's name is `Foo`.
-//
-// A `-` followed by an ASCII LOWERCASE letter becomes that letter uppercased;
-// everything else is carried across untouched, including a `-` at the end and a
-// `-` in front of anything that is not a lowercase letter. False for a name
-// that is not a dataset attribute at all: one without the prefix, or one
-// carrying an ASCII uppercase letter - which no attribute of an HTML element
-// can have and one of an SVG element can.
-[[nodiscard]] bool dataset_name_of(std::string_view attribute_name, std::string & out) {
-    if (!attribute_name.starts_with("data-")) { return false; }
-    const std::string_view rest = attribute_name.substr(5);
-    out.clear();
-    for (std::size_t i = 0; i < rest.size(); ++i) {
-        if (rest[i] >= 'A' && rest[i] <= 'Z') { return false; }
-        if (rest[i] == '-' && i + 1 < rest.size() && rest[i + 1] >= 'a' && rest[i + 1] <= 'z') {
-            out.push_back(static_cast<char>(rest[i + 1] - 'a' + 'A'));
-            ++i;
-            continue;
-        }
-        out.push_back(rest[i]);
-    }
-    return true;
-}
-
-// Why a write can be refused. Two DIFFERENT exceptions, and the corpus checks
-// both by name: a key naming an attribute that could never map back to it is a
-// SyntaxError, and one whose attribute name could not be written into a start
-// tag is an InvalidCharacterError.
-enum class dataset_fault : std::uint8_t {
-    none,
-    syntax,
-    character
-};
-
-// ...and `fooBar` -> `data-foo-bar`, which is the other direction and NOT the
-// inverse. That is the whole reason both exist: `data--foo` reads back as
-// `Foo`, so `-foo` names nothing on the way in, and letting it name
-// `data--foo` on the way out would make one attribute answer to two keys.
-[[nodiscard]] dataset_fault dataset_attribute_of(std::string_view idl, std::string & out) {
-    out = "data-";
-    for (std::size_t i = 0; i < idl.size(); ++i) {
-        if (idl[i] == '-' && i + 1 < idl.size() && idl[i + 1] >= 'a' && idl[i + 1] <= 'z') {
-            return dataset_fault::syntax;
-        }
-        if (idl[i] >= 'A' && idl[i] <= 'Z') {
-            out.push_back('-');
-            out.push_back(static_cast<char>(idl[i] - 'A' + 'a'));
-            continue;
-        }
-        out.push_back(idl[i]);
-    }
-    return is_valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
-}
-
-} // namespace
 
 void dom_bindings::install_dataset(context & cx, script::object_object & obj, node_id id) {
     // THE STORE IS THE PROXY'S TARGET, and it is what `for (k in el.dataset)`
@@ -86,17 +26,7 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
     // by mangling the key and looking that up. The two disagree exactly where
     // `dataset-delete.html` and `dataset-get.html` say they must.
     const auto value_of = [this, id](std::string_view key) -> std::optional<std::string> {
-        const auto txn = doc_->read();
-        std::string name;
-        for (const attribute & held : txn.attributes(id)) {
-            // NULL NAMESPACE ONLY: `xlink:data-x` is not a dataset attribute
-            // however its local name reads.
-            if (held.ns) { continue; }
-            if (dataset_name_of(atoms_->text(held.name), name) && name == key) {
-                return held.value;
-            }
-        }
-        return std::nullopt;
+        return dataset_value(*doc_, id, key);
     };
     // A MISS FALLS THROUGH TO THE TARGET, which is how `dataset.toString` finds
     // Object.prototype's - but NOT past a name the refill left on the target.
@@ -208,13 +138,8 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
             stale.reserve(store->props.size());
             for (const auto & [key, held] : store->props) { stale.push_back(key); }
             for (const std::string & key : stale) { (void)store->erase(key); }
-            const auto txn = doc_->read();
-            std::string name;
-            for (const attribute & held : txn.attributes(id)) {
-                if (held.ns) { continue; }
-                if (dataset_name_of(atoms_->text(held.name), name)) {
-                    store->set(name, c.string(held.value));
-                }
+            for (const auto & [name, text] : dataset_entries(*doc_, id)) {
+                store->set(name, c.string(text));
             }
             return proxy;
         });

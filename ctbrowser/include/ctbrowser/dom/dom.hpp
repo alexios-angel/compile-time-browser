@@ -12,6 +12,7 @@
 // See :document for the locking policy and for precisely which atomicity
 // guarantees this does and does not make.
 
+#include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/element.hpp>
 #include <ctbrowser/dom/html.hpp>
