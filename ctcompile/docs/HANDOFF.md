@@ -45,17 +45,34 @@ that missing source proof.
 
 Stable formatting: **824 C++ / 93 Python / 33 web PASS**. The required pinned
 check is byte-identical to the prior **nine-file / 26-diagnostic** baseline.
-Full standard devbox gate is running; final measurements are not yet available.
-Evidence: `/tmp/ctcompile-dom-storage/`.
+Final standard devbox gate: **262-step build / 598/598 CTests PASS in
+1201.00s**, including **172/172 lit in 845.97s**. All **1,427 frozen inputs**
+match local source and the tested devbox. Full ownership **355.00s**, native DOM
+**274.13s**, new DOM Data **48.41s**, owned DOM **80.55s**, existing Data **52.69s**.
+Evidence: `/tmp/ctcompile-dom-storage/{full.log,full-last-test.log,measured.json}`.
 
-**Exact next boundary:** prove and gate the original nested Bootstrap Data family
-with explicit DOM inputs, including its child snapshots and saved child aliases.
-The new emitter requires one complete root/table family and refuses additional
-object-global aliases. The preserved flat snapshot refusal above is a concrete
-source-proof probe. Component construction/disposal, event callbacks, persistent
-initialization and the application driver remain unfinished. The entry still
-recreates source storage on every invocation; persistent initialization needs its
-own proof. No full native Bootstrap startup or vendor admission gain is claimed.
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips/prunes. Existing Data remains **3,218 source bytes / 7/7 functions /
+23 direct calls / 19 observations / three source outer keys**. The complete escape
+oracle remains **222 functions / 861 claims / 895 observed sites / 35 unclaimed /
+zero violations / precision 40 of 172**. Dense length remains **178 rows / 5,031
+cutoffs**, structured contents **43 rows / 2,228 cutoffs**. Both browser and compiler
+suites passed; no browser/runtime edits, WPT/test262 score remeasurement or push.
+
+**Exact next boundary:** the original Bootstrap Data probe also owns a
+`console.error` recorder root and an `instance = {value:64}` payload alias.
+`LowerToEmitC.cpp` currently requires one root and no object-global aliases;
+make those additional roots/aliases private session storage before relaxing that
+guard. Replace only the three probe key allocations (`element`, `other`, `absent`)
+with direct DOM parameters, preserving the vendor fragment, 23 calls and 19
+observations. Bootstrap uses `Array.from(child.keys())[0]`; that child snapshot
+already has source proof. It is distinct from the new flat `state.values()`
+refusal, and outer DOM-key snapshots must remain refused. Carry the existing Data
+saved-child/replacement/payload/reentry observations into the real-document gate.
+Components, event callbacks, persistent initialization and the driver remain
+unfinished. The entry still recreates source storage on every invocation;
+persistent initialization needs its own proof. No full native Bootstrap startup
+or vendor admission gain is claimed.
 
 ## DOM Data source ownership and native array shrink, 2026-09-14 UTC
 
