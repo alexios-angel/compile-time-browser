@@ -24,6 +24,15 @@ inline bool toggle_class(ctbrowser::element_ref element, std::string_view token,
 } // namespace ctnative
 )cpp";
 
+inline constexpr llvm::StringLiteral kDOMAttributeReadHelpers = R"cpp(
+namespace ctnative {
+inline std::optional<std::string> get_attribute(ctbrowser::element_ref element,
+                                               std::string_view name) {
+    return ctbrowser::get_element_attribute(*element.owner, element.id, name);
+}
+} // namespace ctnative
+)cpp";
+
 inline constexpr llvm::StringLiteral kDOMAttributeHelpers = R"cpp(
 namespace ctnative {
 inline void set_attribute(ctbrowser::element_ref element, std::string_view name,

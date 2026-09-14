@@ -306,6 +306,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         tokenList,
         toggle,
         attribute,
+        getAttribute,
+        optionalString,
         toggleAttribute,
         hasAttribute,
         removeAttribute,
@@ -398,7 +400,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (frame || (!hasKind(result.getValue(), Kind::undefined) &&
                               !hasKind(result.getValue(), Kind::boolean) &&
-                              !hasKind(result.getValue(), Kind::string))) {
+                              !hasKind(result.getValue(), Kind::string) &&
+                              !hasKind(result.getValue(), Kind::optionalString))) {
                     refusal = "DOM entry return must be a scalar with no borrowed browser handle";
                     return;
                 }
@@ -417,6 +420,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (hasKind(read.getObject(), Kind::element) && key == "classList") {
                     values[read.getResult()] = Kind::tokenList;
                     provedTokens.push_back(read);
+                    continue;
+                }
+                if (hasKind(read.getObject(), Kind::element) && key == "getAttribute") {
+                    values[read.getResult()] = Kind::getAttribute;
+                    provedMethods.emplace_back(read, HostDOMMethod::getAttribute);
                     continue;
                 }
                 if (hasKind(read.getObject(), Kind::element) && key == "setAttribute") {
@@ -491,6 +499,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                          classes ? HostDOMMethod::toggleClass : HostDOMMethod::toggleAttribute,
                          element});
                     values[invoke.getResult()] = Kind::boolean;
+                    continue;
+                }
+                if (hasKind(invoke.getCallee(), Kind::getAttribute) && arguments.size() == 1 &&
+                    hasKind(arguments[0], Kind::string)) {
+                    provedCalls.push_back(
+                        {invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
+                    // Own String or null, with no prototype fallback. Other
+                    // operations do not accept this kind; only return/root do.
+                    values[invoke.getResult()] = Kind::optionalString;
                     continue;
                 }
                 if (hasKind(invoke.getCallee(), Kind::hasAttribute) && arguments.size() == 1 &&

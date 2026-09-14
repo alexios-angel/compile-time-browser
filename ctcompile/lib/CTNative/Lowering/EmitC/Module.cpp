@@ -177,6 +177,11 @@ void lowering::declareGlobals() {
                                   b.getStringAttr("ctbrowser/dom/token_list.hpp"), b.getUnitAttr());
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMToggleHelpers));
         }
+        if (needsDOMAttributeRead) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("optional"), b.getUnitAttr());
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeReadHelpers));
+        }
         if (needsDOMAttributes) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeHelpers));
         }

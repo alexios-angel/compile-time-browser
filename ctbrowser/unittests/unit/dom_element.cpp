@@ -101,6 +101,8 @@ void test_case_and_namespace() {
     CHECK(set_element_attribute(doc, svg, "viewBox", "0 0 4 3").has_value());
     CHECK_EQ(doc.read().attribute_value(svg, view_box), "0 0 4 3");
     CHECK(!doc.read().has_attribute(svg, folded));
+    CHECK(get_element_attribute(doc, svg, "viewBox") == "0 0 4 3");
+    CHECK(!get_element_attribute(doc, svg, "viewbox"));
 
     document xml{atoms};
     xml.set_xml(true);
@@ -108,6 +110,8 @@ void test_case_and_namespace() {
     CHECK(set_element_attribute(xml, html_in_xml, "viewBox", "case preserved").has_value());
     CHECK_EQ(xml.read().attribute_value(html_in_xml, view_box), "case preserved");
     CHECK(!xml.read().has_attribute(html_in_xml, folded));
+    CHECK(get_element_attribute(xml, html_in_xml, "viewBox") == "case preserved");
+    CHECK(!get_element_attribute(xml, html_in_xml, "viewbox"));
 
     const node_id element = doc.create_element(atoms.intern("div"));
     const atom name = atoms.intern("p:attr");
@@ -120,6 +124,43 @@ void test_case_and_namespace() {
     const auto * second = txn.find_attribute_ns(element, "urn:second", "attr");
     CHECK(first != nullptr && first->name == name && first->value == "changed");
     CHECK(second != nullptr && second->name == name && second->value == "two");
+    CHECK(get_element_attribute(doc, element, "P:ATTR") == "changed");
+    CHECK(!get_element_attribute(doc, element, "attr"));
+    CHECK(doc.remove_attribute(element, name).has_value());
+    CHECK(get_element_attribute(doc, element, "P:ATTR") == "two");
+}
+
+void test_attribute_reads() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id element = doc.create_element(atoms.intern("button"));
+    CHECK(set_element_attribute(doc, element, "disabled", "").has_value());
+    constexpr std::string_view bytes{"a\0b", 3};
+    CHECK(set_element_attribute(doc, element, "data-value", bytes).has_value());
+    const auto saved = get_element_attribute(doc, element, "DATA-VALUE");
+    CHECK(saved == bytes);
+    CHECK(set_element_attribute(doc, element, "data-value", "changed").has_value());
+    CHECK(saved == bytes);
+    CHECK(get_element_attribute(doc, element, "data-value") == "changed");
+    CHECK(doc.remove_attribute(element, atoms.intern("data-value")).has_value());
+    CHECK(saved == bytes);
+
+    // Reads accept even names which the public setter rejects.
+    constexpr std::array invalid_names = {std::string_view{}, std::string_view{"bad name"}, bytes};
+    for (const std::string_view name : invalid_names) {
+        CHECK(!is_valid_attribute_name(name));
+        CHECK(doc.set_attribute(element, atoms.intern(name), "unvalidated").has_value());
+    }
+    doc.log_writes(true);
+    const auto before = doc.version();
+    CHECK(get_element_attribute(doc, element, "DISABLED") == "");
+    CHECK(!get_element_attribute(doc, element, "missing"));
+    CHECK(!get_element_attribute(doc, element, "data-value"));
+    for (const std::string_view name : invalid_names) {
+        CHECK(get_element_attribute(doc, element, name) == "unvalidated");
+    }
+    CHECK_EQ(doc.version(), before);
+    CHECK(doc.take_writes().empty());
 }
 
 void test_attribute_toggle() {
@@ -214,6 +255,7 @@ int main() {
     test_borrowed_identity();
     test_attribute_names_and_writes();
     test_case_and_namespace();
+    test_attribute_reads();
     test_attribute_toggle();
     test_toggle_case_and_namespace();
     REPORT("dom_element");

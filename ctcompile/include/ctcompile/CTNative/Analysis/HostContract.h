@@ -80,6 +80,7 @@ void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 enum class HostDOMMethod {
     toggleClass,
     setAttribute,
+    getAttribute,
     toggleAttribute,
     hasAttribute,
     removeAttribute,
@@ -93,9 +94,10 @@ struct HostDOMCall {
     HostDOMMethod kind;
     mlir::Value element;
     [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
+    [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
     [[nodiscard]] bool returnsBoolean() const {
-        return !returnsElement() && kind != HostDOMMethod::setAttribute &&
-               kind != HostDOMMethod::removeAttribute;
+        return !returnsOptionalString() && !returnsElement() &&
+               kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
     }
     [[nodiscard]] bool usesStyle() const {
         return kind == HostDOMMethod::matches || kind == HostDOMMethod::closest;

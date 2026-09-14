@@ -730,6 +730,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 fn->setAttr("ctjs.not_structured", marker);
             }
         }
+        if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
+            lower.censusDOM(*admittedDOM,
+                            hostContract->provider == HostContract::Provider::ctbrowserDOMSession);
+        }
         lower.censusScalars(accepted, admittedGlobals.get());
         if (domData && !lower.censusSession(*admittedGlobals, accepted)) {
             module.emitError("native DOM Data requires a private captured Map table");
@@ -745,10 +749,6 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
-        if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
-            lower.censusDOM(*admittedDOM,
-                            hostContract->provider == HostContract::Provider::ctbrowserDOMSession);
-        }
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }

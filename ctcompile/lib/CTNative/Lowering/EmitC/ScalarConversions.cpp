@@ -93,7 +93,17 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
             auto [position, inserted] = globalTypes.try_emplace(store.getName(), type);
             if (!inserted) { position->second = meet(position->second, type); }
         });
-        resultTypes[fn.getSymName()] = scalarType(joinedReturnType(fn));
+        // The live DOM proof admits only one straight-line return. Preserve
+        // its String-or-null result as an owning optional, before the generic
+        // scalar census can request a tagged nullable String value model.
+        mlir::Type domResult;
+        fn.getBody().walk([&](ctjs::ReturnOp ret) {
+            const auto call = domCalls.find(ret.getValue().getDefiningOp());
+            if (call != domCalls.end() && call->second.returnsOptionalString()) {
+                domResult = ec::OpaqueType::get(context, kDOMOptionalStringType);
+            }
+        });
+        resultTypes[fn.getSymName()] = domResult ? domResult : scalarType(joinedReturnType(fn));
         auto & params = parameterTypes[fn.getSymName()];
         for (mlir::BlockArgument arg : fn.getBody().front().getArguments()) {
             params.push_back(scalarType(typeOf(arg)));

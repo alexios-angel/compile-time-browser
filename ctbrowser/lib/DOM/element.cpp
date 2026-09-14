@@ -24,6 +24,13 @@ atom attribute_key(document & doc, node_id id, std::string_view qualified) {
     return folds ? doc.atoms().intern_lower(qualified) : doc.atoms().intern(qualified);
 }
 
+std::optional<std::string> get_element_attribute(document & doc, node_id id,
+                                                 std::string_view name) {
+    const atom key = attribute_key(doc, id, name);
+    const attribute * held = doc.read().find_attribute(id, key);
+    return held == nullptr ? std::nullopt : std::optional{held->value};
+}
+
 std::expected<void, dom_error> set_element_attribute(document & doc, node_id id,
                                                      std::string_view name, std::string_view text) {
     if (!is_valid_attribute_name(name)) {

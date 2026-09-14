@@ -35,6 +35,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             domCalls[call] = *edge;
             needsDOMToggle |= edge->kind == HostDOMMethod::toggleClass;
             needsDOMAttributes |= edge->kind == HostDOMMethod::setAttribute;
+            needsDOMAttributeRead |= edge->returnsOptionalString();
             needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
             needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
             needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
@@ -117,6 +118,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     switch (edge.kind) {
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
     case HostDOMMethod::setAttribute: callee = "ctnative::set_attribute"; break;
+    case HostDOMMethod::getAttribute: callee = "ctnative::get_attribute"; break;
     case HostDOMMethod::toggleAttribute: callee = "ctnative::toggle_attribute"; break;
     case HostDOMMethod::hasAttribute: callee = "ctnative::has_attribute"; break;
     case HostDOMMethod::removeAttribute: callee = "ctnative::remove_attribute"; break;
@@ -124,9 +126,11 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::matches: callee = "ctnative::matches"; break;
     case HostDOMMethod::closest: callee = "ctnative::closest"; break;
     }
-    if (edge.returnsBoolean() || edge.returnsElement()) {
-        const mlir::Type type =
-            edge.returnsElement() ? carrierType(context, carrier::domElement) : at.getI1Type();
+    if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString()) {
+        const mlir::Type type = edge.returnsOptionalString()
+                                    ? ec::OpaqueType::get(context, kDOMOptionalStringType)
+                                : edge.returnsElement() ? carrierType(context, carrier::domElement)
+                                                        : at.getI1Type();
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);
         call.getResult().replaceAllUsesWith(value.getResult(0));

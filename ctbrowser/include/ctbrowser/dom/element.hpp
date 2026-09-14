@@ -3,6 +3,7 @@
 #include <ctbrowser/dom/document.hpp>
 
 #include <optional>
+#include <string>
 
 namespace ctbrowser {
 
@@ -27,6 +28,12 @@ struct element_ref {
 // Qualified names fold only on HTML elements in HTML documents. Namespaced
 // attribute APIs deliberately do not use this helper.
 [[nodiscard]] atom attribute_key(document & doc, node_id id, std::string_view qualified);
+
+// Copy the first qualified-name match, preserving empty values and returning
+// nullopt when absent. Reads do not validate attribute names; native element
+// parameters must first pass validate_element.
+[[nodiscard]] std::optional<std::string> get_element_attribute(document & doc, node_id id,
+                                                               std::string_view name);
 
 // Validate the name, then update the first attribute with that qualified name
 // through document::set_attribute. DOM errors and same-value write records

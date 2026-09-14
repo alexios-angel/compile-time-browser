@@ -56,7 +56,7 @@ captures, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, and nested control flow refuse. Current operations are
 strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
-`hasAttribute(name)`, `removeAttribute(name)` and
+`getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from source strings;
 force is a proved Boolean (including an earlier DOM result) or explicit undefined.
 `contains(otherElement)`, `matches(selector)` and `closest(selector)` also
@@ -72,6 +72,15 @@ with another result or an element parameter, so misses compare equal even across
 documents. Dereferencing, retaining or returning that result, passing it to
 `contains`, and comparing it with an explicit source `null` still refuse.
 Unsupported coercions and observed set/remove results refuse.
+
+A `getAttribute` result is an owning `std::optional<std::string>`: absent is
+`std::nullopt`, while an empty attribute remains an engaged empty string. Reads
+call the public `get_element_attribute` core shared with the VM binding, preserving
+HTML name folding, SVG/XML casing, first qualified-name matching and embedded
+NUL bytes. Read names are not validated as mutation names. The copied result may
+be returned or left unused and survives later mutations or document destruction.
+Boolean coercion, null comparisons, String operations, dynamic names and storage
+into properties remain unproved and refuse; no generic nullable carrier is emitted.
 
 The provider starts with the standard `undefined` binding, independently of
 external script state. Complete source discovery rejects replacement (including
@@ -103,6 +112,13 @@ other actions keep DOM/Core-only linkage. Query checks cover live interactive
 state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
+
+The `ctcompile_native_dom_strings` CTest compares nine observations with Node
+and the ctbrowser VM, then executes eight GCC/Clang clients across both providers,
+optimization policies and printing layouts. It checks copied optional strings,
+invalid handles before effects, document domains, name bytes and casing, and
+64 source refusals. These clients link DOM/Core only and reject Script symbols
+or generic nullable value helpers in the generated code.
 
 ## Owned synchronous sessions
 

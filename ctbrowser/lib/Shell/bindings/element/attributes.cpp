@@ -769,16 +769,8 @@ void dom_bindings::install_attribute_methods(context & cx) {
     method("getAttribute", 1, [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::null(); }
-        const auto txn = doc_->read();
-        // PRESENT-BUT-EMPTY is not absent. `<details open>`, `<input
-        // disabled>` and `<option selected>` all have an empty value, and
-        // returning null for them made every boolean attribute unreadable
-        // from script - the one shape of attribute that is only ever tested
-        // for presence.
-        const atom name = attribute_key(txn, id, arg_string(c, args, 0));
-        const attribute * held = txn.find_attribute(id, name);
-        if (held == nullptr) { return value::null(); }
-        return c.string(held->value);
+        const auto text = get_element_attribute(*doc_, id, arg_string(c, args, 0));
+        return text ? c.string(*text) : value::null();
     });
     // THE OTHER TWO HALVES OF THE ATTRIBUTE API. `setAttribute` and
     // `getAttribute` were here and these were not, so an attribute could be
