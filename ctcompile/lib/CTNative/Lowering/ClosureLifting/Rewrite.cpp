@@ -24,6 +24,14 @@ liftReport closureLifter::run() {
     indexAndNewTargets();
     specializeCallbacks(out);
     bindLocalFunctions(out);
+    // Expose proved uncaptured object literals before the argument/receiver
+    // census. A separate census owns the store pointers this rewrite erases;
+    // the main lift must index the resulting live IR afresh.
+    {
+        closureLifter locals{module};
+        locals.census();
+        locals.unboxCells(out, true);
+    }
     census();
     // THE ARGUMENT SLOTS FIRST, because `closedAfterLift` reads them and
     // `methodCensus` reads `closedAfterLift`. Both censuses run before any

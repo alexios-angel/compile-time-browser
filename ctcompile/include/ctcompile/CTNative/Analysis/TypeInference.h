@@ -276,6 +276,10 @@ private:
     /// index is keyed on the exact SSA value, which is one object.
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Operation *, 2>>
         fieldStoreSites_;
+    // Complete direct call sites for closed private object parameters. Every
+    // member's uses preserve its shape, and callable values cannot escape.
+    // Presence still checks each actual operand's stores in its own caller.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Operation *, 2>> objectParameterCallSites_;
     /// For the dominance question above. Built lazily per region by MLIR and
     /// valid for the whole solve, because nothing mutates the IR while the
     /// solver runs - the closure lift and every rewrite in
@@ -339,6 +343,10 @@ private:
     /// what the field may HOLD is still everything anyone ever stored in it.
     /// Owning identity fields use the separate live allocation/Map-alias query
     /// cached in initialize(); the schema group supplies no ordering evidence.
+    /// A closed private object parameter also drops absence when every actual
+    /// call passes a local literal with a same-function dominating store. The
+    /// complete use census excludes removal; callee writes remain in the join.
+    /// Forwarded parameters and stores in a different invocation do not qualify.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every

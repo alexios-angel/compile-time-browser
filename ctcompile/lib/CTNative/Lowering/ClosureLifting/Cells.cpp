@@ -360,10 +360,18 @@ std::optional<std::string> closureLifter::whyCarriedCellStaysABox(ctjs::CreateCe
 // every lift, because a cell captured by one lifted and one unlifted
 // closure must stay a cell for the unlifted one - which is refused, but
 // whose IR this pass has no business falsifying.
-void closureLifter::unboxCells(liftReport & out) {
+// The early mode only exposes uncaptured local objects to the receiver census.
+void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
     llvm::SmallVector<ctjs::CreateCellOp> cells;
     module.walk([&](ctjs::CreateCellOp cell) { cells.push_back(cell); });
     for (ctjs::CreateCellOp cell : cells) {
+        if (localObjectsOnly &&
+            (!constantValueOf(cell).getDefiningOp<ctjs::CreateObjectOp>() ||
+             !llvm::all_of(cell.getResult().getUsers(), [](mlir::Operation * user) {
+                 return llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user);
+             }))) {
+            continue;
+        }
         // PHASE 59 SLICE 2 STEP 2: A CARRIED CELL IS NOT UNBOXED. There is
         // no one value to write over its reads - that is why it is
         // carried - so the box stays in the IR and becomes an
@@ -460,6 +468,7 @@ void closureLifter::unboxCells(liftReport & out) {
         // to do. Erased after the reads, because both use the cell.
         if (write) { write.erase(); }
         cell->setAttr("ctnative.unboxed", mlir::UnitAttr::get(context));
+        if (localObjectsOnly && cell.getResult().use_empty()) { cell.erase(); }
         ++out.cells;
     }
 }

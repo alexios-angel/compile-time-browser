@@ -677,7 +677,7 @@ struct closureLifter {
 
     std::optional<std::string> whyCarriedCellStaysABox(ctjs::CreateCellOp cell);
 
-    void unboxCells(liftReport & out);
+    void unboxCells(liftReport & out, bool localObjectsOnly = false);
 };
 
 } // namespace ctcompile::ctnative::lowering_detail

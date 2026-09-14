@@ -32,6 +32,7 @@
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "OwnedGlobalRoots.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
@@ -287,19 +288,28 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
                                           mlir::Operation * read) {
     if (nativeObjectFieldGroup(read) >= 0) { return assignedIdentityFields_.contains(read); }
     const auto sites = fieldStoreSites_.find({object, key});
-    if (sites == fieldStoreSites_.end()) { return false; }
     auto * owner = read->getParentOfType<ctjs::FuncOp>().getOperation();
-    for (mlir::Operation * store : sites->second) {
-        // THE SAME FUNCTION FIRST, THEN DOMINANCE. Asked in this order because
-        // the second question is meaningless without the first: two operations
-        // in different `ctjs.func`s sit in `builtin.module`'s body, which is a
-        // GRAPH region, and MLIR answers "dominates" for every pair in one.
-        // The closure lift's `byValueMissesACall` compares the two functions
-        // for exactly this reason and says so in the same words.
-        if (store->getParentOfType<ctjs::FuncOp>().getOperation() != owner) { continue; }
-        if (dominance_.properlyDominates(store, read)) { return true; }
+    if (sites != fieldStoreSites_.end()) {
+        for (mlir::Operation * store : sites->second) {
+            // A module body is a graph region: dominance across functions says
+            // nothing about execution order. Always compare owners first.
+            if (store->getParentOfType<ctjs::FuncOp>().getOperation() != owner) { continue; }
+            if (dominance_.properlyDominates(store, read)) { return true; }
+        }
     }
-    return false;
+    const auto callers = objectParameterCallSites_.find(object);
+    if (callers == objectParameterCallSites_.end()) { return false; }
+    const unsigned index = llvm::cast<mlir::BlockArgument>(object).getArgNumber();
+    for (mlir::Operation * call : callers->second) {
+        const mlir::Value actual = call->getOperand(index);
+        // ponytail: one call boundary; forwarding and recursive borrows need
+        // their own bounded presence proof. Never order stores across frames.
+        if (!actual.getDefiningOp<ctjs::CreateObjectOp>() ||
+            !fieldIsAssignedBefore(actual, key, call)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
@@ -375,6 +385,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     identityFieldStores_.clear();
     assignedIdentityFields_.clear();
     fieldStoreSites_.clear();
+    objectParameterCallSites_.clear();
     appends_.clear();
     arrayReadValues_.clear();
     cellStores_.clear();
@@ -442,6 +453,41 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             assignedIdentityFields_.insert(read);
         }
     });
+    if (auto module = llvm::dyn_cast<mlir::ModuleOp>(top)) {
+        top->walk([&](ctjs::FuncOp function) {
+            if (function.getBody().empty() || mlir::SymbolTable::getSymbolVisibility(function) !=
+                                                  mlir::SymbolTable::Visibility::Private) {
+                return;
+            }
+            llvm::SmallVector<mlir::Value> parameters;
+            for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
+                const auto group = groups.find(argument);
+                if (namesAnObjectParameter(argument) && group != groups.end() &&
+                    llvm::all_of(group->second, hasClosedShape)) {
+                    parameters.push_back(argument);
+                }
+            }
+            if (parameters.empty() || !closedCallableProblem(function, module).empty()) { return; }
+            // Numeric closure identities are checked above; symbol uses must
+            // also be a complete census of ordinary direct calls. Each slot
+            // retains its actual operands, never the receiver schema group.
+            const auto uses = mlir::SymbolTable::getSymbolUses(function, module);
+            if (!uses) { return; }
+            llvm::SmallVector<mlir::Operation *, 2> callers;
+            for (const auto & use : *uses) {
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                if (!call || call.getTarget() != function ||
+                    call->getNumOperands() != function.getBody().front().getNumArguments()) {
+                    return;
+                }
+                callers.push_back(call);
+            }
+            if (callers.empty()) { return; }
+            for (mlir::Value parameter : parameters) {
+                objectParameterCallSites_[parameter] = callers;
+            }
+        });
+    }
     // THE APPENDS INDEX, beside fieldStores_ and for the same reason: an
     // element read has to find every value appended or stored into the array, and
     // walking the uses at each read would be the same walk done once per read.

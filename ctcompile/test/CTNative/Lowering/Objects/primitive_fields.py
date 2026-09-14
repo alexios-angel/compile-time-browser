@@ -1,4 +1,4 @@
-"""Check owning local string fields and the unsupported mixed/absent boundary."""
+"""Check owning String fields through local borrows and the mixed/absent boundary."""
 
 import argparse
 from pathlib import Path
@@ -23,6 +23,19 @@ def main():
         "absent": 12,
         "equality": 111,
         "borrowed-equality": 5,
+        "borrowed-saved": 137,
+        "borrowed-multiple": 151,
+        "borrowed-method": 5,
+        "borrowed-parameters": 1441,
+        "borrowed-before": 12,
+        "borrowed-missing": 21,
+        "borrowed-conditional": 12,
+        "borrowed-mixed": 14,
+        "borrowed-undefined": 1,
+        "borrowed-delete": 1,
+        "borrowed-escape": 5,
+        "borrowed-forwarded": 5,
+        "borrowed-alias-delete": 1,
         "utf8-length": 7,
         "empty-length": 0,
         "unknown-property": 0,
@@ -31,7 +44,17 @@ def main():
         node_expected = 4 if name == "utf8-length" else expected
         assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={node_expected}\n", name
         assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
-        if name in ("strings", "equality", "utf8-length", "empty-length"):
+        if name in (
+            "strings",
+            "equality",
+            "utf8-length",
+            "empty-length",
+            "borrowed",
+            "borrowed-equality",
+            "borrowed-saved",
+            "borrowed-multiple",
+            "borrowed-parameters",
+        ):
             checked += check_native(args, source, name, expected)
             continue
         raw = args.work / f"{name}.mlir"
