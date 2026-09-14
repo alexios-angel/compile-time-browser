@@ -33,10 +33,22 @@ checks both **a73/count3**. Stable whole formatting passes **825 C++ / 99 Python
 33 web**; required pinned formatting has the byte-identical prior **nine-file /
 26-diagnostic** baseline. Evidence: `/tmp/ctcompile-getters-recover/`.
 
-**In flight:** the forwarded String draft's first native gate found the earlier
-object-argument ownership census still rejects forwarding. Its agent is completing
-that existing census and bound-call annotations; this work is not yet committed or
-validated. The full standard gate is pending a frozen final source tree.
+**ff125088** completes the recovered forwarded String proof. The existing
+object-argument census now follows exact borrowed entry parameters, checks every
+incoming actual and outgoing use, and rejects incomplete/short/foreign callable
+censuses. Previously bound direct calls receive the same object-argument annotation.
+Field presence traces actual callers back to a same-function dominating store;
+cycles and the **64-frame / 65,536-query** cutoff retain absence. Every callee write
+stays in the type join; saved strings own their bytes. No EscapeAnalysis transfer
+rule changed. The unchanged original forwarded source now executes natively.
+The String gate passes **136 native executions / 52 refusals**, including alias
+mutation, saved NUL strings, argument swaps, late/missing/mixed fields, deletion,
+escapes, recursion, depth cutoff, short calls and escaping callables.
+
+Final focused **4/4 lit56.53s / 3/3CTest0.45s PASS**. The complete standard devbox
+build/CTest gate is running against **1,438 frozen inputs**; this is not yet a full
+suite pass. Both source concerns are committed separately and the source tree is
+frozen while that gate runs.
 
 **Exact next Bootstrap boundary:** inherited instance/static receivers, default
 derived forwarding, lexical `super` and observable `this.constructor`, then DOM

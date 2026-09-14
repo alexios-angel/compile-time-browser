@@ -97,8 +97,10 @@ closed direct object-argument borrow, with exact initialization before every cal
 and all callee writes retained in the type join. Saved strings own their bytes.
 **3e494a80** also proves stored-method callable provenance, keeping initialization
 at every actual direct call and all callee writes in the type join. The String gate
-passes **96 native executions / 30 refusals**. Forwarded parameters and mixed/possibly
-absent String storage remain separate proofs. See HANDOFF for current gate status.
+passes **96 native executions / 30 refusals**. **ff125088** completes forwarded
+parameters through the closed object-argument census and exact caller initialization
+proof; the expanded gate passes **136 native executions / 52 refusals**. Mixed/possibly
+absent String storage remains a separate proof. See HANDOFF for current gate status.
 
 HostContract now accepts the helper's explicitly declared initial identity as well
 as Map and Array. The local class pass accepts only its helper declaration; the
