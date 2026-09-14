@@ -266,12 +266,15 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                     if (!arguments.empty()) { arguments += ", "; }
                     arguments += name;
                 }
+                const std::string provenance = target + ", " + siteOfFunction(function);
                 definition += "private:\n  " + environment + " capture_" + key +
-                              ";\npublic:\n  void initialize_" + key + "(" + environment +
+                              ";\npublic:\n  // ctcompile: initialize capture for " + target +
+                              "\n  void initialize_" + key + "(" + environment +
                               " value) { capture_" + key + " = std::move(value); }\n  " + result +
                               " m_" + key + "(" + parameters + ");\n";
-                std::string body = "inline " + result + " ctnative::method_" + cIdentifier(site) +
-                                   "::m_" + key + "(" + parameters + ") {\n  return " +
+                std::string body = "// ctcompile: session method " + provenance + "\ninline " +
+                                   result + " ctnative::method_" + cIdentifier(site) + "::m_" +
+                                   key + "(" + parameters + ") {\n  return " +
                                    names.lookup(target) + "(";
                 for (unsigned index = 0; index < captures; ++index) {
                     if (index) { body += ", "; }

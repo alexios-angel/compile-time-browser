@@ -57,6 +57,18 @@ def main():
         deduced = args.work / f"{name}.deduced.mlir"
         host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
         for mode, ir in (("explicit", output), ("deduced", deduced)):
+            host.run(
+                [
+                    "cmake",
+                    f"-DTRANSLATE={args.translate}",
+                    f"-DMODULE={ir}",
+                    "-DCOMPILERS=" + ",".join(compilers),
+                    f"-DWORK={args.work}",
+                    f"-DNAME={name}-{mode}",
+                    "-P",
+                    str(Path(__file__).resolve().parents[1] / "Checks/compile-clean.cmake"),
+                ]
+            )
             cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
             entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
             if owned.VM.search(cpp) or not entry:

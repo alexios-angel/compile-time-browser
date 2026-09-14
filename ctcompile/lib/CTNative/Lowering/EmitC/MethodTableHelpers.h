@@ -19,7 +19,7 @@ template <class Callable, class... Args>
 auto invoke_callable(const Callable & callable, Args... args) {
     return callable(args...);
 }
-// The fixed member cannot be extracted as a callable that owns its captures.
+// ctcompile: invoke a fixed member without extracting an owning callable
 template <auto Member, class Table, class... Args>
 auto invoke_session(const std::shared_ptr<Table> & table, Args... args) {
     return (table.get()->*Member)(std::move(args)...);
