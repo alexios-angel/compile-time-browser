@@ -117,6 +117,18 @@ of String pairs. Writes and removal reuse the public document namespace APIs.
 The direct DOM/Core client and **8 WPT files / 47 subtests** pass, with identical
 WPT results before/after; the complete **601/601 CTest / 176/176 lit** gate passes.
 
+Native synchronous entries now lower constant-name `getAttribute` calls through
+`get_element_attribute` in the public DOM library. The Shell binding uses the same
+core. Results are owning `std::optional<std::string>` values; absent and empty
+remain distinct, and copies survive later mutations and document destruction.
+The source gate checks both DOM providers, printing layouts and optimization
+policies with Node, the VM, GCC and Clang. Null comparisons, String operations,
+computed names and composition with other source functions still need proof.
+Bootstrap's original `getDataAttribute` (vendor line **264**) computes its name
+through `F` and feeds the optional result to `M`; neither step is admitted by this
+bounded DOM entry. Preserve that source normalization instead of replacing it
+with browser helper code.
+
 The compiler still refuses dataset operations. Bootstrap's original
 `getDataAttributes` (vendor lines **253–261**) needs `Object.keys`, filtering, a
 loop and dynamic reads. Prove those source uses and preserve live read order;
