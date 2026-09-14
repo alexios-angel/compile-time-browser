@@ -65,6 +65,7 @@ struct closureLifter {
     // error, not a wrong answer.
 
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
+    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> uniqueClosureByTarget;
 
     // --- PHASE 59 SLICE 2 STEP 1: A BINDING WITH ONE DOMINATING WRITE -------
     //
@@ -620,6 +621,9 @@ struct closureLifter {
     // opens it": two literals passed to one read-only parameter support each
     // other, and neither opens anything.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<unsigned, 2>> objectSlotsOf;
+    // One immutable symbol census, consumed only before the first lift.
+    llvm::StringMap<llvm::SmallVector<mlir::Operation *, 2>> objectArgumentSymbolUsers;
+    bool completeObjectArgumentSymbols = false;
     llvm::SmallVector<closureCall> objectArgumentCalls(ctjs::CreateClosureOp c);
     bool slotIsACandidate(ctjs::CreateClosureOp c, unsigned j);
 

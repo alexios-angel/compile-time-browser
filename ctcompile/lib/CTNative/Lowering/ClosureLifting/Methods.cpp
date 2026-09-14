@@ -180,17 +180,15 @@ bool closureLifter::onlyConstantKeyAccess(mlir::Value v) {
 llvm::SmallVector<closureLifter::closureCall> closureLifter::objectArgumentCalls(
     ctjs::CreateClosureOp c) {
     ctjs::FuncOp target = targetOf(c);
-    if (!target) { return {}; }
+    if (!target || !completeObjectArgumentSymbols) { return {}; }
     llvm::SmallVector<closureCall> calls;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         const auto site = callSiteOf(use, target);
         if (!site) { return {}; }
         calls.push_back(site);
     }
-    const auto symbols = mlir::SymbolTable::getSymbolUses(target, module);
-    if (!symbols) { return {}; }
-    for (const auto & use : *symbols) {
-        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+    for (mlir::Operation * user : objectArgumentSymbolUsers.lookup(target.getSymName())) {
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
         if (!direct || direct.getTarget() != target || closureCalledBy(direct) != c) { return {}; }
         if (direct.getCalleeValue() != c.getResult()) {
             calls.push_back({direct, direct.getArgs(), direct.getReceiver()});
@@ -227,6 +225,19 @@ bool closureLifter::slotCarriesAnObject(ctjs::CreateClosureOp c, unsigned j) con
 }
 
 void closureLifter::argumentCensus() {
+    // Scanning the module once per parameter and fixpoint round made the
+    // unchanged Phaser admission scan take minutes instead of seconds.
+    if (const auto symbols = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
+        completeObjectArgumentSymbols = true;
+        for (const auto & use : *symbols) {
+            auto name = llvm::dyn_cast<mlir::FlatSymbolRefAttr>(use.getSymbolRef());
+            if (!name) {
+                completeObjectArgumentSymbols = false;
+                break;
+            }
+            objectArgumentSymbolUsers[name.getValue()].push_back(use.getUser());
+        }
+    }
     for (ctjs::CreateClosureOp c : closures) {
         // A METHOD FIELD IS NOT THIS RULE'S, AND NEEDS NO CLAUSE HERE:
         // its closure value is STORED rather than called, which condition

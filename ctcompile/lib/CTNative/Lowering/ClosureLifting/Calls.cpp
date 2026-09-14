@@ -40,17 +40,11 @@ ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
         // or an arbitrary callee value cannot substitute for that proof.
         auto constant = direct.getCalleeValue().getDefiningOp<ctjs::ConstantOp>();
         if (!constant || !llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) { return {}; }
-        ctjs::CreateClosureOp found;
-        for (ctjs::CreateClosureOp made : closures) {
-            auto target = targetOf(made);
-            if (!target || target != direct.getTarget()) { continue; }
-            if (found || !bindingClosures.contains(made.getOperation()) ||
-                target.getUpvalueCount() != 0) {
-                return {};
-            }
-            found = made;
-        }
-        return found;
+        auto found = uniqueClosureByTarget.lookup(direct.getTarget());
+        return found && bindingClosures.contains(found.getOperation()) &&
+                       targetOf(found).getUpvalueCount() == 0
+                   ? found
+                   : ctjs::CreateClosureOp{};
     }
     return {};
 }
@@ -102,6 +96,12 @@ void closureLifter::census() {
             allConstructs.push_back(built);
         }
     });
+    for (ctjs::CreateClosureOp made : closures) {
+        if (auto target = targetOf(made)) {
+            auto [at, unique] = uniqueClosureByTarget.try_emplace(target, made);
+            if (!unique) { at->second = {}; }
+        }
+    }
     // The fixpoint over the closure-target graph.
     for (bool changed = true; changed;) {
         changed = false;
