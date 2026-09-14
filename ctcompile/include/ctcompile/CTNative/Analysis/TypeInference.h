@@ -206,14 +206,20 @@ public:
     /// THE DENSE ARRAY (part 24 Phase 57A, the typing half). An array literal
     /// whose uses preserve density and local lifetime can use `std::vector`.
     /// Appends, index/length reads and complete current own-element overwrite
-    /// proofs qualify. Sparse writes, deletion, length changes and escaping or
-    /// transported aliases still open the site; its reads remain `boxed`.
+    /// proofs and literal non-growing length stores qualify. SCF selections
+    /// borrow entry-block literals only after a complete connected use census.
+    /// Other transport, sparse writes, deletion and escape open the site.
     ///
     /// For such an array a read of an index is the join of every appended/stored
     /// value, starting from undefined - because an index nothing appended,
     /// and every index past the end, reads `undefined` - and a read of
     /// `length` is a Number.
     static bool isDenseVectorSite(mlir::Value array);
+
+    /// Complete local ownership group: owning literals and their SCF-selected
+    /// borrows. Empty on any unknown origin/use or incomplete contents proof.
+    /// Recomputed from current IR; no annotations authorize ownership.
+    static llvm::SmallVector<mlir::Value, 4> denseVectorAliases(mlir::Value array);
 
     /// A value that names a shared binding the closure lift made a
     /// frame-local variable: the `ctjs.create_cell` it marked

@@ -375,6 +375,13 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 const auto normalized = recoverLoopGuards(body, rewriter);
                 if (mlir::failed(normalized)) { return mlir::WalkResult::interrupt(); }
                 changed |= *normalized;
+                // CFG reconstruction can leave an unused mux constant before
+                // frame_enter even without a loop. Keep the source entry first.
+                body->walk([&](mlir::arith::ConstantOp constant) {
+                    if (!constant->use_empty()) { return; }
+                    rewriter.eraseOp(constant);
+                    changed = true;
+                });
                 return mlir::WalkResult::advance();
             });
         if (walked.wasInterrupted()) { signalPassFailure(); }

@@ -7,6 +7,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/EquivalenceClasses.h"
@@ -14,7 +15,6 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
-#include <optional>
 
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
@@ -204,7 +204,11 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 // writes, growth, deletion and escape still refuse. This use census supplies
 // local lifetime separately; contents evidence alone proves neither native
 // element types nor ownership.
-// ponytail: direct local uses only; CFG aliases and SCF need transport proofs.
+// SCF selection borrows entry-block owners. Its connected use census includes
+// both arms, every source owner and every selected result; nothing may escape.
+// ponytail: no loop/CFG transport or region-local owners; those need lifetimes.
+// ponytail: repeated whole-function queries can be quadratic; cache only within
+// an immutable analysis phase if profiling makes that necessary.
 //
 // WHAT IT DOES NOT PROVE: that nothing planted a numeric own property on
 // `Array.prototype`, which an index past the end would find. That is the same
@@ -212,55 +216,110 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 // answer: `Array.prototype[7] = x` is not a thing this tier undertakes to
 // survive, and it is recorded here rather than assumed away.
 bool TypeInference::isDenseVectorSite(mlir::Value array) {
-    const bool snapshot = isNativeMapSnapshot(array.getDefiningOp());
-    if (!array.getDefiningOp<ctjs::CreateArrayOp>() && !snapshot) { return false; }
-    std::optional<ArrayContentsEvidence> contents;
-    for (mlir::OpOperand & use : array.getUses()) {
-        mlir::Operation * user = use.getOwner();
-        if (user->hasAttr(kNativeMapSnapshotCopy) && use.getOperandNumber() == 2 &&
-            isDenseVectorSite(user->getResult(0))) {
-            continue;
-        }
-        if (llvm::isa<ctjs::AppendOp>(user)) {
-            // OPERAND 0 IS THE ARRAY BEING BUILT; operand 1 is the element,
-            // and an array appended INTO another array has escaped into it.
-            if (use.getOperandNumber() != 0 || snapshot) { return false; }
-            continue;
-        }
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0) { return false; }
-            const llvm::StringRef key = constantKey(get.getKey());
-            // An empty key is a key that is not a constant string - an index,
-            // computed or literal, which is what `a[0]` imports as.
-            if (key.empty() || key == "length") { continue; }
-            return false;
-        }
-        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            const llvm::StringRef key = constantKey(set.getKey());
-            if (use.getOperandNumber() != 0 || snapshot || (!key.empty() && key != "length")) {
-                return false;
+    return !denseVectorAliases(array).empty();
+}
+
+llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value array) {
+    llvm::SmallVector<mlir::Value, 4> members{array};
+    llvm::DenseSet<mlir::Value> seen{array};
+    llvm::SmallVector<ctjs::SetPropertyOp> stores;
+    auto * origin = array.getDefiningOp();
+    if (!origin) { return {}; }
+    auto function = origin->getParentOfType<ctjs::FuncOp>();
+    bool borrowed = false;
+    std::size_t work = 0;
+    const auto add = [&](mlir::Value value) {
+        if (seen.insert(value).second) { members.push_back(value); }
+    };
+    for (std::size_t at = 0; at < members.size(); ++at) {
+        // A failed census publishes no partial ownership group.
+        if (++work > 65536) { return {}; }
+        const mlir::Value member = members[at];
+        auto * definition = member.getDefiningOp();
+        if (!definition || definition->getParentOfType<ctjs::FuncOp>() != function) { return {}; }
+        const bool snapshot = isNativeMapSnapshot(definition);
+        if (auto selected = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
+            borrowed = true;
+            const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
+            if (selected.getElseRegion().empty()) { return {}; }
+            for (mlir::Region & region : selected->getRegions()) {
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                if (!yield || index >= yield.getNumOperands()) { return {}; }
+                add(yield.getOperand(index));
             }
-            if (!contents) {
-                auto function = user->getParentOfType<ctjs::FuncOp>();
-                if (!function) { return false; }
-                contents = computeArrayContents(function);
-            }
-            if (!contents->complete) { return false; }
-            // The complete query checks every length store against its current
-            // dense contents and accepts only an original Number literal that
-            // does not grow them. It publishes no element-write edge for shrink.
-            if (key == "length") { continue; }
-            if (!llvm::any_of(contents->writes, [&](const ArrayElementWrite & write) {
-                    return write.by == user && write.position == 2 &&
-                           write.array == array.getDefiningOp();
-                })) {
-                return false;
-            }
-            continue;
+        } else if (!llvm::isa<ctjs::CreateArrayOp>(definition) && !snapshot) {
+            return {};
         }
-        return false;
+        for (mlir::OpOperand & use : member.getUses()) {
+            if (++work > 65536) { return {}; }
+            mlir::Operation * user = use.getOwner();
+            if (user->getParentOfType<ctjs::FuncOp>() != function) { return {}; }
+            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
+                auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+                if (!selected || use.getOperandNumber() >= selected.getNumResults()) { return {}; }
+                add(selected.getResult(use.getOperandNumber()));
+                continue;
+            }
+            if (user->hasAttr(kNativeMapSnapshotCopy) && use.getOperandNumber() == 2 &&
+                isDenseVectorSite(user->getResult(0))) {
+                continue;
+            }
+            if (llvm::isa<ctjs::AppendOp>(user)) {
+                // OPERAND 0 IS THE ARRAY BEING BUILT; operand 1 is the element,
+                // and an array appended INTO another array has escaped into it.
+                if (use.getOperandNumber() != 0 || snapshot ||
+                    !member.getDefiningOp<ctjs::CreateArrayOp>()) {
+                    return {};
+                }
+                continue;
+            }
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                if (use.getOperandNumber() != 0) { return {}; }
+                const llvm::StringRef key = constantKey(get.getKey());
+                // An empty key is a key that is not a constant string - an index,
+                // computed or literal, which is what `a[0]` imports as.
+                if (key.empty() || key == "length") { continue; }
+                return {};
+            }
+            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                const llvm::StringRef key = constantKey(set.getKey());
+                if (use.getOperandNumber() != 0 || snapshot || (!key.empty() && key != "length")) {
+                    return {};
+                }
+                stores.push_back(set);
+                continue;
+            }
+            return {};
+        }
     }
-    return true;
+    if (borrowed) {
+        if (!function) { return {}; }
+        for (mlir::Value member : members) {
+            auto * definition = member.getDefiningOp();
+            if (llvm::isa<mlir::scf::IfOp>(definition)) { continue; }
+            if (!llvm::isa<ctjs::CreateArrayOp>(definition) ||
+                definition->getBlock() != &function.getBody().front()) {
+                return {};
+            }
+        }
+    }
+    if (borrowed || !stores.empty()) {
+        if (!function) { return {}; }
+        const auto contents = computeArrayContents(function);
+        if (!contents.complete) { return {}; }
+        for (auto store : stores) {
+            // The complete query checks every literal length store against its
+            // current dense contents; shrink publishes no element-write edge.
+            if (constantKey(store.getKey()) == "length") { continue; }
+            if (!llvm::any_of(contents.writes, [&](const ArrayElementWrite & write) {
+                    return write.by == store && write.position == 2 &&
+                           seen.contains(write.array->getResult(0));
+                })) {
+                return {};
+            }
+        }
+    }
+    return members;
 }
 
 } // namespace ctcompile::ctnative

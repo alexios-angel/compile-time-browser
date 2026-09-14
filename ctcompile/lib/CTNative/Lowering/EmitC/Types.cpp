@@ -10,8 +10,8 @@ void lowering::retype(ctjs::FuncOp fn) {
     // Current contents evidence is invalidated even by retyping operands.
     // Capture every admitted vector access before changing the source IR.
     fn.getBody().walk([&](mlir::Operation * op) {
-        if (op->getNumResults() == 1 && TypeInference::isDenseVectorSite(op->getResult(0))) {
-            collectVector(op->getResult(0));
+        for (mlir::Value result : op->getResults()) {
+            if (TypeInference::isDenseVectorSite(result)) { collectVector(result); }
         }
     });
     // Preserve complete receiver schemas before replacements erase solver
@@ -95,11 +95,15 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         needsString |= isStringCarrier(c);
         // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
-        // scalars carrierType() can spell: `std::vector<double>`, by value,
-        // in this frame.
+        // scalars carrierType() can spell: an owning vector in this frame,
+        // or an SCF-selected address whose owners outlive every use.
         if (isVectorCarrier(c)) {
             needsStringVector |= c == carrier::stringVector;
-            v.setType(vectorCarrierType(context, c == carrier::stringVector));
+            auto owner =
+                llvm::cast<ec::LValueType>(vectorCarrierType(context, c == carrier::stringVector));
+            v.setType(v.getDefiningOp<mlir::scf::IfOp>()
+                          ? mlir::Type(ec::PointerType::get(owner.getValueType()))
+                          : mlir::Type(owner));
             return;
         }
         // NO CARRIER IS FATAL, NOT A DOUBLE. This fell through to f64
@@ -147,6 +151,20 @@ void lowering::retype(ctjs::FuncOp fn) {
             for (mlir::Block & block : region) {
                 for (mlir::BlockArgument a : block.getArguments()) { retypeValue(a); }
             }
+        }
+    });
+    // Selection carries an address to the proved entry-scope owner. Do this
+    // before scalar boundary conversion, which would otherwise load/copy it.
+    fn.getBody().walk([&](mlir::scf::YieldOp yield) {
+        auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+        if (!selected) { return; }
+        for (unsigned index = 0; index < selected.getNumResults(); ++index) {
+            auto pointer = llvm::dyn_cast<ec::PointerType>(selected.getResult(index).getType());
+            auto owner = llvm::dyn_cast<ec::LValueType>(yield.getOperand(index).getType());
+            if (!pointer || !owner || pointer.getPointee() != owner.getValueType()) { continue; }
+            mlir::OpBuilder at(yield);
+            yield->setOperand(index, ec::AddressOfOp::create(at, yield.getLoc(), pointer,
+                                                             yield.getOperand(index)));
         }
     });
     // NOW THE SHAPES. The census gave every closed literal in the module

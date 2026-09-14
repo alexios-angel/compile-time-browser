@@ -376,6 +376,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     assignedIdentityFields_.clear();
     fieldStoreSites_.clear();
     appends_.clear();
+    arrayReadValues_.clear();
     cellStores_.clear();
     mapKeys_.clear();
     mapValues_.clear();
@@ -448,19 +449,23 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     // `create_array` and one `append` per element, but the operation carries
     // them and a lowering that ignored them would drop values.
     top->walk([&](ctjs::CreateArrayOp array) {
-        if (!isDenseVectorSite(array.getResult())) { return; }
-        llvm::SmallVector<mlir::Value, 4> & into = appends_[array.getResult()];
-        for (mlir::Value element : array.getElements()) { into.push_back(element); }
+        for (mlir::Value member : denseVectorAliases(array.getResult())) {
+            auto & into = appends_[member];
+            for (mlir::Value element : array.getElements()) { into.push_back(element); }
+        }
     });
     top->walk([&](ctjs::AppendOp push) {
-        if (!isDenseVectorSite(push.getArray())) { return; }
-        appends_[push.getArray()].push_back(push.getElement());
+        for (mlir::Value member : denseVectorAliases(push.getArray())) {
+            appends_[member].push_back(push.getElement());
+        }
     });
     top->walk([&](ctjs::SetPropertyOp store) {
-        if (constantKey(store.getKey()) == "length" || !isDenseVectorSite(store.getObject())) {
-            return;
+        if (constantKey(store.getKey()) == "length") { return; }
+        // Every selected root has one numeric storage schema, including writes
+        // through another result in the connected ownership group.
+        for (mlir::Value member : denseVectorAliases(store.getObject())) {
+            appends_[member].push_back(store.getValue());
         }
-        appends_[store.getObject()].push_back(store.getValue());
     });
     llvm::DenseSet<mlir::Operation *> contentsFunctions;
     for (const auto & [array, values] : appends_) {
@@ -471,10 +476,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         if (!contents.complete) { continue; }
         for (const auto & read : contents.reads) {
             auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(read.by);
-            if (!get || get.getObject().getDefiningOp() != read.array ||
-                !appends_.contains(get.getObject())) {
-                continue;
-            }
+            if (!get || !appends_.contains(get.getObject())) { continue; }
             auto & origins = arrayReadValues_[read.by];
             if (!llvm::is_contained(origins, read.value)) { origins.push_back(read.value); }
         }

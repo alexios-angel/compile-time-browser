@@ -263,7 +263,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (vectorLengthReads.contains(o)) {
         swap(callWithConstValueOperands(b, where, mlir::TypeRange{f64},
                                         b.getStringAttr("ctnative::vec_length"),
-                                        mlir::ValueRange{o->getOperand(0)})
+                                        mlir::ValueRange{cellPlace(b, where, o->getOperand(0))})
                  .getResult(0));
         return;
     }
@@ -276,16 +276,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                      ? carrierType(context, carrier::nullable)
                                      : resultType;
         const auto value =
-            callWithConstValueOperands(b, where, mlir::TypeRange{storageType},
-                                       b.getStringAttr("ctnative::vec_at"),
-                                       mlir::ValueRange{o->getOperand(0), o->getOperand(1)})
+            callWithConstValueOperands(
+                b, where, mlir::TypeRange{storageType}, b.getStringAttr("ctnative::vec_at"),
+                mlir::ValueRange{cellPlace(b, where, o->getOperand(0)), o->getOperand(1)})
                 .getResult(0);
         swap(convertScalar(b, where, value, resultType));
         return;
     }
     if (vectorLengthWrites.contains(o)) {
         ec::VerbatimOp::create(b, where,
-                               "{}.resize(static_cast<std::vector<double>::size_type>({}));",
+                               llvm::isa<ec::PointerType>(o->getOperand(0).getType())
+                                   ? "{}->resize(static_cast<std::vector<double>::size_type>({}));"
+                                   : "{}.resize(static_cast<std::vector<double>::size_type>({}));",
                                mlir::ValueRange{o->getOperand(0), o->getOperand(2)});
         eraseIfUnused(o);
         return;
@@ -294,7 +296,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // EmitC subscript cannot take an opaque lvalue; loading it would copy
         // the vector. Keep this ordinary assignment on the original storage.
         ec::VerbatimOp::create(b, where,
-                               "{}[static_cast<std::vector<double>::size_type>({})] = {};",
+                               llvm::isa<ec::PointerType>(o->getOperand(0).getType())
+                                   ? "(*{})[static_cast<std::vector<double>::size_type>({})] = {};"
+                                   : "{}[static_cast<std::vector<double>::size_type>({})] = {};",
                                o->getOperands());
         eraseIfUnused(o);
         return;
