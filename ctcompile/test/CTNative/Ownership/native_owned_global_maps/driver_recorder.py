@@ -304,6 +304,10 @@ def recorder_refusals():
         # A completed source rejection must not be disguised as a budget cutoff.
         row.update(admitted=False, max_steps=1_000_000)
     cases["recorder_exact_later_zero"]["max_steps"] = 2_000_000
+    # Every later store is proved independently. Missing/falsy lookups retain
+    # null through the broad getter ABI; the object-valued store still refuses.
+    for name in ("missing", "zero"):
+        cases["recorder_exact_later_" + name]["admitted"] = True
     return cases
 
 
