@@ -6,6 +6,76 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Checked base-class initialization and definite string fields, 2026-09-14 UTC
+
+Started clean **b8d7dcdb**, after the **14:04:21 AGENT-SYNC** completion and the
+**14:07:48** abandoned attempt, which left no dirty source. Both histories and
+unmerged branches were checked; `codex-wip-20260907` is already an ancestor.
+Resumed the promised trusted class-helper boundary from this handoff and
+`bootstrap-native-next.md`. Three agents split provenance review, class controls
+and primitive-field investigation; two reached service limits, and root completed
+implementation and gates. No browser/runtime files changed.
+
+**075bdd9c** adds `ctnative-specialize-class-initialization`. It consumes the
+existing fingerprinted `closed-source-v1` manifest with the explicit initial
+`__ctbrowser_class_defined` identity. A complete bounded census permits only
+local base constructors with empty fresh prototypes, exact construction sites,
+ordinary constant-key receiver uses, and closed source calls. Unique dominating
+source global declarations are rechecked; printed resolver/native attributes
+supply no authority. Only after all checks pass are the unused helper and the
+three unobservable prototype/constructor/home writes removed. Ordinary native
+constructor and field admission still runs independently.
+
+The class gate preserves **13 Node/interpreter source observations**, executes
+**16 native compiler/policy/layout cases**, and checks **26 unprepared refusals /
+17 preparation refusals**. Empty/default and numeric own-field classes execute;
+methods, field initializer closures, inherited/static receivers, constructor
+identity, prototype mutation and helper replacement still refuse. A reviewer
+found a nested-module/external-function crash risk; the checked top-level region
+census now refuses the verifier-valid control. Forged native attributes cannot
+supply missing authority and are removed after successful fresh proof. The
+empty-class census first succeeds at **99 steps**; **98** refuses without output.
+The original helper overrides remain **Node 0 / interpreter 1**, and the inherited
+static getter remains **Node 1 / interpreter 0**. No runtime behavior was changed.
+
+**fef19039** admits a local field as `std::string` only when all its reads and
+writes have definite String carriers. The existing emitter owns the bytes by
+value; mixed or possibly absent fields cannot fall into its numeric nullable
+join. The new saved-string/NUL/independent-object case passes **8 native
+executions**; **10 refusals** preserve mixed/absent fields, String length and
+borrowed-object boundaries. The preserved `literal-primitives.js` now executes
+unchanged through the existing nullable Number/Boolean/Null/Undefined storage and
+the new String admission. The scalar prototype group rises **40 → 48 native
+executions**; global `undefined` still requires separate binding provenance.
+`Scalars/strings.mlir` keeps its original field source and now checks native output.
+
+Focused class checks pass **3/3 lit in 9.82s / 4/4 CTests in 43.11s**; the final
+hardened class driver and **3/3 CTests in 0.36s** pass. The String/scalar fixtures
+pass their focused lit checks after preserving the discovered length/borrow
+refusals. Generated class/String C++ was inspected: local owning structs/strings,
+borrowed constructor pointers and no Script symbols. Stable formatting passes
+**825 C++ / 99 Python / 33 web**; the required pinned formatter retains the
+byte-identical prior **nine-file / 26-diagnostic** baseline.
+
+**Full-gate checkpoint:** the standard **276-step build passed**, and the
+**600-test CTest gate is running** against **1,438 frozen non-Markdown inputs**.
+Do not claim final full-suite or fresh vendor/escape results until
+`/tmp/ctcompile-class-initialization/full.log` and `measured.json` finish. The
+preceding full snapshot was Bootstrap **19/574**, original DOM Data **7/7**, Button
+**4/86**, and escape precision **40/172** with zero violations; those are previous
+measurements at this checkpoint, not an admission gain from these local probes.
+
+**Exact next Bootstrap boundary:** extend the checked local class proof to
+immutable prototype methods and inherited receiver/static-getter semantics,
+then compose class preparation with the existing DOM Data ownership contract.
+The present preparation pass does not accept Map/DOM providers or the original
+Button source. Default derived argument forwarding, lexical super home,
+`this.constructor`, retained DOM/config payloads, dataset, disposal's event writes,
+persistent actions/events and the native application driver remain unfinished.
+The original Button lifecycle and its uncaught interpreter failure must remain.
+Independent next work: String property-read lowering and borrowed String fields,
+then sound mixed/optional String field joins; broader array lifetimes are unchanged.
+
 ## Recovered counted borrows and scalar prototypes, 2026-09-14 UTC
 
 Resumed dirty **353f8ab4** from the **12:56:45/12:57:56 AGENT-SYNC** class/array thread,

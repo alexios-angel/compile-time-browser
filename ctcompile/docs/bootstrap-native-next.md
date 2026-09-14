@@ -28,13 +28,21 @@ explicit linkage. Those measured discrepancies are journaled for Claude; the tes
 fails when they change so the next measurement cannot silently reuse them.
 The older driver catches this failure and never disposes Button.
 
-**Next compiler boundary: Stage 60A's closed prototype/inherited receiver proof.**
-Class import includes an ordinary mutable-global call to
-`__ctbrowser_class_defined`; it makes properties non-enumerable. Its spelling
-alone cannot authorize erasing that call. Establish trusted initialization
-provenance and a complete constructor/prototype use census before admitting source
-classes. `makesAnInstance`, method resolution,
-receiver admission and the scalar-field environment must consume compatible proof.
+**075bdd9c** supplies the first trusted class-initialization slice. The explicit
+`ctnative-specialize-class-initialization` pass binds the complete source fingerprint
+and the host's initial `__ctbrowser_class_defined` identity. Only a complete local
+base-class/setup/use census can remove its unobservable descriptor effects. The
+empty/default and numeric own-field cases pass **16 native executions**, with
+**26 unprepared refusals / 17 preparation refusals**. Methods, inheritance,
+field-initializer closures, reflection, helper mutation and unknown source effects
+remain refused. This pass is separate from the DOM Data provider and does not yet
+prepare original Button. [Host contract details](native-host-slots.md) describe the
+input and its limits; [HANDOFF](HANDOFF.md) records the full-gate status.
+
+**Next compiler boundary: Stage 60A's immutable prototype methods and inherited
+receivers**, followed by composition with DOM Data ownership. `makesAnInstance`,
+method resolution, receiver admission and the scalar-field environment must consume
+compatible proof.
 Default derived construction forwards through `super`; inherited static getters,
 `this.constructor`, lexical home and `new.target` are separate obligations.
 
@@ -50,10 +58,16 @@ rejects constructing unused-this arrows. Its preserved source exposes another or
 discrepancy: Node throws TypeError, while the interpreter's inline construct opcode
 returns 7. Native refuses; the runtime finding is journaled for Claude.
 
-This does not prove class initialization: HostContract's `initial_intrinsics`
-currently admits only Map and Array, and its realm descriptor guard also rejects
-prototype writes. Extend that existing provenance/use boundary and model the actual
-initialization effects; do not infer an intrinsic from the helper's name.
+**fef19039** additionally admits definite local String fields as `std::string`.
+The preserved literal-primitives prototype now executes unchanged, bringing that
+group to **48 native executions**. The new saved-string/NUL/independent-object gate
+passes **8 native executions / 10 refusals**; mixed/possibly absent strings, String
+length operations and borrowed String fields remain outside this slice.
+
+HostContract now accepts the helper's explicitly declared initial identity as well
+as Map and Array. The local class pass accepts only its helper declaration; the
+existing realm descriptor guard still rejects prototype writes. Broader composition
+needs a shared complete provenance/use proof, not a helper-name exemption.
 Component publication retains `_element` and `_config`, beyond Data's current
 scalar-field leaf proof. See HANDOFF for measured gates and the final full-gate status.
 
