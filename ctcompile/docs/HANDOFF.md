@@ -6,6 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Outer-key formals and imported-loop normalization, 2026-09-14 UTC
+
+Clean start at **b33f91b8**; the 05:07:54 AGENT-SYNC journal confirmed previous
+recovery complete, and the September 7 WIP was already an ancestor. Continued the
+promised DOM/Data input boundary and the preserved imported-loop refusal.
+
+**23d360db** records `HostCapturedMap.outerKeyParameters` independently of caller
+allocation roles. Only object-capable formals used exclusively as direct keys of
+the captured outer Map qualify; outer snapshots withhold every role. A caller's
+field or sibling payload use can exclude its allocation while a getter's formal
+retains its own narrower role. Every owning call revalidates the complete family.
+No DOM origin, input non-aliasing or borrowed lifetime follows from this evidence.
+Focused **70-step build / 2/2 CTests PASS in 235.25s**: ownership **235.24s**, unchanged
+Data session **30.58s**, including source/prepared mutations and budget cutoffs.
+
+**c4b7cf8c** recovers the importer's exact `1/0` loop guard and uses upstream SCF
+while patterns, with folding, constant CSE and region simplification disabled.
+Independent review found an upstream duplicate-result replacement hazard; each
+pattern application now checks current operands, including moved nested loops
+and aliases created during cleanup. Seven new structural controls cover guard,
+effect and duplicate-forwarding boundaries. The existing invariant-loop source
+now carries one counter slot instead of two; its source is unchanged.
+
+**c65ad9cb** repairs two defects exposed by the first full gate: upstream
+`WhileMoveIfDown` could introduce a before-to-after sibling-region use, and shared
+dominance trees could outlive erased regions and crash later function lifting.
+The guard now checks live passthrough uses before every rewrite; dominance data is
+local to each function. An isolated Bootstrap do-while and a new IR regression
+reproduced the first defect. Guard-only repair fixed Bootstrap while p5/Phaser
+still crashed; local dominance fixed those separately. The numeric source is
+unchanged; its structural check now expects the condition before the body.
+Corrected **9-step build / 5/5 lit in 1.80s / 47/47 CTests in 24.08s PASS**, including
+all native claims, both loop policies/layouts and the complete escape oracle.
+The first full gate was **565/573**, with **167/169 lit**, and remains in `full.log`;
+its progress count was initially misread as a passed count and corrected in AGENT-SYNC.
+
+The preserved `array-overwrite-loop.js` is byte-identical, SHA256
+`3d926af84da7a76e3080257dade46e5d59ad603ba0231dff7d24f97de2f81cbf`.
+It improves **0/2 → 2/2 native**, both policies, through the existing complete
+contents proof, with no EscapeAnalysis changes. Initial loop-focused **3/3 lit PASS /
+12/12 CTests PASS in 5.42s** includes both layouts, GCC/Clang compile-clean,
+VM differential execution, printing checks and the complete escape oracle.
+This is a called local fixture, not a vendor admission gain.
+
+Corrected full standard gate: **244-step build / 573/573 CTests PASS in 1226.65s**,
+including **169/169 lit in 870.79s**. All **1418 frozen inputs** match local/devbox.
+Under full load, Data takes **52.96s**, owned DOM **78.65s**, DOM entries **272.81s**
+and shared-Map ownership **355.85s**. Stable format **823 C++ / 90 Python / 33 web
+PASS**; pinned output matches the existing nine-file / 26-diagnostic baseline exactly.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skipped/pruned functions. DOM stays **18 entries / 42 refusals**; the owned
+session stays **3 sources / 5 retention refusals**, with generated-client ASan/UBSan
+against ordinary browser libraries. The unchanged Data probe stays **3218 bytes /
+7/7 functions / 23 calls / 19 observations / 3 outer-key objects**. The complete
+escape source/snapshot stays **222 functions / 861 claims / 895 observed sites /
+35 unclaimed / zero violations / 40 of 172 precision**; structured contents stays
+**43 rows / 2228 budget cutoffs**. Scalar/Data checks use GCC13.3/Clang18.1.3;
+DOM checks use GCC13.3/Clang24. Final evidence is `full-fixed.log` and `measured.json`.
+Evidence and independent review notes are in `/tmp/ctcompile-data-formals/` and
+AGENT-SYNC. No browser source/runtime changes, WPT/test262 remeasurement or push.
+
+**Next native:** explicit DOM actual origins at the Data entry, validated against
+these formal roles across every method call, then private Data/table storage
+inside the nonmovable atoms/document owner. `HostContractAnalysis` still rejects
+explicit entry arguments; `capturedMapParameters` and callable-edge construction
+still require source allocations. Keep different external parameters potentially
+aliasing: current `CapturedMapBody::keyRelation` distinguishes source allocations,
+not arbitrary parameters. Never synthesize fresh objects to stand in for DOM
+inputs. The existing shared table/global carriers can still escape their owner.
+Preserve full document/node identity, validate all domains before effects, and
+reject DOM payloads, child keys, snapshots, returns and extracted callables.
+Gate a source with no Map snapshots too: Data's child snapshot selects insertion-order
+storage and cannot test the separate associative key comparator.
+Then component construction/disposal, retained callbacks and the application driver.
+**Next escape:** broader source alias/ownership consumers and a preserved vendor
+refused-to-emitted case. Keep duplicate guard forwarding and before-region
+passthrough uses refused until their upstream rewrite is fixed; the complete
+contents proof still rejects unsupported loops.
+
 ## Owned DOM sessions and direct arrays, 2026-09-14 UTC
 
 **Owned synchronous DOM sessions and direct-array contents, 2026-09-14 UTC.**

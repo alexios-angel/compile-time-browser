@@ -139,6 +139,11 @@ Data session supplies direct/member calls. Connecting them requires explicit DOM
 input provenance across the complete Data method family, conservative aliasing
 between different inputs, and Data storage that cannot outlive the document.
 The existing shared table/global carriers do not provide that final guarantee.
+The live `HostCapturedMap.outerKeyParameters` proof now separates each method's
+outer-key-only formals from caller allocation ownership. It does not identify an
+external DOM origin or imply that two input parameters differ. The entry and
+call-argument proofs still require source-created objects; explicit DOM inputs
+must extend those proofs without pretending that borrowed handles are fresh allocations.
 Retained DOM keys are not admitted yet.
 Then admit the original Button receiver/action
 and its BaseComponent/Config construction, prototype/static getters and disposal.

@@ -59,13 +59,25 @@ complete family proof and removal of escaping shared table/global ownership for
 that mode. Distinct input parameters can alias the same node and must not be
 assumed unequal. See [native-dom-entry.md](native-dom-entry.md) for the entry API.
 
-The direct-array counted contents certificate has also landed. The preserved
-`array-overwrite-loop.js` still measures **0/2 native**, both policies before/after:
-the imported loop has a branch inside its header and poison/arith flag transport.
-Proving that complete shape is next; recognizing the direct array alone did not
-produce an emission gain.
-Both milestones passed the full **563/563 CTest / 169/169 lit** gate; all **1418
-frozen inputs** match the devbox. Full Bootstrap stays **19/574**, both policies.
+The complete-family proof now records outer-key formal parameters separately from
+caller allocation roles (**23d360db**). A getter's parameter can retain its role
+when the caller also passes that same object as a sibling payload. DOM origins,
+conservative input aliases and nonescaping storage must still be proved separately.
+
+The preserved `array-overwrite-loop.js` now improves **0/2 → 2/2 native**, both
+policies, through **c4b7cf8c**. Exact `1/0` guard recovery exposes the existing
+header/body contents certificate; checked upstream SCF while patterns remove
+the temporary poison/flag transport. No escape proof was weakened. Every pattern
+application checks for duplicate forwarding, including aliases introduced during
+cleanup and moved nested loops. **c65ad9cb** also guards before-region passthrough
+uses and makes dominance data local to each function, fixing Bootstrap's do-while
+and p5/Phaser crashes exposed by the full gate. Corrected **5/5 lit / 47/47 CTests
+PASS in 24.08s** cover all native claims, both loop policies/layouts/compilers, VM
+observations and the complete oracle.
+The corrected full gate passed **573/573 CTests in 1226.65s / 169/169 lit in
+870.79s**, with all **1418 frozen inputs** matching local/devbox. Fresh full Bootstrap
+remains **19/574 native / 0 of 43 globals**, both policies, no skips/prunes.
+[HANDOFF](HANDOFF.md) records the measurements and the initial failed gate.
 
 ## What is measured
 
@@ -75,7 +87,8 @@ frozen inputs** match the devbox. Full Bootstrap stays **19/574**, both policies
 | Browser Data/UMD probe: **7/7** with manifest, prefix specialization and explicit 1m budget | Ownership and execution of the extracted Data methods and wrapper, including their preserved observations | A real Window, DOM nodes, Bootstrap constructors, event registration |
 | Data session probe: **7/7**, 23 direct calls and 19 typed observations | Nonmovable method table owns its outer Map by value; source methods access it directly without stored captures and cannot escape independently; compile-clean and saved-child/payload lifetime gates | Atoms/document ownership and retained DOM keys; table, child-Map and ordinary object ownership remain |
 | Full bundle: **0/43 globals resolved** | Current module-wide global-name census refuses | This is not a count of 43 missing browser APIs |
-| Called local array-overwrite fixture: **0/6 → 6/6 native**, both policies | Live own-element write proof, stored-value type joins and direct vector assignments; unchanged source | Structured-loop transport and a preserved vendor admission gain |
+| Called local array-overwrite fixture: **0/6 → 6/6 native**, both policies | Live own-element write proof, stored-value type joins and direct vector assignments; unchanged source | Broader loop forms and a preserved vendor admission gain |
+| Called local array-overwrite-loop fixture: **0/2 → 2/2 native**, both policies | Exact imported guard normalization lets the existing complete contents proof authorize the unchanged source | Duplicate guard forwarding, broader aliases and a preserved vendor admission gain |
 | Generic escape oracle: **40/172 precision**, zero violations in the recorded snapshot | Independent analysis evidence; complete current contents now feed the local vector density check | General retained-graph ownership and refined escape verdicts remain outside native emission |
 
 Fresh full-source IR names the leading first refusals: **272 `this` receivers**,
@@ -104,20 +117,22 @@ show only each function's first failure; fixing one exposes its downstream failu
    contract with the existing source-owned Data provider. The next proof must
    establish that each owning document outlives the stored keys and every future
    Data invocation, using ordinary C++ ownership.
-   The current Data probe permits extracted callables to outlive their owner;
-   borrowing an element into that carrier would dangle. Also, `document` borrows
-   its atom table. Prove a nonmovable session owning atoms, document, then Data
-   state in that declaration order. The separate session provider has established
-   direct/member calls that cannot escape independently; extend that proof with
-   document ownership. Keep this distinct from the existing owning Data-callable
+   The existing owning-callable provider permits extracted callables to outlive
+   their owner; its session variant prevents method extraction, but the table and
+   global carriers can still escape. Borrowing an element into either escaping
+   carrier would dangle. Also, `document` borrows its atom table. Extend the owned
+   DOM session with private Data storage declared after atoms and document, so Data
+   is destroyed first. Keep this distinct from the existing owning Data-callable
    contract, and give DOM keys their own provenance instead of treating them as
    source-created ordinary objects.
-   The current entry proof accepts only three implicit script arguments, and
+   The closed-source Data script-entry proof accepts only three implicit arguments, and
    its actual-object census requires source allocations. An owned-session input
    contract must supply DOM origins explicitly. The existing `objectKeys` category
-   permits both keys and payloads: give DOM values a role limited to outer Map keys,
-   initially refusing payloads, child keys, snapshots and returns. Revalidate that
-   role across the full method family before type inference or emission. Compare
+   permits both keys and payloads. Match explicit DOM origins to the new
+   `outerKeyParameters` roles, initially refusing payloads, child keys, snapshots
+   and returns. Revalidate that role across the full method family before type
+   inference or emission. Distinct external parameters may denote the same node;
+   do not reuse the distinct-source-allocation proof for them. Compare
    foreign document ownership before validation dereferences the owner pointer.
    Reuse `ctbrowser::document` and `node_id` from the public DOM API. Bind their
    identity, ownership and permitted calls through the existing HostContract,
@@ -127,7 +142,11 @@ show only each function's first failure; fixing one exposes its downstream failu
    must preserve identity, distinct nodes must differ, and detaching a node must not
    free it or confuse Data entries. Prove a single document domain or preserve
    document identity too: node IDs from different documents can have equal bits.
-   The document must outlive borrowed handles.
+   The document must outlive borrowed handles. `element_ref` currently supplies
+   equality only, while the non-iterating native Map uses `std::less<K>`; prove its
+   key ordering as well as the insertion-order representation. Test a source with
+   no Map snapshots too: Bootstrap Data's child-key snapshot selects insertion-order
+   storage module-wide and would otherwise hide that comparator path.
    This is a **Data + DOM** milestone with its own denominator.
 2. **Compile a real Button action, then its construction and lifetime.**
    [Button.toggle](../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js#L424) toggles
@@ -202,8 +221,10 @@ is not required to take the browser branch of Bootstrap's wrapper. The original
 write evidence for direct local overwrites. Stored values join the element type;
 admission requires definite Number indices and values, and emission records accesses
 before retyping invalidates the proof. The called fixture preserves its source while
-moving from refusal to execution under both policies. Structured-loop transport,
-retained graph ownership and a preserved vendor admission gain remain separate work.
+moving from refusal to execution under both policies. The preserved counted-loop
+fixture now also emits through checked guard normalization and the complete contents
+proof. Broader loop/alias transport, retained graph ownership and a preserved vendor
+admission gain remain separate work.
 
 The `window.scrollTo` receiver in ScrollSpy triggers the current global-object
 escape reason. [Native.cmake](../test/cmake/Native.cmake) also records why removing
