@@ -159,6 +159,126 @@ function method_empty() {
 }
 var a = method_empty();
 
+// Calls through an immutable method keep the exact receiver at every depth.
+//--- method-chain.js
+function method_chain() {
+    class Shape {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        outer() { return this.read(); }
+    }
+    var first = new Shape(7), second = new Shape(2);
+    first.n = 9;
+    return first.outer() * 10 + second.outer();
+}
+var a = method_chain();
+
+// The leaf needs no receiver after lifting, nor does its caller after rewrite.
+//--- method-chain-empty.js
+function method_chain_empty() {
+    class Shape {
+        read() { return 7; }
+        outer() { return this.read(); }
+    }
+    return new Shape().outer();
+}
+var a = method_chain_empty();
+
+// An unused inner result still mutates its receiver, independently at each site.
+//--- method-chain-effects.js
+function method_chain_effects() {
+    class Shape {
+        constructor(n) { this.n = n; }
+        set(n) { this.n = n; return n + 1; }
+        middle(n) { this.set(n); return this.n; }
+        outer(n) { return this.middle(n) + this.n; }
+    }
+    var first = new Shape(1), second = new Shape(2);
+    var left = first.outer(3), right = second.outer(7);
+    return left * 1000 + right * 100 + first.n * 10 + second.n;
+}
+var a = method_chain_effects();
+
+// Evaluate inner arguments before the outer body and keep its following read.
+//--- method-chain-order.js
+function method_chain_order() {
+    class Shape {
+        constructor() { this.n = 1; }
+        write(n) { this.n = this.n * 10 + n; return this.n; }
+        outer() { return this.write(this.write(2)) + this.n; }
+    }
+    return new Shape().outer();
+}
+var a = method_chain_order();
+
+//--- method-chain-replace.js
+function method_chain_replace() {
+    class Shape {
+        read() { return 7; }
+        outer() { this.read = function () { return 9; }; return this.read(); }
+    }
+    return new Shape().outer();
+}
+var a = method_chain_replace();
+
+// The callee is read before its argument replaces the property: first 7, then 9.
+//--- method-chain-argument-replace.js
+function method_chain_argument_replace() {
+    class Shape {
+        read(n) { return 7; }
+        replace() { this.read = function () { return 9; }; return 0; }
+        outer() { return this.read(this.replace()); }
+    }
+    var instance = new Shape();
+    return instance.outer() * 10 + instance.read();
+}
+var a = method_chain_argument_replace();
+
+//--- method-chain-identity.js
+function method_chain_identity() {
+    class Shape {
+        read() { return 7; }
+        outer() { return (this.read === this.read) * 1; }
+    }
+    return new Shape().outer();
+}
+var a = method_chain_identity();
+
+// The same SSA receiver also used as an argument needs a separate borrow proof.
+//--- method-chain-argument-receiver.js
+function method_chain_argument_receiver() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(other) { other.n = 9; return this.n; }
+        outer() { return this.read(this); }
+    }
+    return new Shape().outer();
+}
+var a = method_chain_argument_receiver();
+
+//--- method-chain-return-receiver.js
+function method_chain_return_receiver() {
+    class Shape {
+        constructor() { this.n = 7; }
+        next() { return this; }
+        outer() { return this.next().n; }
+    }
+    return new Shape().outer();
+}
+var a = method_chain_return_receiver();
+
+// Terminating recursion still requires structured control-flow proof.
+//--- method-chain-cycle.js
+function method_chain_cycle() {
+    class Shape {
+        constructor() { this.n = 7; }
+        first(n) { if (n === 0) { return this.n; } return this.second(n - 1); }
+        second(n) { return this.first(n); }
+    }
+    return new Shape().first(1);
+}
+var a = method_chain_cycle();
+
 //--- method-shadow.js
 function method_shadow() {
     class Shape { read() { return 7; } }
@@ -196,6 +316,29 @@ function method_constructor_write() {
     return new Shape().read();
 }
 var a = method_constructor_write();
+
+// Construction invokes prototype methods before any post-construction binding.
+//--- method-constructor-call.js
+function method_constructor_call() {
+    class Shape {
+        constructor() { this.n = this.init(7); }
+        init(n) { this.n = n; return n + 1; }
+        read() { return this.n; }
+    }
+    return new Shape().read();
+}
+var a = method_constructor_call();
+
+//--- method-constructor-order.js
+function method_constructor_order() {
+    class Shape {
+        constructor() { this.n = 1; this.init(this.init(2)); }
+        init(n) { this.n = this.n * 10 + n; return this.n; }
+        read() { return this.n; }
+    }
+    return new Shape().read();
+}
+var a = method_constructor_order();
 
 //--- method-self-replace.js
 function method_self_replace() {

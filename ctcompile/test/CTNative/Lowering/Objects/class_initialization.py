@@ -21,10 +21,22 @@ OBSERVATIONS = {
     "method": (92, 92),
     "method-arguments": (3737, 3737),
     "method-empty": (7, 7),
+    "method-chain": (92, 92),
+    "method-chain-empty": (7, 7),
+    "method-chain-effects": (7437, 7437),
+    "method-chain-order": (264, 264),
+    "method-chain-replace": (9, 9),
+    "method-chain-argument-replace": (79, 79),
+    "method-chain-identity": (1, 1),
+    "method-chain-argument-receiver": (9, 9),
+    "method-chain-return-receiver": (7, 7),
+    "method-chain-cycle": (7, 7),
     "method-shadow": (9, 9),
     "method-extracted": (1, 1),
     "method-constructor-read": (1, 1),
     "method-constructor-write": (9, 9),
+    "method-constructor-call": (8, 8),
+    "method-constructor-order": (132, 132),
     "method-self-replace": (79, 79),
     "method-duplicate": (9, 9),
     "method-captured": (7, 7),
@@ -41,7 +53,17 @@ OBSERVATIONS = {
     "constructor-identity": (1, 1),
     "descriptor": (0, 0),
 }
-POSITIVES = {"empty", "number", "method", "method-arguments", "method-empty"}
+POSITIVES = {
+    "empty",
+    "number",
+    "method",
+    "method-arguments",
+    "method-empty",
+    "method-chain",
+    "method-chain-empty",
+    "method-chain-effects",
+    "method-chain-order",
+}
 PREPARATION = "--ctnative-specialize-class-initialization="
 
 
@@ -297,7 +319,7 @@ def main():
             ):
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
-        if name in ("empty", "method"):
+        if name in ("empty", "method", "method-chain-order"):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         for optimize in (False, True):

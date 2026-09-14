@@ -53,12 +53,12 @@ struct classInitialization {
         return store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
     }
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
-                    bool instance = false) {
+                    bool methodsAvailable = false) {
         for (mlir::OpOperand & use : object.getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && instance) {
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && methodsAvailable) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (use.getOperandNumber() == 1 && read && read.getObject() == object &&
                     read.getResult().hasOneUse() &&
@@ -78,7 +78,7 @@ struct classInitialization {
                 auto call = read && read.getResult().hasOneUse()
                                 ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
                                 : ctjs::CallOp{};
-                if (!instance || !call || call.getCallee() != read.getResult() ||
+                if (!methodsAvailable || !call || call.getCallee() != read.getResult() ||
                     call.getReceiver() != object) {
                     return refuse(
                         "class method is observed, shadowed or accessed by its constructor");
@@ -88,8 +88,8 @@ struct classInitialization {
         return true;
     }
 
-    // ponytail: local base methods with field-only receivers; inheritance and
-    // chained method calls need a complete receiver/home proof before widening.
+    // ponytail: immutable local base methods; constructor calls and inheritance
+    // need a complete initialization-order/receiver/home proof before widening.
     bool examine(ctjs::CallOp call) {
         if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
@@ -187,8 +187,8 @@ struct classInitialization {
             auto & block = fn.getBody().front();
             if (!methodHome || !block.getArgument(ctjs::arg_callee).use_empty() ||
                 !block.getArgument(ctjs::arg_new_target).use_empty() ||
-                !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys)) {
-                return refuse("class method observes its identity, home or another method");
+                !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, true)) {
+                return refuse("class method observes its identity, home or an unproved receiver");
             }
             methods.insert(fn);
             methodHomes.insert(methodHome);
