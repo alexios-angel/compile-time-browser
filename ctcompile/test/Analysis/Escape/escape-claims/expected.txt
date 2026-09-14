@@ -6,7 +6,7 @@
 # No program hash, function, allocation PC, kind, count, route or claim is discarded.
 # Implicit Errors must remain site rows with their exact thrown counts and unclaimed verdict.
 # Measured baseline: 222 functions, 895 observed sites, 35 unclaimed, zero violations;
-# precision 39/172. Original source SHA pins remain in Initialize.cmake.
+# precision 40/172. Original source SHA pins remain in Initialize.cmake.
 # Family explanations retained from the preceding per-family CMake assertions.
 
 program 4a20324d7d3db801
@@ -233,7 +233,7 @@ alloc 3152 fn 1 0 1 0 0 globals:1 escapes:phase59
 fn 1 confinedObject
 alloc 1 obj 1 1 0 0 0 - escapes:passed
 fn 2 confinedArray
-alloc 3 arr 1 1 0 0 0 - escapes:passed
+alloc 3 arr 1 1 0 0 0 - confined
 fn 3 confinedForOf
 alloc 3 arr 1 1 0 0 0 - escapes:passed
 alloc 15 arr unobserved unclaimed

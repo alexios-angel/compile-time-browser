@@ -70,6 +70,10 @@ void lowering::lower(ctjs::FuncOp fn) {
     for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
         params.push_back(entry.getArgument(i).getType());
     }
+    const auto styleType = ec::OpaqueType::get(context, "ctbrowser::style::engine &");
+    for (mlir::BlockArgument parameter : domStyleParameters) {
+        if (parameter.getOwner() == &entry) { params.push_back(styleType); }
+    }
     const mlir::Type f64 = mlir::Float64Type::get(context);
     const mlir::Type i32 = mlir::IntegerType::get(context, 32);
     // THE RETURN TYPE IS WHAT THE RETURNS CARRY - retyped already, so any
@@ -95,6 +99,11 @@ void lowering::lower(ctjs::FuncOp fn) {
                                   siteOfFunction(fn)));
     made.getBody().takeBody(fn.getBody());
     mlir::Block & body = made.getBody().front();
+    for (mlir::BlockArgument parameter : domStyleParameters) {
+        if (parameter.getOwner() == &body) {
+            domStyles[parameter] = body.addArgument(styleType, made.getLoc());
+        }
+    }
 
     // THE ONE LOCAL A RECEIVER COSTS, built by memberAccess() at the first
     // field it reads: `emitc.member_of_ptr` wants an lvalue HOLDING the
@@ -193,6 +202,14 @@ void lowering::lower(ctjs::FuncOp fn) {
                                                           at.getStringAttr("static_cast<void>"),
                                                           mlir::ValueRange{arg});
             suppression->setAttr("ctnative.parameter_suppression", at.getUnitAttr());
+        }
+        for (mlir::BlockArgument parameter : domStyleParameters) {
+            if (parameter.getOwner() == &body) {
+                callWithConstValueOperands(
+                    at, made.getLoc(), mlir::TypeRange{},
+                    at.getStringAttr("ctnative::require_style"),
+                    mlir::ValueRange{parameter, domStyles.lookup(parameter)});
+            }
         }
     }
 

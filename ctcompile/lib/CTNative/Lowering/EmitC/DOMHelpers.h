@@ -65,4 +65,51 @@ inline void remove_attribute(ctbrowser::element_ref element, std::string_view na
 } // namespace ctnative
 )cpp";
 
+inline constexpr llvm::StringLiteral kDOMContainsHelpers = R"cpp(
+namespace ctnative {
+inline bool contains(ctbrowser::element_ref element, ctbrowser::element_ref other) {
+    return element.owner == other.owner &&
+        element.owner->read().is_ancestor_of(element.id, other.id);
+}
+} // namespace ctnative
+)cpp";
+
+inline constexpr llvm::StringLiteral kDOMSelectorHelpers = R"cpp(
+namespace ctnative {
+inline void require_style(ctbrowser::element_ref element, ctbrowser::style::engine & style) {
+    if (&style.atoms() != &element.owner->atoms()) {
+        throw std::invalid_argument("DOM selector engine uses another atom table");
+    }
+}
+inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref element,
+                                                       std::string_view selector) {
+    bool bad = false;
+    auto parsed = ctbrowser::style::css::parse_selector_text(selector, element.owner->atoms(), bad);
+    if (bad) { throw std::invalid_argument("DOM selector is invalid"); }
+    return parsed;
+}
+} // namespace ctnative
+)cpp";
+
+inline constexpr llvm::StringLiteral kDOMMatchesHelpers = R"cpp(
+namespace ctnative {
+inline bool matches(ctbrowser::element_ref element, ctbrowser::style::engine & style,
+                    std::string_view selector) {
+    const auto parsed = parse_selector(element, selector);
+    return style.element_matches(element.owner->read(), element.id, parsed.selectors);
+}
+} // namespace ctnative
+)cpp";
+
+inline constexpr llvm::StringLiteral kDOMClosestHelpers = R"cpp(
+namespace ctnative {
+inline ctbrowser::element_ref closest(ctbrowser::element_ref element,
+                                     ctbrowser::style::engine & style, std::string_view selector) {
+    const auto parsed = parse_selector(element, selector);
+    const auto found = style.closest(element.owner->read(), element.id, parsed.selectors);
+    return found ? ctbrowser::element_ref{element.owner, found} : ctbrowser::element_ref{};
+}
+} // namespace ctnative
+)cpp";
+
 } // namespace ctcompile::ctnative::lowering_detail

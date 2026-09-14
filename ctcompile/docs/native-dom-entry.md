@@ -7,6 +7,16 @@ contract for one synchronous function. Its explicit parameters are borrowed
 the call. Identity compares both fields, including across documents; detaching
 a node does not destroy it.
 
+Entries using `matches` or `closest` also take the caller's live
+`ctbrowser::style::engine &` for each element parameter used as a selector
+receiver, appended after the element parameters in source parameter order.
+For example, `closest(element, expected)` takes `(element_ref, element_ref,
+style::engine &)`, and two queried elements take two engine references. The
+caller supplies the engine associated with each document, so hover/focus state
+matches the page. Every element and engine atom-table association is checked
+before source effects. The engine, document and their atom table must remain
+alive throughout the synchronous call.
+
 This is an action entry, not native Bootstrap initialization. For example:
 
 ```javascript
@@ -49,6 +59,18 @@ strict element identity, Boolean negation, Boolean/String/undefined constants an
 `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from source strings;
 force is a proved Boolean (including an earlier DOM result) or explicit undefined.
+`contains(otherElement)`, `matches(selector)` and `closest(selector)` also
+use proved parameter receivers. Selectors are source strings, parsed by the
+existing Style parser at the source call; invalid syntax throws
+`std::invalid_argument` after any preceding source effects. `contains` preserves
+document identity before calling `read_txn::is_ancestor_of`. Selector calls use
+`engine::element_matches` and `engine::closest`, the same cores as the bindings.
+
+A `closest` result is a local borrowed identity, with a canonical empty
+`element_ref{}` for no match. Its only supported observation is strict equality
+with another result or an element parameter, so misses compare equal even across
+documents. Dereferencing, retaining or returning that result, passing it to
+`contains`, and comparing it with an explicit source `null` still refuse.
 Unsupported coercions and observed set/remove results refuse.
 
 The provider starts with the standard `undefined` binding, independently of
@@ -76,7 +98,10 @@ The registered `ctcompile_native_dom_entry` CTest compiles and executes real
 DOM clients with GCC and the configured C++23 Clang, both printing layouts and
 optimization policies. It checks document domains, detached subtree lifetime,
 ordered mutations, String/Boolean conversion, validation failures, refusal
-controls and absence of Script symbols. Boolean actions also exclude scalar
+controls and absence of Script symbols. Selector clients additionally link Style;
+other actions keep DOM/Core-only linkage. Query checks cover live interactive
+state, atom-table mismatches, shadow boundaries and cross-document misses.
+Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
 Next is retained DOM-backed Data ownership: the document must outlive every

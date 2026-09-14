@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile a typed DOM action and identity query against the real DOM/Core.
+"""Compile typed actions and queries against the real DOM/Core/Style.
 
 This is an action-only browser entry gate, not original Bootstrap construction,
 Data storage, event delivery or native initialization of the vendor bundle.
@@ -71,6 +71,33 @@ EXPLICIT_FORCES = """function explicitForces(element) {
 INVALID_ATTRIBUTE = """function invalidAttribute(element) {
   element.toggleAttribute('bad name', false);
   element.setAttribute('aria-pressed', 'after');
+  return true;
+}
+"""
+CONTAINS = "function contains(first, second) { return first.contains(second); }\n"
+MATCHES = """function matches(element) {
+  const matched = element.matches('button.btn:hover');
+  element.toggleAttribute('data-matched', matched);
+  return matched;
+}
+"""
+CLOSEST = """function closest(element, expected) {
+  return element.closest('[data-bs-toggle="button"]') === expected;
+}
+"""
+CLOSEST_STATE = """function hovered(element, expected) {
+  return element.closest('button:hover') === expected;
+}
+"""
+CLOSEST_SCOPE = "function scope(element) { return element.closest(':scope') === element; }\n"
+CLOSEST_MISSES = """function misses(first, second) {
+  return first.closest('.missing') === second.closest('.missing');
+}
+"""
+INVALID_SELECTOR = """function invalidSelector(element) {
+  element.setAttribute('data-before', 'yes');
+  element.matches('[');
+  element.setAttribute('data-after', 'no');
   return true;
 }
 """
@@ -336,6 +363,131 @@ INVALID_ATTRIBUTE_CHECKS = r"""
 """
 
 
+CONTAINS_CHECKS = r"""
+        const element_ref descendant{&doc, child};
+        assert(@ENTRY@(element, alias));
+        assert(@ENTRY@(element, descendant));
+        assert(!@ENTRY@(descendant, element));
+        assert(!@ENTRY@(element, foreign));
+        assert(!@ENTRY@(foreign, element));
+        assert(doc.remove_child(button));
+        assert(@ENTRY@(element, descendant));
+        assert(doc.remove_child(child));
+        assert(!@ENTRY@(element, descendant));
+        assert(doc.append_child(button, child));
+        for (const bool invalid_first : {false, true}) {
+            bool rejected = false;
+            try { (void)@ENTRY@(invalid_first ? element_ref{} : element,
+                               invalid_first ? element : element_ref{}); }
+            catch (const std::bad_expected_access<dom_error> &) { rejected = true; }
+            assert(rejected);
+        }
+        (void)pressed;
+"""
+
+MATCHES_CHECKS = r"""
+        style::engine selectors{atoms}, foreign_selectors{foreign_atoms};
+        const auto matched = atoms.intern("data-matched");
+        assert(!@ENTRY@(element, selectors));
+        assert(selectors.set_state(button, style::engine::state_hover, true));
+        assert(@ENTRY@(alias, selectors));
+        assert(doc.read().has_attribute(button, matched));
+        assert(!@ENTRY@(foreign, foreign_selectors));
+        assert(doc.remove_child(button));
+        assert(@ENTRY@(element, selectors));
+        assert(selectors.set_state(button, style::engine::state_hover, false));
+        assert(!@ENTRY@(element, selectors));
+        assert(!doc.read().has_attribute(button, matched));
+        (void)doc.take_writes();
+        bool rejected = false;
+        try { (void)@ENTRY@(element, foreign_selectors); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        assert(rejected && doc.take_writes().empty());
+        (void)pressed;
+"""
+
+CLOSEST_CHECKS = r"""
+        style::engine selectors{atoms}, foreign_selectors{foreign_atoms};
+        const element_ref descendant{&doc, child};
+        const auto toggle = atoms.intern("data-bs-toggle");
+        assert(doc.set_attribute(button, toggle, "button"));
+        assert(@ENTRY@(descendant, element, selectors));
+        assert(@ENTRY@(element, alias, selectors));
+        assert(!@ENTRY@(descendant, foreign, selectors));
+        assert(!@ENTRY@(element, descendant, selectors));
+        assert(!@ENTRY@(foreign, foreign, foreign_selectors));
+        assert(doc.remove_child(button));
+        assert(@ENTRY@(descendant, element, selectors));
+        assert(doc.remove_attribute(button, toggle));
+        assert(!@ENTRY@(descendant, element, selectors));
+        assert(doc.set_attribute(button, toggle, "button"));
+        const auto host = doc.create_element(atoms.intern("div"));
+        assert(doc.append_child(button, host));
+        const auto shadow = doc.attach_shadow(host, true).value();
+        const auto shadow_child = doc.create_element(atoms.intern("span"));
+        assert(doc.append_child(shadow, shadow_child));
+        assert(!@ENTRY@(element_ref{&doc, shadow_child}, element, selectors));
+        (void)doc.take_writes();
+        bool rejected = false;
+        try { (void)@ENTRY@(descendant, element, foreign_selectors); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        assert(rejected && doc.take_writes().empty());
+        (void)pressed;
+"""
+
+CLOSEST_STATE_CHECKS = r"""
+        style::engine selectors{atoms};
+        const element_ref descendant{&doc, child};
+        assert(!@ENTRY@(descendant, element, selectors));
+        assert(selectors.set_state(button, style::engine::state_hover, true));
+        assert(@ENTRY@(descendant, element, selectors));
+        assert(doc.remove_child(button));
+        assert(@ENTRY@(descendant, element, selectors));
+        assert(selectors.set_state(button, style::engine::state_hover, false));
+        assert(!@ENTRY@(descendant, element, selectors));
+        (void)alias;
+        (void)foreign;
+        (void)pressed;
+"""
+
+CLOSEST_SCOPE_CHECKS = r"""
+        style::engine selectors{atoms}, foreign_selectors{foreign_atoms};
+        assert(@ENTRY@(element, selectors));
+        assert(@ENTRY@(foreign, foreign_selectors));
+        assert(doc.remove_child(button));
+        assert(@ENTRY@(element, selectors));
+        (void)alias;
+        (void)pressed;
+"""
+
+CLOSEST_MISSES_CHECKS = r"""
+        style::engine selectors{atoms}, foreign_selectors{foreign_atoms};
+        assert(@ENTRY@(element, foreign, selectors, foreign_selectors));
+        assert(doc.set_attribute(button, classes, "missing"));
+        assert(!@ENTRY@(element, foreign, selectors, foreign_selectors));
+        assert(foreign_doc.set_attribute(other_button,
+            foreign_atoms.intern("class"), "missing"));
+        assert(!@ENTRY@(element, foreign, selectors, foreign_selectors));
+        assert(@ENTRY@(element, alias, selectors, selectors));
+        (void)pressed;
+"""
+
+INVALID_SELECTOR_CHECKS = r"""
+        style::engine selectors{atoms};
+        bool rejected = false;
+        try { (void)@ENTRY@(element, selectors); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        assert(rejected);
+        const auto writes = doc.take_writes();
+        assert(writes.size() == 1 && writes[0].name == atoms.intern("data-before"));
+        assert(doc.read().attribute_value(button, atoms.intern("data-before")) == "yes");
+        assert(!doc.read().has_attribute(button, atoms.intern("data-after")));
+        (void)foreign;
+        (void)alias;
+        (void)pressed;
+"""
+
+
 def prepare(args, name, source, parameters):
     js = args.work / f"{name}.js"
     raw = args.work / f"{name}.raw.mlir"
@@ -389,7 +541,7 @@ def lower(args, ir, contract, name, *, optimize=False, success=True):
     return text
 
 
-def link_options(args):
+def link_options(args, *, selectors=False):
     cache = dict(
         re.findall(
             r"^([A-Za-z0-9_]+):[^=\n]+=(.*)$", (args.build / "CMakeCache.txt").read_text(), re.M
@@ -404,6 +556,8 @@ def link_options(args):
         args.build / "lib/DOM/libctbrowser-dom.a",
         args.build / "lib/Core/libctbrowser-core.a",
     ]
+    if selectors:
+        libraries.insert(0, args.build / "lib/Style/libctbrowser-style.a")
     for name in ("CTBROWSER_SIMDUTF", "CTBROWSER_MIMALLOC"):
         if name == "CTBROWSER_MIMALLOC" and cache.get("CTBROWSER_USE_MIMALLOC") != "ON":
             continue
@@ -481,6 +635,19 @@ def main():
     entries = (
         ("action", ACTION, 1, ACTION_CHECKS),
         ("identity", IDENTITY, 2, IDENTITY_CHECKS),
+        ("contains", CONTAINS, 2, CONTAINS_CHECKS),
+        ("matches", MATCHES, 1, MATCHES_CHECKS),
+        ("closest", CLOSEST, 2, CLOSEST_CHECKS),
+        ("closest-state", CLOSEST_STATE, 2, CLOSEST_STATE_CHECKS),
+        ("closest-scope", CLOSEST_SCOPE, 1, CLOSEST_SCOPE_CHECKS),
+        ("closest-misses", CLOSEST_MISSES, 2, CLOSEST_MISSES_CHECKS),
+        ("invalid-selector", INVALID_SELECTOR, 1, INVALID_SELECTOR_CHECKS),
+        (
+            "invalid-closest",
+            INVALID_SELECTOR.replace(".matches(", ".closest("),
+            1,
+            INVALID_SELECTOR_CHECKS,
+        ),
         ("reserved-name", IDENTITY.replace("same(", "_script_("), 2, IDENTITY_CHECKS),
         ("label", LABEL, 1, LABEL_CHECKS),
         ("invalid-token", INVALID_TOKEN, 1, INVALID_TOKEN_CHECKS),
@@ -496,7 +663,14 @@ def main():
         for optimize in (False, True):
             label = f"{name}-{'optimized' if optimize else 'unoptimized'}"
             native = lower(args, ir, contract, label, optimize=optimize)
-            standalone(args, native, label, checks, compilers, includes, libraries)
+            selected_includes, selected_libraries = (
+                link_options(args, selectors=True)
+                if ".matches(" in source or ".closest(" in source
+                else (includes, libraries)
+            )
+            standalone(
+                args, native, label, checks, compilers, selected_includes, selected_libraries
+            )
 
     action, contract = prepared["action"]
     raw = run([args.opt, str(action), "--ctnative-lower-to-emitc=optimize=false"]).stdout
@@ -526,6 +700,46 @@ def main():
             ACTION.replace(
                 "  const active", "  element.classList.toggle = element;\n  const active"
             ),
+            "DOM",
+        ),
+        (
+            "closest-explicit-null",
+            "function invalid(element) { return element.closest('.btn') === null; }",
+            "DOM",
+        ),
+        (
+            "borrowed-closest-return",
+            "function invalid(element) { return element.closest('.btn'); }",
+            "DOM",
+        ),
+        (
+            "nullable-closest-receiver",
+            "function invalid(element) { return element.closest('.btn').matches('.btn'); }",
+            "DOM",
+        ),
+        (
+            "nullable-contains-argument",
+            "function invalid(element) { return element.contains(element.closest('.btn')); }",
+            "DOM",
+        ),
+        (
+            "closest-retention",
+            "function invalid(element) { element.saved = element.closest('.btn'); return true; }",
+            "DOM",
+        ),
+        (
+            "selector-coercion",
+            "function invalid(element) { return element.matches(element); }",
+            "DOM",
+        ),
+        (
+            "contains-coercion",
+            "function invalid(element) { return element.contains('button'); }",
+            "DOM",
+        ),
+        (
+            "selector-lost-receiver",
+            "function invalid(element) { const query = element.matches; return query('.btn'); }",
             "DOM",
         ),
         ("invoked-entry", ACTION + "toggle({});\n", "wrapper"),
@@ -562,7 +776,15 @@ def main():
             "unused",
         ),
     ]
-    for method in ("classList.toggle", "toggleAttribute", "hasAttribute", "removeAttribute"):
+    for method in (
+        "classList.toggle",
+        "toggleAttribute",
+        "hasAttribute",
+        "removeAttribute",
+        "contains",
+        "matches",
+        "closest",
+    ):
         label = method.replace(".", "-")
         toggle = method in ("classList.toggle", "toggleAttribute")
         extra = "'active', true, false" if toggle else "'active', true"
@@ -612,8 +834,8 @@ def main():
     ):
         lower(args, action, changed, name, success=False)
     print(
-        f"native DOM: {len(entries)} action/identity/attribute/force/error entries, "
-        f"both policies/layouts, GCC/Clang, DOM/Core-only; {len(refusals) + 6} refusal controls"
+        f"native DOM: {len(entries)} action/identity/attribute/query/error entries, "
+        f"both policies/layouts, GCC/Clang, DOM/Core and selector-only Style; {len(refusals) + 6} refusal controls"
     )
 
 

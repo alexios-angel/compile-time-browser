@@ -1,0 +1,224 @@
+#pragma once
+
+#include "Harness.h"
+
+namespace ctcompile::test::escape::arrays {
+
+inline void checkArrayInduction(mlir::MLIRContext & context) {
+    const std::string prefix =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %one = ctjs.constant #ctjs.number<4607182418800017408> {storage_test_id = \"one\"}\n"
+        "  %two = ctjs.constant #ctjs.number<4611686018427387904> {storage_test_id = \"two\"}\n"
+        "  %three = ctjs.constant #ctjs.number<4613937818241073152> {storage_test_id = \"three\"}\n"
+        "  %a = ctjs.create_array [%one, %two, %three] {storage_test_id = \"a\"}\n";
+    const std::string loop =
+        "  cf.br ^header(%a, %zero, %zero : !ctjs.value, !ctjs.value, !ctjs.value)\n"
+        "^header(%array: !ctjs.value, %index: !ctjs.value, %sum: !ctjs.value):\n"
+        "  %key = ctjs.constant #ctjs.string<\"length\">\n"
+        "  %length = ctjs.get_property %array[%key]\n"
+        "  %less = ctjs.compare lt %index, %length\n"
+        "  %flag = ctjs.truthy %less\n"
+        "  cf.cond_br %flag, ^body(%array, %index, %sum : !ctjs.value, !ctjs.value, !ctjs.value), "
+        "^exit(%sum : !ctjs.value)\n"
+        "^body(%base: !ctjs.value, %i: !ctjs.value, %s: !ctjs.value):\n"
+        "  %read = ctjs.get_property %base[%i]\n"
+        "  %added = ctjs.binary add %s, %read {storage_test_id = \"added\"}\n"
+        "  %step = ctjs.binary_static add %i, %one\n"
+        "  cf.br ^header(%base, %step, %added : !ctjs.value, !ctjs.value, !ctjs.value)\n"
+        "^exit(%result: !ctjs.value):\n"
+        "  ctjs.return %result\n";
+    const std::string original = prefix + loop;
+    const auto replace = [](std::string source, const std::string & before,
+                            const std::string & after) {
+        const std::size_t position = source.find(before);
+        assert(position != std::string::npos);
+        source.replace(position, before.size(), after);
+        return source;
+    };
+    unsigned rows = 0;
+    std::size_t budgets = 0;
+    const auto run = [&](const contents_row & expected, const char * discharged = "") {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.body + "}\n", &context);
+        if (!module) {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the induction fixture did not parse");
+            return;
+        }
+        checkArrayContents(*module, expected);
+        budgets += checkArrayRetention(
+            *module, {.what = expected.what,
+                      .body = expected.body,
+                      .discharged = discharged,
+                      .complete = expected.failure == ArrayContentsFailure::None});
+        ++rows;
+    };
+    run({.what = "zero/+1 induction records every distinct element under strict own length",
+         .body = original,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "zero-length induction skips its certified body without an element read",
+         .body = replace(original, "[%one, %two, %three]", "[]"),
+         .arrays = "a:[]",
+         .exit = "zero -> {}"});
+    run({.what = "one-element induction terminates before an inherited index could be read",
+         .body = replace(original, "[%one, %two, %three]", "[%one]"),
+         .arrays = "a:[one]",
+         .reads = "a[0]=one",
+         .exit = "added -> {}"});
+    const std::string savedChild =
+        replace(replace(replace(replace(original, "  %a =",
+                                        "  %x = ctjs.create_object "
+                                        "{storage_test_id = \"x\"}\n  %a ="),
+                                "[%one, %two, %three]", "[%one, %x]"),
+                        "  %added = ctjs.binary add %s, %read {storage_test_id = \"added\"}\n", ""),
+                "^header(%base, %step, %added", "^header(%base, %step, %read");
+    run({.what = "a saved final child keeps its identity through every induction iteration",
+         .body = savedChild,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "unreturned children remain confined after all loop reads",
+         .body = replace(savedChild, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "unrelated registers swap simultaneously on each backedge",
+         .body = prefix + "  cf.br ^header(%a, %zero, %one, %two : !ctjs.value, !ctjs.value, "
+                          "!ctjs.value, !ctjs.value)\n"
+                          "^header(%array: !ctjs.value, %index: !ctjs.value, %left: !ctjs.value, "
+                          "%right: !ctjs.value):\n"
+                          "  %key = ctjs.constant #ctjs.string<\"length\">\n"
+                          "  %length = ctjs.get_property %array[%key]\n"
+                          "  %less = ctjs.compare lt %index, %length\n"
+                          "  %flag = ctjs.truthy %less\n"
+                          "  cf.cond_br %flag, ^body(%array, %index : !ctjs.value, !ctjs.value), "
+                          "^exit(%left : !ctjs.value)\n"
+                          "^body(%base: !ctjs.value, %i: !ctjs.value):\n"
+                          "  %read = ctjs.get_property %base[%i]\n"
+                          "  %step = ctjs.binary_static add %i, %one\n"
+                          "  cf.br ^header(%base, %step, %right, %left : !ctjs.value, !ctjs.value, "
+                          "!ctjs.value, !ctjs.value)\n"
+                          "^exit(%result: !ctjs.value):\n"
+                          "  ctjs.return %result\n",
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "two -> {}"});
+
+    const auto reject = [&](const char * what, std::string body,
+                            ArrayContentsFailure failure =
+                                ArrayContentsFailure::UnsupportedControlFlow) {
+        run({.what = what, .body = std::move(body), .failure = failure});
+    };
+    reject("inclusive guards do not prove an own index",
+           replace(original, "compare lt", "compare le"));
+    reject("inverted guards do not borrow strict induction",
+           replace(original, "compare lt %index, %length", "compare lt %length, %index"));
+    reject("an unknown entry index does not borrow literal zero",
+           replace(original, "^header(%a, %zero, %zero", "^header(%a, %p, %zero"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("a nonzero start stays outside zero induction",
+           replace(original, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    reject("a zero step is not a finite induction",
+           replace(original, "add %i, %one", "add %i, %zero"));
+    reject("a nonunit step needs a separate proof",
+           replace(original, "add %i, %one", "add %i, %two"));
+    reject("a fractional step is not integer induction",
+           replace(replace(original, "  %step =",
+                           "  %half = ctjs.constant "
+                           "#ctjs.number<4602678819172646912>\n  %step ="),
+                   "add %i, %one", "add %i, %half"));
+    reject("a negative step is not increasing induction",
+           replace(replace(original, "  %step =",
+                           "  %minus = ctjs.constant "
+                           "#ctjs.number<13830554455654793216>\n  %step ="),
+                   "add %i, %one", "add %i, %minus"));
+    reject("a mixed BigInt update does not establish Number induction",
+           replace(replace(original,
+                           "  %step =", "  %big = ctjs.constant #ctjs.bigint<\"1\">\n  %step ="),
+                   "add %i, %one", "add %i, %big"));
+    reject("an unknown update cannot reuse the previous iteration's exact index",
+           replace(original, "^header(%base, %step, %added", "^header(%base, %p, %added"));
+    reject("a dynamic Add update has no static Number induction certificate",
+           replace(original, "binary_static add %i, %one", "binary add %i, %one"));
+    reject("a different guard bound is not the array's own length",
+           replace(original, "compare lt %index, %length", "compare lt %index, %three"));
+    reject("a replaced array alias invalidates the guard certificate",
+           replace(original, "^header(%base, %step, %added", "^header(%a, %step, %added"));
+    std::string changedKey = replace(
+        original, "  cf.br ^header(%a, %zero, %zero : !ctjs.value, !ctjs.value, !ctjs.value)",
+        "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+        "  cf.br ^header(%a, %zero, %zero, %name : !ctjs.value, !ctjs.value, "
+        "!ctjs.value, !ctjs.value)");
+    changedKey =
+        replace(changedKey, "%sum: !ctjs.value):", "%sum: !ctjs.value, %property: !ctjs.value):");
+    changedKey = replace(changedKey, "%array[%key]", "%array[%property]");
+    changedKey =
+        replace(changedKey, "^header(%base, %step, %added : !ctjs.value, !ctjs.value, !ctjs.value)",
+                "^header(%base, %step, %added, %zero : !ctjs.value, !ctjs.value, "
+                "!ctjs.value, !ctjs.value)");
+    reject("a changing guard property cannot borrow its first length snapshot", changedKey);
+    reject("array mutation inside the loop refuses before replay",
+           replace(original, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="));
+    reject("length mutation inside the loop invalidates the stable bound",
+           replace(original, "  %read =", "  ctjs.set_property %base[%key], %zero\n  %read ="));
+    reject("allocation in a repeated block cannot collapse dynamic instances",
+           replace(original, "  %read =", "  %fresh = ctjs.create_array []\n  %read ="));
+    reject("publication inside the loop is rejected structurally",
+           replace(original, "  %read =", "  ctjs.store_global \"held\", %base\n  %read ="));
+    reject("a zero-trip loop still refuses an unsupported operation",
+           replace(replace(original, "[%one, %two, %three]", "[]"),
+                   "  %read =", "  ctjs.store_global \"held\", %base\n  %read ="));
+    reject("effects after a finite loop invalidate complete contents",
+           replace(original, "  ctjs.return %result",
+                   "  ctjs.store_global \"held\", %a\n"
+                   "  ctjs.return %result"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("an offset read must independently remain in bounds on the last iteration",
+           replace(original, "  %read = ctjs.get_property %base[%i]",
+                   "  %shifted = ctjs.binary_static add %i, %one\n"
+                   "  %read = ctjs.get_property %base[%shifted]"),
+           ArrayContentsFailure::MissingElement);
+    reject("a different shorter array cannot borrow the guard array's bound",
+           replace(replace(original, "  %a =",
+                           "  %other = ctjs.create_array [%one] "
+                           "{storage_test_id = \"other\"}\n  %a ="),
+                   "%base[%i]", "%other[%i]"),
+           ArrayContentsFailure::MissingElement);
+    reject("every later element must independently exclude object coercion",
+           replace(replace(original, "  %a =",
+                           "  %child = ctjs.create_array [] "
+                           "{storage_test_id = \"child\"}\n  %a ="),
+                   "[%one, %two, %three]", "[%one, %child, %three]"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("opaque loop-carried keys cannot retain a prior exact Number fact",
+           replace(replace(original, "%base[%i]", "%base[%s]"), "^header(%base, %step, %added",
+                   "^header(%base, %step, %p"),
+           ArrayContentsFailure::UnknownIndex);
+    std::string many = "%one";
+    for (unsigned i = 1; i < 32; ++i) { many += ", %one"; }
+    const std::string longLoop = replace(original, "%one, %two, %three", many);
+    if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + longLoop + "}\n", &context)) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        const auto complete = computeArrayContents(function);
+        const auto partial = computeArrayContents(function, 128);
+        if (!complete.complete || complete.reads.size() != 32 || partial.complete ||
+            partial.failure != ArrayContentsFailure::WorkLimit || partial.work != 128 ||
+            !partial.arrays.empty() || !partial.reads.empty() || !partial.writes.empty() ||
+            !partial.exits.empty()) {
+            fail(row{.what = "finite induction still obeys the unchanged work budget",
+                     .body = longLoop,
+                     .expected = ""},
+                 "a long loop lost exact reads or published an incomplete prefix");
+        }
+    } else {
+        fail(row{.what = "finite induction work budget", .body = longLoop, .expected = ""},
+             "the long induction fixture did not parse");
+    }
+    std::printf("array induction: %u rows, %zu retention budget cutoffs\n", rows, budgets);
+}
+
+} // namespace ctcompile::test::escape::arrays

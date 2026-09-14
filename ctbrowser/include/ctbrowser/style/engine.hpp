@@ -1253,6 +1253,11 @@ public:
     [[nodiscard]] bool element_matches(const read_txn & txn, node_id node,
                                        std::span<const compiled_selector> list, node_id scope = {});
 
+    // First matching element in the inclusive ancestor chain, or an empty handle.
+    // The subject remains :scope; parent traversal does not cross shadow hosts.
+    [[nodiscard]] node_id closest(const read_txn & txn, node_id subject,
+                                  std::span<const compiled_selector> list);
+
     // Start a level: clear the siblings seen at that depth and count what the
     // traversal cannot know from them alone - the level's element total and its
     // per-tag totals, which `:last-child` and the `-of-type` family need.

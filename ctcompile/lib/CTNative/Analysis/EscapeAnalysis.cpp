@@ -781,6 +781,7 @@ namespace {
 
 // An original Number in the exact array-length range; -0 has index value zero.
 std::optional<std::size_t> boundedNumber(mlir::Value value) {
+    if (!value) { return std::nullopt; }
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     auto number =
         constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue()) : ctjs::NumberAttr{};
@@ -873,7 +874,7 @@ enum class ContentsKind {
 struct ContentsValue {
     mlir::Value original;
     ContentsKind kind = ContentsKind::Identity;
-    // ponytail: lengths, bounded literal offsets and static Add only; no loop proof.
+    // Exact bounded Numbers survive simultaneous successor transport and replay.
     std::optional<std::size_t> integerNumber = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
@@ -910,9 +911,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // Enumerate structural paths, never solver flags or annotations. A join
     // keeps separate exact states: unioning array aliases before a strong
     // overwrite would incorrectly erase an element of an unmodified array.
-    // Every branch edge is visited, including a constant flag's untaken edge
-    // and a switch's default edge. Any unsupported path refuses everything.
+    // Every ordinary branch edge is visited, including a constant flag's untaken
+    // edge and a switch's default edge. Only a certified finite loop selects its
+    // guard edge. Any unsupported path refuses everything.
     using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;
+    struct CountedLoop {
+        mlir::Block * header;
+        mlir::Block * body;
+        mlir::Value index;
+        mlir::Value array;
+        mlir::Operation * site;
+        std::size_t length;
+    };
     struct State {
         // Imported successors forward every raw register, including unused
         // receiver/parameter values. Their Opaque kind keeps entry identity:
@@ -924,6 +934,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         ctjs::FrameEnterOp frame;
         bool frameExited = false;
         mlir::Operation * current = nullptr;
+        std::optional<CountedLoop> loop;
     };
     State state;
     for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
@@ -941,7 +952,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     const auto origin = [&](mlir::Value value) { return held(value).origin(); };
     const auto forward = [&](State & path, mlir::Block * next, mlir::ValueRange operands) {
         if (next->getParent() != &function.getBody() || next->empty() ||
-            next->getNumArguments() != operands.size() || !path.visited.insert(next).second) {
+            next->getNumArguments() != operands.size() ||
+            (!path.visited.insert(next).second &&
+             (!path.loop || (next != path.loop->header && next != path.loop->body)))) {
             return ArrayContentsFailure::UnsupportedControlFlow;
         }
         // Read every source before assigning any destination: successor operands
@@ -978,6 +991,90 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         const auto failure = forward(copy, next, operands);
         if (failure == ArrayContentsFailure::None) { alternatives.push_back(std::move(copy)); }
         return failure;
+    };
+    const auto countedLoop = [&](mlir::cf::CondBranchOp branch, mlir::cf::BranchOp latch) {
+        constexpr auto unsupported = ArrayContentsFailure::UnsupportedControlFlow;
+        mlir::Block * header = branch->getBlock();
+        mlir::Block * body = branch.getTrueDest();
+        if (body == header || branch.getFalseDest() == header || branch.getFalseDest() == body ||
+            body->getParent() != &function.getBody() ||
+            branch.getTrueDestOperands().size() != body->getNumArguments() ||
+            latch.getDestOperands().size() != header->getNumArguments()) {
+            return unsupported;
+        }
+        mlir::Block * entry = nullptr;
+        unsigned predecessors = 0;
+        for (mlir::Block * predecessor : header->getPredecessors()) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            ++predecessors;
+            if (predecessor != body) { entry = predecessor; }
+        }
+        if (predecessors != 2 || entry == nullptr) { return unsupported; }
+        predecessors = 0;
+        for (mlir::Block * predecessor : body->getPredecessors()) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            if (predecessor != header) { return unsupported; }
+            ++predecessors;
+        }
+        if (predecessors != 1) { return unsupported; }
+        auto incoming = llvm::dyn_cast<mlir::cf::BranchOp>(entry->getTerminator());
+        auto truthy = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto compare =
+            truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+        if (!incoming || incoming.getDest() != header ||
+            incoming.getDestOperands().size() != header->getNumArguments() || !compare ||
+            compare.getKind() != ctjs::CompareKind::Lt || truthy->getBlock() != header ||
+            compare->getBlock() != header) {
+            return unsupported;
+        }
+        auto index = llvm::dyn_cast<mlir::BlockArgument>(compare.getLhs());
+        auto length = compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>();
+        auto array = length ? llvm::dyn_cast<mlir::BlockArgument>(length.getObject())
+                            : mlir::BlockArgument{};
+        if (!index || index.getOwner() != header || !array || array.getOwner() != header ||
+            length->getBlock() != header ||
+            ownObjectKey(length->getOperand(1)) !=
+                mlir::StringAttr::get(function.getContext(), "length") ||
+            boundedNumber(incoming.getDestOperands()[index.getArgNumber()]) != 0) {
+            return unsupported;
+        }
+        // Read actual/formal transport, not register numbers or source names.
+        const auto fromHeader = [&](mlir::Value value) -> mlir::Value {
+            auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+            if (!argument || argument.getOwner() != body) { return {}; }
+            return branch.getTrueDestOperands()[argument.getArgNumber()];
+        };
+        auto step =
+            latch.getDestOperands()[index.getArgNumber()].getDefiningOp<ctjs::BinaryStaticOp>();
+        if (!step || step->getBlock() != body || step.getKind() != ctjs::BinaryKind::Add ||
+            fromHeader(step.getLhs()) != index || boundedNumber(step.getRhs()) != 1 ||
+            fromHeader(latch.getDestOperands()[array.getArgNumber()]) != array) {
+            return unsupported;
+        }
+        // ponytail: one read-only header/body pair; nested control, allocation
+        // and mutation need a separate instance/lifetime proof. Primitive kinds
+        // and every indexed element still pass the ordinary operation transfers.
+        for (mlir::Block * block : {header, body}) {
+            for (mlir::Operation & operation : *block) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                if (&operation == branch.getOperation() || &operation == latch.getOperation()) {
+                    continue;
+                }
+                if (!llvm::isa<ctjs::ConstantOp, ctjs::GetPropertyOp, ctjs::CompareOp,
+                               ctjs::TruthyOp, ctjs::UnaryOp, ctjs::BinaryOp, ctjs::BinaryStaticOp,
+                               ctjs::ConvertOp, ctjs::RootOp>(&operation)) {
+                    return unsupported;
+                }
+            }
+        }
+        const mlir::Value base = origin(array);
+        auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
+        if (found == state.arrays.end() || found->second.size() > 4294967295ULL ||
+            boundedNumber(origin(index)) != 0) {
+            return unsupported;
+        }
+        state.loop = CountedLoop{header, body, index, array, found->first, found->second.size()};
+        return ArrayContentsFailure::None;
     };
     while (true) {
         bool returned = false;
@@ -1036,6 +1133,35 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(&op)) {
                 if (!origin(branch.getCondition())) {
                     return refuse(ArrayContentsFailure::UnknownValue, &op);
+                }
+                if (!state.loop && !branch.getTrueDest()->empty()) {
+                    auto latch =
+                        llvm::dyn_cast<mlir::cf::BranchOp>(branch.getTrueDest()->getTerminator());
+                    if (latch && latch.getDest() == op.getBlock()) {
+                        const auto failure = countedLoop(branch, latch);
+                        if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                    }
+                }
+                if (state.loop && state.loop->header == op.getBlock()) {
+                    const CountedLoop loop = *state.loop;
+                    const ContentsValue index = held(loop.index);
+                    const auto number =
+                        index.integerNumber ? index.integerNumber : boundedNumber(index.origin());
+                    const mlir::Value base = origin(loop.array);
+                    if (!number || *number > loop.length || !base ||
+                        base.getDefiningOp() != loop.site) {
+                        return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+                    }
+                    // Only this independently checked finite guard selects an
+                    // edge. Exact replay records every actual element alternative;
+                    // all unrelated conditions retain both structural paths.
+                    const bool continued = *number < loop.length;
+                    if (!continued) { state.loop.reset(); }
+                    const auto failure = forward(
+                        state, continued ? branch.getTrueDest() : branch.getFalseDest(),
+                        continued ? branch.getTrueDestOperands() : branch.getFalseDestOperands());
+                    if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                    continue;
                 }
                 auto failure = alternative(branch.getFalseDest(), branch.getFalseDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }

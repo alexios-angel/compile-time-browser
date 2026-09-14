@@ -291,12 +291,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     enum class Kind {
         implicit,
         element,
+        nullableElement,
         tokenList,
         toggle,
         attribute,
         toggleAttribute,
         hasAttribute,
         removeAttribute,
+        contains,
+        matches,
+        closest,
         string,
         boolean,
         undefined,
@@ -434,6 +438,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     continue;
                 }
                 if (hasKind(read.getObject(), Kind::element) &&
+                    (key == "contains" || key == "matches" || key == "closest")) {
+                    values[read.getResult()] = key == "contains"  ? Kind::contains
+                                               : key == "matches" ? Kind::matches
+                                                                  : Kind::closest;
+                    provedMethods.emplace_back(read, key == "contains"  ? HostDOMMethod::contains
+                                                     : key == "matches" ? HostDOMMethod::matches
+                                                                        : HostDOMMethod::closest);
+                    continue;
+                }
+                if (hasKind(read.getObject(), Kind::element) &&
                     (key == "toggleAttribute" || key == "hasAttribute" ||
                      key == "removeAttribute")) {
                     values[read.getResult()] = key == "toggleAttribute" ? Kind::toggleAttribute
@@ -460,6 +474,20 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     return;
                 }
                 auto arguments = invoke.getArgs();
+                const bool contains = hasKind(invoke.getCallee(), Kind::contains);
+                const bool matches = hasKind(invoke.getCallee(), Kind::matches);
+                const bool closest = hasKind(invoke.getCallee(), Kind::closest);
+                if (arguments.size() == 1 &&
+                    ((contains && hasKind(arguments[0], Kind::element)) ||
+                     ((matches || closest) && hasKind(arguments[0], Kind::string)))) {
+                    provedCalls.push_back({invoke,
+                                           contains  ? HostDOMMethod::contains
+                                           : matches ? HostDOMMethod::matches
+                                                     : HostDOMMethod::closest,
+                                           invoke.getReceiver()});
+                    values[invoke.getResult()] = closest ? Kind::nullableElement : Kind::boolean;
+                    continue;
+                }
                 if ((hasKind(invoke.getCallee(), Kind::toggle) ||
                      hasKind(invoke.getCallee(), Kind::toggleAttribute)) &&
                     (arguments.size() == 1 ||
@@ -510,8 +538,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
                 compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                hasKind(compare.getLhs(), Kind::element) &&
-                hasKind(compare.getRhs(), Kind::element)) {
+                (hasKind(compare.getLhs(), Kind::element) ||
+                 hasKind(compare.getLhs(), Kind::nullableElement)) &&
+                (hasKind(compare.getRhs(), Kind::element) ||
+                 hasKind(compare.getRhs(), Kind::nullableElement))) {
                 values[compare.getResult()] = Kind::boolean;
                 continue;
             }
@@ -541,6 +571,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {
     return llvm::is_contained(elements, value);
+}
+
+bool DOMEntryAnalysis::isElementIdentity(mlir::Value value) const {
+    return isElement(value) || llvm::any_of(calls, [&](const HostDOMCall & call) {
+               return call.returnsElement() && call.operation->getResult(0) == value;
+           });
 }
 
 bool DOMEntryAnalysis::isTokenList(mlir::Value value) const {

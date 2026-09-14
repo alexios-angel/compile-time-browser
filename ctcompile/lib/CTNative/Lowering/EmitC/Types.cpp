@@ -15,8 +15,9 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
-        if (auto call = domCalls.find(v.getDefiningOp());
-            call != domCalls.end() && !call->second.returnsBoolean()) {
+        if (auto call = domCalls.find(v.getDefiningOp()); call != domCalls.end() &&
+                                                          !call->second.returnsBoolean() &&
+                                                          !call->second.returnsElement()) {
             // The proof requires this result to be unused, and the effect is
             // emitted as a void call. This placeholder never reaches C++.
             v.setType(mlir::Float64Type::get(context));
