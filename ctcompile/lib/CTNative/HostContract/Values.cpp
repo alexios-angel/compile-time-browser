@@ -6,6 +6,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace ctcompile::ctnative::host_detail {
@@ -911,75 +912,140 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         // Complete reusable effects above remain independent of these optional
         // entry-order facts. Never carry mutable state through the category DAG:
         // its iteration order groups calls by method, not by execution order.
-        CapturedMapInvocation invocation;
-        invocation.root = result.allocation.getResult();
-        auto & initial = invocation.states[{invocation.root, nullptr}];
-        initial.completeKeys = true;
-        initial.currentSize = 0;
-        std::vector<HostReturnedLeaf> leaves;
-        std::vector<HostReturnedScalar> scalars;
-        unsigned visited = 0;
-        bool complete = true;
-        for (mlir::Operation & operation : entry.getBody().front()) {
+        llvm::SmallVector<mlir::Value> inputs;
+        llvm::SmallVector<unsigned> partition;
+        for (mlir::BlockArgument argument : entry.getBody().front().getArguments()) {
             if (!step()) { return {}; }
-            if (!familyInvocations.contains(&operation)) { continue; }
-            ctjs::FuncOp member;
-            for (unsigned index = 0; index < familyCalls.size(); ++index) {
-                if (!step()) { return {}; }
-                if (llvm::is_contained(familyCalls[index], &operation)) {
-                    member = result.parameters[index].function;
-                    break;
-                }
-            }
-            HostMethodParameters parameters{member, {}};
-            if (!member || !capturedMapParameters(member, prepared, {&operation}, familyInvocations,
-                                                  completedResults, parameters)) {
-                complete = false;
-                break;
-            }
-            invocation.call = &operation;
-            invocation.arguments.clear();
-            for (auto parameter :
-                 member.getBody().front().getArguments().drop_front(prepared ? 4u : 3u)) {
-                if (!step()) { return {}; }
-                auto actual = explicitArgument(&operation, parameter.getArgNumber());
-                if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-                    if (auto object = objectGlobalRead(load)) {
-                        actual = object->object.getResult();
-                    }
-                }
-                invocation.arguments[parameter] = actual;
-            }
-            HostCapturedMap scratch;
-            scratch.childMapContents = result.childMapContents;
-            scratch.childEntries = result.childEntries;
-            scratch.childScalarContents = result.childScalarContents;
-            scratch.childLeafContents = result.childLeafContents;
-            scratch.outerStringKeys = result.outerStringKeys;
-            scratch.childStringKeys = result.childStringKeys;
-            scratch.scalarCallbacks = result.scalarCallbacks;
-            PrimitiveAlternatives alternatives;
-            if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
-                                 alternatives, &invocation)) {
-                complete = false;
-                break;
-            }
-            ++visited;
-            auto leaf = invocation.returnedLeaf
-                            ? invocation.returnedLeaf.getDefiningOp<ctjs::CreateObjectOp>()
-                            : ctjs::CreateObjectOp{};
-            if (leaf && leaf->getParentOp() == entry &&
-                dominance.properlyDominates(leaf.getOperation(), &operation)) {
-                leaves.push_back({&operation, leaf});
-            }
-            if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
-                if (!step()) { return {}; }
-                scalars.push_back({&operation, alternatives});
+            if (elementInput(argument)) {
+                inputs.push_back(argument);
+                partition.push_back(0);
             }
         }
-        if (complete && visited == familyInvocations.size()) {
-            result.returnedLeaves = std::move(leaves);
-            result.returnedScalars = std::move(scalars);
+        std::vector<HostReturnedLeaf> leaves;
+        std::vector<HostReturnedScalar> scalars;
+        bool complete = true;
+        bool firstPartition = true;
+        // Every equality partition of the stable inputs denotes possible callers.
+        // Intersect exact identities and join scalar alternatives across all of
+        // them. No partition's branch choice narrows the reusable method body.
+        // ponytail: Bell-number replay uses the shared work budget; symbolic
+        // joins can replace enumeration if measured input counts outgrow it.
+        while (true) {
+            if (!step()) { return {}; }
+            CapturedMapInvocation invocation;
+            invocation.root = result.allocation.getResult();
+            auto & initial = invocation.states[{invocation.root, nullptr}];
+            initial.completeKeys = true;
+            initial.currentSize = 0;
+            for (auto [index, input] : llvm::enumerate(inputs)) {
+                if (!step()) { return {}; }
+                invocation.elementClasses[input] = partition[index];
+            }
+            std::size_t visited = 0;
+            for (mlir::Operation & operation : entry.getBody().front()) {
+                if (!step()) { return {}; }
+                if (!familyInvocations.contains(&operation)) { continue; }
+                ctjs::FuncOp member;
+                for (unsigned index = 0; index < familyCalls.size(); ++index) {
+                    if (!step()) { return {}; }
+                    if (llvm::is_contained(familyCalls[index], &operation)) {
+                        member = result.parameters[index].function;
+                        break;
+                    }
+                }
+                HostMethodParameters parameters{member, {}};
+                if (!member ||
+                    !capturedMapParameters(member, prepared, {&operation}, familyInvocations,
+                                           completedResults, parameters)) {
+                    complete = false;
+                    break;
+                }
+                invocation.call = &operation;
+                invocation.arguments.clear();
+                for (auto parameter :
+                     member.getBody().front().getArguments().drop_front(prepared ? 4u : 3u)) {
+                    if (!step()) { return {}; }
+                    auto actual = explicitArgument(&operation, parameter.getArgNumber());
+                    if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
+                        if (auto object = objectGlobalRead(load)) {
+                            actual = object->object.getResult();
+                        }
+                    }
+                    invocation.arguments[parameter] = actual;
+                }
+                HostCapturedMap scratch;
+                scratch.childMapContents = result.childMapContents;
+                scratch.childEntries = result.childEntries;
+                scratch.childScalarContents = result.childScalarContents;
+                scratch.childLeafContents = result.childLeafContents;
+                scratch.outerStringKeys = result.outerStringKeys;
+                scratch.childStringKeys = result.childStringKeys;
+                scratch.scalarCallbacks = result.scalarCallbacks;
+                PrimitiveAlternatives alternatives;
+                if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
+                                     alternatives, &invocation)) {
+                    complete = false;
+                    break;
+                }
+                auto leaf = invocation.returnedLeaf
+                                ? invocation.returnedLeaf.getDefiningOp<ctjs::CreateObjectOp>()
+                                : ctjs::CreateObjectOp{};
+                if (leaf && (leaf->getParentOp() != entry ||
+                             !dominance.properlyDominates(leaf.getOperation(), &operation))) {
+                    leaf = {};
+                }
+                if (!step()) { return {}; }
+                if (firstPartition) {
+                    leaves.push_back({&operation, leaf});
+                    scalars.push_back({&operation, alternatives});
+                } else {
+                    if (visited >= leaves.size() || leaves[visited].call != &operation) {
+                        complete = false;
+                        break;
+                    }
+                    if (leaves[visited].object != leaf) { leaves[visited].object = {}; }
+                    scalars[visited].alternatives =
+                        scalars[visited].alternatives.joined(alternatives);
+                }
+                ++visited;
+            }
+            complete &= visited == familyInvocations.size();
+            if (!complete) { break; }
+            firstPartition = false;
+            // Restricted-growth strings enumerate canonical partitions without
+            // recursion or retaining every case. The first class stays zero.
+            bool next = false;
+            for (std::size_t end = partition.size(); end > 1; --end) {
+                if (!step()) { return {}; }
+                const std::size_t index = end - 1;
+                unsigned limit = 1;
+                for (std::size_t before = 0; before < index; ++before) {
+                    if (!step()) { return {}; }
+                    limit = std::max(limit, partition[before] + 1);
+                }
+                if (partition[index] == limit) { continue; }
+                ++partition[index];
+                for (std::size_t after = end; after < partition.size(); ++after) {
+                    if (!step()) { return {}; }
+                    partition[after] = 0;
+                }
+                next = true;
+                break;
+            }
+            if (!next) { break; }
+        }
+        if (complete) {
+            for (const auto & leaf : leaves) {
+                if (!step()) { return {}; }
+                if (leaf.object) { result.returnedLeaves.push_back(leaf); }
+            }
+            for (const auto & scalar : scalars) {
+                if (!step()) { return {}; }
+                const auto alternatives = scalar.alternatives;
+                if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
+                    result.returnedScalars.push_back(scalar);
+                }
+            }
             for (ctjs::GetPropertyOp read : unguarded) {
                 if (!step()) { return {}; }
                 if (!ctjs::ordinaryKey(ctjs::constantKey(read.getKey())) ||

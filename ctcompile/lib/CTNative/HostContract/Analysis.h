@@ -37,6 +37,9 @@ struct CapturedMapInvocation {
     mlir::Value root;
     mlir::Operation * call = nullptr;
     llvm::DenseMap<mlir::Value, mlir::Value> arguments;
+    // One exhaustively enumerated alias partition of checked DOM entry inputs.
+    // These classes never narrow the reusable family proof.
+    llvm::DenseMap<mlir::Value, unsigned> elementClasses;
     llvm::DenseMap<CapturedMapOrigin, CapturedMapState> states;
     mlir::Value returnedLeaf;
 };

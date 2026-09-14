@@ -205,27 +205,60 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         }
         variant(readback, true, "entry replay retains actual DOM key alias uncertainty", 2,
                 different ? 2 : 1);
+        readback = replaced(readback, "    ctjs.return %found", R"MLIR(
+    %present = ctjs.truthy %found
+    %selected = scf.if %present -> (!ctjs.value) {
+      scf.yield %found : !ctjs.value
+    } else {
+      %missing = ctjs.constant #ctjs.null
+      scf.yield %missing : !ctjs.value
+    }
+    ctjs.return %selected
+)MLIR");
+        variant(readback, true, "alias partitions close a conditional scalar return", 2,
+                different ? 2 : 1);
         auto program = mlir::parseSourceString<mlir::ModuleOp>(readback, &context);
         if (!program) { continue; }
-        HostContractAnalysis query(*program, requested(*program));
-        // An unknown result is conservative too: complete key provenance does
-        // not require inferring a finite category for every possible alias.
-        bool observed = different;
+        const auto manifest = requested(*program);
+        HostContractAnalysis query(*program, manifest);
+        OwnedGlobalRoots owner(*program, manifest);
+        using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
+        const Alternatives expected{Alternatives::Number, different ? Alternatives::Null : 0u,
+                                    true};
+        bool observed = false;
+        mlir::Value answer;
         for (const auto & edge : query.callables()) {
             auto function = edge.function;
             if (function.getSymName() != "get$3" || !edge.capturedMap) { continue; }
+            answer = edge.call->getResult(0);
             for (const auto & result : edge.capturedMap->returnedScalars) {
                 if (result.call != edge.call) { continue; }
-                using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-                const auto mask = result.alternatives.truthy | result.alternatives.falsy;
-                observed = different
-                               ? !result.alternatives.known || ((mask & Alternatives::Number) &&
-                                                                (mask & Alternatives::Undefined))
-                               : result.alternatives.known && mask == Alternatives::Number;
+                observed = result.alternatives == expected;
             }
         }
-        check(observed, different ? "distinct external inputs may alias and may miss the prior set"
-                                  : "reusing one DOM input finds the preceding scalar insertion");
+        check(query.proved() && owner.proved() && observed && answer &&
+                  owner.returnedScalar(answer) == expected && !owner.returnedLeaf(answer),
+              different ? "every alias partition contributes to the exact Number-or-Null result"
+                        : "reusing one DOM input proves only the preceding Number insertion");
+        if (!different || !query.proved() || !owner.proved() || !answer) { continue; }
+        for (unsigned budget : {0u, query.steps() - 1}) {
+            HostContractAnalysis partial(*program, manifest, budget);
+            check(!partial.proved() && partial.exhausted() && partial.steps() <= budget &&
+                      partial.callables().empty(),
+                  "an incomplete alias family publishes no joined scalar evidence");
+        }
+        for (unsigned budget : {0u, query.steps(), owner.steps() - 1}) {
+            OwnedGlobalRoots partial(*program, manifest, budget);
+            check(!partial.proved() && partial.exhausted() && partial.steps() <= budget &&
+                      empty(*program, partial) && partial.domInputs().empty() &&
+                      partial.returnedScalar(answer) == Alternatives{} &&
+                      !partial.returnedLeaf(answer),
+                  "an incomplete alias owner publishes no scalar, leaf or DOM input evidence");
+        }
+        OwnedGlobalRoots exact(*program, manifest, owner.steps());
+        check(exact.proved() && exact.steps() == owner.steps() &&
+                  exact.returnedScalar(answer) == expected,
+              "the exact budget restores the complete alias result union");
     }
 
     const std::string declaration = R"MLIR(

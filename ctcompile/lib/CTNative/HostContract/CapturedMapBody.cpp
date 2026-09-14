@@ -151,6 +151,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         right = actualKey(right);
         const auto relation = comparePrimitiveMapKeys(left, right, leftEvidence, rightEvidence);
         if (!invocation || relation != PrimitiveMapKeyRelation::Unknown) { return relation; }
+        if (elementInput(left) && elementInput(right)) {
+            if (!step()) { return PrimitiveMapKeyRelation::Unknown; }
+            const auto a = invocation->elementClasses.find(left);
+            const auto b = invocation->elementClasses.find(right);
+            if (a != invocation->elementClasses.end() && b != invocation->elementClasses.end()) {
+                return a->second == b->second ? PrimitiveMapKeyRelation::Same
+                                              : PrimitiveMapKeyRelation::Distinct;
+            }
+        }
         // Entry allocations identify this activation's actual objects. Different
         // loads, method-local allocation sites and carrier schemas do not.
         const auto entryObject = [&](mlir::Value value) {
