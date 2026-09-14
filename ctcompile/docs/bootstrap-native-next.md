@@ -10,7 +10,11 @@ to real document/node handles and the shared token/attribute APIs. Its separate
 action gate covers synchronous borrowed parameters, identity, mutation and errors.
 Retained DOM-backed Data keys, original Button receivers/construction and full
 bundle initialization remain the next boundaries; the survey below is not a
-native Bootstrap completion claim.
+native Bootstrap completion claim. Synchronous query entries now call public
+DOM containment and Style matching/closest, including Bootstrap's delegated
+`[data-bs-toggle="button"]` ancestor lookup. They borrow the caller's live
+Style engine and keep nullable closest results local to identity comparisons.
+The shared closest implementation preserves `:scope` and shadow boundaries.
 
 ## What is measured
 
@@ -19,7 +23,7 @@ native Bootstrap completion claim.
 | Full bundle: **19/574 native**, both optimization policies; no skipped or pruned functions | Admission of individual functions from the unchanged vendor source | Native initialization, an interactive component, or a native application |
 | Browser Data/UMD probe: **7/7** with manifest, prefix specialization and explicit 1m budget | Ownership and execution of the extracted Data methods and wrapper, including their preserved observations | A real Window, DOM nodes, Bootstrap constructors, event registration |
 | Full bundle: **0/43 globals resolved** | Current module-wide global-name census refuses | This is not a count of 43 missing browser APIs |
-| Generic escape oracle: **39/172 precision**, zero violations in the recorded snapshot | Independent analysis evidence | Native emission does not currently consume its refined contents/verdict queries |
+| Generic escape oracle: **40/172 precision**, zero violations in the recorded snapshot | Independent analysis evidence | Native emission does not currently consume its refined contents/verdict queries |
 
 Fresh full-source IR names the leading first refusals: **272 `this` receivers**,
 **137 own closures**, **70 unproved boxed parameters**, **29 closures passed to
@@ -109,7 +113,7 @@ with typed C++ operations and owners while retaining that dependency boundary.
 The old generator helper was retired in `71952bf3`; Bootstrap's immediate need is
 callbacks/timers, not restoring unused generator machinery.
 
-This session's bounded extraction exposes `parse_ordered_tokens`, `validate_token`,
+The initial shared-token extraction exposes `parse_ordered_tokens`, `validate_token`,
 `update_tokens` and `toggle_token` in
 [dom/token_list.hpp](../../ctbrowser/include/ctbrowser/dom/token_list.hpp).
 They work for an associated attribute, not just `class`. The classList binding and
@@ -121,17 +125,19 @@ not add compiler DOM types or increase native Bootstrap admission.
 
 ## Parallel work worth doing
 
-- Compiler: typed document/node entry and Data + DOM ownership; then the exact
+- Compiler: nonescaping Data + DOM session ownership; then the exact
   constructor/prototype/receiver proof required by Button.
-- Browser, in a claimed isolated worktree: shared platform extractions, starting
-  with the token API and later the actual event subsystem. Preserve browser behavior.
+- Browser, in a claimed isolated worktree: shared event/timer behavior and typed
+  callback ownership beyond the current token/attribute/selector APIs. Preserve
+  browser behavior.
 - Validation: real DOM/component observations, lifecycle and no-Script link gates;
   keep original full-source coverage visible.
 
 CommonJS replacement/old-exports alias support remains valid provider work, but it
-is not required to take the browser branch of Bootstrap's wrapper. The generic
-`confinedArray` loop proof can proceed independently; it should not displace these
-browser tasks. Production calls to `computeVerdicts`/`computeArrayContents` currently
+is not required to take the browser branch of Bootstrap's wrapper. The original
+`confinedArray` now passes its bounded read-only zero/+1 escape proof; the next
+independent step is consuming live contents and index evidence in native lowering.
+Production calls to `computeVerdicts`/`computeArrayContents` currently
 stay inside EscapeAnalysis.cpp; native vector admission uses
 `TypeInference::isDenseVectorSite`. An escape-precision gain needs a real consumer
 and a preserved refused-to-emitted vendor case before it counts as native progress.

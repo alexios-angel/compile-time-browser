@@ -6,6 +6,69 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native selector queries and original array induction, 2026-09-14 UTC
+
+Continued clean **fc03829b**. Both commit histories and the synchronization journal
+showed the preceding review/native work complete; September 7 WIP was already an
+ancestor. Resumed the retained DOM Data boundary from HANDOFF/plan00, then followed
+the user's browser-API steering. Three agents split shared closest extraction,
+native query proof/emission and the independent escape loop; root integrated and
+gated `codex-native-session-20260914`. No push.
+
+**eb80c53f** moves the existing inclusive ancestor walk into public
+`style::engine::closest`. The VM binding is a thin adapter after its unchanged
+argument conversion and selector validation. Both callers use the existing matcher;
+`:scope`, nearest-match order, detachment and shadow boundaries are preserved.
+The direct Style/DOM/Core test and VM selector regressions cover those behaviors.
+
+**c83d90cc** emits proved `contains`, `matches` and `closest` calls through
+public DOM/Style APIs. Query entries append borrowed Style engine references for
+queried element parameters, in source order. The embedding supplies each document's
+live engine; element validation and atom-table checks precede source effects.
+This preserves interactive selector state. No new engine, selector implementation,
+VM context or GC handle is generated. Closest misses use canonical empty element
+identities; local results permit only strict identity comparisons, including
+cross-document misses. Nullable dereference, retention, borrowed returns and
+explicit source-null comparison still refuse. The existing Data provider is unchanged.
+
+**8fb90ece** certifies a read-only header/body loop with literal zero/+1 induction
+under the same stable array's strict own-length guard. Existing exact state
+transport and operation checks run on every bounded iteration. Allocation,
+mutation, other control, unsafe elements and incomplete budgets refuse. Thirty
+matrix rows exercise 1527 retention-budget cutoffs, plus a 32-iteration budget case.
+The unchanged original `confinedArray` becomes confined: the complete snapshot
+changes only its fn2/pc3 array claim. All recorded observations and source pins
+remain intact. Escape precision is **40/172**, with **222 functions / 861 claims /
+895 observed sites / 35 unclaimed / zero soundness violations**.
+
+Validation: initial **400-step devbox build**; corrected focused gate **6/6 PASS
+in 168.15s**, including native **18 sources / 42 refusal controls** in **168.14s**,
+both optimization policies, both layouts, GCC13.3 and Clang24. Final standard
+gate: **690-step build / 549/549 CTests in 1167.79s**,
+including **167/167 lit cases in 823.37s**. The native matrix took **247.81s**
+under full load.
+All **1410 frozen inputs** match isolated/devbox. Stable formatting passes
+**822 C++ / 88 Python / 33 web**. The pinned formatter retains the same nine
+baseline files / 26 diagnostics. No full WPT/test262 score remeasurement.
+Evidence: `/tmp/ctcompile-native-session/`, including emitted closest C++.
+
+Fresh complete Bootstrap remains **19/574 native / 0 of 43 globals resolved**,
+both policies, no skipped/pruned functions. This session adds synchronous queries;
+it does not establish native vendor initialization or a complete application.
+
+**Exact next browser boundary:** a separate source-derived Data+DOM session whose
+nonmovable owner declares atoms, document, then Data state, with direct/member
+calls that cannot independently escape. Preserve the existing owning-callable
+Data contract. DOM keys need separate provenance and document+node identity;
+foreign keys must either belong to the session's owned domains or refuse. Then
+original Button/BaseComponent/Config construction and disposal, retained callbacks
+and the native application driver.
+**Exact next escape boundary:** a current-IR consumer connecting contents/identity
+and index evidence to `TypeInference::isDenseVectorSite`, admission and emission.
+The existing native query recognizes only direct array sites; structured-loop
+transport needs live proof, not copied analysis-report attributes. Require a
+preserved refused-to-emitted source case before counting native coverage progress.
+
 ## Monorepo review fixes and shared browser cores, 2026-09-13 UTC
 
 Continued clean **ec5b3060**, resuming review **c0259f2a** at the user's request to
