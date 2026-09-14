@@ -450,7 +450,10 @@ struct ArrayContentsEvidence {
 /// VM's named property path does not access dense elements, unlike JavaScript's String
 /// index semantics. Loaded aliases share one contents state per path; cycles
 /// are visited once at exits. Unknown values/keys,
-/// holes, calls, throws, publication, regions, prototypes and accessors refuse.
+/// holes, calls, throws, publication, unsupported regions, prototypes and accessors refuse.
+/// Single-block scf.if arms keep separate exact states; scf.yield transports
+/// all result facts simultaneously, including aliases and scalar snapshots.
+/// An implicit empty else preserves its incoming state. Structured loops refuse.
 /// Every conditional/switch edge is explored, including default and statically
 /// untaken cases. Switch flags must have an independently known origin. Strict
 /// equality, ToBoolean and logical negation produce independent, noncapturing

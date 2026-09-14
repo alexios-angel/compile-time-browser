@@ -27,6 +27,7 @@
 
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -983,23 +984,25 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         path.current = &next->front();
         return ArrayContentsFailure::None;
     };
-    const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
+    const auto snapshot = [&]() -> std::optional<State> {
         // Path enumeration can be exponential. Charge every copied value,
         // visited block, container and element before allocating the snapshot.
-        if (!spend(state.values.size()) || !spend(state.visited.size())) {
-            return ArrayContentsFailure::WorkLimit;
-        }
+        if (!spend(state.values.size()) || !spend(state.visited.size())) { return std::nullopt; }
         for (const auto & [array, elements] : state.arrays) {
             (void)array;
-            if (!spend() || !spend(elements.size())) { return ArrayContentsFailure::WorkLimit; }
+            if (!spend() || !spend(elements.size())) { return std::nullopt; }
         }
         for (const auto & [object, properties] : state.objects) {
             (void)object;
-            if (!spend() || !spend(properties.size())) { return ArrayContentsFailure::WorkLimit; }
+            if (!spend() || !spend(properties.size())) { return std::nullopt; }
         }
-        State copy = state;
-        const auto failure = forward(copy, next, operands);
-        if (failure == ArrayContentsFailure::None) { alternatives.push_back(std::move(copy)); }
+        return state;
+    };
+    const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
+        auto copy = snapshot();
+        if (!copy) { return ArrayContentsFailure::WorkLimit; }
+        const auto failure = forward(*copy, next, operands);
+        if (failure == ArrayContentsFailure::None) { alternatives.push_back(std::move(*copy)); }
         return failure;
     };
     const auto countedLoop = [&](mlir::cf::CondBranchOp branch, mlir::cf::BranchOp latch) {
@@ -1092,7 +1095,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             mlir::Operation & op = *state.current;
             state.current = op.getNextNode();
             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-            if (op.getNumRegions() != 0 ||
+            if ((op.getNumRegions() != 0 && !llvm::isa<mlir::scf::IfOp>(&op)) ||
                 (op.getNumSuccessors() != 0 &&
                  !llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(&op))) {
                 return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
@@ -1134,6 +1137,55 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
             if (state.frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
                 return refuse(ArrayContentsFailure::InvalidFrame, &op);
+            }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(&op)) {
+                if (!origin(branch.getCondition())) {
+                    return refuse(ArrayContentsFailure::UnknownValue, &op);
+                }
+                // ponytail: single-block structured arms only; loops and nested
+                // CFG need their own lifetime/transport proof. Both arms run in
+                // separate exact states, including an implicit empty else.
+                for (mlir::Region & region : branch->getRegions()) {
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    if (region.empty() && &region == &branch.getElseRegion() &&
+                        branch.getNumResults() == 0) {
+                        continue;
+                    }
+                    if (!llvm::hasSingleElement(region) || region.front().empty() ||
+                        region.front().getNumArguments() != 0 ||
+                        !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator())) {
+                        return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+                    }
+                }
+                auto copy = snapshot();
+                if (!copy) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                if (!branch.getElseRegion().empty()) {
+                    copy->current = &branch.getElseRegion().front().front();
+                }
+                alternatives.push_back(std::move(*copy));
+                state.current = &branch.getThenRegion().front().front();
+                continue;
+            }
+            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(&op)) {
+                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+                if (!branch || yield.getNumOperands() != branch.getNumResults()) {
+                    return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+                }
+                if (!spend(yield.getNumOperands())) {
+                    return refuse(ArrayContentsFailure::WorkLimit, &op);
+                }
+                llvm::SmallVector<ContentsValue, 4> incoming;
+                for (mlir::Value value : yield.getOperands()) {
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    const ContentsValue fact = held(value);
+                    if (!fact.original) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    incoming.push_back(fact);
+                }
+                for (auto [result, fact] : llvm::zip(branch.getResults(), incoming)) {
+                    state.values[result] = fact;
+                }
+                state.current = branch->getNextNode();
+                continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
                 const auto failure = forward(state, branch.getDest(), branch.getDestOperands());

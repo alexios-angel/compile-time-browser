@@ -4,6 +4,7 @@
 #include "Induction.h"
 #include "Length.h"
 #include "PrimitiveBinary.h"
+#include "Structured.h"
 
 using namespace ctcompile::test::escape;
 using namespace ctcompile::test::escape::arrays;
@@ -23,6 +24,7 @@ int main() {
     checkLiteralBigIntIndices(context);
     checkDenseArrayLength(context);
     checkArrayInduction(context);
+    checkStructuredContents(context);
     checkObjectContents(context);
     checkObjectDeletions(context);
     checkObjectCopies(context);
