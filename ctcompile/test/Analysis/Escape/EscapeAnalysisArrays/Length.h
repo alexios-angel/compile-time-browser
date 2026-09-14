@@ -237,6 +237,19 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
          .body = values + addIndex + indexed,
          .arrays = "a:[zero]",
          .exit = "a -> {a}"});
+    run({.what = "original Number Add selects its exact overwritten element without optimization",
+         .body = values +
+                 "  %index = ctjs.binary add %zero, %zero {storage_test_id = \"index\"}\n" +
+                 indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    run({.what = "original Number Add rejects overflow before narrowing or subtraction",
+         .body = values + one +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                 "  %sum = ctjs.binary add %bound, %one\n"
+                 "  %index = ctjs.binary sub %sum, %bound\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
     run({.what = "static Add uses the saved length before a later append",
          .body = values + read +
                  "  %index = ctjs.binary_static add %length, %zero\n"
@@ -292,6 +305,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             run({.what = "each static Add operand independently needs an exact bounded Number",
                  .body = values + "  %input = ctjs.constant " + input +
                          "\n  %index = ctjs.binary_static add " +
+                         (left ? "%input, %zero\n" : "%zero, %input\n") + indexed,
+                 .failure = ArrayContentsFailure::UnknownIndex});
+            run({.what = "original Add also requires two independently bounded Number operands",
+                 .body = values + "  %input = ctjs.constant " + input +
+                         "\n  %index = ctjs.binary add " +
                          (left ? "%input, %zero\n" : "%zero, %input\n") + indexed,
                  .failure = ArrayContentsFailure::UnknownIndex});
         }
@@ -495,7 +513,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
           "ctjs.binary mul %length, %zero", "ctjs.binary_static add %length, %zero"}) {
         run({.what = "other arithmetic does not borrow length-subtraction index authority",
              .body = values + one + read + "  %index = " + producer + "\n" + indexed,
-             .failure = producer == "ctjs.binary_static add %length, %zero"
+             .failure = (producer == "ctjs.binary_static add %length, %zero" ||
+                         producer == "ctjs.binary add %length, %one")
                             ? ArrayContentsFailure::MissingElement
                             : ArrayContentsFailure::UnknownIndex});
     }
@@ -838,7 +857,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         inspect(ArrayContentsFailure::UnknownIndex);
         binary->setOperand(0, lhs);
         binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Add));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(ArrayContentsFailure::MissingElement);
         binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
         load->setOperand(0, function.getBody().front().getArgument(3));
         inspect(ArrayContentsFailure::UnknownArray);

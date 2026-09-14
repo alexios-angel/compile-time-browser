@@ -885,6 +885,16 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
+std::optional<std::size_t> boundedNumberSum(const ContentsValue & left,
+                                            const ContentsValue & right) {
+    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(left.origin());
+    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(right.origin());
+    // Both original operands must be exact Numbers. Guard before adding so
+    // neither dynamic nor static Add can borrow coercion, rounding or wrap.
+    if (a && b && *a <= 4294967295ULL - *b) { return *a + *b; }
+    return std::nullopt;
+}
+
 } // namespace
 
 ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t workLimit) {
@@ -1407,7 +1417,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // to_primitive followed by static Number/String operations;
                 // Concat uses primitive to_string. Their result is independent,
                 // without a Number/String tag, value, index or key inference
-                // except for the separately checked length subtraction below.
+                // except for bounded Number addition and length subtraction.
                 // Add and numeric conversions have a depth guard that may
                 // throw an unrelated RangeError. This whole-frame query refuses
                 // calls, handlers and publication, so it cannot retain fresh
@@ -1416,6 +1426,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // results allocate in the VM and static conversions can allocate
                 // C++ temporaries; absence/success of allocation is unproved.
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
+                if (binary.getKind() == ctjs::BinaryKind::Add) {
+                    result.integerNumber = boundedNumberSum(left, right);
+                }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
                     auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
                     auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
@@ -1501,11 +1514,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // saved exact Number facts supply an index; never branch liveness.
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
-                    // Fixed-cost work is covered by this operation's visit. The
-                    // bound guards before addition; no rounding, wrap or coercion.
-                    if (a && b && *a <= 4294967295ULL - *b) { result.integerNumber = *a + *b; }
+                    result.integerNumber = boundedNumberSum(left, right);
                 }
                 state.values[binary.getResult()] = result;
                 continue;
