@@ -45,10 +45,18 @@ The String gate passes **136 native executions / 52 refusals**, including alias
 mutation, saved NUL strings, argument swaps, late/missing/mixed fields, deletion,
 escapes, recursion, depth cutoff, short calls and escaping callables.
 
-Final focused **4/4 lit56.53s / 3/3CTest0.45s PASS**. The complete standard devbox
-build/CTest gate is running against **1,438 frozen inputs**; this is not yet a full
-suite pass. Both source concerns are committed separately and the source tree is
-frozen while that gate runs.
+Initial combined focus passed **4/4 lit56.53s / 3/3CTest0.45s**. The first full
+**280-step build passed**, followed by **597 passing CTests**, but two Phaser scans
+exceeded ten minutes (previous full-gate times **25.76 / 27.44s**). That run was
+stopped before lit. **b61c5bb3** indexes symbol users once in the module body and
+indexes unique closure targets before lifting; duplicate/unknown identities still
+refuse. The existing source controls caught and corrected an initial index-scope
+mistake. Final focused Phaser checks pass **17.05 / 17.85s** with two CTest jobs,
+and **4/4 lit55.81s PASS**, with class/String counts unchanged. These timings have
+different concurrency from the old full gate; no isolated speedup ratio is claimed.
+Stable formatting passes and the pinned baseline is unchanged. A fresh full standard
+gate is now running against **1,438 frozen inputs**; it has not yet completed.
+Evidence includes `slow-full.log`, `performance.log` and `performance2.log`.
 
 **Exact next Bootstrap boundary:** inherited instance/static receivers, default
 derived forwarding, lexical `super` and observable `this.constructor`, then DOM
