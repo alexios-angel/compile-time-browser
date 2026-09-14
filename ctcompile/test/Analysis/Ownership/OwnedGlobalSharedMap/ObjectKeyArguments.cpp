@@ -11,7 +11,8 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
         return contract;
     };
     const auto evidence = [&](mlir::ModuleOp module, const HostContractAnalysis & host,
-                              const OwnedGlobalRoots & owner, unsigned calls, unsigned outerKeys) {
+                              const OwnedGlobalRoots & owner, unsigned calls, unsigned outerKeys,
+                              bool outerFormal) {
         check(owner.roots().size() == 1 && owner.roots().front().methodTable &&
                   owner.roots().front().methodTable->capturedMap,
               "object arguments retain one ordinary published Map owner");
@@ -23,11 +24,14 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
         auto getter = module.lookupSymbol<ctjs::FuncOp>("get$3");
         auto entry = module.lookupSymbol<ctjs::FuncOp>("script$0");
         const auto parameter = getter.getBody().front().getArgument(prepared ? 4 : 3);
+        const std::vector<mlir::BlockArgument> formals =
+            outerFormal ? std::vector{parameter} : std::vector<mlir::BlockArgument>{};
         bool complete = table.methods.size() == 1 && table.calls.size() == calls &&
                         host.callables().size() == calls &&
                         table.capturedMap->parameters.size() == 1 &&
                         table.capturedMap->leafObjects.empty() &&
                         table.capturedMap->outerKeyObjects.size() == outerKeys &&
+                        table.capturedMap->outerKeyParameters == formals &&
                         table.capturedMap->childScalarContents == Alternatives{};
         mlir::Operation * previous = nullptr;
         for (const auto & edge : table.calls) {
@@ -57,7 +61,8 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                 family.alternatives == std::vector{Alternatives{}} &&
                 edge.capturedMap->allocation == table.capturedMap->allocation &&
                 edge.capturedMap->parameters == table.capturedMap->parameters &&
-                checked->capturedMap &&
+                checked->capturedMap && checked->capturedMap->outerKeyParameters == formals &&
+                edge.capturedMap->outerKeyParameters == formals &&
                 checked->capturedMap->outerKeyObjects == table.capturedMap->outerKeyObjects &&
                 edge.capturedMap->outerKeyObjects == table.capturedMap->outerKeyObjects;
         }
@@ -66,7 +71,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     };
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message,
-                             unsigned calls = 1, unsigned outerKeys = 1) {
+                             unsigned calls = 1, unsigned outerKeys = 1, bool outerFormal = true) {
         ++rows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "object-key source/prepared fixture parses");
@@ -83,7 +88,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                          owner.reason().str().c_str());
         }
         if (expected && host.proved() && owner.proved()) {
-            evidence(*module, host, owner, calls, outerKeys);
+            evidence(*module, host, owner, calls, outerKeys, outerFormal);
         } else if (!expected) {
             check(host.callables().empty() && empty(*module, owner),
                   "an unproved object argument exposes no partial callable or owner");
@@ -145,7 +150,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                                std::string(key ? "%entryKey, %zero" : "%zero, %entryKey") +
                                ")\n    %found = ctjs.constant #ctjs.boolean<false>\n");
         variant(storing, true, "checked empty objects may be retained as Map keys or payloads", 1,
-                key ? 1 : 0);
+                key ? 1 : 0, key);
     }
     const std::string retain = "    %setKey = ctjs.constant #ctjs.string<\"set\">\n"
                                "    %setter = ctjs.get_property %state[%setKey]\n"
@@ -164,7 +169,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
 )MLIR";
     variant(replaced(source, has, retain + snapshot + has), true,
             "an outer snapshot withholds key-only evidence without rejecting ordinary ownership", 1,
-            0);
+            0, false);
     variant(replaced(source, has,
                      retain + replaced(snapshot, "%state[%keysKey]", "%stored[%keysKey]") + has),
             false, "a snapshot must retain the exact fluent receiver");
@@ -173,7 +178,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                          replaced(replaced(snapshot, "%state[%keysKey]", "%stored[%keysKey]"),
                                   "%keys(%state)", "%keys(%stored)") +
                          has),
-            true, "a fluent outer Map snapshot also withholds the narrow key role", 1, 0);
+            true, "a fluent outer Map snapshot also withholds the narrow key role", 1, 0, false);
     variant(replaced(replaced(source, has, retain + has), "#ctjs.string<\"has\">",
                      "#ctjs.string<\"get\">"),
             true, "a read after set keeps the exact object key's scalar payload");
@@ -247,7 +252,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     OwnedGlobalRoots exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact object argument budget reproduces the complete source owner");
-    if (exact.proved()) { evidence(*module, host, exact, 1, 1); }
+    if (exact.proved()) { evidence(*module, host, exact, 1, 1, true); }
     std::printf("object-key owner %s: %u rows and all %u incomplete budgets checked\n",
                 prepared ? "prepared" : "source", rows, completion);
 }

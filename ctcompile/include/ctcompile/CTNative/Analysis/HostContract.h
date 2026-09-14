@@ -269,6 +269,12 @@ struct HostCapturedMap {
     std::vector<HostScalarCallback> scalarCallbacks{};
     std::vector<HostReturnedLeaf> returnedLeaves{};
     std::vector<HostReturnedScalar> returnedScalars{};
+    // Object-capable formals used only as direct keys of this captured outer
+    // Map. Recomputed over the complete family; outer snapshots withhold all
+    // roles. This describes uses, not actual origins, distinct identities or
+    // permission to retain a borrowed DOM input. Caller field/payload uses may
+    // exclude an allocation below without changing its callee's formal role.
+    std::vector<mlir::BlockArgument> outerKeyParameters{};
     // Caller allocations used only as outer Map keys across every family call.
     // Payloads, child keys, parameter transport and outer key snapshots exclude
     // an allocation. This is source-use evidence, not DOM provenance or permission

@@ -103,6 +103,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->scalarCallbacks != capture->scalarCallbacks ||
                          edge.capturedMap->returnedLeaves != capture->returnedLeaves ||
                          edge.capturedMap->returnedScalars != capture->returnedScalars ||
+                         edge.capturedMap->outerKeyParameters != capture->outerKeyParameters ||
                          edge.capturedMap->outerKeyObjects != capture->outerKeyObjects ||
                          edge.capturedMap->childMaps != capture->childMaps ||
                          edge.capturedMap->childMapContents != capture->childMapContents ||

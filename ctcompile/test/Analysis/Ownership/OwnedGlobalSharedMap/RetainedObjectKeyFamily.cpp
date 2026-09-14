@@ -11,7 +11,8 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
         return contract;
     };
     const auto variant = [&](const std::string & text, bool expected, const char * message,
-                             unsigned fields = 0, unsigned outerKeys = 1) {
+                             unsigned fields = 0, unsigned outerKeys = 1,
+                             unsigned outerFormals = 2) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "retained sibling key fixture parses");
         if (!module) { return; }
@@ -32,6 +33,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
             check(table.methods.size() == 2 && table.calls.size() == 2 && table.capturedMap &&
                       table.capturedMap->parameters.size() == 2 &&
                       table.capturedMap->leafWrites.size() == fields &&
+                      table.capturedMap->outerKeyParameters.size() == outerFormals &&
                       table.capturedMap->outerKeyObjects.size() == outerKeys,
                   "the complete two-method family owns one captured Map");
             if (table.calls.size() == 2) {
@@ -42,9 +44,17 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
                           second[0].alternatives == PrimitiveAlternatives{},
                       "both siblings independently prove their actual object identity");
                 for (const auto & call : host.callables()) {
-                    check(call.capturedMap && call.capturedMap->outerKeyObjects ==
-                                                  table.capturedMap->outerKeyObjects,
-                          "every sibling exposes the same complete outer-key allocation role");
+                    check(call.capturedMap &&
+                              call.capturedMap->outerKeyObjects ==
+                                  table.capturedMap->outerKeyObjects &&
+                              call.capturedMap->outerKeyParameters ==
+                                  table.capturedMap->outerKeyParameters,
+                          "every sibling exposes the same complete outer-key roles");
+                }
+                for (mlir::BlockArgument parameter : table.capturedMap->outerKeyParameters) {
+                    check(first.size() == 1 && second.size() == 1 &&
+                              (parameter == first[0].parameter || parameter == second[0].parameter),
+                          "outer-key roles name the original source formals");
                 }
                 if (fields == 1 && table.capturedMap && table.capturedMap->leafWrites.size() == 1 &&
                     first.size() == 1) {
@@ -70,8 +80,8 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
                      "    ctjs.store_global \"escapedKey\", %actual\n" + observation),
             false, "a named object still requires a separate global owner");
     variant(replaced(source, "%state, %entryKey, %value)", "%state, %entryKey, %entryKey)"), true,
-            "the complete family may retain the checked empty object as both key and payload", 0,
-            0);
+            "the complete family may retain the checked empty object as both key and payload", 0, 0,
+            1);
     variant(replaced(source, "    %u = ctjs.constant #ctjs.undefined\n    ctjs.return %u", R"MLIR(
     %map = ctjs.load_global "Map"
     %child = ctjs.construct %map(%map)
@@ -80,7 +90,7 @@ void checkRetainedObjectKeyFamily(mlir::MLIRContext & context, const std::string
     %u = ctjs.constant #ctjs.undefined
     ctjs.return %u)MLIR"),
             true, "one sibling child-key use withholds the allocation role for the whole family", 0,
-            0);
+            0, 1);
     variant(replaced(source, "    ctjs.return %u\n  }\n}\n",
                      "    ctjs.set_property %entryKey[%setKey], %state\n"
                      "    ctjs.return %u\n  }\n}\n"),

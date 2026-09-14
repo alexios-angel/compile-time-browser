@@ -326,6 +326,7 @@ bool analyzer::capturedMapOuterKeys(
                 onlyKeys &= key;
                 usedKey |= key;
             }
+            if (onlyKeys && usedKey) { result.outerKeyParameters.push_back(parameter); }
             for (mlir::Operation * operation : familyCalls[index]) {
                 if (!step()) { return false; }
                 const unsigned position =
