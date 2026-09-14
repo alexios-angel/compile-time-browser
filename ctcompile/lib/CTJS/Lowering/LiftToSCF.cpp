@@ -194,6 +194,44 @@ struct CheckedWhilePattern : mlir::RewritePattern {
     std::unique_ptr<mlir::RewritePattern> original;
 };
 
+// Upstream moves then-yielded header values directly into after-region uses,
+// but only remaps captures inside then. Forward those values explicitly first,
+// so its replacement encounters no live after uses of the affected arguments.
+// Extra results are unused; both the true and false edges retain their values.
+mlir::scf::WhileOp forwardHeaderCaptures(mlir::scf::WhileOp loop, mlir::scf::IfOp branch,
+                                         mlir::IRRewriter & rewriter) {
+    llvm::DenseSet<mlir::Value> forwarded;
+    llvm::SmallVector<std::pair<unsigned, mlir::Value>> captures;
+    for (auto [index, value] : llvm::enumerate(loop.getConditionOp().getArgs())) {
+        if (auto other = value.getDefiningOp<mlir::scf::IfOp>(); other && other != branch) {
+            return loop;
+        }
+        if (value.getDefiningOp() != branch) { continue; }
+        if (!forwarded.insert(value).second) { return loop; }
+        auto yielded =
+            branch.thenYield().getOperand(llvm::cast<mlir::OpResult>(value).getResultNumber());
+        if (yielded.getParentRegion() == &loop.getBefore() &&
+            !loop.getAfterArguments()[index].use_empty()) {
+            captures.emplace_back(static_cast<unsigned>(index), yielded);
+        }
+    }
+    if (captures.empty()) { return loop; }
+    llvm::SmallVector<mlir::Type> types(loop.getResultTypes());
+    for (auto [index, value] : captures) { types.push_back(value.getType()); }
+    rewriter.setInsertionPoint(loop);
+    auto replacement = mlir::scf::WhileOp::create(rewriter, loop.getLoc(), types, loop.getInits());
+    replacement->setAttrs(loop->getAttrs());
+    replacement.getBefore().takeBody(loop.getBefore());
+    replacement.getAfter().takeBody(loop.getAfter());
+    for (auto [index, value] : captures) {
+        auto argument = replacement.getAfter().addArgument(value.getType(), loop.getLoc());
+        replacement.getConditionOp().getArgsMutable().append(value);
+        rewriter.replaceAllUsesWith(replacement.getAfterArguments()[index], argument);
+    }
+    rewriter.replaceOp(loop, replacement.getResults().take_front(loop.getNumResults()));
+    return replacement;
+}
+
 // CFG reconstruction encodes a loop's guard as an if result (1/0), then
 // truncates it back to i1. Recover that exact Boolean identity so upstream's
 // WhileMoveIfDown can put the guarded body in the after region. Neither arm's
@@ -223,6 +261,7 @@ mlir::FailureOr<bool> recoverLoopGuards(mlir::FunctionOpInterface function,
             return integer && integer.getValue() == expected;
         };
         if (!flag(branch.thenYield(), 1) || !flag(branch.elseYield(), 0)) { return; }
+        loop = forwardHeaderCaptures(loop, branch, rewriter);
         if (!safeWhileInputs(loop)) { return; }
         rewriter.replaceOp(truncate, branch.getCondition());
         recovered = true;

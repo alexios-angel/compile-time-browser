@@ -283,11 +283,12 @@ ctjs.func @duplicate_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // directly to an after-region use would violate sibling-region dominance.
 // CHECK-LABEL: ctjs.func @header_passthrough_guard
 // CHECK: scf.while
-// CHECK: ctjs.unary neg
-// CHECK: scf.if
-// CHECK: arith.trunci
-// CHECK: scf.condition
-// CHECK: scf.yield
+// CHECK: %[[STEP:.*]] = ctjs.unary neg
+// CHECK-NOT: scf.if
+// CHECK-NOT: arith.trunci
+// CHECK: scf.condition({{.*}}) {{.*}}%[[STEP]]
+// CHECK: ^bb0({{.*}}%[[CARRIED:.*]]: !ctjs.value):
+// CHECK: scf.yield %[[CARRIED]]
 ctjs.func @header_passthrough_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
                                   %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {

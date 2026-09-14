@@ -204,9 +204,9 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 // writes, growth, deletion and escape still refuse. This use census supplies
 // local lifetime separately; contents evidence alone proves neither native
 // element types nor ownership.
-// SCF selection borrows entry-block owners. Its connected use census includes
-// both arms, every source owner and every selected result; nothing may escape.
-// ponytail: no loop/CFG transport or region-local owners; those need lifetimes.
+// SCF selections and certified counted loops borrow entry-block owners. The
+// connected use census includes every incoming edge, source and borrowed slot.
+// ponytail: no CFG transport or region-local owners; those need lifetimes.
 // ponytail: repeated whole-function queries can be quadratic; cache only within
 // an immutable analysis phase if profiling makes that necessary.
 //
@@ -223,22 +223,56 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value 
     llvm::SmallVector<mlir::Value, 4> members{array};
     llvm::DenseSet<mlir::Value> seen{array};
     llvm::SmallVector<ctjs::SetPropertyOp> stores;
-    auto * origin = array.getDefiningOp();
-    if (!origin) { return {}; }
-    auto function = origin->getParentOfType<ctjs::FuncOp>();
+    auto function = array.getParentRegion()->getParentOfType<ctjs::FuncOp>();
     bool borrowed = false;
     std::size_t work = 0;
     const auto add = [&](mlir::Value value) {
         if (seen.insert(value).second) { members.push_back(value); }
     };
+    const auto before = [&](mlir::scf::WhileOp loop, unsigned index) {
+        if (!llvm::hasSingleElement(loop.getBefore()) || !llvm::hasSingleElement(loop.getAfter()) ||
+            index >= loop.getInits().size()) {
+            return false;
+        }
+        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(loop.getAfter().front().getTerminator());
+        if (!yield || index >= yield.getNumOperands()) { return false; }
+        borrowed = true;
+        add(loop.getInits()[index]);
+        add(loop.getBeforeArguments()[index]);
+        add(yield.getOperand(index));
+        return true;
+    };
+    const auto after = [&](mlir::scf::WhileOp loop, unsigned index) {
+        if (!llvm::hasSingleElement(loop.getBefore()) || !llvm::hasSingleElement(loop.getAfter()) ||
+            index >= loop.getNumResults()) {
+            return false;
+        }
+        auto condition =
+            llvm::dyn_cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator());
+        if (!condition || index >= condition.getArgs().size()) { return false; }
+        borrowed = true;
+        add(condition.getArgs()[index]);
+        add(loop.getAfterArguments()[index]);
+        add(loop.getResult(index));
+        return true;
+    };
     for (std::size_t at = 0; at < members.size(); ++at) {
         // A failed census publishes no partial ownership group.
         if (++work > 65536) { return {}; }
-        const mlir::Value member = members[at];
+        mlir::Value member = members[at];
         auto * definition = member.getDefiningOp();
-        if (!definition || definition->getParentOfType<ctjs::FuncOp>() != function) { return {}; }
-        const bool snapshot = isNativeMapSnapshot(definition);
-        if (auto selected = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
+        if (member.getParentRegion()->getParentOfType<ctjs::FuncOp>() != function) { return {}; }
+        const bool snapshot = definition && isNativeMapSnapshot(definition);
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(member)) {
+            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
+            if (!loop || !(&loop.getBefore() == argument.getOwner()->getParent()
+                               ? before(loop, argument.getArgNumber())
+                               : after(loop, argument.getArgNumber()))) {
+                return {};
+            }
+        } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(definition)) {
+            if (!after(loop, llvm::cast<mlir::OpResult>(member).getResultNumber())) { return {}; }
+        } else if (auto selected = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
             borrowed = true;
             const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
             if (selected.getElseRegion().empty()) { return {}; }
@@ -254,7 +288,23 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value 
             if (++work > 65536) { return {}; }
             mlir::Operation * user = use.getOwner();
             if (user->getParentOfType<ctjs::FuncOp>() != function) { return {}; }
+            if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(user)) {
+                if (!before(loop, use.getOperandNumber())) { return {}; }
+                continue;
+            }
+            if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(user)) {
+                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(condition->getParentOp());
+                if (!loop || use.getOperandNumber() == 0 ||
+                    !after(loop, use.getOperandNumber() - 1)) {
+                    return {};
+                }
+                continue;
+            }
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
+                if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(yield->getParentOp())) {
+                    if (!before(loop, use.getOperandNumber())) { return {}; }
+                    continue;
+                }
                 auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
                 if (!selected || use.getOperandNumber() >= selected.getNumResults()) { return {}; }
                 add(selected.getResult(use.getOperandNumber()));
@@ -296,7 +346,9 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value 
         if (!function) { return {}; }
         for (mlir::Value member : members) {
             auto * definition = member.getDefiningOp();
-            if (llvm::isa<mlir::scf::IfOp>(definition)) { continue; }
+            if (!definition || llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(definition)) {
+                continue;
+            }
             if (!llvm::isa<ctjs::CreateArrayOp>(definition) ||
                 definition->getBlock() != &function.getBody().front()) {
                 return {};

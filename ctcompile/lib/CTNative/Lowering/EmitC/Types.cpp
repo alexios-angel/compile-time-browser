@@ -13,6 +13,13 @@ void lowering::retype(ctjs::FuncOp fn) {
         for (mlir::Value result : op->getResults()) {
             if (TypeInference::isDenseVectorSite(result)) { collectVector(result); }
         }
+        for (mlir::Region & region : op->getRegions()) {
+            for (mlir::Block & block : region) {
+                for (mlir::BlockArgument argument : block.getArguments()) {
+                    if (TypeInference::isDenseVectorSite(argument)) { collectVector(argument); }
+                }
+            }
+        }
     });
     // Preserve complete receiver schemas before replacements erase solver
     // identities. Read result facts must never choose the storage schema.
@@ -96,14 +103,17 @@ void lowering::retype(ctjs::FuncOp fn) {
         needsString |= isStringCarrier(c);
         // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
         // scalars carrierType() can spell: an owning vector in this frame,
-        // or an SCF-selected address whose owners outlive every use.
+        // or an SCF-carried address whose owners outlive every use.
         if (isVectorCarrier(c)) {
             needsStringVector |= c == carrier::stringVector;
             auto owner =
                 llvm::cast<ec::LValueType>(vectorCarrierType(context, c == carrier::stringVector));
-            v.setType(v.getDefiningOp<mlir::scf::IfOp>()
-                          ? mlir::Type(ec::PointerType::get(owner.getValueType()))
-                          : mlir::Type(owner));
+            const bool borrowed =
+                llvm::isa<mlir::BlockArgument>(v) ||
+                (v.getDefiningOp() &&
+                 llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(v.getDefiningOp()));
+            v.setType(borrowed ? mlir::Type(ec::PointerType::get(owner.getValueType()))
+                               : mlir::Type(owner));
             return;
         }
         // NO CARRIER IS FATAL, NOT A DOUBLE. This fell through to f64
@@ -153,18 +163,33 @@ void lowering::retype(ctjs::FuncOp fn) {
             }
         }
     });
-    // Selection carries an address to the proved entry-scope owner. Do this
+    // SCF carries an address to the proved entry-scope owner. Do this
     // before scalar boundary conversion, which would otherwise load/copy it.
-    fn.getBody().walk([&](mlir::scf::YieldOp yield) {
-        auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
-        if (!selected) { return; }
-        for (unsigned index = 0; index < selected.getNumResults(); ++index) {
-            auto pointer = llvm::dyn_cast<ec::PointerType>(selected.getResult(index).getType());
-            auto owner = llvm::dyn_cast<ec::LValueType>(yield.getOperand(index).getType());
-            if (!pointer || !owner || pointer.getPointee() != owner.getValueType()) { continue; }
-            mlir::OpBuilder at(yield);
-            yield->setOperand(index, ec::AddressOfOp::create(at, yield.getLoc(), pointer,
-                                                             yield.getOperand(index)));
+    fn.getBody().walk([&](mlir::Operation * op) {
+        const auto borrow = [&](unsigned index, mlir::Type target) {
+            auto pointer = llvm::dyn_cast<ec::PointerType>(target);
+            auto owner = llvm::dyn_cast<ec::LValueType>(op->getOperand(index).getType());
+            if (!pointer || !owner || pointer.getPointee() != owner.getValueType()) { return; }
+            mlir::OpBuilder at(op);
+            op->setOperand(
+                index, ec::AddressOfOp::create(at, op->getLoc(), pointer, op->getOperand(index)));
+        };
+        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
+            for (unsigned index = 0; index < op->getNumOperands(); ++index) {
+                borrow(index, loop.getBeforeArguments()[index].getType());
+            }
+        } else if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
+            auto * parent = yield->getParentOp();
+            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
+            if (!loop && !llvm::isa<mlir::scf::IfOp>(parent)) { return; }
+            for (unsigned index = 0; index < op->getNumOperands(); ++index) {
+                borrow(index, loop ? loop.getBeforeArguments()[index].getType()
+                                   : parent->getResult(index).getType());
+            }
+        } else if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(op)) {
+            for (unsigned index = 1; index < op->getNumOperands(); ++index) {
+                borrow(index, condition->getParentOp()->getResult(index - 1).getType());
+            }
         }
     });
     // NOW THE SHAPES. The census gave every closed literal in the module

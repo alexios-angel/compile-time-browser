@@ -206,8 +206,8 @@ public:
     /// THE DENSE ARRAY (part 24 Phase 57A, the typing half). An array literal
     /// whose uses preserve density and local lifetime can use `std::vector`.
     /// Appends, index/length reads and complete current own-element overwrite
-    /// proofs and literal non-growing length stores qualify. SCF selections
-    /// borrow entry-block literals only after a complete connected use census.
+    /// proofs and literal non-growing length stores qualify. SCF selections and
+    /// certified counted loops borrow entry-block literals after a complete census.
     /// Other transport, sparse writes, deletion and escape open the site.
     ///
     /// For such an array a read of an index is the join of every appended/stored
@@ -216,7 +216,7 @@ public:
     /// `length` is a Number.
     static bool isDenseVectorSite(mlir::Value array);
 
-    /// Complete local ownership group: owning literals and their SCF-selected
+    /// Complete local ownership group: owning literals and their SCF-carried
     /// borrows. Empty on any unknown origin/use or incomplete contents proof.
     /// Recomputed from current IR; no annotations authorize ownership.
     static llvm::SmallVector<mlir::Value, 4> denseVectorAliases(mlir::Value array);

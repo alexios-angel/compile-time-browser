@@ -470,7 +470,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     llvm::DenseSet<mlir::Operation *> contentsFunctions;
     for (const auto & [array, values] : appends_) {
         (void)values;
-        auto function = array.getDefiningOp()->getParentOfType<ctjs::FuncOp>();
+        auto function = mlir::Value(array).getParentRegion()->getParentOfType<ctjs::FuncOp>();
         if (!function || !contentsFunctions.insert(function).second) { continue; }
         const auto contents = computeArrayContents(function);
         if (!contents.complete) { continue; }

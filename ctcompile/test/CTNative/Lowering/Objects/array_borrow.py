@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove selected vectors borrow entry owners and preserve JavaScript identity."""
+"""Prove SCF vector borrows preserve entry-owner lifetime and JavaScript identity."""
 
 import argparse
 import hashlib
@@ -46,7 +46,19 @@ def main():
             "nested_1",
             {"left": 2134, "middle": 3214, "right": 4231},
         ),
+        "selected-counted": (
+            args.fixtures / "selected-counted.js",
+            "counted_1",
+            {"left": 34, "right": 204},
+        ),
     }
+    counted = (args.fixtures / "counted.js").read_text()
+    for trips, expected in enumerate((2935, 33195, 312935, 3133195)):
+        source = args.work / f"counted-{trips}.js"
+        source.write_text(
+            counted.replace("guard = [0, 0, 0]", "guard = [" + ", ".join(["0"] * trips) + "]")
+        )
+        positives[f"counted-{trips}"] = (source, "counted_1", {"observed": expected})
     compilers = find_compilers()
     checked = 0
     mutations = 0
@@ -94,14 +106,19 @@ def main():
                 if "ctbrowser::" in cpp:
                     raise RuntimeError(f"{prefix}/{layout}: generated code reaches the runtime")
                 body = function_body(cpp, function)
-                owners = 3 if name == "nested" else 2
+                owners = (
+                    4
+                    if name == "selected-counted"
+                    else 3 if name == "nested" or name.startswith("counted-") else 2
+                )
                 if len(re.findall(r"std::vector<double>\s+[A-Za-z_]\w*\s*;", body)) != owners:
                     raise RuntimeError(
                         f"{prefix}/{layout}: expected {owners} owning vectors\n{body}"
                     )
-                if len(re.findall(r"&[A-Za-z_]\w*", body)) != owners:
+                borrowed = owners - 1 if "counted" in name else owners
+                if len(re.findall(r"&[A-Za-z_]\w*", body)) != borrowed:
                     raise RuntimeError(
-                        f"{prefix}/{layout}: selection must borrow every owner\n{body}"
+                        f"{prefix}/{layout}: expected {borrowed} borrowed owners\n{body}"
                     )
                 file = args.work / f"{prefix}.{layout}.cpp"
                 file.write_text(cpp)
@@ -130,10 +147,51 @@ def main():
                             "copy mutation did not expose the original identity loss"
                         )
                     mutations += 1
+                if name.startswith("counted-"):
+                    # Replacing the post-loop borrowed write by a copy preserves
+                    # the loop's scalar work but must fail its owner observations.
+                    changed, count = re.subn(
+                        r"\(\*([A-Za-z_]\w*)\)\[",
+                        r"std::vector<double> ctnative_copy = *\1;\nctnative_copy[",
+                        cpp,
+                    )
+                    if count != 1:
+                        raise RuntimeError("loop copy mutation did not find one borrowed write")
+                    file = args.work / f"{prefix}.{layout}.copy.cpp"
+                    file.write_text(changed)
+                    binary = args.work / f"{prefix}.{layout}.copy"
+                    run([compilers[0], *FLAGS, str(file), "-o", str(binary)])
+                    if run([str(binary.resolve())]).stdout == expected:
+                        raise RuntimeError("loop copy mutation concealed owner identity loss")
+                    mutations += 1
     refusals = 0
-    for source in sorted(args.fixtures.glob("*.js")):
-        if source.stem in ("unequal", "nested"):
-            continue
+    negatives = {
+        "loop-bound": counted.replace("i < guard.length", "i < 3"),
+        "loop-step": counted.replace("++i", "i += 2"),
+        "loop-mutation": counted.replace("var saved = left;", "left[0] = 7; var saved = left;"),
+        "loop-region": counted.replace("left = right;", "left = [7, 8];"),
+        "loop-mixed": counted.replace("b = [3, 4, 5]", 'b = ["three", "four", "five"]'),
+        "loop-external": counted.replace("function counted()", "function counted(a)")
+        .replace("var a = [1, 2], b", "var b")
+        .replace("counted();", "counted([1, 2]);"),
+        "loop-returned": counted.replace(
+            "return sum * 10000", "return left;\n  return sum * 10000"
+        ).replace("counted();", "counted().length;"),
+        "loop-offset": counted.replace("left[0];", "left[i + 1];"),
+        "loop-zero-effect": counted.replace("guard = [0, 0, 0]", "guard = []").replace(
+            "var saved = left;", "held = left; var saved = left;"
+        ),
+    }
+    for name, text in negatives.items():
+        source = args.work / f"{name}.js"
+        source.write_text(text)
+    sources = [
+        source
+        for source in sorted(args.fixtures.glob("*.js"))
+        if source.stem not in ("unequal", "nested", "counted", "selected-counted")
+    ]
+    sources += [args.work / f"{name}.js" for name in negatives]
+    for source in sources:
         raw = args.work / f"{source.stem}.raw.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         for optimize in (False, True):

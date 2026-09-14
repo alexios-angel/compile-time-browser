@@ -30,6 +30,38 @@ var left = nested(true, true);
 var middle = nested(false, true);
 var right = nested(false, false);
 
+//--- counted.js
+function counted() {
+  var a = [1, 2], b = [3, 4, 5], guard = [0, 0, 0];
+  var left = a, right = b, sum = 0;
+  for (var i = 0; i < guard.length; ++i) {
+    var saved = left;
+    left = right;
+    right = saved;
+    sum = sum * 10 + left[0];
+  }
+  var before = left.length;
+  left[0] = 9;
+  left.length = 1;
+  return sum * 10000 + before * 1000 + a[0] * 100 + b[0] * 10 + a.length * 2 + b.length;
+}
+var observed = counted();
+
+//--- selected-counted.js
+function counted(flag) {
+  var a = [1, 2], b = [3, 4, 5], c = [6, 7, 8, 9], guard = [0];
+  var left = flag ? a : b, right = c;
+  for (var i = 0; i < guard.length; ++i) {
+    var saved = left;
+    left = right;
+    right = saved;
+  }
+  right.length = 0;
+  return a.length * 100 + b.length * 10 + c.length;
+}
+var left = counted(true);
+var right = counted(false);
+
 //--- external.js
 function blocked(flag, external) {
   var a = [1, 2];
