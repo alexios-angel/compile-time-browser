@@ -54,9 +54,12 @@ refuse. The existing source controls caught and corrected an initial index-scope
 mistake. Final focused Phaser checks pass **17.05 / 17.85s** with two CTest jobs,
 and **4/4 lit55.81s PASS**, with class/String counts unchanged. These timings have
 different concurrency from the old full gate; no isolated speedup ratio is claimed.
-Stable formatting passes and the pinned baseline is unchanged. A fresh full standard
-gate is now running against **1,438 frozen inputs**; it has not yet completed.
-Evidence includes `slow-full.log`, `performance.log` and `performance2.log`.
+Stable formatting passes and the pinned baseline is unchanged. The fresh full
+**280-step build and 599 non-lit CTests passed**; Phaser takes **31.00 / 31.01s**
+in that full run and owned-global Map proofs pass in **409.03s**. The complete
+**176-test lit suite is still running** against the same **1,438 frozen inputs**.
+This is not yet a full-suite pass. Evidence includes `slow-full.log`,
+`performance.log`, `performance2.log` and `full.log`.
 
 **Exact next Bootstrap boundary:** inherited instance/static receivers, default
 derived forwarding, lexical `super` and observable `this.constructor`, then DOM
