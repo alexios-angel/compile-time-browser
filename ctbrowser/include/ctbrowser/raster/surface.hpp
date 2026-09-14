@@ -1,7 +1,9 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -91,12 +93,21 @@ struct pixel_rect {
 // are not an edge case here - they are what a tile sees for content starting to
 // its left, and what a blit sees for a scrolled layer - so an inconsistent
 // rounding shows up as tile seams and as a scroll that lands one pixel short.
+// Saturate before narrowing; callers clip wide coordinate sums before indexing.
 [[nodiscard]] constexpr int round_to_pixel(float f) noexcept {
-    return static_cast<int>(f < 0 ? f - 0.5f : f + 0.5f);
+    if (f != f) { return 0; }
+    const double rounded = static_cast<double>(f) + (f < 0 ? -0.5 : 0.5);
+    if (rounded <= std::numeric_limits<int>::min()) { return std::numeric_limits<int>::min(); }
+    if (rounded >= std::numeric_limits<int>::max()) { return std::numeric_limits<int>::max(); }
+    return static_cast<int>(rounded);
 }
 
 [[nodiscard]] inline pixel_rect to_pixels(const rect & r, int clip_width,
                                           int clip_height) noexcept {
+    if (!std::isfinite(r.x) || !std::isfinite(r.y) || !std::isfinite(r.width) ||
+        !std::isfinite(r.height)) {
+        return {};
+    }
     pixel_rect out;
     out.left = round_to_pixel(r.x);
     out.top = round_to_pixel(r.y);

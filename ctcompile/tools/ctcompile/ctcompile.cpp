@@ -51,6 +51,20 @@ std::vector<std::byte> bytes_of(std::string_view text) {
     return {bytes.begin(), bytes.end()};
 }
 
+bool write_file(const std::filesystem::path & path, std::span<const std::byte> bytes) {
+    std::ofstream out{path, std::ios::binary};
+    if (out) {
+        out.write(reinterpret_cast<const char *>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        out.close();
+    }
+    if (!out) {
+        std::cerr << "ctcompile: cannot write " << path << " (output may be incomplete)\n";
+        return false;
+    }
+    return true;
+}
+
 int main(int argc, char ** argv) try {
     // VISIBLE and HIDDEN, which is what makes `--help` readable: the positional
     // application directory is documented in the usage line rather than listed
@@ -427,15 +441,7 @@ int main(int argc, char ** argv) try {
         written = ctbrowser::shell::append_bundle_to(base, bytes);
     }
 
-    {
-        std::ofstream write{out, std::ios::binary};
-        if (!write) {
-            std::cerr << "ctcompile: cannot write " << out << '\n';
-            return 1;
-        }
-        write.write(reinterpret_cast<const char *>(written.data()),
-                    static_cast<std::streamsize>(written.size()));
-    }
+    if (!write_file(out, written)) { return 1; }
     // AND THE MANIFEST BESIDE IT, when asked. `bundle_bytes` is filled in only
     // here, because it is the size of the file that was just written and the
     // copy inside the bundle cannot know it - writing the manifest is what
@@ -443,12 +449,8 @@ int main(int argc, char ** argv) try {
     if (options.count("manifest") != 0) {
         record.bundle_bytes = written.size();
         const std::filesystem::path where{options["manifest"].as<std::string>()};
-        std::ofstream write{where};
-        if (!write) {
-            std::cerr << "ctcompile: cannot write the manifest to " << where << '\n';
-            return 1;
-        }
-        write << ctcompile::to_json(record);
+        const std::string manifest = ctcompile::to_json(record);
+        if (!write_file(where, std::as_bytes(std::span{manifest}))) { return 1; }
     }
 
     if (!bundle_only) {

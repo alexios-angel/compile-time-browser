@@ -174,13 +174,23 @@ private:
     [[nodiscard]] static std::vector<std::byte> read_file(const std::filesystem::path & path) {
         std::error_code failed;
         if (!std::filesystem::is_regular_file(path, failed)) { return {}; }
-        std::ifstream in{path, std::ios::binary};
+        std::ifstream in{path, std::ios::binary | std::ios::ate};
         if (!in) { return {}; }
+        // Size the opened file, so a renamed path cannot supply an error
+        // sentinel or the size of a different file to the allocation.
+        const std::streamoff size = in.tellg();
+        if (size <= 0 || !std::in_range<std::size_t>(size) ||
+            !std::in_range<std::streamsize>(size)) {
+            return {};
+        }
         std::vector<std::byte> bytes;
-        bytes.resize(static_cast<std::size_t>(std::filesystem::file_size(path, failed)));
-        if (failed) { return {}; }
-        in.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        bytes.resize(static_cast<std::size_t>(in.gcount()));
+        if (static_cast<std::size_t>(size) > bytes.max_size()) { return {}; }
+        in.seekg(0);
+        if (!in) { return {}; }
+        bytes.resize(static_cast<std::size_t>(size));
+        if (!in.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(size))) {
+            return {};
+        }
         return bytes;
     }
 

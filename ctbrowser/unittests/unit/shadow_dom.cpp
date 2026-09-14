@@ -119,6 +119,31 @@ void test_only_some_elements_may_host_one() {
        "NotSupportedError");
 }
 
+void test_conversion_and_foreign_document_boundaries() {
+    is("(function () { var calls = ''; var init = {get mode() { calls += 'get;';"
+       " return {toString: function () { calls += 'string;'; return 'open'; }}; }};"
+       " try { document.getElementById('nothost').attachShadow(init); }"
+       " catch (e) { return calls + e.name; } })()",
+       "get;string;NotSupportedError");
+    is("(function () { try { document.getElementById('nothost').attachShadow({mode: 'bad'}); }"
+       " catch (e) { return e.name; } })()",
+       "TypeError");
+    is("(function () { var d = document.implementation.createHTMLDocument('other');"
+       " var h = d.createElement('div'); var r = h.attachShadow({mode: 'closed'});"
+       " try { document.adoptNode(r); } catch (e) {"
+       " return e.name + ':' + (r.ownerDocument === d) + ':' + (r.host === h); } })()",
+       "HierarchyRequestError:true:true");
+    is("(function () { var d = document.implementation.createHTMLDocument('other');"
+       " var h = d.createElement('div'); var r = h.attachShadow({mode: 'open'});"
+       " try { document.importNode(r, true); } catch (e) {"
+       " return e.name + ':' + (h.shadowRoot === r); } })()",
+       "NotSupportedError:true");
+    is(with_root("document.adoptNode(h);"
+                 " return (h.shadowRoot === r) + ':' + r.isConnected + ':' +"
+                 " (r.getRootNode({composed: true}) === h);"),
+       "true:false:true");
+}
+
 // --- the tree inside it -----------------------------------------------------
 
 void test_a_shadow_root_holds_a_tree() {
@@ -281,6 +306,7 @@ int main() {
     test_attach_shadow_makes_a_shadow_root();
     test_the_mode_is_required_and_is_one_of_two_words();
     test_only_some_elements_may_host_one();
+    test_conversion_and_foreign_document_boundaries();
     test_a_shadow_root_holds_a_tree();
     test_the_shadow_tree_is_invisible_to_the_light_dom();
     test_query_selector_searches_the_shadow_tree();

@@ -264,8 +264,8 @@ void dom_bindings::scan_custom_elements() {
     walk_custom_elements(txn, txn.root(), true);
     // Every shadow tree, connected when its host's shadow-including root is
     // the document.
-    for (const auto & [host_key, root] : shadow_roots_) {
-        const node_id top = root_of_tree(txn, unpack(host_key), true);
+    for (const node_id root : doc_->shadow_roots()) {
+        const node_id top = root_of_tree(txn, shadow_tree_of(root)->host, true);
         const bool connected =
             top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
         walk_custom_elements(txn, root, connected);

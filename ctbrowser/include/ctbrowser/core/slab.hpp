@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <utility>
 
 #include <ctbrowser/core/handle.hpp>
@@ -70,10 +71,18 @@ public:
 
     // --- writer side -----------------------------------------------------------
 
+    // Throws length_error when every slot is occupied; allocation and T's
+    // constructor may also throw. Failed construction leaves the slot reusable.
     template <typename... Args> [[nodiscard]] handle_type insert(Args &&... args) {
         const std::uint32_t slot = claim_slot();
         entry * e = locate(slot);
-        std::construct_at(value_of(e), std::forward<Args>(args)...);
+        try {
+            std::construct_at(reinterpret_cast<T *>(e->storage), std::forward<Args>(args)...);
+        } catch (...) {
+            e->next_free = free_head_;
+            free_head_ = slot + 1;
+            throw;
+        }
         // Publishing the generation is what makes the object visible; the
         // construction above must not be reordered after it.
         const std::uint32_t generation = e->generation.load(std::memory_order_relaxed) + 1;
@@ -129,6 +138,7 @@ private:
         }
         const std::uint32_t slot = capacity_.load(std::memory_order_relaxed);
         const std::size_t chunk = slot >> chunk_bits;
+        if (chunk >= max_chunks) { throw std::length_error("slab capacity exceeded"); }
         if (directory_[chunk].load(std::memory_order_relaxed) == nullptr) {
             // Published with release so a reader that sees the pointer also
             // sees zero-initialized generations behind it.

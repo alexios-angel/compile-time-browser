@@ -41,6 +41,28 @@ if(NOT EXISTS ${OUT})
   message(FATAL_ERROR "ctcompile reported success and wrote no executable")
 endif()
 
+# Opening a file is not proof that its bytes reached the destination. Linux's
+# full device deterministically rejects the write/close while permitting open.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "/dev/full")
+  foreach(failed_output bundle manifest)
+    if(failed_output STREQUAL "bundle")
+      set(output_args --bundle -o /dev/full)
+    else()
+      set(output_args --bundle -o ${OUT}.failed.ctapp --manifest /dev/full)
+    endif()
+    execute_process(
+      COMMAND ${CTCOMPILE} ${APP} --entry index.html --fonts ${FONTS} ${output_args}
+      RESULT_VARIABLE failed_write
+      OUTPUT_VARIABLE failed_out ERROR_VARIABLE failed_err
+      TIMEOUT 30)
+    if(failed_write EQUAL 0 OR NOT failed_err MATCHES "cannot write[^\n]*/dev/full")
+      message(FATAL_ERROR "${failed_output} write failure was not reported: "
+                          "${failed_write}\n${failed_out}${failed_err}")
+    endif()
+  endforeach()
+  file(REMOVE ${OUT}.failed.ctapp)
+endif()
+
 # IT SAID WHAT IT DID, and the numbers are checked rather than the phrasing:
 # two scripts is the count that matters, because a packager that quietly packed
 # one would produce an application that starts and is refused for a reason

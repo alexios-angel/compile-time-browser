@@ -1,0 +1,2 @@
+# Optional reference browsers for compare.py and css-parity.py.
+playwright>=1.40,<2

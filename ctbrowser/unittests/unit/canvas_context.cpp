@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <span>
 #include <sstream>
 #include <string>
@@ -374,6 +375,103 @@ void test_image_data() {
     check(log[6] == "patch=0,255,0", "getImageData reads from the offset given: " + log[6]);
 }
 
+void test_image_data_numeric_bounds() {
+    browser page{browser_options{80, 60}};
+    page.load_html(R"(<canvas id=c width=4 height=2></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        function error(f) {
+          try { f(); console.log('no error'); } catch (e) { console.log(e.name); }
+        }
+        error(() => ctx.createImageData(NaN, 1));
+        error(() => ctx.createImageData(Infinity, 1));
+        error(() => ctx.createImageData(2147483648, 1));
+        error(() => ctx.createImageData(0, 1));
+        error(() => ctx.getImageData(0, 0, 1, 0));
+        const blank = ctx.createImageData(-2.9, -1.9);
+        console.log('negative=' + blank.width + 'x' + blank.height);
+        const copied = ctx.createImageData(blank);
+        console.log('copy=' + copied.data.length + ',' + copied.data[0]);
+        ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 1, 1);
+        ctx.fillStyle = '#00ff00'; ctx.fillRect(1, 0, 1, 1);
+        const back = ctx.getImageData(2, 1, -2, -1);
+        console.log('back=' + back.data[0] + ',' + back.data[5]);
+        const far = ctx.getImageData(2147483647, 0, 2, 1);
+        const left = ctx.getImageData(-2147483648, 0, -2, 1);
+        console.log('outside=' + far.data[3] + ',' + far.data[7] + ',' + left.data[3]);
+        ctx.putImageData(back, 2147483647, 0);
+        ctx.putImageData(back, -2147483648, 0);
+        console.log('unchanged=' + ctx.getImageData(0, 0, 1, 1).data[0]);
+        ctx.putImageData(back, -1, 0);
+        console.log('clipped=' + ctx.getImageData(0, 0, 1, 1).data[1]);
+        error(() => ctx.putImageData(back, NaN, 0));
+        error(() => ctx.getImageData(Infinity, 0, 1, 1));
+        let order = '';
+        ctx.getImageData({ valueOf() { order += 'x'; return 0.9; } },
+                         { valueOf() { order += 'y'; return 0; } }, 1, 1);
+        console.log('coercion=' + order);
+        error(() => ctx.getImageData({ valueOf() { throw new Error('stop'); } },
+                                     { valueOf() { order += 'wrong'; return 0; } }, 1, 1));
+        console.log('stopped=' + order);
+        console.log('wrap=' + new ImageData(4294967297, 1).width);
+        error(() => new ImageData(NaN, 1));
+        error(() => new ImageData(-1, -1));
+        error(() => new ImageData(new Uint8ClampedArray(8), 2, 0));
+        error(() => new ImageData(new Uint8ClampedArray(7), 2));
+        const view = new Uint8ClampedArray(new ArrayBuffer(8), 4, 4);
+        view[0] = 10; view[1] = 20; view[2] = 30; view[3] = 255;
+        ctx.putImageData(new ImageData(view, 1), 0, 0);
+        console.log('view=' + ctx.getImageData(0, 0, 1, 1).data[2]);
+        // The binding accepts array-backed image objects too; channel coercion
+        // must use Uint8ClampedArray semantics even on that compatibility path.
+        ctx.putImageData({ width: 1, height: 1, data: [NaN, Infinity, 2.5, 255] }, 0, 0);
+        const clamped = ctx.getImageData(0, 0, 1, 1).data;
+        console.log('channels=' + clamped[0] + ',' + clamped[1] + ',' + clamped[2]);
+    </script>)");
+    check(page.script_error().empty(), "image-data boundary calls ran: " + page.script_error());
+    const std::vector<std::string> expected{
+        "TypeError",      "TypeError", "TypeError",       "IndexSizeError", "IndexSizeError",
+        "negative=2x1",   "copy=8,0",  "back=255,255",    "outside=0,0,0",  "unchanged=255",
+        "clipped=255",    "TypeError", "TypeError",       "coercion=xy",    "Error",
+        "stopped=xy",     "wrap=1",    "IndexSizeError",  "RangeError",     "IndexSizeError",
+        "IndexSizeError", "view=30",   "channels=0,255,2"};
+    const auto & log = log_of(page);
+    check(log == expected, "ImageData conversions, clipping, buffer shapes and errors agree");
+    if (log != expected) {
+        for (const auto & line : log) { std::fprintf(stderr, "ImageData: %s\n", line.c_str()); }
+    }
+}
+
+void test_raster_numeric_bounds() {
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    check(raster::round_to_pixel(-27.5f) == -28 && raster::round_to_pixel(27.5f) == 28,
+          "pixel ties still round away from zero");
+    check(raster::round_to_pixel(infinity) == std::numeric_limits<int>::max() &&
+              raster::round_to_pixel(-infinity) == std::numeric_limits<int>::min() &&
+              raster::round_to_pixel(nan) == 0,
+          "pixel rounding defines out-of-range and non-finite results");
+    const auto clipped = raster::to_pixels(rect{-1e30f, -1e30f, 2e30f, 2e30f}, 4, 4);
+    check(clipped.left == 0 && clipped.top == 0 && clipped.right == 4 && clipped.bottom == 4,
+          "large finite bounds clip to the tiny surface before indexing");
+    check(raster::to_pixels(rect{nan, 0, 4, 4}, 4, 4).empty() &&
+              raster::to_pixels(rect{0, 0, infinity, 4}, 4, 4).empty(),
+          "invalid rectangles do not draw");
+    raster::surface into{4, 4};
+    paint::paint_command text;
+    text.text = "AA";
+    text.font_size = 16;
+    text.fill = color::rgba(255, 0, 0);
+    const auto & fonts = raster::font8x8_fonts();
+    fonts.draw_run(rect{1e30f, 0, 16, 16}, text, {0, 0, 4, 4}, into);
+    fonts.draw_run(rect{0, 1e30f, 16, 16}, text, {0, 0, 4, 4}, into);
+    check(std::ranges::all_of(into.pixels(), [](auto pixel) { return pixel == 0; }),
+          "far-off glyphs leave the surface unchanged");
+    text.font_size = 1e30f;
+    fonts.draw_run(rect{0, 0, 16, 16}, text, {0, 0, 4, 4}, into);
+    check(fonts.ascent(text.font_size, "", false, false) > 0,
+          "large font scales remain defined and drawing visits only clipped pixels");
+}
+
 // WEBGL COMPILES AND CONSTRUCTS, AND REFUSES CLEANLY.
 //
 // The scope for p5.js here is 2D. That is not the same as WebGL being absent:
@@ -531,6 +629,8 @@ int main() {
     test_composite_operations();
     test_composite_clears_untouched_pixels();
     test_image_data();
+    test_image_data_numeric_bounds();
+    test_raster_numeric_bounds();
     test_fill_rule();
     test_text_alignment();
     test_canvas_transform_and_paths();

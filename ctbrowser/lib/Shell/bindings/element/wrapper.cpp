@@ -151,11 +151,7 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
         // `I`, because the rule is about the DOCUMENT's language rather than
         // the element's vocabulary. The two agreed as long as the only way to
         // build a document was the HTML tree builder; see dom/xml.hpp.
-        if (txn.element_ns(id) == node_ns::html && !doc_->xml()) {
-            for (char & c : tag_name) {
-                if (c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
-            }
-        }
+        if (txn.element_ns(id) == node_ns::html && !doc_->xml()) { ascii_upper_in_place(tag_name); }
         obj.set("tagName", cx.string(tag_name));
         // `nodeName` AND `nodeType`, which every tree-walking page reads and
         // this wrapper did not have. They are not aliases of `tagName`: a

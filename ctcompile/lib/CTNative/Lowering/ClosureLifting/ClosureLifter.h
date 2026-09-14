@@ -475,25 +475,22 @@ struct closureLifter {
         // (`enclosing_indices`, slice 1b), which is the binding travelling one
         // frame further in; `examineCapturedSlot` follows it and appends in
         // POST-ORDER, so a slot always stands before the slot it is filled
-        // from. `depth` is 0 for a slot the owning frame filled and one more
-        // for each frame after that, and pass B sorts on it.
+        // from. Pass B orders removals by the closure target nesting.
         struct capturedSlot {
             ctjs::CreateClosureOp made;
             unsigned slot;
-            unsigned depth;
         };
         llvm::SmallVector<capturedSlot> slots;
         unsigned calls = 0;
     };
 
-    // WHICH SLOTS OF ONE CLOSURE GO, AND HOW FAR IN THE SHALLOWEST OF THEM WAS.
+    // WHICH SLOTS OF ONE CLOSURE GO.
     // One closure can hold slots from more than one binding, so the removals
     // are collected per closure and the whole set goes in one rewrite -
     // `removeCaptureSlots` renumbers, and a second rewrite of the same closure
     // would be renumbering indices the first one already moved.
     struct slotRemoval {
         llvm::SmallVector<unsigned> slots;
-        unsigned depth = 0;
     };
     static bool holdsAFunction(ctjs::CreateCellOp cell);
 
@@ -503,7 +500,7 @@ struct closureLifter {
                                                  unsigned & calls);
 
     std::optional<std::string> examineCapturedSlot(
-        functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot, unsigned depth,
+        functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot,
         llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> & examined);
 
     std::optional<std::string> examineFunctionBinding(ctjs::CreateCellOp cell,

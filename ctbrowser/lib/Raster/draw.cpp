@@ -22,8 +22,7 @@ namespace {
 // advance is exact and has no font metrics behind it. Layout must measure with
 // THIS if the raster is to place text where layout thought it would.
 int font8x8_scale(float font_size) noexcept {
-    const int s = static_cast<int>(font_size / 8.0f + 0.5f);
-    return s < 1 ? 1 : s;
+    return std::max(1, round_to_pixel(font_size / 8.0f));
 }
 
 std::size_t utf8_length(std::string_view text) noexcept {
@@ -37,8 +36,8 @@ std::size_t utf8_length(std::string_view text) noexcept {
 } // namespace
 
 float font8x8_advance(std::string_view text, float font_size) noexcept {
-    return static_cast<float>(utf8_length(text) * 8u *
-                              static_cast<std::size_t>(font8x8_scale(font_size)));
+    return static_cast<float>(utf8_length(text)) * 8.0f *
+           static_cast<float>(font8x8_scale(font_size));
 }
 
 namespace {
@@ -199,9 +198,12 @@ void fill_band(float x, float y, float width, float thickness, color c, const pi
 // run's box top is the TOP of the cell, matching how layout positions a line.
 void draw_text(const rect & where, const paint_command & c, const pixel_rect & clip,
                surface & into) {
-    const int scale = font8x8_scale(c.font_size);
-    const int origin_x = round_to_pixel(where.x);
-    const int origin_y = round_to_pixel(where.y);
+    if (!std::isfinite(where.x) || !std::isfinite(where.y) || !std::isfinite(c.font_size)) {
+        return;
+    }
+    const std::int64_t scale = font8x8_scale(c.font_size);
+    std::int64_t left = round_to_pixel(where.x);
+    const std::int64_t origin_y = round_to_pixel(where.y);
     const bool bold = c.face.bold;
     const bool italic = c.face.italic;
     // A styled glyph reaches past its 8-wide cell - one column for the bold
@@ -210,24 +212,21 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
     // the slant read. The advance is unchanged, which is what keeps layout and
     // this function agreeing about where text goes.
     const int overhang = (bold ? 1 : 0) + (italic ? 2 : 0);
-    int cell = 0;
-    for (std::size_t i = 0; i < c.text.size();) {
+    for (std::size_t i = 0; i < c.text.size(); left += 8 * scale) {
+        if (left >= clip.right) { break; }
         const char32_t cp = decode_utf8(c.text, i);
-        const int left = origin_x + cell * 8 * scale;
-        ++cell;
         if (cp > 0x7F) { continue; } // outside font8x8; the cell is still advanced
         for (int gy = 0; gy < 8; ++gy) {
             for (int gx = 0; gx < 8 + overhang; ++gx) {
                 if (!inked(cp, gy, gx, bold, italic)) { continue; }
-                const int px = left + gx * scale;
-                const int py = origin_y + gy * scale;
-                for (int sy = 0; sy < scale; ++sy) {
-                    const int y = py + sy;
-                    if (y < clip.top || y >= clip.bottom) { continue; }
-                    const std::span<std::uint32_t> row = into.row(y);
-                    for (int sx = 0; sx < scale; ++sx) {
-                        const int x = px + sx;
-                        if (x < clip.left || x >= clip.right) { continue; }
+                const auto px = left + gx * scale;
+                const auto py = origin_y + gy * scale;
+                // Clip the scaled glyph cell before narrowing or visiting pixels.
+                for (auto y = std::max<std::int64_t>(py, clip.top);
+                     y < std::min<std::int64_t>(py + scale, clip.bottom); ++y) {
+                    const auto row = into.row(static_cast<int>(y));
+                    for (auto x = std::max<std::int64_t>(px, clip.left);
+                         x < std::min<std::int64_t>(px + scale, clip.right); ++x) {
                         row[static_cast<std::size_t>(x)] =
                             blend_over(row[static_cast<std::size_t>(x)], c.fill);
                     }
@@ -261,7 +260,7 @@ public:
     }
     [[nodiscard]] float ascent(float font_size, std::string_view, bool, bool) const override {
         // The cell is 8 tall and the glyphs sit on its last row.
-        return static_cast<float>(8 * font8x8_scale(font_size));
+        return 8.0f * static_cast<float>(font8x8_scale(font_size));
     }
     [[nodiscard]] float descent(float, std::string_view, bool, bool) const override {
         return 0; // nothing in font8x8 goes below the cell

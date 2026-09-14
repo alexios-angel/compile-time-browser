@@ -11,10 +11,7 @@
 #              <repo>/tools/llvm-mingw
 #   SDL3       $SDL3_MINGW (the package root holding x86_64-w64-mingw32/),
 #              ~/projects/sdl3-mingw
-#   GLM        $GLM_INC, ~/projects/glm-inc - an ISOLATED directory holding
-#              glm/ only. Never a general /usr/include: that would drag the
-#              host's glibc headers into the mingw compile.
-#   Boost      $BOOST_INC, ~/projects/boost-inc - the same idea, holding
+#   Boost      $BOOST_INC, ~/projects/boost-inc - an ISOLATED directory holding
 #              boost/ only. the engine uses Boost HEADER-ONLY (containers, unordered,
 #              asio), so headers are the whole dependency; a symlink to the
 #              host's boost/ inside an otherwise empty directory is enough.
@@ -66,16 +63,6 @@ if(NOT EXISTS "${_ctb_toolchain_root}/x86_64-w64-mingw32/lib/cmake/SDL3")
     endif()
   endforeach()
 endif()
-
-# --- GLM (header-only): the isolated include dir
-set(_ctb_glm_roots "$ENV{GLM_INC}" "$ENV{HOME}/projects/glm-inc")
-foreach(_root IN LISTS _ctb_glm_roots)
-  if(_root AND EXISTS "${_root}/glm/glm.hpp")
-    set(CTBROWSER_GLM_INCLUDE_DIR "${_root}" CACHE PATH
-        "isolated GLM include dir for the mingw cross build")
-    break()
-  endif()
-endforeach()
 
 # --- Boost (header-only): the isolated include dir. There is no BoostConfig
 # for the cross target, and there does not need to be - the engine links Boost::headers

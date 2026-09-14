@@ -9,13 +9,23 @@ foreach(test IN LISTS tests)
   ctbrowser_test(${test})
 endforeach()
 
+# Core lifetime/storage tests also run without the browser or interpreter.
+get_target_property(_core_libs ctbrowser-test-core_basics LINK_LIBRARIES)
+list(FILTER _core_libs EXCLUDE REGEX "^ctbrowser::(dom|script|style|layout|paint|raster|shell|ctbrowser)$")
+set_property(TARGET ctbrowser-test-core_basics PROPERTY LINK_LIBRARIES "${_core_libs}")
+
 # The native DOM clients must link without the interpreter or Shell.
 # Keep the test helper's configured trace libraries and DOM/Core dependencies.
-foreach(client dom_token_list dom_element)
+foreach(client dom_token_list dom_element dom_shadow)
   get_target_property(_dom_libs ctbrowser-test-${client} LINK_LIBRARIES)
   list(FILTER _dom_libs EXCLUDE REGEX "^ctbrowser::(script|style|layout|paint|raster|shell|ctbrowser)$")
   set_property(TARGET ctbrowser-test-${client} PROPERTY LINK_LIBRARIES "${_dom_libs}")
 endforeach()
+
+# Easing/interpolation is callable by native Style clients without Script or Shell.
+get_target_property(_easing_libs ctbrowser-test-style_easing LINK_LIBRARIES)
+list(FILTER _easing_libs EXCLUDE REGEX "^ctbrowser::(script|layout|paint|raster|shell|ctbrowser)$")
+set_property(TARGET ctbrowser-test-style_easing PROPERTY LINK_LIBRARIES "${_easing_libs}")
 
 # vm_operators is the one file that still runs ctjs - `diff_vs_v1` sends an
 # expression through the previous engine's interpreter as well - and that

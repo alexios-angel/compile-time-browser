@@ -3,6 +3,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // WHICH PROPERTIES EXIST, WHAT EACH ACCEPTS, AND HOW A VALUE SERIALISES - what
@@ -203,6 +204,13 @@ using declaration_block = std::vector<declaration>;
 // The longhands `shorthand` expands to, in canonical order; empty for a
 // longhand and for a shorthand this table does not split.
 [[nodiscard]] std::span<const std::string_view> longhands_of(std::string_view shorthand);
+
+// Expand an already-substituted cascade value. Results borrow `property` and
+// `value` or static names/defaults. CSSOM canonicalization and validation stay
+// with its caller. The order and uniform border aliases are the
+// cascade's existing contract; unknown/unsupported values return an empty list.
+[[nodiscard]] std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_shorthand(
+    std::string_view property, std::string_view value);
 
 // `setProperty` / the IDL setter: "set a CSS declaration" for `name`, or for
 // each longhand of a shorthand. The value goes through `check_declaration`;

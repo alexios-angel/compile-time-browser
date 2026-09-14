@@ -10,6 +10,7 @@
 // one it does not model - `background`, `font`, `grid` - or any value holding a
 // `var()` is kept whole, exactly as every property was before this existed.
 
+#include "expansion.hpp"
 #include "internal.hpp"
 
 #include <ctbrowser/style/css/parser.hpp>
@@ -229,16 +230,7 @@ split split_positional(const expansion & e, std::span<const std::string_view> pa
         given.push_back(canonical(e.longhands[i], parts[i], valid));
         if (!valid) { return split::invalid; }
     }
-    if (n == 2) {
-        out = {given[0], given.size() > 1 ? given[1] : given[0]};
-        return split::ok;
-    }
-    // 1: all four. 2: vertical, horizontal. 3: top, horizontal, bottom.
-    const std::string & top = given[0];
-    const std::string & right = given.size() > 1 ? given[1] : top;
-    const std::string & bottom = given.size() > 2 ? given[2] : top;
-    const std::string & left = given.size() > 3 ? given[3] : right;
-    out = {top, right, bottom, left};
+    out = detail::expand_positional<std::string>(given, n);
     return split::ok;
 }
 
@@ -303,45 +295,17 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
 // `flex: 1` is `1 1 0`, Flexbox 1 §7.1.1 - the omitted basis is the length 0
 // (`0px` serialised), not `0%`: cssom/flex-serialization asks for `0 1 0px`.
 split split_flex(std::span<const std::string_view> parts, std::vector<std::string> & out) {
-    if (parts.empty() || parts.size() > 3) { return split::invalid; }
-    const auto number = [](std::string_view part, std::string & text) {
+    const auto parse = [](std::string_view name,
+                          std::string_view part) -> std::optional<std::string> {
         bool valid = false;
-        text = canonical("flex-grow", part, valid);
-        return valid;
+        std::string text = canonical(name, part, valid);
+        return valid ? std::optional{std::move(text)} : std::nullopt;
     };
-    const auto basis = [](std::string_view part, std::string & text) {
-        bool valid = false;
-        text = canonical("flex-basis", part, valid);
-        return valid;
-    };
-    if (parts.size() == 1) {
-        if (ascii_iequals(parts[0], "none")) {
-            out = {"0", "0", "auto"};
-            return split::ok;
-        }
-        if (ascii_iequals(parts[0], "auto")) {
-            out = {"1", "1", "auto"};
-            return split::ok;
-        }
-    }
-    std::string grow, shrink = "1", b = "0px";
-    std::size_t i = 0;
-    if (number(parts[0], grow)) {
-        i = 1;
-        std::string text;
-        if (i < parts.size() && number(parts[i], text)) {
-            shrink = text;
-            ++i;
-        }
-    } else {
-        grow = "1";
-    }
-    if (i < parts.size()) {
-        if (!basis(parts[i], b)) { return split::invalid; }
-        ++i;
-    }
-    if (i != parts.size()) { return split::invalid; }
-    out = {grow, shrink, b};
+    auto values = detail::expand_flex<std::string>(
+        parts, "0px", [parse](std::string_view part) { return parse("flex-grow", part); },
+        [parse](std::string_view part) { return parse("flex-basis", part); });
+    if (!values) { return split::invalid; }
+    out = {(*values)[0], (*values)[1], (*values)[2]};
     return split::ok;
 }
 

@@ -19,6 +19,8 @@ namespace ctbrowser::shell {
 struct http_options {
     int timeout_ms = 5000;
     int max_redirects = 5;
+    // Exceeding this limit fails the request and discards its partial body.
+    // Zero accepts only an empty body.
     std::size_t max_bytes = 8U * 1024U * 1024U;
     std::string user_agent = "ctbrowser/2.0";
 };

@@ -18,7 +18,7 @@ while it is still happening.
 
 The browsers cannot live inside one invocation - the caller is a shell, and
 every command is a new process - so `start` leaves a DAEMON holding them and
-every other verb is a one-line client that talks to it over a unix socket.
+every other verb is a one-line client that talks to it over loopback TCP.
 
 --engine= picks who is driven: ctbrowse (alias normal), chrome (alias
 chromium), firefox. Repeatable and comma-accepting; the default is
@@ -33,9 +33,13 @@ generators with nothing to vary.
 """
 
 import argparse
+from contextlib import contextmanager
+from importlib.metadata import version
 import json
 import os
 import socket
+import select
+import signal
 import struct
 import shlex
 import subprocess
@@ -54,6 +58,9 @@ PORTFILE = OUT / "session.port"
 # find the binary it just built. Same relative layout, so page paths carry over.
 REMOTE_DIR = "$HOME/projects/compile-time-browser"
 VENV = ROOT / "tools" / ".venv"
+REQUEST_TIMEOUT = 30.0
+START_TIMEOUT = 60.0
+CLOSE_TIMEOUT = 5.0
 
 # ctbrowse first so it is the left-hand image, which is the one being judged.
 ALIASES = {
@@ -64,6 +71,75 @@ ALIASES = {
     "chromium": "chrome",
     "firefox": "firefox",
 }
+
+
+# Deadlines cover a complete message, including a peer that trickles bytes.
+def receive_line(sock, deadline: float) -> str:
+    data = bytearray()
+    while b"\n" not in data:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("session reply deadline expired")
+        sock.settimeout(left)
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise ConnectionError("session closed before completing its reply")
+        data.extend(chunk)
+    return data.split(b"\n", 1)[0].decode()
+
+
+def exchange(sock, payload: dict, deadline: float) -> dict:
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("session request deadline expired")
+    sock.settimeout(left)
+    sock.sendall((json.dumps(payload) + "\n").encode())
+    return json.loads(receive_line(sock, deadline))
+
+
+def stop_process(proc) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(timeout=CLOSE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=CLOSE_TIMEOUT)
+    except BaseException:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=CLOSE_TIMEOUT)
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+
+@contextmanager
+def time_limit(seconds: float):
+    """Bound daemon operations, including browser APIs without timeout parameters.
+
+    The daemon runs on the main thread on POSIX, as its detached session does.
+    Socket clients use monotonic deadlines and can also run from other threads.
+    """
+
+    def expired(signum, frame):
+        raise TimeoutError("comparison operation deadline expired")
+
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(
+        signal.ITIMER_REAL, min(seconds, previous_timer[0]) if previous_timer[0] else seconds
+    )
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        if previous_timer[0]:
+            left = max(0.000001, previous_timer[0] - (time.monotonic() - started))
+            signal.setitimer(signal.ITIMER_REAL, left, previous_timer[1])
 
 
 # --- images ----------------------------------------------------------------
@@ -205,16 +281,30 @@ class Ctbrowse:
             if remote
             else self._spawn_local(page, size, headed)
         )
-        # It prints the port it got before doing anything else; asking for 0
-        # means the OS chose one and this is the only way to learn it.
-        assert self.proc.stdout is not None
-        line = self.proc.stdout.readline()
-        if "listening on" not in line:
-            tail = "" if self.proc.poll() is None else " (it exited)"
-            raise RuntimeError(f"ctdrive did not start{tail}: {line.strip()}")
-        port = self.port if remote else int(line.rsplit(":", 1)[1])
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
-        self.io = self.sock.makefile("rw")
+        self.sock = None
+        try:
+            # Read bytes with a deadline: a readable pipe may still lack a newline.
+            assert self.proc.stdout is not None
+            deadline = time.monotonic() + START_TIMEOUT
+            data = bytearray()
+            while b"\n" not in data:
+                left = deadline - time.monotonic()
+                if left <= 0 or not select.select([self.proc.stdout], [], [], left)[0]:
+                    raise TimeoutError("ctdrive did not announce its port")
+                chunk = os.read(self.proc.stdout.fileno(), 4096)
+                if not chunk:
+                    raise RuntimeError("ctdrive exited before announcing its port")
+                data.extend(chunk)
+            line = data.split(b"\n", 1)[0].decode()
+            if "listening on" not in line:
+                raise RuntimeError(f"ctdrive did not start: {line.strip()}")
+            port = self.port if remote else int(line.rsplit(":", 1)[1])
+            self.sock = socket.create_connection(
+                ("127.0.0.1", port), timeout=max(0.001, deadline - time.monotonic())
+            )
+        except BaseException:
+            self.close(graceful=False)
+            raise
 
     def _spawn_local(self, page: Path, size, headed: bool):
         # build/tools/, because ctdrive is a TOOL now: the monorepo split moved
@@ -280,6 +370,10 @@ class Ctbrowse:
                 "ssh",
                 "-o",
                 "BatchMode=yes",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "ConnectTimeout=10",
                 "-L",
                 f"127.0.0.1:{self.port}:127.0.0.1:{self.port}",
                 host,
@@ -290,9 +384,13 @@ class Ctbrowse:
         )
 
     def send(self, **cmd) -> dict:
-        self.io.write(json.dumps(cmd) + "\n")
-        self.io.flush()
-        return json.loads(self.io.readline())
+        if self.sock is None:
+            raise ConnectionError("ctdrive is closed")
+        try:
+            return exchange(self.sock, cmd, time.monotonic() + REQUEST_TIMEOUT)
+        except (OSError, ValueError):
+            self.close(graceful=False)
+            raise
 
     def click(self, x, y, button=0):
         return self.send(cmd="click", x=x, y=y, button=button)
@@ -351,6 +449,7 @@ class Ctbrowse:
                     ],
                     stdout=subprocess.PIPE,
                     check=False,
+                    timeout=REQUEST_TIMEOUT,
                 )
                 if fetched.returncode != 0 or not fetched.stdout:
                     return {"ok": False, "error": f"could not fetch {there} from {self.remote}"}
@@ -359,12 +458,17 @@ class Ctbrowse:
             return answer
         return self.send(cmd="shot", path=str(path))
 
-    def close(self):
-        try:
-            self.send(cmd="quit")
-        except (OSError, ValueError):
-            pass
-        self.proc.terminate()
+    def close(self, graceful=True):
+        if self.sock is not None:
+            try:
+                if graceful:
+                    exchange(self.sock, {"cmd": "quit"}, time.monotonic() + CLOSE_TIMEOUT)
+            except (OSError, ValueError):
+                pass
+            finally:
+                self.sock.close()
+                self.sock = None
+        stop_process(self.proc)
 
 
 def serve_repo() -> str:
@@ -429,11 +533,16 @@ class Reference:
         # and a hidden scrollbar is an overlay one - it takes no space.
         skip = ["--hide-scrollbars"] if name == "chrome" else []
         self.browser = kind.launch(headless=not headed, ignore_default_args=skip)
-        self.page = self.browser.new_page(viewport={"width": size[0], "height": size[1]})
-        if Reference.served is None:
-            Reference.served = serve_repo()
-        relative = page_path.resolve().relative_to(ROOT).as_posix()
-        self.page.goto(f"{Reference.served}/{relative}")
+        try:
+            self.page = self.browser.new_page(viewport={"width": size[0], "height": size[1]})
+            if Reference.served is None:
+                Reference.served = serve_repo()
+            relative = page_path.resolve().relative_to(ROOT).as_posix()
+            self.page.goto(f"{Reference.served}/{relative}")
+        except BaseException:
+            with time_limit(CLOSE_TIMEOUT):
+                self.close()
+            raise
 
     def click(self, x, y, button=0):
         names = {0: "left", 1: "middle", 2: "right"}
@@ -518,28 +627,40 @@ class Session:
             raise FileNotFoundError(f"{page} does not exist")
         size = (args.size[0], args.size[1])
 
-        wanted = args.engines
-        if "ctbrowse" in wanted:
-            self.engines.append(
-                Ctbrowse(page, size, args.headed, getattr(args, "remote", "") or "")
-            )
-        real = [e for e in wanted if e != "ctbrowse"]
-        if real:
-            from playwright.sync_api import sync_playwright
+        try:
+            wanted = args.engines
+            if "ctbrowse" in wanted:
+                self.engines.append(
+                    Ctbrowse(page, size, args.headed, getattr(args, "remote", "") or "")
+                )
+            real = [e for e in wanted if e != "ctbrowse"]
+            if real:
+                from playwright.sync_api import sync_playwright
 
-            if not args.system_fonts:
-                OUT.mkdir(parents=True, exist_ok=True)
-                os.environ["FONTCONFIG_FILE"] = str(font_conf(OUT / "fonts.conf"))
-            self.playwright = sync_playwright().start()
-            for name in real:
-                self.engines.append(Reference(name, self.playwright, page, size, args.headed))
+                if not args.system_fonts:
+                    OUT.mkdir(parents=True, exist_ok=True)
+                    os.environ["FONTCONFIG_FILE"] = str(font_conf(OUT / "fonts.conf"))
+                self.playwright = sync_playwright().start()
+                for name in real:
+                    self.engines.append(Reference(name, self.playwright, page, size, args.headed))
+        except BaseException:
+            self.close()
+            raise
 
     def run(self, cmd: dict) -> dict:
         verb = cmd["verb"]
         if verb == "stop":
             return {"ok": True, "stopping": True}
         if verb == "info":
-            return {"ok": True, "engines": [e.name for e in self.engines], "delay": self.delay}
+            return {
+                "ok": True,
+                "engines": [e.name for e in self.engines],
+                "delay": self.delay,
+                "versions": {
+                    **({"playwright": version("playwright")} if self.playwright else {}),
+                    **{e.name: e.browser.version for e in self.engines if isinstance(e, Reference)},
+                },
+            }
 
         # The pause is what makes this watchable. It goes BEFORE the input so
         # the human sees the page as it was, then the change - not a change
@@ -551,6 +672,8 @@ class Session:
         for engine in self.engines:
             try:
                 out[engine.name] = self.dispatch(engine, cmd)
+            except TimeoutError:
+                raise
             except Exception as e:  # one engine failing must not kill the rig
                 out[engine.name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
                 out["ok"] = False
@@ -585,50 +708,69 @@ class Session:
     def close(self):
         for engine in self.engines:
             try:
-                engine.close()
+                if isinstance(engine, Ctbrowse):
+                    engine.close()
+                else:
+                    with time_limit(CLOSE_TIMEOUT):
+                        engine.close()
             except Exception:
                 pass
+        self.engines.clear()
         if self.playwright is not None:
-            self.playwright.stop()
+            try:
+                with time_limit(CLOSE_TIMEOUT):
+                    self.playwright.stop()
+            finally:
+                self.playwright = None
 
 
 def serve(args) -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     PORTFILE.unlink(missing_ok=True)
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", 0))
-    listener.listen(4)
-    try:
-        session = Session(args)
-    except Exception as e:
-        listener.close()
-        print(f"compare.py: {e}", file=sys.stderr)
-        return 1
-    # Written only once the engines are UP, so a client that finds the file
-    # knows there is something to talk to.
-    PORTFILE.write_text(str(listener.getsockname()[1]))
-    print(f"compare.py: {', '.join(e.name for e in session.engines)} ready", flush=True)
-
-    try:
-        while True:
-            peer, _ = listener.accept()
-            with peer, peer.makefile("rw") as io:
-                line = io.readline()
-                if not line:
-                    continue
-                try:
-                    answer = session.run(json.loads(line))
-                except Exception as e:
-                    answer = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-                io.write(json.dumps(answer) + "\n")
-                io.flush()
+    session = None
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        try:
+            with time_limit(START_TIMEOUT):
+                session = Session(args)
+            PORTFILE.write_text(str(listener.getsockname()[1]))
+            print(f"compare.py: {', '.join(e.name for e in session.engines)} ready", flush=True)
+            while True:
+                peer, _ = listener.accept()
+                answer = {}
+                with peer:
+                    deadline = time.monotonic() + REQUEST_TIMEOUT
+                    try:
+                        line = receive_line(peer, deadline)
+                    except (OSError, ValueError):
+                        continue
+                    try:
+                        with time_limit(max(0.001, deadline - time.monotonic())):
+                            answer = session.run(json.loads(line))
+                    except TimeoutError as why:
+                        answer = {"ok": False, "error": str(why), "stopping": True}
+                    except (OSError, ValueError):
+                        continue
+                    except Exception as why:
+                        answer = {"ok": False, "error": f"{type(why).__name__}: {why}"}
+                    try:
+                        peer.settimeout(max(0.001, deadline - time.monotonic()))
+                        peer.sendall((json.dumps(answer) + "\n").encode())
+                    except OSError:
+                        pass  # A client that gave up must not strand the next one.
                 if answer.get("stopping"):
                     break
-    finally:
-        session.close()
-        listener.close()
-        PORTFILE.unlink(missing_ok=True)
+        except Exception as why:
+            print(f"compare.py: {why}", file=sys.stderr)
+            return 1
+        finally:
+            try:
+                if session is not None:
+                    session.close()
+            finally:
+                PORTFILE.unlink(missing_ok=True)
     return 0
 
 
@@ -646,21 +788,17 @@ def request(payload: dict) -> dict:
     """
     if not PORTFILE.exists():
         raise NoSession("no session; run `tools/check/compare.py start <page.html>`")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(("127.0.0.1", int(PORTFILE.read_text())))
-        with s.makefile("rw") as io:
-            io.write(json.dumps(payload) + "\n")
-            io.flush()
-            answer = json.loads(io.readline())
-    # WAIT FOR IT TO ACTUALLY GO. The daemon answers `stop` and only then
-    # closes the browsers and drops the port file; returning immediately means
-    # the next `start` finds a file whose port is already dead, which is what
-    # anyone scripting a start/stop cycle hits on the first try.
+    deadline = time.monotonic() + REQUEST_TIMEOUT
+    with socket.create_connection(
+        ("127.0.0.1", int(PORTFILE.read_text())), timeout=REQUEST_TIMEOUT
+    ) as sock:
+        answer = exchange(sock, payload, deadline)
     if answer.get("stopping"):
-        for _ in range(100):
-            if not PORTFILE.exists():
-                break
-            time.sleep(0.1)
+        while PORTFILE.exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("session did not finish shutting down")
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
     return answer
 
 
@@ -670,7 +808,7 @@ def ask(payload: dict) -> int:
     except NoSession as why:
         print(f"compare.py: {why}", file=sys.stderr)
         return 1
-    except OSError as e:
+    except (OSError, ValueError) as e:
         print(f"compare.py: cannot reach the session: {e}", file=sys.stderr)
         return 1
     print(json.dumps(answer, indent=2))
@@ -699,7 +837,16 @@ def setup() -> int:
         print(f"creating {VENV}")
         subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
     pip = VENV / "bin" / "pip"
-    subprocess.run([str(pip), "install", "--quiet", "playwright"], check=True)
+    subprocess.run(
+        [
+            str(pip),
+            "install",
+            "--quiet",
+            "-r",
+            str(Path(__file__).with_name("compare-requirements.txt")),
+        ],
+        check=True,
+    )
     subprocess.run([str(VENV / "bin" / "playwright"), "install", "chromium", "firefox"], check=True)
     print(f"ready: {VENV}")
     return 0
@@ -787,26 +934,44 @@ def main() -> int:
             return 1
         if args.foreground:
             return serve(args)
-        # Detach, so the caller's shell gets its prompt back and the browsers
-        # outlive it - the whole point is that the next command finds them.
-        if os.fork() != 0:
-            for _ in range(600):  # a first Playwright launch is not quick
-                time.sleep(0.1)
-                if PORTFILE.exists():
-                    return ask({"verb": "info", "args": []})
-            print("compare.py: the session did not come up", file=sys.stderr)
-            return 1
-        os.setsid()
-        # DETACH THE STREAMS, or the daemon holds the caller's stdout open and
-        # a pipeline never sees EOF - `compare.py start ... | head` hangs for
-        # as long as the browsers live, which is forever.
+        # A subprocess gives startup a waitable owner. Kill its process group
+        # on failure so a timed-out launch cannot leave a detached rig behind.
         OUT.mkdir(parents=True, exist_ok=True)
-        log = os.open(str(OUT / "session.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-        null = os.open(os.devnull, os.O_RDONLY)
-        os.dup2(null, 0)
-        os.dup2(log, 1)
-        os.dup2(log, 2)
-        sys.exit(serve(args))
+        with (OUT / "session.log").open("w") as log:
+            proc = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:], "--foreground"],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+        ready = False
+        try:
+            deadline = time.monotonic() + START_TIMEOUT
+            while time.monotonic() < deadline and proc.poll() is None:
+                if PORTFILE.exists():
+                    with time_limit(max(0.000001, deadline - time.monotonic())):
+                        answer = request({"verb": "info", "args": []})
+                    print(json.dumps(answer, indent=2))
+                    ready = answer.get("ok", False)
+                    return 0 if ready else 1
+                time.sleep(0.1)
+            print(
+                "compare.py: the session did not come up; see build/compare/session.log",
+                file=sys.stderr,
+            )
+            return 1
+        except (OSError, ValueError) as why:
+            print(f"compare.py: startup failed: {why}", file=sys.stderr)
+            return 1
+        finally:
+            if not ready:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait(timeout=CLOSE_TIMEOUT)
+                PORTFILE.unlink(missing_ok=True)
 
     return ask(
         {

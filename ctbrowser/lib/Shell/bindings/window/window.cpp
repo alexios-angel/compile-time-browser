@@ -4,6 +4,8 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include "../image_data.hpp"
+
 namespace ctbrowser::shell {
 
 void dom_bindings::install_window(context & cx) {
@@ -666,32 +668,33 @@ void dom_bindings::install_window(context & cx) {
     // to hand to putImageData, and a filter that returns a fresh ImageData
     // rather than mutating in place - which is p5.js's own convention - needs
     // to be able to make one.
-    cx.define_native("ImageData", [](context & c, std::span<value> args) {
-        auto * out = c.allocate<script::object_object>();
-        // The array form comes FIRST, and the size arguments shift along - the
-        // two overloads are told apart by whether argument 0 is a buffer.
+    cx.define_native("ImageData", [this](context & c, std::span<value> args) {
         const bool given = !args.empty() && args[0].is_array();
-        const int width = static_cast<int>(arg_number(args, given ? 1 : 0));
-        int height = static_cast<int>(arg_number(args, given ? 2 : 1));
-        value bytes = given ? args[0] : c.make_array();
-        auto * store = static_cast<script::array_object *>(bytes.as_heap());
-        if (given) {
-            // Height is optional when the data is given: it follows from the
-            // length, because the buffer is four bytes a pixel by definition.
-            if (height <= 0 && width > 0) {
-                height =
-                    static_cast<int>(store->items.size() / (static_cast<std::size_t>(width) * 4));
+        // These constructor parameters are unsigned long, unlike the canvas
+        // methods' [EnforceRange] long: use the VM's existing modulo conversion.
+        const double width_number = c.to_number_value(arg(args, given ? 1 : 0));
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto width = context::to_uint32(value::number(width_number));
+        const bool height_given = !arg(args, given ? 2 : 1).is_undefined();
+        const double height_number = c.to_number_value(arg(args, given ? 2 : 1));
+        if (c.throw_pending()) { return value::undefined(); }
+        std::uint64_t height = context::to_uint32(value::number(height_number));
+        if (given && width != 0) {
+            const auto length = static_cast<script::array_object *>(args[0].as_heap())->length();
+            const auto row_bytes = std::uint64_t{width} * 4;
+            const auto derived_height = length / row_bytes;
+            if (length % row_bytes != 0 || (height_given && height != derived_height)) {
+                throw_dom_exception(c, "IndexSizeError",
+                                    "ImageData dimensions do not match its data");
+                return value::undefined();
             }
-        } else {
-            store->elements = script::element_kind::u8_clamped;
-            store->items.assign(static_cast<std::size_t>(std::max(0, width)) *
-                                    static_cast<std::size_t>(std::max(0, height)) * 4,
-                                value::number(0));
+            height = derived_height;
         }
-        out->set("width", value::number(std::max(0, width)));
-        out->set("height", value::number(std::max(0, height)));
-        out->set("data", bytes);
-        return value::object(out);
+        if (width == 0 || height == 0) {
+            throw_dom_exception(c, "IndexSizeError", "ImageData dimensions must be nonzero");
+            return value::undefined();
+        }
+        return detail::make_image_data(c, width, height, given ? args[0] : value::undefined());
     });
 
     // `Event`, `CustomEvent`, `EventTarget` and `window.dispatchEvent` USED TO

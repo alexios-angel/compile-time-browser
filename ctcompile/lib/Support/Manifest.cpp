@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdio>
+#include <format>
 #include <string_view>
 
 namespace ctcompile {
@@ -11,11 +12,7 @@ namespace {
 // A 64-bit value as "0x…", because these are identities rather than
 // quantities. A decimal program id invites arithmetic on it.
 std::string hex(std::uint64_t value) {
-    std::array<char, 32> buffer{};
-    const int written = std::snprintf(buffer.data(), buffer.size(), "0x%016llx",
-                                      static_cast<unsigned long long>(value));
-    return written > 0 ? std::string{buffer.data(), static_cast<std::size_t>(written)}
-                       : std::string{"0x0"};
+    return std::format("0x{:016x}", value);
 }
 
 } // namespace
