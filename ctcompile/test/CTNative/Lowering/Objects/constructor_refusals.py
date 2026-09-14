@@ -121,7 +121,7 @@ def main():
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
             )
-        if args.scalars and name != "primitives":
+        if (args.scalars and name != "primitives") or name == "inherited-call":
             checked += check_native(args, source, name, expected)
             continue
         # The original source now has a positive native gate in prototype-scalars.mlir.

@@ -81,12 +81,12 @@ std::optional<std::string> closureLifter::whyConstructorReturnsAnObject(ctjs::Fu
     return bad;
 }
 
-// Recompute from live uses. Copying primitive fields preserves reads and own
-// writes only when neither the prototype nor property ownership is observable.
-// ponytail: one same-block literal replacement; methods/chains need Stage 60A.
-std::optional<closureLifter::scalarPrototype> closureLifter::immutableScalarPrototype(
+// Recompute from live uses. Primitive defaults and immutable methods are safe
+// only when neither the prototype nor property ownership is observable.
+// ponytail: one same-block literal replacement; inheritance needs Stage 60A.
+std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     ctjs::CreateClosureOp c) {
-    scalarPrototype proof;
+    prototypeFields proof;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner())) {
             if (use.getOperandNumber() < 2 && made.getCallee() == c.getResult() &&
@@ -110,8 +110,8 @@ std::optional<closureLifter::scalarPrototype> closureLifter::immutableScalarProt
         if (use.getOwner() == proof.attachment && use.getOperandNumber() == 2) { continue; }
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
         if (!set || use.getOperandNumber() != 0 || set->getBlock() != c->getBlock() ||
-            !set->isBeforeInBlock(proof.attachment) ||
-            !set.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+            !llvm::isa_and_nonnull<ctjs::ConstantOp, ctjs::CreateClosureOp>(
+                set.getValue().getDefiningOp())) {
             return std::nullopt;
         }
         const auto key = ctjs::constantKey(set.getKey());
@@ -122,7 +122,10 @@ std::optional<closureLifter::scalarPrototype> closureLifter::immutableScalarProt
     if (sites == constructsOfTarget.end() || sites->second.empty()) { return std::nullopt; }
     for (ctjs::ConstructOp made : sites->second) {
         if (made.getCallee() != c.getResult() || made->getBlock() != c->getBlock() ||
-            !proof.attachment->isBeforeInBlock(made)) {
+            !proof.attachment->isBeforeInBlock(made) ||
+            !llvm::all_of(proof.fields, [&](ctjs::SetPropertyOp field) {
+                return field->isBeforeInBlock(made);
+            })) {
             return std::nullopt;
         }
     }
@@ -131,7 +134,7 @@ std::optional<closureLifter::scalarPrototype> closureLifter::immutableScalarProt
 
 // Other prototype accesses retain the precise Stage 60A diagnostic.
 std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClosureOp c) {
-    if (immutableScalarPrototype(c)) { return std::nullopt; }
+    if (immutablePrototype(c)) { return std::nullopt; }
     for (mlir::Operation * user : c.getResult().getUsers()) {
         llvm::StringRef key;
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
@@ -152,6 +155,40 @@ std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClos
 // the instance is a literal and the constructor is a receiver carrier, so
 // the two rules are the same rule reached through `new`.
 std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::CreateClosureOp c) {
+    if (auto why = whyConstructorSetupDoesNotLift(c)) { return why; }
+    if (auto prototype = immutablePrototype(c)) {
+        for (ctjs::SetPropertyOp field : prototype->fields) {
+            auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            if (!method) { continue; }
+            if (!methodClosures.contains(method)) {
+                return "its prototype method is not an immutable direct-call binding";
+            }
+            // ponytail: conservatively check this key across the module. A
+            // callable identity read cannot survive erasing its runtime field.
+            bool calledOnly = true;
+            module.walk([&](ctjs::GetPropertyOp read) {
+                const auto key = ctjs::constantKey(read.getKey());
+                if (!key.empty() && key != ctjs::constantKey(field.getKey())) { return; }
+                auto call = read.getResult().hasOneUse()
+                                ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
+                                : ctjs::CallOp{};
+                if (!call || call.getCallee() != read.getResult() ||
+                    call.getReceiver() != read.getObject()) {
+                    calledOnly = false;
+                }
+            });
+            if (!calledOnly) { return "its prototype method is also observed as a value"; }
+            if (!lifted.contains(method)) {
+                if (auto why = whyNotLiftableMethod(method)) { return why; }
+            }
+        }
+    }
+    return whyThisLeaks(targetOf(c));
+}
+
+// Receiver resolution needs the prototype method census. All other constructor
+// guards hold before seeding that census; full admission still checks both.
+std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c) {
     // THE ARROW GUARD FIRST, as the method form does: an arrow's `this` is
     // lexical, so every use of it reads as a legal constant-key access to
     // the receiver clause below and admitting one would answer wrongly
@@ -171,7 +208,7 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     // Aside from the proved prototype attachment, every operand use must be
     // its own callee/new.target pair. Passing the closure as an argument to
     // another constructor is still an escape.
-    const auto prototype = immutableScalarPrototype(c);
+    const auto prototype = immutablePrototype(c);
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
         if (prototype && user == prototype->attachment) { continue; }
@@ -188,10 +225,6 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
         return "its constructor uses new.target, whose function identity this lift does not carry";
     }
-    // GUARD 2: `this` never escapes the constructor, and every use of it is
-    // a constant-key access. Word for word the receiver carrier's
-    // condition 3, because it IS that condition.
-    if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
     // GUARD 3.
     if (const std::optional<std::string> why = whyConstructorReturnsAnObject(target)) {
         return why;

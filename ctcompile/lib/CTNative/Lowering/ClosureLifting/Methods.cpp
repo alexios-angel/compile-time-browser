@@ -406,6 +406,34 @@ void closureLifter::methodCensus() {
     };
     for (ctjs::CreateObjectOp object : objects) { collect(object.getResult(), false); }
     for (ctjs::ConstructOp built : allConstructs) { collect(built.getResult(), true); }
+    // Constructor calls precede every store to the constructed result. Seed
+    // their receiver from the proved prototype alone, never from those stores.
+    // The structural check omits only receiver resolution; full constructor
+    // admission rechecks that after this census reaches its fixpoint.
+    for (ctjs::ConstructOp built : allConstructs) {
+        auto closure = built.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        if (!closure || whyConstructorSetupDoesNotLift(closure)) { continue; }
+        auto prototype = immutablePrototype(closure);
+        if (!prototype) { continue; }
+        mlir::Value origin = prototype->attachment.getValue();
+        for (ctjs::SetPropertyOp field : prototype->fields) {
+            auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            if (!method) { continue; }
+            const auto key = ctjs::constantKey(field.getKey());
+            bool stable = true;
+            // As with post-construction methods, all receiver writes count.
+            module.walk([&](ctjs::SetPropertyOp set) {
+                auto written = ctjs::constantKey(set.getKey());
+                if (written.empty() || (written == key && set != field)) { stable = false; }
+            });
+            if (!stable) { continue; }
+            methodsOf[origin][key] = methodField{field, method};
+            methodsOf[built.getResult()][key] = methodField{field, method};
+        }
+        behind[built.getResult()] = {built.getResult()};
+        auto receiver = targetOf(closure).getBody().front().getArgument(ctjs::arg_receiver);
+        if (!llvm::is_contained(behind[receiver], origin)) { behind[receiver].push_back(origin); }
+    }
     // THE FIXPOINT OVER THE RECEIVER CHAIN. `this.other()` inside a method
     // has `%arg0` for a receiver, and `%arg0` names whatever the call sites
     // pass - which is only known once those call sites resolve. One round

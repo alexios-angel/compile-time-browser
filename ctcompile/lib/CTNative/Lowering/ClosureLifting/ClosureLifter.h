@@ -359,6 +359,7 @@ struct closureLifter {
     };
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<methodCall>> callsOfTarget;
     llvm::DenseSet<mlir::Operation *> methodClosures; // create_closures bound to a method field
+    llvm::DenseSet<mlir::Operation *> lifted;         // closures lifted by this invocation
 
     // --- the constructor lift ----------------------------------------------
     //
@@ -371,18 +372,18 @@ struct closureLifter {
     // and `replace` need no constructor case at all: after the rewrite there
     // is no constructor, only a literal and a call that takes its address.
     //
-    // A local immutable scalar prototype can initialize the instance's fields.
+    // A local immutable prototype supplies scalar defaults and method bindings.
     // Its complete use census excludes observations of property ownership or
-    // prototype identity. Methods and mutable chains still need Stage 60A.
+    // prototype identity. Mutable chains still need Stage 60A.
     llvm::SmallVector<ctjs::ConstructOp> allConstructs;
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::ConstructOp>> constructsOfTarget;
     llvm::DenseSet<mlir::Operation *> constructorClosures; // diagnostic routing, not admission
 
-    struct scalarPrototype {
+    struct prototypeFields {
         ctjs::SetPropertyOp attachment;
         llvm::SmallVector<ctjs::SetPropertyOp> fields;
     };
-    std::optional<scalarPrototype> immutableScalarPrototype(ctjs::CreateClosureOp c);
+    std::optional<prototypeFields> immutablePrototype(ctjs::CreateClosureOp c);
 
     // --- THE CENSUS, which is a MEASUREMENT and not a rule ------------------
     //
@@ -665,6 +666,7 @@ struct closureLifter {
     std::optional<std::string> whyPrototypeIsTouched(ctjs::CreateClosureOp c);
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
 
     liftReport run();
 

@@ -45,7 +45,6 @@ liftReport closureLifter::run() {
     argumentCensus();
     methodCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // closure -> its own reason
-    llvm::DenseSet<mlir::Operation *> lifted;                // closures lift() has taken
     // THE CLOSURE THAT NAMES EACH FUNCTION, for the chained reason below:
     // a capture filled from the enclosing closure is refused with THAT
     // closure's reason, and the enclosing function's closure is the one
@@ -424,7 +423,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         }
         llvm::SmallVector<mlir::Value> captured;
         ctjs::CreateClosureOp only = made.front();
-        auto prototype = immutableScalarPrototype(only);
+        auto prototype = immutablePrototype(only);
         for (unsigned i = 0; i < static_cast<unsigned>(only.getUpvalues().size()); ++i) {
             captured.push_back(liftedCapture(only, i));
         }
@@ -438,6 +437,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             auto instance = ctjs::CreateObjectOp::create(at, built.getLoc(), valueType);
             if (prototype) {
                 for (ctjs::SetPropertyOp field : prototype->fields) {
+                    // Methods become direct calls, with no runtime field. Their
+                    // original stores may already carry a method-lift marker.
+                    if (field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) { continue; }
                     ctjs::SetPropertyOp::create(at, built.getLoc(), instance.getResult(),
                                                 field.getKey(), field.getValue());
                 }

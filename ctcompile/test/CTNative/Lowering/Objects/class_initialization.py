@@ -37,6 +37,14 @@ OBSERVATIONS = {
     "method-constructor-write": (9, 9),
     "method-constructor-call": (8, 8),
     "method-constructor-order": (132, 132),
+    "method-constructor-chain": (48, 48),
+    "method-constructor-constant": (7, 7),
+    "method-constructor-identity": (1, 1),
+    "method-constructor-argument-replace": (79, 79),
+    "method-constructor-return-object": (9, 9),
+    "method-constructor-argument-receiver": (9, 9),
+    "method-constructor-return-receiver": (7, 7),
+    "method-constructor-self-replace": (79, 79),
     "method-self-replace": (79, 79),
     "method-duplicate": (9, 9),
     "method-captured": (7, 7),
@@ -63,6 +71,10 @@ POSITIVES = {
     "method-chain-empty",
     "method-chain-effects",
     "method-chain-order",
+    "method-constructor-call",
+    "method-constructor-order",
+    "method-constructor-chain",
+    "method-constructor-constant",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 
@@ -72,17 +84,23 @@ def check_constructed_methods(args):
     for name, expected in {
         "plain-method": 7,
         "plain-before-store": None,
+        "plain-constructor-before-store": None,
         "plain-borrowed-write": 9,
         "plain-self-replace": 79,
         "plain-constructor-write": 7,
         "plain-detached": 1,
+        "plain-prototype": 83,
+        "plain-prototype-identity": 1,
+        "plain-prototype-replace": 79,
+        "plain-prototype-self-replace": 79,
+        "plain-prototype-before-store": None,
     }.items():
         source = args.fixtures / f"{name}.js"
         for command in ([args.node, "-e", NODE, str(source)], [args.reference, str(source)]):
             result = run(command, success=expected is not None)
             if expected is not None and result.stdout != f"a={expected}\n":
                 raise RuntimeError(f"{name}: constructed method observation changed")
-        if name == "plain-method":
+        if name in ("plain-method", "plain-prototype"):
             checked += check_native(args, source, name, expected)
             continue
         raw = args.work / f"{name}.raw.mlir"
@@ -319,7 +337,7 @@ def main():
             ):
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
-        if name in ("empty", "method", "method-chain-order"):
+        if name in ("empty", "method", "method-chain-order", "method-constructor-order"):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         for optimize in (False, True):

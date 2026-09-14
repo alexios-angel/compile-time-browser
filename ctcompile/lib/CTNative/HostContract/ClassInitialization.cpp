@@ -18,10 +18,10 @@ struct classInitialization {
     llvm::StringMap<ctjs::StoreGlobalOp> globals;
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseSet<mlir::Operation *> setup;
+    llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
-    llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> bindings;
 
     classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
 
@@ -80,16 +80,15 @@ struct classInitialization {
                                 : ctjs::CallOp{};
                 if (!methodsAvailable || !call || call.getCallee() != read.getResult() ||
                     call.getReceiver() != object) {
-                    return refuse(
-                        "class method is observed, shadowed or accessed by its constructor");
+                    return refuse("class method is observed or shadowed");
                 }
             }
         }
         return true;
     }
 
-    // ponytail: immutable local base methods; constructor calls and inheritance
-    // need a complete initialization-order/receiver/home proof before widening.
+    // ponytail: immutable local base methods; inheritance needs a complete
+    // receiver/home proof before widening.
     bool examine(ctjs::CallOp call) {
         if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
@@ -193,11 +192,6 @@ struct classInitialization {
             methods.insert(fn);
             methodHomes.insert(methodHome);
             setup.insert(methodHome);
-            setup.insert(definition);
-            for (ctjs::ConstructOp made : instances) {
-                if (!step()) { return false; }
-                bindings.emplace_back(made, definition);
-            }
         }
         for (mlir::OpOperand & use : prototype.getResult().getUses()) {
             if (!step()) { return false; }
@@ -220,12 +214,18 @@ struct classInitialization {
         auto & entry = function.getBody().front();
         if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
             !entry.getArgument(ctjs::arg_callee).use_empty() ||
-            !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys)) {
+            !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, true)) {
             return refuse(
                 "class constructor observes new.target, lexical home or receiver identity");
         }
         constructors.insert(function);
-        setup.insert(attachment);
+        // Keep method definitions on the prototype until constructor lowering.
+        // They must already be available when the constructor body runs.
+        if (definitions.empty()) {
+            setup.insert(attachment);
+        } else {
+            retainedSetup.insert(attachment);
+        }
         setup.insert(home);
         setup.insert(backedge);
         return true;
@@ -286,7 +286,8 @@ struct classInitialization {
         // Reject the whole module, including suffixes and uncalled bodies.
         walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (setup.contains(op) || methodCalls.contains(op) || llvm::is_contained(calls, op)) {
+            if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
+                llvm::is_contained(calls, op)) {
                 return mlir::WalkResult::advance();
             }
             bool accepted =
@@ -375,12 +376,6 @@ struct CTNativeSpecializeClassInitializationPass
         // All current-IR checks precede the first mutation. Nothing inferred
         // from report attributes authorizes removal, even on a repeated run.
         module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-        for (auto [instance, definition] : proof.bindings) {
-            mlir::OpBuilder at(instance);
-            at.setInsertionPointAfter(instance);
-            ctjs::SetPropertyOp::create(at, definition.getLoc(), instance.getResult(),
-                                        definition.getKey(), definition.getValue());
-        }
         for (ctjs::CallOp call : proof.calls) { call.erase(); }
         for (mlir::Operation * op : proof.setup) { op->erase(); }
         module.walk([&](ctjs::LoadGlobalOp load) {

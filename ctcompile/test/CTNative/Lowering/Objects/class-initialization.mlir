@@ -404,6 +404,16 @@ function plain_before_store() {
 }
 var a = plain_before_store();
 
+// Constructor receiver origins cannot make a later binding available earlier.
+//--- plain-constructor-before-store.js
+function plain_constructor_before_store() {
+    function Shape() { this.n = this.read(); }
+    var instance = new Shape();
+    instance.read = function () { return 7; };
+    return instance.n;
+}
+var a = plain_constructor_before_store();
+
 //--- plain-borrowed-write.js
 function plain_borrowed_write() {
     function Shape() {}
@@ -443,3 +453,146 @@ function plain_detached() {
     return called === 7 && saved === instance.read ? 1 : 0;
 }
 var a = plain_detached();
+
+// An immutable literal prototype exposes its method before the constructor runs.
+//--- plain-prototype.js
+function plain_prototype() {
+    function Shape(n) { this.n = this.read(n); }
+    Shape.prototype = {read: function (n) { this.n = n; return this.n + 1; }};
+    var first = new Shape(7), second = new Shape(2);
+    return first.n * 10 + second.n;
+}
+var a = plain_prototype();
+
+// An actual call cannot authorize retaining the same method as a function value.
+//--- plain-prototype-identity.js
+function plain_prototype_identity() {
+    function Shape() { this.n = this.read(); }
+    Shape.prototype = {read: function () { return 7; }};
+    var instance = new Shape();
+    var called = instance.read(), saved = instance.read;
+    return called === 7 && saved === instance.read ? 1 : 0;
+}
+var a = plain_prototype_identity();
+
+//--- plain-prototype-replace.js
+function plain_prototype_replace() {
+    function Shape() { this.n = this.read(); }
+    Shape.prototype = {read: function () { return 7; }};
+    var instance = new Shape();
+    instance.read = function () { return 9; };
+    return instance.n * 10 + instance.read();
+}
+var a = plain_prototype_replace();
+
+//--- plain-prototype-self-replace.js
+function plain_prototype_self_replace() {
+    function Shape() { this.n = this.read() * 10 + this.read(); }
+    Shape.prototype = {read: function () { this.read = function () { return 9; }; return 7; }};
+    return new Shape().n;
+}
+var a = plain_prototype_self_replace();
+
+// One available prototype method does not initialize a different, later binding.
+//--- plain-prototype-before-store.js
+function plain_prototype_before_store() {
+    function Shape() { this.n = this.read() + this.late(); }
+    Shape.prototype = {read: function () { return 7; }};
+    var instance = new Shape();
+    instance.late = function () { return 2; };
+    return instance.n;
+}
+var a = plain_prototype_before_store();
+
+//--- method-constructor-chain.js
+// Each construction seeds the receiver used by every method in the chain.
+function method_constructor_chain() {
+    class Shape {
+        constructor(n) { this.init(n); }
+        init(n) { this.write(n); this.n = this.n + 1; }
+        write(n) { this.n = n; }
+        read() { return this.n; }
+    }
+    var first = new Shape(3), second = new Shape(7);
+    return first.read() * 10 + second.read();
+}
+var a = method_constructor_chain();
+
+//--- method-constructor-constant.js
+// A constant leaf drops its unused receiver without dropping the constructor store.
+function method_constructor_constant() {
+    class Shape {
+        constructor() { this.n = this.constant(); }
+        constant() { return 7; }
+    }
+    return new Shape().n;
+}
+var a = method_constructor_constant();
+
+//--- method-constructor-identity.js
+// Calling an immutable method does not authorize observing its closure identity.
+function method_constructor_identity() {
+    class Shape {
+        constructor() { this.n = (this.init === this.init) * 1; }
+        init() { return 7; }
+    }
+    return new Shape().n;
+}
+var a = method_constructor_identity();
+
+//--- method-constructor-argument-replace.js
+// Resolve read before replace runs, then observe the replacement after construction.
+function method_constructor_argument_replace() {
+    class Shape {
+        constructor() { this.n = this.read(this.replace()); }
+        read(n) { return 7; }
+        replace() { this.read = function () { return 9; }; return 0; }
+    }
+    var instance = new Shape();
+    return instance.n * 10 + instance.read();
+}
+var a = method_constructor_argument_replace();
+
+//--- method-constructor-return-object.js
+// A method initializes the original receiver before construction replaces it.
+function method_constructor_return_object() {
+    class Shape {
+        constructor() { this.init(); return {n: 9}; }
+        init() { this.n = 7; }
+    }
+    return new Shape().n;
+}
+var a = method_constructor_return_object();
+
+//--- method-constructor-argument-receiver.js
+// A constructor receiver used as a method argument needs its own borrow proof.
+function method_constructor_argument_receiver() {
+    class Shape {
+        constructor() { this.n = 7; this.n = this.init(this); }
+        init(other) { other.n = 9; return this.n; }
+    }
+    return new Shape().n;
+}
+var a = method_constructor_argument_receiver();
+
+//--- method-constructor-return-receiver.js
+// Seeding the constructor receiver does not authorize a method to return it.
+function method_constructor_return_receiver() {
+    class Shape {
+        constructor() { this.n = 7; this.n = this.init().n; }
+        init() { return this; }
+    }
+    return new Shape().n;
+}
+var a = method_constructor_return_receiver();
+
+//--- method-constructor-self-replace.js
+// A constructor observes the live replacement on its second method call.
+function method_constructor_self_replace() {
+    class Shape {
+        constructor() { this.n = this.read() * 10 + this.read(); }
+        read() { this.read = function () { return 9; }; return 7; }
+    }
+    return new Shape().n;
+}
+var a = method_constructor_self_replace();
