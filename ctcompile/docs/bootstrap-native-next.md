@@ -39,10 +39,18 @@ remain refused. This pass is separate from the DOM Data provider and does not ye
 prepare original Button. [Host contract details](native-host-slots.md) describe the
 input and its limits; [HANDOFF](HANDOFF.md) records the full-gate status.
 
-**Next compiler boundary: Stage 60A's immutable prototype methods and inherited
-receivers**, followed by composition with DOM Data ownership. `makesAnInstance`,
-method resolution, receiver admission and the scalar-field environment must consume
-compatible proof.
+**fae7cac3** extends preparation to immutable local base-class methods. It proves
+exact prototype/home uses, primitive constructor returns and unobservable method
+identity before installing bindings on instances. Existing constructor and receiver
+lowering then independently prove initialization order and method-key immutability.
+The gate passes **40 class native executions / 48 unprepared / 30 preparation
+refusals**, plus **8 plain constructed-method native executions / 10 refusals**.
+
+**Next compiler boundary: chained and constructor method receivers, then inherited
+receivers**, followed by composition with DOM Data ownership. Config chains three
+methods; BaseComponent calls `_getConfig` inside construction. The present proof
+forbids both, and `makesAnInstance`, method resolution, receiver admission and the
+scalar-field environment must consume compatible proof before widening.
 Default derived construction forwards through `super`; inherited static getters,
 `this.constructor`, lexical home and `new.target` are separate obligations.
 
@@ -60,9 +68,12 @@ returns 7. Native refuses; the runtime finding is journaled for Claude.
 
 **fef19039** additionally admits definite local String fields as `std::string`.
 The preserved literal-primitives prototype now executes unchanged, bringing that
-group to **48 native executions**. The new saved-string/NUL/independent-object gate
-passes **8 native executions / 10 refusals**; mixed/possibly absent strings, String
-length operations and borrowed String fields remain outside this slice.
+group to **48 native executions**. Its original saved-string gate passed **8 native
+executions**. **f854d2f6** adds definite String length inference and `std::size`
+emission; the expanded group passes **32 native executions / 10 refusals**, including
+the unchanged original length source. ND-1's Unicode byte count remains separately
+measured against Node. Mixed/possibly absent strings and borrowed String fields
+remain outside this slice.
 
 HostContract now accepts the helper's explicitly declared initial identity as well
 as Map and Array. The local class pass accepts only its helper declaration; the

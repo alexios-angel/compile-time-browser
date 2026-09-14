@@ -6,6 +6,69 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Immutable local class methods and String length, 2026-09-14 UTC
+
+Started clean **93f4b26f**, after the **14:51:45 AGENT-SYNC** completed handoff.
+Both histories and unmerged branches were checked; `codex-wip-20260907` is already
+an ancestor. Resumed the promised immutable prototype-method boundary, rather than
+redoing the landed empty-class proof. Three agents split method controls, String
+fields and proof review; two hit service limits before editing, and root completed
+their bounded work. No browser/runtime files changed.
+
+**fae7cac3** extends the fingerprinted class preparation to unique immutable local
+base-class methods. Complete prototype, closure and receiver use censuses exclude
+identity, reflection, capture, mutation and lexical-home observations. Constructors
+cannot touch method keys and must return primitive constants when methods exist;
+copying methods onto a replacement return object would change the program. Only
+after the whole proof succeeds are method bindings installed after each construction
+and unobservable prototype/home setup removed. Ordinary constructor and receiver
+lowering independently prove native admission. Their new constructed-method census
+checks initialization before observation and conservatively refuses any other write
+to the method key anywhere in the module. Receiver rewrites read the live call after
+constructor replacement, avoiding a stale SSA value.
+
+The class gate preserves **24 source observations**, with **40 native executions /
+48 unprepared refusals / 30 preparation refusals**. Plain constructed methods add
+**8 native executions / 10 refusals**, including calls before initialization,
+borrowed replacement, self-replacement, constructor writes and detached methods.
+Both policies, layouts and GCC/Clang pass. Empty and method-bearing proof inputs
+both gate nested malformed IR, duplicate closure identities, forged reports and
+exact work cutoffs: first complete budgets **100 / 166**, respectively; the preceding
+limits refuse without output. Review caught duplicate callee/new-target uses and
+the replacement-object hazard; both are fixed and covered.
+
+**f854d2f6** infers a numeric length only after the receiver has a definite String
+type, and emits `std::size` on owning `std::string` storage. The unchanged saved
+NUL-containing String source now executes and preserves its earlier value after a
+field overwrite. The group passes **32 native executions / 10 refusals**, including
+empty strings and the explicit ND-1 Unicode control: **Node 4 / interpreter and
+native 7**, because the established engine contract counts UTF-8 bytes. No UTF-16
+migration or runtime change is claimed. Borrowed String fields, mixed/absent fields
+and unknown String properties retain their refusals.
+
+Focused **4/4 lit PASS in 15.54s / 3/3 CTests PASS in 0.35s**; the measured class and
+String drivers pass **2/2 lit in 14.88s**. Generated C++ was inspected: ordinary local
+structs and owning strings, borrowed receiver pointers, free method calls, and no
+Script/VM symbols. Stable formatting passes **825 C++ / 99 Python / 33 web**; the
+required pinned formatter retains the byte-identical **nine-file / 26-diagnostic**
+baseline. Full standard devbox **276-step build PASS**; the **600-test CTest gate is
+running** against **1,438 frozen non-Markdown inputs**. Final full results and fresh
+vendor/oracle counts are pending, not inferred from these local fixtures. Evidence:
+`/tmp/ctcompile-class-methods/{final-focus.log,measured-focus.log,full.log,
+frozen-inputs.json,class-method.cpp,string-length.cpp}`.
+
+**Exact next Bootstrap boundary:** prove chained method receivers and constructor
+method calls, then inherited/static-getter receivers and composition with the DOM
+Data ownership provider. The local proof remains capture-free and does not prepare
+original Button. Config chains `_mergeConfigObj`, `_configAfterMerge` and
+`_typeCheckConfig`; BaseComponent's constructor invokes `_getConfig` and observes
+`this.constructor.DATA_KEY`. Those cannot be erased. Preserve the original Button
+lifecycle and its uncaught interpreter/static-inheritance discrepancy. Default
+derived forwarding, lexical `super`, retained DOM/config payloads, dataset,
+disposal/event writes, persistent actions and the application driver remain open.
+Independent next work is definite borrowed String fields and sound mixed/optional
+String field joins; array lifetime boundaries are unchanged.
+
 ## Checked base-class initialization and definite string fields, 2026-09-14 UTC
 
 Started clean **b8d7dcdb**, after the **14:04:21 AGENT-SYNC** completion and the
