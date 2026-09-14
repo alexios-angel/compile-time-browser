@@ -119,11 +119,12 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares copied values and Boolean
-observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients across both providers,
+The `ctcompile_native_dom_strings` CTest compares **81** copied-value and Boolean
+observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
+across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-source refusals for unsupported coercion, control flow, handles and retention. These clients link DOM/Core only and reject Script symbols
+**80** source refusals for unsupported coercion, control flow, handles and retention. These clients link DOM/Core only and reject Script symbols
 or generic nullable value helpers in the generated code.
 
 ## Owned synchronous sessions

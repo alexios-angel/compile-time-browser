@@ -122,7 +122,7 @@ Native synchronous entries lower proved String-name `getAttribute` calls through
 core. Results are owning `std::optional<std::string>` values; absent and empty
 remain distinct, and copies survive later mutations and document destruction.
 The source gate checks both DOM providers, printing layouts and optimization
-policies with Node, the VM, GCC and Clang. The next source slice adds strict
+policies with Node, the VM, GCC and Clang. **a41b3bc3** adds strict
 null/String comparisons, optional String truthiness and definite String + String
 names/values. Missing and empty are both false in Boolean observations; saved reads
 keep their copied value after mutation. These operations do not admit source
@@ -131,8 +131,13 @@ Bootstrap's original `getDataAttribute` (vendor line **264**) computes its name
 through `F` and feeds the optional result to `M`. `F` still requires regex replace,
 its callback and `toLowerCase`; `M` still requires source branches, `Number`,
 `toString`, `typeof`, URI decoding, JSON parsing and exceptions. Prove those source
-operations and their composition with the DOM entry. Preserve that normalization
-instead of replacing it with browser helper code.
+operations and their composition with the DOM entry. Start with `_mergeConfigObj`'s
+actual `H.getDataAttribute(e, "config")` call: the key is constant, so checked source
+specialization may discharge `F` before a general runtime regex backend is needed.
+The DOM provider still admits only one source function and declares every explicit
+parameter as an element; helper expansion and mixed parameter types are not supplied
+by String concatenation support. Preserve the normalization source instead of
+replacing it with browser helper code.
 
 The compiler still refuses dataset operations. Bootstrap's original
 `getDataAttributes` (vendor lines **253–261**) needs `Object.keys`, filtering, a

@@ -34,17 +34,27 @@ are unchanged. Stable formatting passes **828 C++ / 100 Python / 33 web**;
 `tools/format.sh --check` has the byte-identical pre-existing **nine-file /
 26-diagnostic** pinned-formatter baseline.
 
-The complete default devbox build and CTest gate are **running**, against **1,442
-frozen source inputs**. No complete-suite result is claimed yet. Logs, the frozen
-manifest and gate script are in `/tmp/ctcompile-dom-normalize-20260914/`.
-No browser/runtime files or WPT/test262 expectations changed.
+The complete **615-step build / 602/602 CTests in 1417.77s / 176/176 lit in
+972.10s PASS**. DOM entry passed in **205.11s**, shared Map ownership in **302.82s**,
+and the expanded String gate in **21.31s**. All **1,442 frozen source hashes** match
+the devbox and committed source. Logs, the manifest, measurements and generated C++
+are in `/tmp/ctcompile-dom-normalize-20260914/`.
+
+Fresh whole Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7**, and Button
+**4/86** with its **22 Node observations** and known interpreter failure. The escape
+oracle still reports **zero violations / precision 40/172**. No browser/runtime
+files or WPT/test262 expectations changed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** original Bootstrap `getDataAttribute` at vendor line
 **264** still calls `F` (regex replace, callback, `toLowerCase`) and `M` (branches,
 `Number`, `toString`, `typeof`, URI decoding, JSON and exceptions). The new primitive
 observations are prerequisites; they do not admit either complete helper or their
-composition. Preserve that source normalization. Dataset enumeration and missing-key
-prototype fallback remain separate; inherited/static receivers, derived forwarding,
+composition. Begin with `_mergeConfigObj`'s literal `"config"` key and determine
+whether checked source specialization can discharge `F`. The DOM provider still
+allows only one function and all-element explicit parameters; source helper
+composition is the next prerequisite. Preserve the normalization source. Dataset
+enumeration and missing-key prototype fallback remain separate; inherited/static receivers, derived forwarding,
 lexical `super`, `this.constructor`, retained DOM/config and callbacks still block
 original Button startup and the native application driver. The ctcompile plan is
 unfinished.
