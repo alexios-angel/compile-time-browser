@@ -36,6 +36,39 @@ specific initial embedding resources for
 escape is rechecked from source. These fields do not supply an effect proof or
 authorize the complete slot query when another obligation fails.
 
+`initial_intrinsics` also accepts `__ctbrowser_class_defined`, the embedding's
+class-descriptor initialization helper. This is an explicit initial identity,
+not an exemption based on a global's spelling. Source replacement and escaping
+uses still fail validation. The other host analyses do not interpret its effects.
+
+`ctnative-specialize-class-initialization` consumes that identity separately.
+Prepare source with `ctjs-resolve-globals` and `ctjs-lift-to-scf`, fingerprint
+the resulting module, and bind a `closed-source-v1` manifest with
+`initial_intrinsics: ["__ctbrowser_class_defined"]`, empty absent/undefined
+bindings, and no realm receiver declaration. Existing roots/observations remain
+declarations; this pass grants no publication or ownership proof.
+
+```sh
+ctjs-opt prepared.mlir \
+  --ctnative-specialize-class-initialization='manifest=class.json' \
+  --ctnative-lower-to-emitc -o native.mlir
+```
+
+The bounded census admits only local base constructors with an empty fresh
+prototype, its constructor back-reference and the constructor's lexical home.
+Every instance and constructor receiver must have only ordinary constant-key
+field accesses. Every call stays within the supplied source; unresolved bindings,
+dynamic keys, reflection, captured functions and nested regions fail closed.
+The pass removes only the unused helper call and those three unobservable setup
+writes, after every check succeeds. It also discards supplied native reports.
+Ordinary native constructor/type/ownership admission then runs independently.
+
+Methods, inheritance, executable field initializer closures, observable
+constructor identity, prototype mutation and retained receivers still refuse.
+The pass does not yet compose with the DOM Data session or prepare the original
+Bootstrap Button. The original mutable-helper and inherited-getter runtime
+discrepancies remain separately measured in the class and Button gates.
+
 The fingerprint covers the canonical generic IR of the complete program and
 driver. Locations and previous `ctnative.host_*` reports are excluded. Changing
 semantic IR invalidates the manifest; comments or printing locations do not.

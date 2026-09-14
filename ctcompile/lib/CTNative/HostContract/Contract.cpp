@@ -135,7 +135,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return std::move(failure);
         }
         for (const auto & name : result.initialIntrinsics) {
-            if (name != "Map" && name != "Array") {
+            if (name != "Map" && name != "Array" && name != host_detail::classDefinedIntrinsic) {
                 return error("unsupported initial intrinsic identity");
             }
             if (llvm::is_contained(result.absentBindings, name) ||
@@ -680,7 +680,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
         return "invalid initial realm globalThis declaration";
     }
     for (const auto & name : contract.initialIntrinsics) {
-        if ((name != "Map" && name != "Array") ||
+        if ((name != "Map" && name != "Array" && name != classDefinedIntrinsic) ||
             llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
@@ -728,7 +728,16 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     construct.getNewTarget() == load.getResult() && construct.getArgs().empty()) {
                     continue;
                 }
-            } else {
+            } else if (load.getName() == classDefinedIntrinsic) {
+                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                auto receiver = call ? call.getReceiver().getDefiningOp<ctjs::ConstantOp>()
+                                     : ctjs::ConstantOp{};
+                if (call && use.getOperandNumber() == 0 && call.getArgs().size() == 1 && receiver &&
+                    llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                    call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>()) {
+                    continue;
+                }
+            } else if (load.getName() == "Array") {
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
                     read && use.getOperandNumber() == 0 &&
                     ctjs::constantKey(read.getKey()) == "from") {

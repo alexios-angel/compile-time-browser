@@ -12,6 +12,8 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_defined";
+
 using CapturedMapOrigin = std::pair<mlir::Value, mlir::Operation *>;
 
 struct CapturedMapEntry {

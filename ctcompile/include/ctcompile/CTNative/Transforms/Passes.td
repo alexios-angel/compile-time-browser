@@ -33,6 +33,24 @@ def CTNativeHostContract : Pass<"ctnative-host-contract", "mlir::ModuleOp"> {
                           "::mlir::arith::ArithDialect"];
 }
 
+def CTNativeSpecializeClassInitialization : Pass<"ctnative-specialize-class-initialization", "mlir::ModuleOp"> {
+  let summary = "Remove unobservable local base-class setup under a checked host identity";
+  let description = [{
+    Bind the complete source to the existing closed-source-v1 host contract.
+    Require the declared class-definition intrinsic, closed source calls, and
+    an immutable local constructor/prototype census. Only then remove the
+    unused descriptor helper and unobservable prototype/constructor/home edges.
+    Methods, inheritance, field initializer closures, reflection and unknown
+    source effects remain refused. This grants no native ownership or field
+    admission; normal constructor lowering must prove those independently.
+  }];
+  let options = [
+    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
+    Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum complete source census work">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect"];
+}
+
 def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir::ModuleOp"> {
   let summary = "Specialize a checked closed host entry prefix without crossing unknown effects";
   let description = [{
