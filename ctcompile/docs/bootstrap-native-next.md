@@ -97,6 +97,12 @@ remains **19/574 native / 0 of 43 globals**, both policies, no skips/prunes.
 
 ## What is measured
 
+The final gate after **e967db10 / acf98caa** passes **585/585 CTests in
+1283.39s**, including **170/170 lit in 846.62s**. All **1,422 frozen inputs**
+match local/devbox. The Data, DOM, escape and full-bundle rows below were
+remeasured with the same results; the new imported DOM Data contract remains
+analysis-only. [HANDOFF](HANDOFF.md) names the evidence and exact next boundary.
+
 | Gate | What it establishes | What remains outside it |
 | --- | --- | --- |
 | Full bundle: **19/574 native**, both optimization policies; no skipped or pruned functions | Admission of individual functions from the unchanged vendor source | Native initialization, an interactive component, or a native application |

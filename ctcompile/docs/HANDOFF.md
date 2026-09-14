@@ -44,11 +44,22 @@ and type inference **0.22s**. The earlier focused DOM entry test passed in
 **178.86s**. Stable formatter **824 C++ / 91 Python / 33 web PASS**; the required
 pinned check retains the byte-identical nine-file / 26-diagnostic baseline.
 
-The final standard devbox build passed **280 steps**. **584 CTests have passed**;
-the serialized **170-test lit suite is still running**. This is not a completed
-full gate. Inputs are frozen in `/tmp/ctcompile-dom-resume/frozen-inputs.json`
-(**1,422 files**); the live log is `/tmp/ctcompile-dom-resume/full.log`. If this
-session is interrupted, finish or rerun that gate before declaring the handoff green.
+Final standard devbox gate: **280-step build / 585/585 CTests PASS in
+1283.39s**, including **170/170 lit in 846.62s**. All **1,422 frozen inputs**
+match local source and the tested devbox files. Shared-Map ownership passes in
+**277.81s**, native DOM in **257.10s**, owned DOM in **77.48s** and Data in
+**51.73s**. Evidence: `/tmp/ctcompile-dom-resume/{full.log,full-last-test.log,measured.json}`.
+The complete gate covers both browser and compiler tests. No WPT/test262 score
+remeasurement, browser/runtime edit or push occurred.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped/pruned functions. Existing Data remains **3,218 source bytes /
+7/7 functions / 23 direct calls / 19 observations / three source outer keys**.
+Native DOM remains **18 entries / 42 refusals**; owned DOM remains **three sources /
+five retention refusals**, with generated-client lifetime sanitizers passing
+against ordinary browser libraries. Structured contents remains **43 rows /
+2,228 cutoffs**; the complete escape oracle remains **222 functions / 861 claims /
+895 observed sites / 35 unclaimed / zero violations / precision 40 of 172**.
 
 **Exact next native boundary:** consume and revalidate this complete source/input
 proof in private Data storage inside the nonmovable atoms/document owner. Seed
