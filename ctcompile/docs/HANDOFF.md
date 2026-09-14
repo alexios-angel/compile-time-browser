@@ -6,6 +6,50 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Resumed object-held DOM helpers and computed length shrink, 2026-09-14 UTC
+
+Resumed the interrupted **23:19 AGENT-SYNC** thread, explicitly abandoned at
+**23:21:59**, from the three dirty source/test files after checking both agents'
+histories and unmerged branches. The September 7 WIP is already an ancestor.
+Two agents hit service limits; root finished their drafts. A third independently
+reviewed the object proof and identified the required isolated prototype premise.
+
+**a098bfcf** reuses exact held Number facts for non-growing dense array length
+writes. Saved values, structural alternatives, historical cycle edges and charged
+tail removal remain intact; opaque/coercive targets and growth still refuse.
+**1aa5c2c2** resolves unique local object-held callable slots before the existing
+DOM helper expansion. Complete holder uses, source order, exact call receivers,
+closure provenance, direct targets/new.target and unused implicit arguments are
+checked before erasure. The isolated DOM provider explicitly starts with standard
+`Object.prototype`; `__proto__` refuses, and the complete source reproof still
+rejects prototype mutation and script reentry. No callable table, Script type or
+GC ownership is emitted; no ctbrowser implementation changed.
+
+Measured final focused gate: **16/16 CTests in 29.60s PASS**. DOM Strings:
+**145 Node/VM observations / eight GCC-Clang binaries / 224 source refusals /
+41 provenance-depth refusals / 24 method provenance checks / four budget-fingerprint
+controls**. Dense lengths: **199 rows / 50 live states / 5,978 retention cutoffs**.
+The complete escape fixture keeps **zero violations / precision40/172**, all
+**1,123 baseline rows** unchanged. Stable formatting passes **829 C++ / 100 Python /
+33 web**; required pinned formatting matches the existing **nine-file /
+26-diagnostic** baseline byte-for-byte.
+
+The complete **274-step default build passed**. The **602-test CTest gate is
+running**, with four jobs and **1,443 frozen inputs**. No complete-suite result is
+claimed yet. Resume `/tmp/ctcompile-methods-finish/full.log` and `full.sh` if this
+session is interrupted; source is committed and frozen.
+
+**Exact next boundary:** original Bootstrap's outer captured `F`/`M` graph remains
+unproved. Local object slots do not discharge `H.getDataAttribute` at vendor line
+263. `F` at line243 needs checked captured identity and String/RegExp intrinsic
+replacement/execution/property lookup before specializing the literal `"config"`;
+the Object-prototype premise does not grant these intrinsic identities. `M` at
+line230 still normalizes a live attribute through branches, Number/toString,
+typeof, URI decoding, JSON and exceptions. Dataset iteration/prototype fallback,
+inherited receivers and retained config/callback ownership remain open. Full
+native Bootstrap and the application driver remain unfinished; no bundle admission
+or escape precision gain is claimed.
+
 ## Native local DOM helper calls, 2026-09-14 UTC
 
 Continued the completed **3013a8f0 / e1367f3d** thread from HANDOFF and the

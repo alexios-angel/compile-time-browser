@@ -139,8 +139,13 @@ operations and their composition with the DOM entry. Start with `_mergeConfigObj
 actual `H.getDataAttribute(e, "config")` call: the key is constant, so checked source
 specialization may discharge `F` before a general runtime regex backend is needed.
 The exported entry still declares every explicit parameter as an element; local
-helpers receive their proved actual arguments. Original Bootstrap's outer-scope
-and object-held helper graph is beyond the new local capture-free proof.
+helpers receive their proved actual arguments. **1aa5c2c2** now proves unique local
+object-held helper slots and exact method receivers under the isolated standard
+Object-prototype premise. The expanded gate passes **145 Node/VM observations /
+eight GCC-Clang binaries / 224 source refusals / 24 method provenance checks**,
+with the earlier 41 provenance/depth and four budget/fingerprint controls intact.
+Original Bootstrap's outer-scope captured helper graph remains beyond this local
+capture-free proof.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities.
