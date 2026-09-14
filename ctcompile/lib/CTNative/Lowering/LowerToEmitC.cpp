@@ -202,7 +202,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         if (hostContract &&
             (hostContract->provider == HostContract::Provider::ctbrowserDOM ||
              hostContract->provider == HostContract::Provider::ctbrowserDOMSession)) {
-            const DOMEntryAnalysis source(module, *hostContract, hostMaxSteps);
+            if (hostContract->moduleSha256 != hostContractFingerprint(module) ||
+                module->hasAttr("ctjs.skipped")) {
+                module.emitError("native DOM entry: fingerprint mismatch or incomplete source");
+                return signalPassFailure();
+            }
+            mlir::OwningOpRef<mlir::ModuleOp> composed(module.clone());
+            if (auto error = expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps)) {
+                module.emitError() << "native DOM source: " << llvm::toString(std::move(error));
+                return signalPassFailure();
+            }
+            HostContract composedContract = *hostContract;
+            composedContract.moduleSha256 = hostContractFingerprint(*composed);
+            const DOMEntryAnalysis source(*composed, composedContract, hostMaxSteps);
             if (!source.proved()) {
                 module.emitError() << "native DOM entry: " << source.reason();
                 return signalPassFailure();
@@ -212,7 +224,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             // reports, and reprove before publishing the exported function.
             mlir::IRMapping mapping;
             mlir::OwningOpRef<mlir::ModuleOp> prepared(
-                llvm::cast<mlir::ModuleOp>(module->clone(mapping)));
+                llvm::cast<mlir::ModuleOp>((*composed)->clone(mapping)));
             if (auto wrapper = source.wrapper()) {
                 prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
             }

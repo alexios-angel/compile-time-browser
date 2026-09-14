@@ -488,7 +488,7 @@ INVALID_SELECTOR_CHECKS = r"""
 """
 
 
-def prepare(args, name, source, parameters):
+def prepare(args, name, source, parameters, *, entry_name=None):
     js = args.work / f"{name}.js"
     raw = args.work / f"{name}.raw.mlir"
     ir = args.work / f"{name}.mlir"
@@ -498,7 +498,11 @@ def prepare(args, name, source, parameters):
         raise RuntimeError(f"{name}: source was not completely imported")
     run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)])
     entries = [symbol for symbol in FUNCTION.findall(ir.read_text()) if symbol != "_script_$0"]
-    if len(entries) != 1 or len(FUNCTION.findall(ir.read_text())) != 2:
+    if entry_name is not None:
+        entries = [symbol for symbol in entries if symbol.rsplit("$", 1)[0] == entry_name]
+    elif len(FUNCTION.findall(ir.read_text())) != 2:
+        raise RuntimeError(f"{name}: expected one source entry and its declaration wrapper")
+    if len(entries) != 1:
         raise RuntimeError(f"{name}: expected one source entry and its declaration wrapper")
     contract = {
         "version": 1,
@@ -510,11 +514,13 @@ def prepare(args, name, source, parameters):
     return ir, contract
 
 
-def lower(args, ir, contract, name, *, optimize=False, success=True):
+def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=None):
     config = args.work / f"{name}.json"
     output = args.work / f"{name}.native.mlir"
     config.write_text(json.dumps(contract, indent=2) + "\n")
     flags = f"host-manifest={config} optimize={'true' if optimize else 'false'}"
+    if max_steps is not None:
+        flags += f" host-max-steps={max_steps}"
     command = [
         args.opt,
         str(ir),

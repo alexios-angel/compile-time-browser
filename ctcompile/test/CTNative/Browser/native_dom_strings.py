@@ -80,6 +80,46 @@ BOOLEAN_CASES = {
         "1111",
     ),
 }
+HELPER_CASES = {
+    "helper_read": (
+        """function read(target, key) { return target.getAttribute(key); }
+  return read(element, 'x') === null;""",
+        "1000",
+    ),
+    "helper_nested": (
+        """function read(target, key) {
+    function attributeName(name) { return 'data-' + name; }
+    return target.getAttribute(attributeName(key));
+  }
+  element.setAttribute('data-config', 'value');
+  return read(element, 'config') === 'value';""",
+        "1111",
+    ),
+    "helper_order": (
+        r"""function change(target, saved) {
+    target.setAttribute('x', 'a\0b');
+    return saved === target.getAttribute('x');
+  }
+  return change(element, element.getAttribute('x'));""",
+        "0010",
+    ),
+    "helper_repeated": (
+        """function read(target, key) { return target.getAttribute(key); }
+  return read(element, 'x') === read(element, 'missing');""",
+        "1000",
+    ),
+    "helper_forward": (
+        """function identity(target) { return target; }
+  return identity(element).getAttribute('x') === null;""",
+        "1000",
+    ),
+    "helper_unused_result": (
+        """function read(target) { return target.getAttribute('x'); }
+  read(element); return true;""",
+        "1111",
+    ),
+}
+BOOLEAN_CASES.update(HELPER_CASES)
 BOOLEAN_SOURCES = tuple(
     (name, f"function {name}(element) {{ {body} }}\n", 1)
     for name, (body, _) in BOOLEAN_CASES.items()
@@ -113,6 +153,8 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "helper_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "helper_nested": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "saved_equality": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "comparison_force": 'assert(doc.read().has_attribute(node, atoms.intern("data-force")) == result);',
     "computed": """assert(!doc.read().has_attribute(node, atoms.intern("data-copy")));
@@ -388,6 +430,23 @@ REFUSALS = {
     "extra-name": "return element.getAttribute('x', 'y');",
     "non-string-name": "return element.getAttribute(null);",
 }
+HELPER_REFUSALS = {
+    "helper_capture": "function read() { return element.getAttribute('x'); } return read();",
+    "helper_this": "function read() { return this.getAttribute('x'); } return read();",
+    "helper_new_target": "function read(target) { target.getAttribute('x'); return new.target; } return read(element);",
+    "helper_recursive": "function read(target) { return read(target); } return read(element);",
+    "helper_short": "function read(target, key) { return target.getAttribute(key); } return read(element);",
+    "helper_extra": "function read(target) { return target.getAttribute('x'); } return read(element, 'x');",
+    "helper_identity": "function read(target) { return target.getAttribute('x'); } read(element); return read;",
+    "helper_metadata": "function read(target) { return target.getAttribute('x'); } read(element); return read.name;",
+    "helper_unused": "function read(target) { return target.getAttribute('x'); } return true;",
+    "helper_unknown": "function read(target) { sideEffect(); return target.getAttribute('x'); } return read(element);",
+    "helper_branch": "function read(target) { if (target.hasAttribute('x')) return true; return false; } return read(element);",
+    "helper_mutation": "function read(target) { return target.getAttribute('x'); } read.name = 'other'; return read(element);",
+    "helper_optional_name": "function read(target, key) { return target.getAttribute(key); } return read(element, element.getAttribute('x'));",
+    "helper_regex": "const F = t => t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); return element.getAttribute('data-bs-' + F('config'));",
+}
+REFUSALS.update(HELPER_REFUSALS)
 
 
 def emitted(args, module, name):
@@ -409,6 +468,119 @@ def emitted(args, module, name):
             f"{name}: expected an ordinary optional String using the shared DOM API\n{cpp}"
         )
     return cpp, entries[0]
+
+
+def helper_provenance_refusals(args, ir, contract):
+    original = ir.read_text()
+
+    def once(text, old, new):
+        if text.count(old) != 1:
+            raise RuntimeError(f"helper provenance mutation is not unique: {old}")
+        return text.replace(old, new)
+
+    functions = re.findall(r"^  ctjs\.func [^\n]+\n.*?^  }\n", original, re.M | re.S)
+    if len(functions) != 3:
+        raise RuntimeError("helper provenance controls require the complete read source")
+    entry = next(body for body in functions if f"@{contract['entry']}(" in body.splitlines()[0])
+    helper = next(body for body in functions if "@read$2(" in body.splitlines()[0])
+    closure = "ctjs.create_closure %arg2[2] this %1"
+    direct = "ctjs.call_direct @read$2(%4, %5, %2, %arg3, %3)"
+    identity = "DOM helper lacks an exact local closure identity"
+    call_shape = "DOM helper callable escapes or its call shape is unsupported"
+    duplicate = once(helper, "@read$2(", "@duplicate$2(")
+    alternative = once(helper, "@read$2(", "@alternative$3(")
+    variants = {
+        "duplicate-index": (
+            once(original, helper, helper + duplicate),
+            "DOM helper source function identity is ambiguous",
+        ),
+        "negative-index": (
+            once(original, closure, closure.replace("[2]", "[-1]")),
+            identity,
+        ),
+        "missing-index": (
+            once(original, closure, closure.replace("[2]", "[2147483647]")),
+            "DOM helper closure target is missing",
+        ),
+        "foreign-enclosing-closure": (
+            once(original, closure, closure.replace("%arg2[", "%arg3[")),
+            identity,
+        ),
+        "foreign-enclosing-this": (
+            once(original, closure, closure.replace("this %1", "this %arg3")),
+            identity,
+        ),
+        "forged-proof": (
+            once(
+                original,
+                closure,
+                closure.replace("%arg2[", "%arg3[") + " {ctnative.host_proved = true}",
+            ),
+            identity,
+        ),
+        "different-direct-target": (
+            once(
+                once(original, helper, helper + alternative),
+                direct,
+                direct.replace("@read$2(", "@alternative$3("),
+            ),
+            call_shape,
+        ),
+        "direct-receiver": (
+            once(original, direct, direct.replace("(%4,", "(%arg3,")),
+            call_shape,
+        ),
+        "direct-new-target": (
+            once(original, direct, direct.replace(", %5,", ", %arg3,")),
+            call_shape,
+        ),
+        "skipped-helper": (
+            once(
+                original,
+                helper,
+                once(helper, "attributes {", "attributes {ctjs.skipped = true, "),
+            ),
+            "DOM helper requires complete capture-free source functions",
+        ),
+    }
+    if closure not in entry or direct not in entry:
+        raise RuntimeError("helper provenance controls no longer target the entry call")
+    for name, (text, reason) in variants.items():
+        mutated = args.work / f"helper-provenance-{name}.mlir"
+        mutated.write_text(text)
+        # Parsing and fingerprinting must succeed before checking the native
+        # refusal: malformed IR is not evidence for a provenance guard.
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for owned in (False, True):
+            provider = "ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    f"helper-provenance-{name}-{owned}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if f"error: native DOM source: {reason}" not in diagnostic:
+                    raise RuntimeError(f"helper provenance {name}: wrong refusal\n{diagnostic}")
+    # Each local helper calls only its own capture-free child. The 64th
+    # expansion must hit the depth bound, independently of the work budget.
+    body = "return target.getAttribute('x') === null;"
+    for depth in reversed(range(64)):
+        body = f"function deep{depth}(target) {{ {body} }} return deep{depth}(target);"
+    body = once(body, "return deep0(target);", "return deep0(element);")
+    deep_ir, deep_contract = dom.prepare(
+        args,
+        "helper-depth",
+        f"function helper_depth(element) {{ {body} }}\n",
+        1,
+        entry_name="helper_depth",
+    )
+    diagnostic = dom.lower(args, deep_ir, deep_contract, "helper-depth", success=False)
+    if "error: native DOM source: DOM helper call tree is recursive or too deep" not in diagnostic:
+        raise RuntimeError(f"helper depth: wrong refusal\n{diagnostic}")
+    return len(variants) * 4 + 1
 
 
 def main():
@@ -486,7 +658,12 @@ function makeElement(value) {
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     prepared = [
-        (name, *dom.prepare(args, name, source, count))
+        (
+            name,
+            *dom.prepare(
+                args, name, source, count, entry_name=name if name in HELPER_CASES else None
+            ),
+        )
         for name, source, count in SOURCES + BOOLEAN_SOURCES
     ]
     for optimize in (False, True):
@@ -572,7 +749,13 @@ function makeElement(value) {
                 if run([str(binary)]).stdout != expected * 2:
                     raise RuntimeError("native optional String observations disagree with source")
     for name, body in REFUSALS.items():
-        ir, contract = dom.prepare(args, name, f"function invalid(element) {{ {body} }}\n", 1)
+        ir, contract = dom.prepare(
+            args,
+            name,
+            f"function invalid(element) {{ {body} }}\n",
+            1,
+            entry_name="invalid" if name in HELPER_REFUSALS else None,
+        )
         for owned in (False, True):
             provider = "ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
             for optimize in (False, True):
@@ -586,9 +769,29 @@ function makeElement(value) {
                 )
                 if "DOM" not in diagnostic:
                     raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+    _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_nested")
+    for budget in (0, 1, 32):
+        diagnostic = dom.lower(
+            args,
+            helper_ir,
+            helper_contract,
+            f"helper-budget-{budget}",
+            success=False,
+            max_steps=budget,
+        )
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(f"helper budget {budget}: missing bounded refusal\n{diagnostic}")
+    stale = dict(helper_contract, module_sha256="0" * 64)
+    if "fingerprint mismatch" not in dom.lower(
+        args, helper_ir, stale, "helper-stale", success=False
+    ):
+        raise RuntimeError("DOM helper preparation accepted a stale source fingerprint")
+    _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_read")
+    provenance_checks = helper_provenance_refusals(args, helper_ir, helper_contract)
     print(
         f"native DOM Strings: {9 + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
-        f"both providers/policies/layouts; {len(REFUSALS) * 4} refusal checks"
+        f"both providers/policies/layouts; {len(REFUSALS) * 4} source refusal checks, "
+        f"{provenance_checks} provenance/depth refusal checks"
     )
 
 

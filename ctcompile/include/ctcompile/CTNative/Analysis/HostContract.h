@@ -76,6 +76,9 @@ void clearHostContractReports(mlir::ModuleOp module);
 // Remove every attribute of `op` whose name starts with `prefix` - the
 // analyses' reports and proof markers, which a clone must never inherit.
 void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
+// Only on a private, fingerprint-checked clone. The caller must reprove its
+// complete DOM entry after this bounded local-call normalization.
+llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps);
 
 enum class HostDOMMethod {
     toggleClass,
