@@ -6,6 +6,51 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native attribute String reads, 2026-09-14 UTC
+
+Continued the completed **0a6f59a5** dataset handoff after checking both histories,
+branches and shared-tree status. No interrupted source work remained. The next
+browser prerequisite is a proved optional String read for Bootstrap Config.
+Three agents supplied the public core, native regression draft and proof review;
+root finished the drafts after their service limits and handled integration/gates.
+
+**45612884** extracts
+`get_element_attribute` into the public DOM library and makes the Shell
+`getAttribute` binding a thin adapter. **f13f8795** lets the native DOM and owned-session
+providers admit constant-name source calls with an owning `std::optional<std::string>`
+result. Missing and empty remain distinct; copies survive later mutations and
+document destruction. HTML folding, SVG/XML casing, first qualified-name matching,
+invalid read names, NUL and WTF-8 bytes preserve the existing implementation.
+No Script symbol or generic nullable value carrier enters the generated program.
+Only return/root/unused uses of the optional result are proved; conversions,
+comparisons, property storage, computed names and other source calls still refuse.
+
+Measured focus: **156-step devbox build / 4/4 CTests in 9.55s PASS**. The new
+String gate passes **9 Node/VM observations / 8 GCC-Clang binaries / 64 refusals**
+across both providers, optimization policies and printing layouts. All **9 WPT
+files / 547 subtests** retain identical before/after outcomes: **545 PASS / 2 known
+FAIL**, with one non-harness file skipped. No expectations changed. Stable format
+passes **828 C++ / 100 Python / 33 web**; the required pinned formatter retains
+the byte-identical **nine-file / 26-diagnostic** pre-existing baseline.
+
+The complete **608-step build / 602/602 CTests in 1430.93s / 176/176 lit in
+974.76s PASS**, with four CTest jobs. The existing DOM entry passed in **213.67s**;
+the new String gate passed in **12.56s** under that load. All **1,442** source
+hashes match the tested devbox and committed tree. Evidence, the full test log and
+a generated C++ client live in `/tmp/ctcompile-native-attributes-20260914/`.
+Full WPT/test262 and whole-bundle admission were not remeasured; native Config
+admission is not claimed.
+
+**Exact next boundary:** Bootstrap's original `getDataAttribute` at vendor line
+**264** computes the name through `F` and passes the nullable read to `M` for
+normalization. Prove those source operations and their composition; do not replace
+Bootstrap's normalization with platform code. `getDataAttributes` still needs
+source `Object.keys`, filtering/iteration and dynamic dataset reads, including
+prototype fallback when an own key is absent. The independent class boundary is
+inherited instance/static receivers, derived forwarding, lexical `super` and
+`this.constructor`, then DOM Data composition and retained DOM/config payloads.
+Full Bootstrap startup, callbacks and the application driver remain incomplete.
+
 ## Shared DOM dataset API, 2026-09-14 UTC
 
 Started clean at **26a6d064** after checking both histories and unmerged branches;
