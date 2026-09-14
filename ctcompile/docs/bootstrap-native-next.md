@@ -36,6 +36,7 @@ probe, with direct call order, typed Node/VM observations and lifetime checks.
 | --- | --- | --- |
 | Full bundle: **19/574 native**, both optimization policies; no skipped or pruned functions | Admission of individual functions from the unchanged vendor source | Native initialization, an interactive component, or a native application |
 | Browser Data/UMD probe: **7/7** with manifest, prefix specialization and explicit 1m budget | Ownership and execution of the extracted Data methods and wrapper, including their preserved observations | A real Window, DOM nodes, Bootstrap constructors, event registration |
+| Data session probe: **7/7**, 23 direct calls and 19 typed observations | Nonmovable method table; source methods cannot escape independently; both policies/layouts and strict compile-clean/lifetime gates | Atoms/document ownership and retained DOM keys; existing Map/object carriers remain |
 | Full bundle: **0/43 globals resolved** | Current module-wide global-name census refuses | This is not a count of 43 missing browser APIs |
 | Generic escape oracle: **40/172 precision**, zero violations in the recorded snapshot | Independent analysis evidence | Native emission does not currently consume its refined contents/verdict queries |
 

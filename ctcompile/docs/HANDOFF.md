@@ -6,6 +6,73 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Direct Data session methods, 2026-09-14 UTC
+
+Resumed the eleven uncommitted compiler/proof files left after the 01:07 UTC
+interruption on **263f2051**, identified in the working diff and synchronization
+journal. September 7 WIP was already an ancestor. Three parallel agents reached
+service rate limits before writing files; root completed recovery, tests and review.
+
+**61448f32** adds explicit `closed-source-session-v1`, reusing the complete current
+closed-source host and captured-Map owner proof. It requires the whole captured
+method family to pass native admission. Data methods become members of a
+noncopyable, nonmovable table, with private capture tuples and direct calls.
+Method reads cannot escape independently as owning callables. The existing
+`closed-source-v1` owning-callable provider retains its contract. DOM parameters,
+keys and document ownership are not admitted by this prerequisite.
+
+The registered session gate preserves the original **3218-byte Data/UMD probe**,
+**7/7 functions**, **23 Data calls** and **19 typed observations**, checked against
+Node and the VM. Both optimization policies and explicit/deduced C++ pass GCC 13.3 and
+Clang 18.1.3, the no-Script symbol gate and ASan/UBSan lifetime/reentry checks. Budget
+exhaustion, stale manifests and source callable escape refuse; freshly fingerprinted
+forged report attributes do not change emission. Unit coverage also checks provider
+separation, uncaptured/scalar owners and incomplete proof publication.
+
+Focused validation: corrected **99-step build**, native session **20.98s**, existing
+exhaustive shared-Map proof **247.37s**. A new parser fixture omitted required empty
+binding arrays; correcting the fixture gives **2-step rebuild / 2/2 focused PASS
+in 20.99s**.
+
+The full **576-step build** passed; CTest initially passed **530/550 in 1154.03s**,
+including all browser tests and **167/167 lit in 826.29s**. Twenty compile-clean
+checks exposed the new helper's missing provenance prefix. **c67cb463** adds helper
+and session-member provenance and runs the existing strict compile-clean gate on
+each session policy/layout. A **242-step rebuild / 20/20 rerun in 7.75s** fixed the
+initial failures. The expanded session check then exposed older owned-global
+helper comments; after their correction, **241-step rebuild / session 1/1 in
+30.05s** passed. All **550 tests have passing results across the full run and
+focused reruns**; this was not a single clean full run. Follow-up emission changes
+are comments only.
+
+All **1411 frozen source/test/config inputs** match the devbox. Stable whole-tree
+format passes **822 C++ / 89 Python / 33 web**; required pinned `format.sh --check`
+retains exactly the same **nine baseline files / 26 diagnostics**. No browser
+source or semantics changed; full WPT/test262 scores were not remeasured. Evidence:
+`/tmp/ctcompile-session-resume/`, including final C++ and `measured.json`.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals resolved**, both
+policies, no skips/prunes. The independent native DOM gate remains **18 sources /
+42 refusals** (**246.20s** under full load). Escape remains **222 functions / 861
+claims / 895 observed sites / 35 unclaimed / zero violations / 40 of 172 precision**.
+No native bundle startup or DOM-backed Data retention is established. No push.
+
+**Exact next browser boundary:** own atoms, document, then Data state in a single
+nonmovable session; replace this prerequisite's existing shared Map/object carriers
+only where the new ownership proof permits ordinary by-value/unique ownership.
+Give DOM keys separate provenance and document+node identity, preserving detachment
+and refusing foreign document domains unless owned by the session. Keep ordinary
+Data owning-callable behavior separate. Then original Button/BaseComponent/Config
+construction and disposal, retained callbacks and the native application driver.
+
+**Independent escape work surveyed, not implemented:** the current contents query
+already records exact array-write witnesses. A first native consumer can prove
+bounded overwrites, join stored values into element inference, and capture emission
+plans before retyping invalidates those records. The existing `indexed.js` body in
+`CTNative/Lowering/Objects/array.mlir` is a useful control; it is currently uncalled,
+so preserve that test and add a separately measured called subject. Structured-loop
+transport still needs its own live proof. No escape precision gain is claimed here.
+
 ## Native selector queries and original array induction, 2026-09-14 UTC
 
 Continued clean **fc03829b**. Both commit histories and the synchronization journal
