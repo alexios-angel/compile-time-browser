@@ -6,6 +6,61 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered counted borrows and scalar prototypes, 2026-09-14 UTC
+
+Resumed dirty **353f8ab4** from the **12:56:45/12:57:56 AGENT-SYNC** class/array thread,
+explicitly abandoned at **12:58:41**. Both histories and unmerged branches were checked;
+`codex-wip-20260907` is already an ancestor. Three agents recovered arrays, constructor controls
+and proof review; root finished after all three reached service limits. No browser/runtime files
+changed.
+
+**55a041fe** extends entry-owned vector borrows through the existing complete counted-loop
+contents certificate. Before/after arguments and results carry pointers; the complete connected
+use census still requires entry-block owning literals and refuses escapes, unknown origins and
+unproved effects. The gate exposed upstream SCF's header-capture problem: explicitly forwarding
+those values before `WhileMoveIfDown` preserves sibling-region dominance. Every upstream rewrite
+retains the duplicate-forwarding guard. Original alias/swap sources are preserved;
+zero/one/even/odd trips, simultaneous swaps and selections pass **72 native executions / 20
+distinguishing copy controls / 38 refusals**, both policies/layouts/GCC/Clang. No EscapeAnalysis
+transfer rule was relaxed.
+
+**3d45614c** proves one local immutable literal prototype replacement before every construction.
+Only a complete census permits copying its primitive defaults into fresh instance fields before
+the constructor runs. No prototype identity, ownership reflection, alias mutation or method
+chain is admitted. `makesAnInstance` now asks the full constructor proof inside the existing
+argument fixpoint; callee/new.target operands must identify the same closure, and live
+`new.target` remains refused. Numeric/Boolean inherited reads, constructor reads, conditional
+shadowing, borrowed receivers and independent instances pass **40 native executions**. The
+original own-field `prototype-written.js` source remains unchanged and now executes. The
+combined prototype gate has **22 refusals**, including late/replacement/alias mutation, methods,
+new.target, constructor arguments, the mutable class helper and unproved primitive field
+storage. The helper's actual global call remains observable (**Node 0 / interpreter 1**); no
+intrinsic is inferred from its spelling. The global `undefined` fixture and the literal
+String/Null/Undefined-field fixture remain preserved refusals.
+
+Focused final gate: **4/4 lit PASS in 27.37s / 4/4 CTests PASS in 7.01s**, including type
+inference **0.21s** and existing constructor units. Stable formatting: **824 C++ / 97 Python /
+33 web PASS**. The required pinned check has the byte-identical preceding **nine-file /
+26-diagnostic** baseline. The standard full build passed **280 steps** and **599/600 CTests**
+have passed, including ownership **359.91s**; the full lit suite is still running. This is an
+interim checkpoint, not a completed full gate. Evidence:
+`/tmp/ctcompile-class-recovered/{full.log,focused3.log,frozen-inputs.json}`.
+
+**Exact next Bootstrap boundary:** trusted class-initialization provenance for the ordinary
+mutable `__ctbrowser_class_defined` lookup, then immutable method/prototype chains and inherited
+receiver/static-getter semantics. The scalar-default slice does not implement class inheritance.
+Preserve the original Button lifecycle and its uncaught interpreter discrepancy; do not erase
+the helper by name or use the failed runtime lifecycle as a native oracle. Default derived
+argument forwarding, lexical super home, dynamic this.constructor, retained DOM/config payloads,
+dataset access and disposal's event-registry writes remain obligations. Persistent
+initialization/actions, retained events and the application driver remain unfinished.
+
+**Independent continuation:** the exact counted loops remain read-only in their bodies; loop
+mutation, arbitrary bounds/steps, region-local owners, escapes and general CFG transport still
+refuse. Complete lifetime/contents proofs must precede broadening them. Native local struct
+fields beyond Number/Boolean have their own admission/storage boundary; the new prototype proof
+does not bypass it.
+
 ## Recovered Button probe and local vector borrows, 2026-09-14 UTC
 
 Resumed dirty **9f66a86d** from the **12:04:21 AGENT-SYNC** recovery,

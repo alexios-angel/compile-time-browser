@@ -38,10 +38,21 @@ receiver admission and the scalar-field environment must consume compatible proo
 Default derived construction forwards through `super`; inherited static getters,
 `this.constructor`, lexical home and `new.target` are separate obligations.
 
-Keep the preserved `prototype-written.js` and `unwritten-key.js` refusals. The
-first only reads an own field, so future admission needs a distinguishing inherited
-read/call and late/aliased prototype-mutation controls. Component publication also
-retains `_element` and `_config`, beyond Data's current scalar-field leaf proof.
+**3d45614c** now admits the unchanged `prototype-written.js` source through a
+complete local immutable scalar-prototype census. Defaults initialize fresh fields
+before constructor execution; inherited and constructor reads, conditional shadowing,
+borrowed receivers and independent Number/Boolean instances pass 40 native executions.
+The full constructor proof controls receiver eligibility. The combined 22 refusals
+retain inherited methods, late/alias/replacement mutation, new.target, constructor
+arguments, the mutable helper and unsupported String/Null/Undefined field storage.
+`unwritten-key.js` still refuses its inherited constructor observation.
+
+This does not prove class initialization: HostContract's `initial_intrinsics`
+currently admits only Map and Array, and its realm descriptor guard also rejects
+prototype writes. Extend that existing provenance/use boundary and model the actual
+initialization effects; do not infer an intrinsic from the helper's name.
+Component publication retains `_element` and `_config`, beyond Data's current
+scalar-field leaf proof. See HANDOFF for measured gates and the full lit checkpoint.
 
 Config still reads attributes and dataset when defaults are empty. Public DOM
 attribute access exists; dataset behavior can be lifted from
