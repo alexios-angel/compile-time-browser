@@ -109,10 +109,19 @@ needs a shared complete provenance/use proof, not a helper-name exemption.
 Component publication retains `_element` and `_config`, beyond Data's current
 scalar-field leaf proof. See HANDOFF for measured gates and the final full-gate status.
 
-Config still reads attributes and dataset when defaults are empty. Public DOM
-attribute access exists; dataset behavior can be lifted from
-`ctbrowser/lib/Shell/bindings/element/dataset.cpp` into the DOM public API, with
-the binding becoming an adapter under the shared-file worktree/merge protocol.
+Config still reads attributes and dataset when defaults are empty. **8547ad64**
+lifts dataset name conversion, supported-property reads and ordered entries into
+`ctbrowser/dom/dataset.hpp` and the DOM library. The Shell binding is now an
+adapter over that core; native callers receive owning optional strings or vectors
+of String pairs. Writes and removal reuse the public document namespace APIs.
+The direct DOM/Core client and **8 WPT files / 47 subtests** pass, with identical
+WPT results before/after; the complete **601/601 CTest / 176/176 lit** gate passes.
+
+The compiler still refuses dataset operations. Bootstrap's original
+`getDataAttributes` (vendor lines **253–261**) needs `Object.keys`, filtering, a
+loop and dynamic reads. Prove those source uses and preserve live read order;
+a missing supported own property alone does not prove the prototype lookup misses.
+Native optional strings must use ordinary `std::optional<std::string>` storage.
 Keep Bootstrap's parsing and config merge in its source. Disposal calls `P.off`,
 which writes `uidEvent` and initializes registry state even without listeners;
 it cannot be omitted. Retained events will need a plain platform callback seam.

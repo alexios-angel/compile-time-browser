@@ -6,6 +6,52 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared DOM dataset API, 2026-09-14 UTC
+
+Started clean at **26a6d064** after checking both histories and unmerged branches;
+the September 7 WIP is already landed. The interrupted thread was the **20:04:34
+AGENT-SYNC** DOM-entry retry, whose log contains only its start. Compiler sources
+were preserved; the complete combined gate below finishes that pending validation.
+The next independent Bootstrap item came from `bootstrap-native-next.md`: dataset
+behavior still lived in the Shell binding. Three agents supplied the direct API
+test, compiler seam audit and independent behavior review; root handled extraction,
+serialized gates and the atomic worktree merge.
+
+**8547ad64** lifts dataset key conversion, supported-property reads and
+ordered entries into `ctbrowser/dom/dataset.hpp` and the DOM library. Native callers
+receive owning `std::optional<std::string>` values or vectors of `std::string` pairs.
+Writes and removal reuse the existing public document namespace APIs after the
+shared name conversion. The Shell binding is now an adapter over the same core;
+VM conversion order, exceptions, prototype fallback and stale proxy-target behavior
+remain there. No Script type or collector enters the public API or implementation.
+Incoming native element handles must still pass `validate_element`.
+
+Focused devbox **199-step build / 5/5 CTests in 0.07s PASS**. Dataset and custom
+attribute WPT results are identical before and after: **8 files / 47 subtests PASS**,
+including ordered enumeration, supported-key mapping, namespace isolation and
+prototype behavior. The new `dom_dataset` executable links DOM/Core only and has
+no Script symbols. Stable formatting passes **828 C++ / 99 Python / 33 web**;
+the required pinned formatter retains the byte-identical existing **nine-file /
+26-diagnostic** baseline. The complete **920-step build / 601/601 CTests in
+1425.98s / 176/176 lit in 980.52s PASS**. All frozen hashes match the tested devbox
+and the landed tree. The resumed DOM-entry test passed in **213.63s**; the Map
+proof gate passed in **286.05s**, with four CTest jobs. Evidence lives in
+`/tmp/ctcompile-dataset-20260914/`; **1,441** source inputs were frozen for the gate.
+The compiler, source fixtures and whole-bundle admission measurements are unchanged;
+no full WPT/test262 remeasurement or native Config admission is claimed.
+
+**Exact next browser boundary:** prove source dataset enumeration and reads through
+these shared APIs. Bootstrap `getDataAttributes` at vendor lines **253–261** uses
+`Object.keys`, filtering, a loop and dynamic keyed reads. The DOM entry currently
+admits one straight-line function and no dataset handle. A missing own property
+cannot silently replace the VM's prototype fallback; arbitrary names need that
+additional proof. Native optional String storage must stay an ordinary
+`std::optional<std::string>`, without the generic nullable value carrier. Config's
+parsing/merge stays in its JavaScript source. The independent compiler continuation
+is inherited instance/static receivers, derived forwarding, lexical `super` and
+`this.constructor`, then DOM Data composition and retained DOM/config payloads.
+Persistent events, callbacks and the application driver remain open.
+
 ## Recovered static getters and forwarded fields, 2026-09-14 UTC
 
 Resumed the **18:31 / 18:38 / 18:52 AGENT-SYNC** thread explicitly abandoned
@@ -64,7 +110,8 @@ subsequent isolated DOM retry was interrupted before completion.
 The next dataset API session preserved every compiler input and completed
 `ctcompile_native_dom_entry` in **213.63s** with four CTest jobs, closing that
 pending compiler gate. This repeat includes the shared dataset API candidate;
-its complete combined **601-test** gate is still running. Evidence is in
+its complete combined **601/601 CTest / 176/176 lit** gate subsequently passed,
+as recorded in the dataset entry above. Evidence is in
 `/tmp/ctcompile-getters-recover/full.log` and
 `/tmp/ctcompile-dataset-20260914/full.log`.
 
