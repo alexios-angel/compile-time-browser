@@ -540,6 +540,15 @@ bool engine::element_matches(const read_txn & txn, node_id node,
     return false;
 }
 
+node_id engine::closest(const read_txn & txn, node_id subject,
+                        std::span<const compiled_selector> list) {
+    if (list.empty()) { return {}; }
+    for (node_id at = subject; at; at = txn.parent(at)) {
+        if (element_matches(txn, at, list, subject)) { return at; }
+    }
+    return {};
+}
+
 computed_style_ptr engine::resolve_pseudo(const read_txn & txn, node_id node, atom pseudo,
                                           const computed_style_ptr & element) {
     scope_ = node_id{};

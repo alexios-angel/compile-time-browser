@@ -230,10 +230,9 @@ void test_scope_and_has() {
     is("ids('div:has(> span):has(> p)')", "outer");
     is("ids('div:has(> ul)')", "");
     is("ids('li:not(:has(~ li))')", "li3");
-    // `closest` should keep the element it was called on as the scope while it
-    // walks the ancestors - `engine::element_matches` takes one - but the binding
-    // in bindings/element/node_methods.cpp does not pass it yet, so
-    // `li2.closest(':has(> :scope)')` cannot be asserted here.
+    // An ancestor beneath body must not replace the original subject as :scope.
+    is("document.getElementById('p1').closest('body > :scope')", "null");
+    is("document.getElementById('p1').closest('div > :scope').id", "p1");
     is("one(':has()')", "threw:SyntaxError");
     is("one(':has(> )')", "threw:SyntaxError");
     is("one('div:has(:has(p))')", "threw:SyntaxError");
@@ -260,6 +259,18 @@ void test_scoped_queries_and_matches() {
     is("document.getElementById('p1').matches('body > p')", "false");
     is("document.getElementById('li2').closest('ul').id", "list");
     is("document.getElementById('li2').closest('.box')", "null");
+    is("document.getElementById('li2').closest('ul, li').id", "li2");
+    is("(function () { var el = document.createElement('button');"
+       " return el.closest('button') === el && el.closest('body') === null; })()",
+       "true");
+    is("(function () { var host = document.createElement('div');"
+       " var root = host.attachShadow({mode: 'open'});"
+       " var button = document.createElement('button'); root.appendChild(button);"
+       " return button.closest('button') === button && button.closest('div') === null; })()",
+       "true");
+    is("(function () { try { document.getElementById('li2').closest('['); }"
+       " catch (e) { return e.name; } })()",
+       "SyntaxError");
     // matches() and querySelectorAll() are the same matcher, which is the whole
     // point of defining one in terms of the other.
     is("[].every.call(document.querySelectorAll('div p'), "
