@@ -53,15 +53,28 @@ Script/VM symbols. Stable formatting passes **825 C++ / 99 Python / 33 web**; th
 required pinned formatter retains the byte-identical **nine-file / 26-diagnostic**
 baseline. The standard devbox **276-step build passed**. Its first full run passed
 **599/600 CTests in 1235.45s**, including **175/176 lit in 877.44s**; the sole failure
-was the obsolete `constant.js` refusal in `refusal-corpus-shapes.mlir`. That original
-source is now fully native. It remains unchanged, with positive structure checks
-and **GCC/Clang/Node/interpreter `r=2`** observations added; its focused gate passed
-in **0.60s**. No production code changed after the full run. A **CTest retry of the
-complete lit suite is running**. The only difference between the first and final
-**1,438 frozen inputs** is that test file. Final retry results and vendor/oracle
-summary are pending. Evidence: `/tmp/ctcompile-class-methods/{final-focus.log,
-measured-focus.log,full.log,full-last-test.log,final-correction.log,retry.log,
-frozen-inputs.json,class-method.cpp,string-length.cpp}`.
+was the obsolete `constant.js` refusal in `refusal-corpus-shapes.mlir`. **2c68bf32**
+keeps that source unchanged and adds native structure checks plus
+**GCC/Clang/Node/interpreter `r=2`** observations; its focused gate passed in **0.60s**.
+No production code changed after the full run. The complete **CTest lit retry
+passed 1/1 in 877.74s**, with **176/176 lit PASS in 877.73s**. The other **599 CTests**
+passed on unchanged inputs, covering both browser and compiler suites. The only
+first-to-final input difference is that test file; all **1,438 final frozen inputs**
+match local source and the devbox. The first failed run and successful retry remain
+separate in the evidence: `/tmp/ctcompile-class-methods/{full.log,full-last-test.log,
+final-correction.log,retry.log,retry-last-test.log,measured.json,frozen-inputs.json}`.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7 functions /
+23 calls / 19 observations / five alias partitions** (**59.80s**). Original Button
+remains **16,194 bytes / 4 of 86 native**, with its **22 Node lifecycle observations**
+and uncaught interpreter failure preserved (**0.61s**). The complete escape oracle
+remains **222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
+precision 40/172**. Dense length stays **178 rows / 5,031 cutoffs**; structured
+contents stays **43 rows / 2,228 cutoffs**. Ownership passed in **357.92s**, owned DOM
+in **79.66s**. No full-Bootstrap gain is inferred from local class methods or String
+length. No runtime/WPT semantics changed, no WPT/test262 scores were remeasured,
+and nothing was pushed.
 
 **Exact next Bootstrap boundary:** prove chained method receivers and constructor
 method calls, then inherited/static-getter receivers and composition with the DOM
