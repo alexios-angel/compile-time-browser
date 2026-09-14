@@ -47,8 +47,8 @@ function primitives() {
 var a = primitives();
 
 // The preserved primitives.js still refuses the global `undefined` lookup.
-// An actual undefined literal has no host-binding provenance obligation, but
-// String/Null/Undefined fields still require the separate native storage proof.
+// An actual undefined literal has no host-binding provenance obligation.
+// Definite string fields and the existing nullable scalar fields now carry it.
 //--- literal-primitives.js
 function primitives() {
     var Shape = function () {};

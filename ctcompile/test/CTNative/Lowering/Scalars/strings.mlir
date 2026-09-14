@@ -25,7 +25,10 @@
 // GLOBAL: call_opaque "ctnative::global_string"
 // GLOBAL: call_opaque "ctnative::print_string"
 // GLOBAL-NOT: ctnative.not_native
-// FIELD: ctnative.not_native = "field `direction` is stored a !ctnative.str<utf8>, not a number or a boolean"
+// FIELD: emitc.field @direction : !emitc.opaque<"std::string">
+// FIELD: emitc.func @main()
+// FIELD-NOT: ctnative.not_native
+// FIELD-NOT: ctjs.func
 // MIXED: ctjs.func private @choose$1
 // MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
 // SHARED-MIXED: ctjs.func private @mixedShared$1

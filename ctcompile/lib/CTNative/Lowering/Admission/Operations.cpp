@@ -235,6 +235,7 @@ bool admission::op(mlir::Operation * o) {
         // them is an own property; a read of anything else falls through
         // to the prototype, which is what makes an inherited name wrong.
         llvm::StringSet<> written;
+        llvm::StringSet<> stringFields;
         for (mlir::Operation * user : accesses) {
             if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
                 // A METHOD FIELD IS NOT A FIELD. Its store lowers to
@@ -242,6 +243,9 @@ bool admission::op(mlir::Operation * o) {
                 // a key that shadows an inherited name either.
                 if (!user->hasAttr("ctnative.method")) {
                     written.insert(ctjs::constantKey(set.getKey()));
+                    if (carrierOf(typeOf(set.getValue())) == carrier::string) {
+                        stringFields.insert(ctjs::constantKey(set.getKey()));
+                    }
                 }
             }
         }
@@ -267,13 +271,23 @@ bool admission::op(mlir::Operation * o) {
                                "would find undefined")
                                   .str());
             }
+            // The existing shape census already spells one definite string as
+            // std::string. Mixed or possibly absent reads need a different join;
+            // do not route them through the numeric nullable carrier.
+            if (stringFields.contains(key)) {
+                auto set = llvm::dyn_cast<SetPropertyOp>(user);
+                auto value = set ? set.getValue() : llvm::cast<GetPropertyOp>(user).getResult();
+                if (carrierOf(typeOf(value)) != carrier::string) {
+                    return refuse("string field requires definite string reads and writes");
+                }
+            }
             if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
                 const carrier c = carrierOf(typeOf(set.getValue()));
                 if (c == carrier::methodTable) {
                     if (!ownedTableField(set)) { return false; }
                     continue;
                 }
-                if (!isScalarCarrier(c)) {
+                if (!isScalarCarrier(c) && c != carrier::string) {
                     return refuse(("field `" + key + "` is stored a " +
                                    printed(typeOf(set.getValue())) + ", not a number or a boolean")
                                       .str());

@@ -121,7 +121,7 @@ def main():
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
             )
-        if args.scalars and name not in ("primitives", "literal-primitives"):
+        if args.scalars and name != "primitives":
             checked += check_native(args, source, name, expected)
             continue
         # The original source now has a positive native gate in prototype-scalars.mlir.
