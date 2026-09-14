@@ -95,6 +95,19 @@ template <class K, class V> using map_storage = std::map<K, V, map_key_less<K>>;
 } // namespace ctnative
 )cpp";
 
+// Emit only for DOM modules using associative storage. Comparison never
+// resolves either borrowed owner; both slot and generation belong to identity.
+inline constexpr llvm::StringLiteral kNativeDOMMapKeys = R"cpp(
+namespace ctnative {
+template <> struct map_key_less<ctbrowser::element_ref> {
+    bool operator()(ctbrowser::element_ref a, ctbrowser::element_ref b) const noexcept {
+        return a.owner == b.owner ? a.id < b.id
+                                 : std::less<ctbrowser::document *>{}(a.owner, b.owner);
+    }
+};
+} // namespace ctnative
+)cpp";
+
 inline constexpr llvm::StringLiteral kNativeMapHelpers = R"cpp(
 // ctcompile: primitive keys, acyclic primitive/Map payloads, owning identity
 namespace ctnative {
@@ -112,16 +125,24 @@ inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
 template <class Map, class K> bool map_has(const Map & map, const K & key) {
     return map->find(key) != map->end();
 }
-template <class K> nullable_scalar map_get(const std::shared_ptr<number_map<K>> & map, const K & key) {
+template <class K> nullable_scalar map_get(number_map<K> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
 }
 template <class K> nullable_scalar map_get(
-    const std::shared_ptr<map_storage<K, bool>> & map, const K & key) {
+    map_storage<K, bool> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
+}
+template <class K> nullable_scalar map_get(
+    const std::shared_ptr<number_map<K>> & map, const K & key) {
+    return map_get(map.get(), key);
+}
+template <class K> nullable_scalar map_get(
+    const std::shared_ptr<map_storage<K, bool>> & map, const K & key) {
+    return map_get(map.get(), key);
 }
 template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
     const auto found = map->find(key);
@@ -132,13 +153,17 @@ template <class Map, class K> auto map_get_present(const Map & map, const K & ke
 // T is selected only by a rederived present, exact-payload proof. Return
 // by value so an owning string survives overwrite, deletion and Map lifetime.
 template <class T, class K, class... V> T map_get_present_as(
-    const std::shared_ptr<map_storage<K, std::variant<V...>>> & map, const K & key) {
+    map_storage<K, std::variant<V...>> * map, const K & key) {
     const auto found = map->find(key);
     if (found == map->end()) { std::terminate(); }
     return std::visit([](const auto & value) -> T {
         if constexpr (std::is_same_v<T, std::decay_t<decltype(value)>>) { return value; }
         else { std::terminate(); }
     }, found->second);
+}
+template <class T, class K, class... V> T map_get_present_as(
+    const std::shared_ptr<map_storage<K, std::variant<V...>>> & map, const K & key) {
+    return map_get_present_as<T>(map.get(), key);
 }
 // Map keys use CanonicalizeKeyedCollectionKey; payloads retain their sign.
 template <class K> const K & map_normalize_key(const K & key) { return key; }
@@ -170,16 +195,24 @@ template <class Map> js_num map_size(const Map & map) {
 inline constexpr llvm::StringLiteral kNativeStringMapHelpers = R"cpp(
 namespace ctnative {
 template <class K> nullable_string map_get(
-    const std::shared_ptr<map_storage<K, std::string>> & map, const K & key) {
+    map_storage<K, std::string> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
 }
 template <class K> nullable_string map_get(
-    const std::shared_ptr<map_storage<K, nullable_string>> & map, const K & key) {
+    map_storage<K, nullable_string> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
+}
+template <class K> nullable_string map_get(
+    const std::shared_ptr<map_storage<K, std::string>> & map, const K & key) {
+    return map_get(map.get(), key);
+}
+template <class K> nullable_string map_get(
+    const std::shared_ptr<map_storage<K, nullable_string>> & map, const K & key) {
+    return map_get(map.get(), key);
 }
 template <class T> T map_nullable_payload_as(const nullable_string & value) {
     if constexpr (std::is_same_v<T, nullable_string>) { return value; }
@@ -191,7 +224,7 @@ template <class T> T map_nullable_payload_as(const nullable_string & value) {
 // The compiler supplies T only from an independent present payload fact.
 // The storage schema itself never selects a narrower alternative.
 template <class T, class K, class V> T map_get_present_nullable_as(
-    const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+    map_storage<K, V> * map, const K & key) {
     const auto found = map->find(key);
     if (found == map->end()) { std::terminate(); }
     if constexpr (std::is_same_v<V, nullable_string>) {
@@ -206,6 +239,10 @@ template <class T, class K, class V> T map_get_present_nullable_as(
         }, found->second);
     }
 }
+template <class T, class K, class V> T map_get_present_nullable_as(
+    const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+    return map_get_present_nullable_as<T>(map.get(), key);
+}
 } // namespace ctnative
 )cpp";
 
@@ -213,18 +250,25 @@ template <class T, class K, class V> T map_get_present_nullable_as(
 // iteration API whose sorted order would differ from JavaScript insertion order.
 inline constexpr llvm::StringLiteral kNativeMapSnapshotHelpers = R"cpp(
 namespace ctnative {
-template <class K> std::vector<double> map_values(const std::shared_ptr<number_map<K>> & map) {
+template <class K> std::vector<double> map_values(number_map<K> * map) {
     std::vector<double> out;
     out.reserve(map->entries.size());
     for (const auto & entry : map->entries) { out.push_back(entry.second); }
     return out;
 }
 template <class K> std::vector<std::string> map_values(
-    const std::shared_ptr<map_storage<K, std::string>> & map) {
+    map_storage<K, std::string> * map) {
     std::vector<std::string> out;
     out.reserve(map->entries.size());
     for (const auto & entry : map->entries) { out.push_back(entry.second); }
     return out;
+}
+template <class K> std::vector<double> map_values(const std::shared_ptr<number_map<K>> & map) {
+    return map_values(map.get());
+}
+template <class K> std::vector<std::string> map_values(
+    const std::shared_ptr<map_storage<K, std::string>> & map) {
+    return map_values(map.get());
 }
 template <class Map> auto map_keys(const Map & map) {
     using K = typename std::pointer_traits<Map>::element_type::key_type;

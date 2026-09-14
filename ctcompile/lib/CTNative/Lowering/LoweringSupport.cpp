@@ -74,7 +74,7 @@ carrier carrierOf(mlir::Type type) {
         const auto key = map.getKeyType();
         const auto string = llvm::dyn_cast<StrType>(key);
         const bool supportedKey =
-            llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
+            llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType, DOMElementType>(key) ||
             (string && string.getEncoding() == StrEncoding::UTF8) ||
             !mixedMapKeySpelling(key).empty() || !nullableMapSpelling(key).empty();
         const auto value = map.getValueType();
@@ -177,6 +177,7 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
     if (llvm::isa<BoolType>(type)) { return "bool"; }
     if (llvm::isa<StrType>(type)) { return "std::string"; }
     if (llvm::isa<ObjectIdentityType>(type)) { return kObjectIdentityType; }
+    if (llvm::isa<DOMElementType>(type)) { return kDOMElementType; }
     llvm::report_fatal_error("native Map key has no carrier; admission should refuse it");
 }
 

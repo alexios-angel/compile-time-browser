@@ -1,0 +1,1 @@
+# RUN: python3 %S/dom-map-keys.py --opt ctjs-opt --work %t
