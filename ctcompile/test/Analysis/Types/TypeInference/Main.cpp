@@ -332,26 +332,46 @@ int main() {
                                       "  ctjs.return %a\n}\n";
     const std::string overwrite = "  ctjs.set_property %arr[%zero], %b\n";
     const std::vector<row> overwriteRows = {
-        {"a bounded own overwrite joins its wider stored Number",
+        {"an own read has no absence even without an indexed write",
+         overwritePrefix + overwriteRead, "!ctnative.num<i32>", true},
+        {"a read before a later overwrite keeps the earlier scalar",
+         overwritePrefix + "  %r = ctjs.get_property %arr[%zero] {check}\n"
+                           "  %text = ctjs.constant #ctjs.string<\"later\">\n"
+                           "  ctjs.set_property %arr[%zero], %text\n"
+                           "  ctjs.return %a\n}\n",
+         "!ctnative.num<i32>", true},
+        {"a fractional read cannot borrow a neighboring own element",
+         overwritePrefix + "  %key = ctjs.constant " + kOneAndAHalf +
+             "\n  %r = ctjs.get_property %arr[%key] {check}\n  ctjs.return %a\n}\n",
+         "!ctnative.opt<!ctnative.num<i32>>", true},
+        {"one missing read invalidates the whole contents certificate",
+         overwritePrefix + "  %missing = ctjs.get_property %arr[%a]\n" + overwriteRead,
+         "!ctnative.opt<!ctnative.num<i32>>", true},
+        {"a later unknown call withholds an earlier read certificate",
+         overwritePrefix + "  %r = ctjs.get_property %arr[%zero] {check}\n"
+                           "  %called = ctjs.call %p(%a)\n  ctjs.return %a\n}\n",
+         "!ctnative.opt<!ctnative.num<i32>>", true},
+
+        {"a bounded read sees its current wider stored Number",
          overwritePrefix + "  %wide = ctjs.constant " + kOneAndAHalf +
              "\n  ctjs.set_property %arr[%zero], %wide\n" + overwriteRead,
-         "!ctnative.opt<!ctnative.num<f64>>", true},
-        {"an overwritten String participates in the complete element join",
+         "!ctnative.num<f64>", true},
+        {"a bounded read sees the overwriting String",
          overwritePrefix +
              "  %text = ctjs.constant #ctjs.string<\"changed\">\n"
              "  ctjs.set_property %arr[%zero], %text\n" +
              overwriteRead,
-         "!ctnative.opt<!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>>", true},
-        {"an overwritten Boolean participates in the complete element join",
+         "!ctnative.str<utf8>", true},
+        {"a bounded read sees the overwriting Boolean",
          overwritePrefix +
              "  %flag = ctjs.constant #ctjs.boolean<true>\n"
              "  ctjs.set_property %arr[%zero], %flag\n" +
              overwriteRead,
-         "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>", true},
+         "!ctnative.bool", true},
         {"an original negative zero overwrites own index zero",
          overwritePrefix + "  %key = ctjs.constant " + kNegativeZero +
              "\n  ctjs.set_property %arr[%key], %b\n" + overwriteRead,
-         "!ctnative.opt<!ctnative.num<i32>>", true},
+         "!ctnative.num<i32>", true},
         {"an out-of-bounds overwrite never borrows a density claim",
          overwritePrefix + "  ctjs.set_property %arr[%a], %b\n" + overwriteRead, "!ctnative.boxed",
          true},
@@ -386,8 +406,7 @@ int main() {
             std::printf("FAIL live array overwrite mutation fixture did not parse\n");
             ++failures;
         } else {
-            check(*module, "own overwrite before live mutation",
-                  "!ctnative.opt<!ctnative.num<i32>>");
+            check(*module, "own overwrite before live mutation", "!ctnative.num<i32>");
             ctcompile::ctjs::SetPropertyOp store;
             module->walk([&](ctcompile::ctjs::SetPropertyOp found) { store = found; });
             const mlir::Value key = store.getKey();
@@ -395,7 +414,7 @@ int main() {
             check(*module, "a changed index discards the earlier density proof", "!ctnative.boxed");
             store->setOperand(1, key);
             check(*module, "restoring an own index rebuilds density from current IR",
-                  "!ctnative.opt<!ctnative.num<i32>>");
+                  "!ctnative.num<i32>");
         }
     }
 

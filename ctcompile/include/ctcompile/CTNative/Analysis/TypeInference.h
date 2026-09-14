@@ -279,6 +279,10 @@ private:
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
 
+    // Direct reads whose every current path names an existing own element.
+    // Origins come only from a complete, bounded contents proof during this solve.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Value, 2>> arrayReadValues_;
+
     // Proved Map schema families: every queried/stored key and stored value,
     // including through set aliases and closed parameters, captures and returns.
     // A live exact key proof applies only at its Map operation. Keep the

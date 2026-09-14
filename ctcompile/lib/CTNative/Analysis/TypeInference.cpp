@@ -32,6 +32,7 @@
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "OwnedGlobalRoots.h"
+#include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -459,6 +460,23 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         if (!isDenseVectorSite(store.getObject())) { return; }
         appends_[store.getObject()].push_back(store.getValue());
     });
+    llvm::DenseSet<mlir::Operation *> contentsFunctions;
+    for (const auto & [array, values] : appends_) {
+        (void)values;
+        auto function = array.getDefiningOp()->getParentOfType<ctjs::FuncOp>();
+        if (!function || !contentsFunctions.insert(function).second) { continue; }
+        const auto contents = computeArrayContents(function);
+        if (!contents.complete) { continue; }
+        for (const auto & read : contents.reads) {
+            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(read.by);
+            if (!get || get.getObject().getDefiningOp() != read.array ||
+                !appends_.contains(get.getObject())) {
+                continue;
+            }
+            auto & origins = arrayReadValues_[read.by];
+            if (!llvm::is_contained(origins, read.value)) { origins.push_back(read.value); }
+        }
+    }
     // THE SHARED-BINDING INDEX, over the group and not over one value - the
     // reason the field index is, one operand along. A `ctjs.cell_set` through
     // a capture pointer is in a DIFFERENT ctjs.func from the box, and the
@@ -878,7 +896,21 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 // names a property nothing wrote, which is `undefined` - and
                 // undefined is where the join below starts.
                 vectorKnown = true;
-                vector = elementTypeOf(op, get.getObject());
+                if (const auto found = arrayReadValues_.find(op); found != arrayReadValues_.end()) {
+                    // Unlike the storage schema, this read sees only its exact
+                    // current origins. No undefined seed: every path owns this
+                    // index. Subscribe to all origins and wait for the first type.
+                    for (mlir::Value value : found->second) {
+                        const auto * lattice =
+                            getLatticeElementFor(getProgramPointAfter(op), value);
+                        if (lattice->getValue().isUninitialized()) { continue; }
+                        const auto type = lattice->getValue().getType();
+                        vector = vector ? meet(vector, type) : type;
+                    }
+                    if (!vector) { return mlir::success(); }
+                } else {
+                    vector = elementTypeOf(op, get.getObject());
+                }
             }
         }
     }

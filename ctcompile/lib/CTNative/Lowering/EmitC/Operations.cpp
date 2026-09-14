@@ -269,10 +269,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (vectorIndexReads.contains(o)) {
         needsNullable = true;
-        swap(callWithConstValueOperands(b, where, mlir::TypeRange{o->getResult(0).getType()},
-                                        b.getStringAttr("ctnative::vec_at"),
-                                        mlir::ValueRange{o->getOperand(0), o->getOperand(1)})
-                 .getResult(0));
+        const auto resultType = o->getResult(0).getType();
+        // Only a proved Number drops absence. String snapshots use their own
+        // vec_at overload and retain that overload's nullable String carrier.
+        const auto storageType = llvm::isa<mlir::Float64Type>(resultType)
+                                     ? carrierType(context, carrier::nullable)
+                                     : resultType;
+        const auto value =
+            callWithConstValueOperands(b, where, mlir::TypeRange{storageType},
+                                       b.getStringAttr("ctnative::vec_at"),
+                                       mlir::ValueRange{o->getOperand(0), o->getOperand(1)})
+                .getResult(0);
+        swap(convertScalar(b, where, value, resultType));
         return;
     }
     if (vectorIndexWrites.contains(o)) {

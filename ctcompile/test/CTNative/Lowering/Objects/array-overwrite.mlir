@@ -11,8 +11,8 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/negative.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=INDEX
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unknown.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=INDEX
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=MIXED
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-value.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=VALUE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-index.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=KEY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-value.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=READ
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-index.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=READ
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/late-call.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=INDEX
 //
 // One by-value vector and an assignment on that same storage; no helper or copy.
@@ -29,10 +29,12 @@
 // INDEX-SAME: ctnative.not_native = "an array literal written through an index
 // MIXED: ctjs.func private @blocked$1
 // MIXED-SAME: ctnative.not_native = "an array whose elements are !ctnative.opt<!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>>, not numbers"
-// VALUE: ctjs.func private @blocked$1
-// VALUE-SAME: ctnative.not_native = "dense array storage requires definite numbers"
-// KEY: ctjs.func private @blocked$1
-// KEY-SAME: ctnative.not_native = "dense array writes require definite numeric indices"
+// The same original read-fed value/index sources now have complete own reads.
+// READ-NOT: ctnative.not_native
+// READ-LABEL: emitc.func @blocked_1()
+// READ: call_opaque "ctnative::vec_at"
+// READ: verbatim "{}[static_cast<std::vector<double>::size_type>({})] = {};"
+// READ-NOT: ctnative.not_native
 
 //--- sparse.js
 function blocked() {
@@ -100,3 +102,4 @@ function blocked() {
 }
 function later() { return 1; }
 var observed = blocked();
+
