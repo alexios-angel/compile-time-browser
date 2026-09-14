@@ -40,12 +40,39 @@ def main():
         "borrowed-delete": 1,
         "borrowed-escape": 5,
         "borrowed-forwarded": 5,
+        "forwarded-chain": 4,
+        "forwarded-saved": 137,
+        "forwarded-multiple": 151,
+        "forwarded-parameters": 4114,
+        "forwarded-before": 12,
+        "forwarded-missing": 21,
+        "forwarded-conditional": 12,
+        "forwarded-mixed": 14,
+        "forwarded-undefined": 1,
+        "forwarded-alias-delete": 1,
+        "forwarded-escape": 5,
+        "forwarded-recursive": 5,
+        "forwarded-depth-limit": 5,
+        "forwarded-mixed-actual": 21,
+        "forwarded-short-call": 51,
+        "forwarded-callable-escape": 5,
         "borrowed-alias-delete": 1,
         "utf8-length": 7,
         "empty-length": 0,
         "unknown-property": 0,
     }.items():
         source = args.fixtures / f"{name}.js"
+        if name == "forwarded-depth-limit":
+            source = args.work / f"{name}.js"
+            source.write_text(
+                "function forwarded() {\n"
+                "var f0 = function(value) { return value.text.length; };\n"
+                + "".join(
+                    f"var f{i} = function(value) {{ return f{i - 1}(value); }};\n"
+                    for i in range(1, 65)
+                )
+                + 'return f64({text: "owned"});\n}\nvar a = forwarded();\n'
+            )
         node_expected = 4 if name == "utf8-length" else expected
         assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={node_expected}\n", name
         assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
@@ -62,11 +89,17 @@ def main():
             "method-saved",
             "method-multiple",
             "borrowed-parameters",
+            "borrowed-forwarded",
+            "forwarded-chain",
+            "forwarded-saved",
+            "forwarded-multiple",
+            "forwarded-parameters",
         ):
             checked += check_native(args, source, name, expected)
             continue
         raw = args.work / f"{name}.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
+        assert "ctjs.skipped" not in raw.read_text(), name
         for optimize in (False, True):
             text = run(
                 [

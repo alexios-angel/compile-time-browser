@@ -352,6 +352,16 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     if (!objectArgs.empty()) {
         target->setAttr("ctnative.object_args",
                         mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
+        // Calls made by bindLocalFunctions have no closure-value use for the
+        // ordinary rewrite below to visit. Their targets have no captures.
+        if (captures == 0) {
+            module.walk([&](ctjs::CallDirectOp call) {
+                if (call.getTarget() == target) {
+                    call->setAttr("ctnative.object_args",
+                                  mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
+                }
+            });
+        }
         out.objects += static_cast<unsigned>(objectArgs.size());
     }
     // PRIVATE, AND IT IS NOT COSMETIC. MLIR's DeadCodeAnalysis gives a

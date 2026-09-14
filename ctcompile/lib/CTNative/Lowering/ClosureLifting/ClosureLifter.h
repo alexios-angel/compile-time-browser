@@ -436,7 +436,7 @@ struct closureLifter {
     };
     closureCall callSiteOf(mlir::OpOperand & use, ctjs::FuncOp target);
 
-    static ctjs::CreateClosureOp closureCalledBy(mlir::Operation * user);
+    ctjs::CreateClosureOp closureCalledBy(mlir::Operation * user);
 
     static mlir::ValueRange argsOfCallSite(mlir::Operation * user);
 
@@ -602,14 +602,14 @@ struct closureLifter {
     //  1. THE CALLEE IS ONE FUNCTION THIS REWRITE IS ABOUT TO MAKE DIRECT -
     //     a `ctjs.create_closure` made here whose every use is a call of it.
     //     Anything else has no call site to put an address at.
-    //  2. EVERY CALL PASSES AN OBJECT LITERAL IN THAT POSITION, and every one
-    //     of those literals is itself closed. One parameter is one C++ type;
+    //  2. EVERY CALL PASSES A CLOSED OBJECT OR ANOTHER PROVED BORROW. One
+    //     parameter is one C++ type;
     //     a position that is a literal at one site and a number at another has
     //     no single spelling, and a short call that omits it would pass the
     //     padding `undefined`.
-    //  3. THE PARAMETER IS READ, AND ONLY THROUGH CONSTANT KEYS. Unread, the
-    //     emitted parameter is `-Wunused-parameter` under -Werror; reached any
-    //     other way it needs an owner, which this slice introduces none of.
+    //  3. THE PARAMETER IS USED ONLY THROUGH CONSTANT KEYS OR PROVED BORROWS.
+    //     Unread, the emitted parameter is `-Wunused-parameter` under -Werror;
+    //     reached any other way it needs an owner.
     //
     // WHAT CONDITION 2 COSTS, AND WHY IT IS A FIXPOINT. Whether a literal is
     // closed depends on whether being passed here opens it, which depends on
@@ -620,6 +620,7 @@ struct closureLifter {
     // opens it": two literals passed to one read-only parameter support each
     // other, and neither opens anything.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<unsigned, 2>> objectSlotsOf;
+    llvm::SmallVector<closureCall> objectArgumentCalls(ctjs::CreateClosureOp c);
     bool slotIsACandidate(ctjs::CreateClosureOp c, unsigned j);
 
     bool slotCarriesAnObject(ctjs::CreateClosureOp c, unsigned j) const;

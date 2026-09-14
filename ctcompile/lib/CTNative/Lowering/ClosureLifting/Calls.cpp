@@ -32,7 +32,25 @@ ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
         return call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
     }
     if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
-        return direct.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
+        if (auto made = direct.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+            return targetOf(made) == direct.getTarget() ? made : ctjs::CreateClosureOp{};
+        }
+        // bindLocalFunctions proved these calls before erasing the captured
+        // callable. Its uncaptured target is the identity; input annotations
+        // or an arbitrary callee value cannot substitute for that proof.
+        auto constant = direct.getCalleeValue().getDefiningOp<ctjs::ConstantOp>();
+        if (!constant || !llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) { return {}; }
+        ctjs::CreateClosureOp found;
+        for (ctjs::CreateClosureOp made : closures) {
+            auto target = targetOf(made);
+            if (!target || target != direct.getTarget()) { continue; }
+            if (found || !bindingClosures.contains(made.getOperation()) ||
+                target.getUpvalueCount() != 0) {
+                return {};
+            }
+            found = made;
+        }
+        return found;
     }
     return {};
 }

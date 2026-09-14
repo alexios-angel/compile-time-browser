@@ -63,6 +63,8 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
             // The object as the RECEIVER of a call whose callee is a
             // constant-key read of that same object: a method call.
             if (use.getOperandNumber() == 1) {
+                // Borrowed parameters still have no method-resolution proof.
+                if (llvm::isa<mlir::BlockArgument>(object)) { return false; }
                 auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!load || load.getObject() != object ||
                     ctjs::constantKey(load.getKey()).empty()) {
@@ -75,7 +77,7 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
             // `ctn_x *`. `argumentCensus` decided that before anything was
             // rewritten, so this is a map lookup and not a second proof.
             if (use.getOperandNumber() >= 2) {
-                auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+                auto made = closureCalledBy(call);
                 if (made && slotCarriesAnObject(made, use.getOperandNumber() - 2)) { continue; }
             }
             return false;
@@ -87,7 +89,7 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
         // OPEN shape, and the object-argument lift lost it.
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
             if (use.getOperandNumber() >= 3) {
-                auto made = direct.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
+                auto made = closureCalledBy(direct);
                 if (made && slotCarriesAnObject(made, use.getOperandNumber() - 3)) { continue; }
             }
             return false;
@@ -153,18 +155,9 @@ std::string closureLifter::whyNotAMethodField(ctjs::SetPropertyOp set) {
     return "it is stored into an object or an array - Phase 59 slice 2";
 }
 
-// THE RECEIVER LIFT'S CONDITION 3, ASKED OF A VALUE THAT IS NOT `this`.
-// Every use has to be one a `ctn_x *` can carry, and here that is a
-// constant-key read or write and nothing else.
-//
-// DELIBERATELY NARROWER THAN `whyThisLeaks`, WHICH ALSO ADMITS `this.m()`.
-// That arm asks `resolveMethod`, whose answer depends on `behind` - a
-// fixpoint that is still moving while `methodCensus` runs - so a predicate
-// built on it gives one answer early in the pass and another late. This
-// one is a use-list walk with no state at all, which is what lets the same
-// question be asked before the census, during it, and from the lift, and
-// get the same answer every time. A parameter that calls a method on its
-// object is refused, by name, and that is Phase 59 slice 2's.
+// Diagnostic distinction between plain field access and a use that needs
+// another proof. Forwarding is proved by argumentCensus's shrinking graph;
+// this state-free label does not authorize it or resolve borrowed methods.
 bool closureLifter::onlyConstantKeyAccess(mlir::Value v) {
     for (mlir::OpOperand & use : v.getUses()) {
         mlir::Operation * user = use.getOwner();
@@ -182,34 +175,47 @@ bool closureLifter::onlyConstantKeyAccess(mlir::Value v) {
     return true;
 }
 
-// Conditions 1 and 3, which do not move. Condition 2's `closedAfterLift`
-// half is the fixpoint's, and is asked in `argumentCensus` alone.
+// Include every symbolic call, not only uses of the closure value. The local
+// binding proof can erase that value from calls in another function.
+llvm::SmallVector<closureLifter::closureCall> closureLifter::objectArgumentCalls(
+    ctjs::CreateClosureOp c) {
+    ctjs::FuncOp target = targetOf(c);
+    if (!target) { return {}; }
+    llvm::SmallVector<closureCall> calls;
+    for (mlir::OpOperand & use : c.getResult().getUses()) {
+        const auto site = callSiteOf(use, target);
+        if (!site) { return {}; }
+        calls.push_back(site);
+    }
+    const auto symbols = mlir::SymbolTable::getSymbolUses(target, module);
+    if (!symbols) { return {}; }
+    for (const auto & use : *symbols) {
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+        if (!direct || direct.getTarget() != target || closureCalledBy(direct) != c) { return {}; }
+        if (direct.getCalleeValue() != c.getResult()) {
+            calls.push_back({direct, direct.getArgs(), direct.getReceiver()});
+        }
+    }
+    return calls;
+}
+
+// The callable and arity census does not move. All object use and origin
+// dependencies are checked by the shrinking argumentCensus fixpoint.
 bool closureLifter::slotIsACandidate(ctjs::CreateClosureOp c, unsigned j) {
     ctjs::FuncOp target = targetOf(c);
     if (!target || target.getBody().empty()) { return false; }
     mlir::Block & entry = target.getBody().front();
     if (3 + j >= entry.getNumArguments()) { return false; }
-    bool called = false;
-    for (mlir::OpOperand & use : c.getResult().getUses()) {
-        const closureCall site = callSiteOf(use, target);
-        if (!site) { return false; }
-        called = true;
+    const auto calls = objectArgumentCalls(c);
+    for (const closureCall & site : calls) {
         // A SHORT CALL IS NOT A CANDIDATE, and this half is load-bearing
         // twice over: the lift pads a missing argument with `undefined`,
         // which is not an object, and the fixpoint below would index past
         // the end asking whether it is.
-        //
-        // AND A CLAUSE FOR "THE ARGUMENT IS AN OBJECT LITERAL" WAS HERE AND
-        // IS GONE, MEASURED. The fixpoint subsumes it exactly:
-        // `closedAfterLift` returns false for anything whose defining op is
-        // not a ctjs.create_object, so a slot passed a number is dropped on
-        // the first round anyway. Removed, `take(o) + take(2)` refuses with
-        // the same sentence, from the same place, and the whole suite stays
-        // green - which is the definition of decoration.
         if (j >= site.args.size()) { return false; }
     }
     const mlir::Value parameter = entry.getArgument(3 + j);
-    return called && !parameter.use_empty() && onlyConstantKeyAccess(parameter);
+    return !calls.empty() && !parameter.use_empty();
 }
 
 // Is JS parameter `j` of this closure's target one this rewrite will hand a
@@ -239,6 +245,24 @@ void closureLifter::argumentCensus() {
         }
         if (!slots.empty()) { objectSlotsOf[c.getOperation()] = std::move(slots); }
     }
+    const auto closedArgument = [&](mlir::Value value) {
+        if (closedAfterLift(value)) { return true; }
+        auto parameter = llvm::dyn_cast<mlir::BlockArgument>(value);
+        if (!parameter || !parameter.getOwner()->isEntryBlock() ||
+            parameter.getArgNumber() < ctjs::implicit_arguments) {
+            return false;
+        }
+        auto owner = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+        bool found = false;
+        for (ctjs::CreateClosureOp made : closures) {
+            if (targetOf(made) != owner) { continue; }
+            if (!slotCarriesAnObject(made, parameter.getArgNumber() - ctjs::implicit_arguments)) {
+                return false;
+            }
+            found = true;
+        }
+        return found && usesCloseTheShape(value);
+    };
     // THE FIXPOINT, WHICH ONLY SHRINKS. A slot whose literal turns out to
     // be open is not a slot, and dropping it can open another literal that
     // was relying on it - so this repeats until nothing moves. It
@@ -250,12 +274,11 @@ void closureLifter::argumentCensus() {
             if (at == objectSlotsOf.end()) { continue; }
             llvm::SmallVector<unsigned, 2> kept;
             for (unsigned j : at->second) {
-                bool ok = true;
-                for (mlir::OpOperand & use : c.getResult().getUses()) {
-                    const closureCall site = callSiteOf(use, targetOf(c));
-                    if (site && j < site.args.size() && !closedAfterLift(site.args[j])) {
-                        ok = false;
-                    }
+                const auto parameter = targetOf(c).getBody().front().getArgument(3 + j);
+                const auto calls = objectArgumentCalls(c);
+                bool ok = !calls.empty() && usesCloseTheShape(parameter);
+                for (const closureCall & site : calls) {
+                    if (j >= site.args.size() || !closedArgument(site.args[j])) { ok = false; }
                 }
                 if (ok) { kept.push_back(j); }
             }

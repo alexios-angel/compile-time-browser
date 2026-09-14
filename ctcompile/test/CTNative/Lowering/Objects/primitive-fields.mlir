@@ -35,7 +35,7 @@ function borrowed() {
 }
 var a = borrowed();
 
-// Forwarded parameters still need a presence proof across another call boundary.
+// Every forwarded parameter needs its own complete call and presence proof.
 //--- borrowed-forwarded.js
 function borrowed() {
     var read = function (value) { return value.text.length; };
@@ -247,3 +247,165 @@ function method_identity() {
     return value.read() === 1 && saved === value.read ? 1 : 0;
 }
 var a = method_identity();
+
+//--- forwarded-chain.js
+function forwarded() {
+    var read = function (value) { return value.text.length; };
+    var first = function (value) { return read(value); };
+    var second = function (value) { return first(value); };
+    var third = function (value) { return second(value); };
+    var value = {text: "deep"};
+    return third(value);
+}
+var a = forwarded();
+
+// The saved String must own its bytes even across a forwarded mutation.
+//--- forwarded-saved.js
+function forwarded() {
+    var read = function (value) {
+        var saved = value.text;
+        value.text = "changed";
+        return saved === "a\0b" && value.text === "changed" ?
+            saved.length * 10 + value.text.length : 0;
+    };
+    var forward = function (value) { return read(value); };
+    var value = {text: "a\0b"};
+    return forward(value) + (value.text === "changed" ? 100 : 0);
+}
+var a = forwarded();
+
+//--- forwarded-multiple.js
+function forwarded() {
+    var read = function (value) { return value.text.length; };
+    var forward = function (value) { return read(value); };
+    var first = {text: "x"}, second = {text: "three"};
+    return forward(first) * 100 + forward(second) * 10 + read(first);
+}
+var a = forwarded();
+
+//--- forwarded-parameters.js
+function forwarded() {
+    var read = function (first, second) { return first.text.length * 10 + second.text.length; };
+    var forward = function (first, second) { return read(second, first); };
+    var first = {text: "x"}, second = {text: "four"};
+    return forward(first, second) * 100 + forward(second, first);
+}
+var a = forwarded();
+
+// An initialized member cannot stand in for another call's actual object.
+//--- forwarded-before.js
+function forwarded() {
+    var read = function (value) { return value.text === void 0 ? 1 : 2; };
+    var forward = function (value) { return read(value); };
+    var value = {};
+    var before = forward(value);
+    value.text = "set";
+    return before * 10 + forward(value);
+}
+var a = forwarded();
+
+//--- forwarded-missing.js
+function forwarded() {
+    var read = function (value) { return value.text === void 0 ? 1 : 2; };
+    var forward = function (value) { return read(value); };
+    var first = {text: "set"}, second = {};
+    return read(first) * 10 + forward(second);
+}
+var a = forwarded();
+
+//--- forwarded-conditional.js
+function forwarded(flag) {
+    var read = function (value) { return value.text === void 0 ? 1 : 2; };
+    var forward = function (value) { return read(value); };
+    var value = {};
+    if (flag) value.text = "set";
+    return forward(value);
+}
+var a = forwarded(false) * 10 + forwarded(true);
+
+// All callee writes remain in the join, including explicit absence.
+//--- forwarded-mixed.js
+function forwarded() {
+    var read = function (value) {
+        var saved = value.text;
+        value.text = 9;
+        return saved.length + value.text;
+    };
+    var forward = function (value) { return read(value); };
+    var value = {text: "owned"};
+    return forward(value);
+}
+var a = forwarded();
+
+//--- forwarded-undefined.js
+function forwarded() {
+    var read = function (value) {
+        value.text = void 0;
+        return value.text === void 0 ? 1 : 2;
+    };
+    var forward = function (value) { return read(value); };
+    var value = {text: "owned"};
+    return forward(value);
+}
+var a = forwarded();
+
+//--- forwarded-alias-delete.js
+function forwarded() {
+    var read = function (value, alias) {
+        delete alias.text;
+        return value.text === void 0 ? 1 : 2;
+    };
+    var forward = function (value) { return read(value, value); };
+    var value = {text: "owned"};
+    return forward(value);
+}
+var a = forwarded();
+
+//--- forwarded-escape.js
+function forwarded() {
+    var read = function (value) { return value; };
+    var forward = function (value) { return read(value); };
+    var value = {text: "owned"};
+    return forward(value).text.length;
+}
+var a = forwarded();
+
+// No recursive invocation may use itself as initialization evidence.
+//--- forwarded-recursive.js
+function forwarded() {
+    var read = function (value, count) {
+        return count === 0 ? value.text.length : read(value, count - 1);
+    };
+    var forward = function (value) { return read(value, 2); };
+    var value = {text: "owned"};
+    return forward(value);
+}
+var a = forwarded();
+
+// The symbol-only call through forward must contribute its nonobject actual.
+//--- forwarded-mixed-actual.js
+function forwarded() {
+    var read = function (value) { return value.text === void 0 ? 1 : 2; };
+    var forward = function (value) { return read(value); };
+    return read({text: "owned"}) * 10 + forward(9);
+}
+var a = forwarded();
+
+//--- forwarded-short-call.js
+function forwarded() {
+    var read = function (value) { return value === void 0 ? 1 : value.text.length; };
+    var forward = function (value) { return read(value); };
+    return forward({text: "owned"}) * 10 + forward();
+}
+var a = forwarded();
+
+// A direct call does not close the census of an escaping callable value.
+//--- forwarded-callable-escape.js
+var escaped;
+function forwarded() {
+    var read = function (value) { return value.text.length; };
+    var forward = function (value) { return read(value); };
+    escaped = read;
+    return forward({text: "owned"});
+}
+var a = forwarded();

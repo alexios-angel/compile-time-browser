@@ -346,9 +346,10 @@ private:
     /// Owning identity fields use the separate live allocation/Map-alias query
     /// cached in initialize(); the schema group supplies no ordering evidence.
     /// A closed private object parameter also drops absence when every actual
-    /// call passes a local literal with a same-function dominating store. The
-    /// complete use census excludes removal; callee writes remain in the join.
-    /// Forwarded parameters and stores in a different invocation do not qualify.
+    /// call traces back to a same-function dominating store. Forwarded slots
+    /// require their own complete callable/use census; cycles and the bounded
+    /// walk's cutoff retain absence. Removal is excluded by the closed alias
+    /// census, and every callee write remains in the type join.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every

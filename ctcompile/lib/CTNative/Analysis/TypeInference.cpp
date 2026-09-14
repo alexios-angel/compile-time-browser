@@ -287,29 +287,41 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
 bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key,
                                           mlir::Operation * read) {
     if (nativeObjectFieldGroup(read) >= 0) { return assignedIdentityFields_.contains(read); }
-    const auto sites = fieldStoreSites_.find({object, key});
-    auto * owner = read->getParentOfType<ctjs::FuncOp>().getOperation();
-    if (sites != fieldStoreSites_.end()) {
-        for (mlir::Operation * store : sites->second) {
-            // A module body is a graph region: dominance across functions says
-            // nothing about execution order. Always compare owners first.
-            if (store->getParentOfType<ctjs::FuncOp>().getOperation() != owner) { continue; }
-            if (dominance_.properlyDominates(store, read)) { return true; }
+    llvm::DenseSet<mlir::Value> active;
+    unsigned work = 0;
+    const auto assigned = [&](auto && self, mlir::Value value, mlir::Operation * before) -> bool {
+        // ponytail: at most 64 forwarding frames and 65536 queries; larger or
+        // recursive borrows need a cached interprocedural presence proof.
+        if (++work > 65536 || active.size() >= 64) { return false; }
+        const auto sites = fieldStoreSites_.find({value, key});
+        auto * owner = before->getParentOfType<ctjs::FuncOp>().getOperation();
+        if (sites != fieldStoreSites_.end()) {
+            for (mlir::Operation * store : sites->second) {
+                // A module body is a graph region: dominance across functions
+                // says nothing about execution order. Compare owners first.
+                if (store->getParentOfType<ctjs::FuncOp>().getOperation() != owner) { continue; }
+                if (dominance_.properlyDominates(store, before)) { return true; }
+            }
         }
-    }
-    const auto callers = objectParameterCallSites_.find(object);
-    if (callers == objectParameterCallSites_.end()) { return false; }
-    const unsigned index = llvm::cast<mlir::BlockArgument>(object).getArgNumber();
-    for (mlir::Operation * call : callers->second) {
-        const mlir::Value actual = call->getOperand(index);
-        // ponytail: one call boundary; forwarding and recursive borrows need
-        // their own bounded presence proof. Never order stores across frames.
-        if (!actual.getDefiningOp<ctjs::CreateObjectOp>() ||
-            !fieldIsAssignedBefore(actual, key, call)) {
+        const auto callers = objectParameterCallSites_.find(value);
+        if (callers == objectParameterCallSites_.end() || !active.insert(value).second) {
             return false;
         }
-    }
-    return true;
+        const unsigned index = llvm::cast<mlir::BlockArgument>(value).getArgNumber();
+        for (mlir::Operation * call : callers->second) {
+            const mlir::Value actual = call->getOperand(index);
+            // Each forwarded slot needs its own complete callable census.
+            // A schema group alone proves neither origin nor initialization.
+            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() &&
+                 !objectParameterCallSites_.contains(actual)) ||
+                !self(self, actual, call)) {
+                return false;
+            }
+        }
+        active.erase(value);
+        return true;
+    };
+    return assigned(assigned, object, read);
 }
 
 mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
