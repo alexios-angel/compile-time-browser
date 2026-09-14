@@ -6,6 +6,77 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Data Map ownership and native array overwrites, 2026-09-14 UTC
+
+Resumed five dirty EmitC files on **0d5ca5b4**, identified in the 01:59:41 UTC
+`codex-session-map` journal and explicit 02:01:28 abandonment. September 7 WIP was
+already an ancestor. The recovery was gated and committed before the next item.
+Three agents split lifetime tests, ownership review and the vector consumer;
+the first two reached service limits before edits. The vector agent delivered
+its implementation; root integrated, reviewed and gated it after its service limit.
+
+**4868c75d** makes the `closed-source-session-v1` table own the captured outer
+Data Map by value. Its three method capture tuples borrow that member. The table
+remains noncopyable/nonmovable; the complete current source ownership proof still
+guards the change. Saved child Maps and ordinary payloads retain their independent
+ownership across removal, reinsertion and session destruction. The table and
+ordinary object carriers keep their existing ownership. No DOM keys are admitted.
+
+The unchanged **3218-byte probe / 7/7 functions / 23 direct calls / 19 typed
+Node/VM observations** passes both policies, both layouts, GCC13.3/Clang18.1.3,
+strict compile-clean, no-Script symbols and ASan/UBSan saved-value/reentry controls.
+Focused recovery: **4-step rebuild / session 1/1 PASS in 29.45s**. The existing
+`closed-source-v1` UMD owning-callable and refusal matrix also passes separately.
+
+**d878d5ee** reuses bounded static Number Add evidence for original dynamic Add
+only when both original operands are proved exact nonnegative integers and their
+sum fits 2^32-1. It adds no coercion, rounding or control-flow exemption.
+**d01294da** consumes complete current `computeArrayContents` write witnesses in
+`TypeInference::isDenseVectorSite`, joins stored values into element inference,
+and records accesses before retyping invalidates evidence. Direct local own-element
+Number overwrites emit vector assignments. Aliases, sparse writes, uncertain or
+nullable indices/values, length mutation and escaping stores continue to refuse.
+
+The new called `CTNative/Fixtures/Objects/array-overwrite.js` is byte-identical
+before/after (SHA256 `012f7c90595d25de02e4c27a83bcc1d59996f88709acaf7b2a7536df51d2b437`).
+Measured with **4868c75d** then the new compiler: **0/6 → 6/6 native**, both policies,
+no skips/prunes, five direct calls. This is a local fixture, not a vendor gain.
+The original uncalled `indexed.js` body in `array.mlir` is preserved; its assertion
+now records the remaining unvisited-element-type refusal. The existing length+1
+escape controls retain their source and now refuse as MissingElement.
+
+Focused vector validation: corrected **13-step rebuild**, all twelve native
+pipeline checks and the complete escape oracle pass. Two unit-fixture corrections
+pass **4-step rebuild / 2/2 in 0.73s**; the two array lit cases pass in **0.14s**.
+The array length matrix covers **175 rows / 33 live states / 4970 budget cutoffs**.
+
+Final standard devbox gate: **253-step build / 562/562 CTests PASS in 1210.58s**,
+including **168/168 lit cases in 869.32s**. The Data session took **53.09s**, native
+DOM **266.42s**, and exhaustive shared-Map ownership **341.22s** under full load.
+All **1414 frozen source/test/config inputs** match local and devbox.
+Stable whole-tree format passes **822 C++ / 89 Python / 33 web**; required pinned
+`format.sh --check` is byte-identical to the known nine-file / 26-diagnostic baseline.
+Evidence: `/tmp/ctcompile-map-recovery/`. No browser source or runtime semantics
+changed; full WPT/test262 scores were not remeasured. No push.
+
+Fresh complete Bootstrap remains **19/574 native / 0 of 43 globals resolved**,
+both policies, no skipped/pruned functions. Native DOM remains **18 sources /
+42 refusals**. The complete escape oracle remains **222 functions / 861 claims /
+895 observed sites / 35 unclaimed / zero violations / 40 of 172 precision**;
+its source and expected snapshot are unchanged.
+
+**Exact next browser boundary:** a nonmovable owner of atoms, document, then Data
+state. Give retained DOM keys separate provenance and document+node identity;
+detaching a node must preserve that identity. Foreign document domains need session
+ownership or refusal. Keep ordinary-object owning-callable behavior separate.
+Then original Button/BaseComponent/Config construction/disposal, retained browser
+callbacks, event delivery and the native application driver. DOM-backed Data and
+complete vendor initialization remain unimplemented.
+
+**Independent escape next:** structured-loop/CFG alias transport and a preserved
+vendor refused-to-emitted source case. The direct local contents consumer now
+exists; general retained-graph ownership and refined verdict emission do not.
+
 ## Direct Data session methods, 2026-09-14 UTC
 
 Resumed the eleven uncommitted compiler/proof files left after the 01:07 UTC

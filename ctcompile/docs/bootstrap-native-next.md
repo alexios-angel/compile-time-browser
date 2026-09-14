@@ -23,10 +23,13 @@ nonmovable table, with private capture tuples. Every source method read must fee
 its proved direct call; an extracted callable cannot carry the captures away.
 The existing `closed-source-v1` owning-callable contract stays available.
 
-This completes the method-call prerequisite for a Data + DOM session. The new
-provider still uses the existing owning Map/object carriers and accepts no DOM
-parameters or keys. Owning atoms, document, then Data state in a single session
-and proving document-domain key provenance remain the next browser boundary.
+The Data session now owns its outer Map by value and its method captures borrow
+that member. Saved child Maps and payloads retain their independent ownership;
+removal, reinsertion and session destruction must preserve those saved values.
+The table and ordinary object carriers keep their existing ownership contract.
+This completes the method-call and outer-Map prerequisites for a Data + DOM session;
+it accepts no DOM parameters or keys. Owning atoms, document, then Data state in
+a single session and proving document-domain key provenance remain the next boundary.
 The registered `ctcompile_native_data_session` gate uses the same pinned Data
 probe, with direct call order, typed Node/VM observations and lifetime checks.
 
@@ -36,9 +39,10 @@ probe, with direct call order, typed Node/VM observations and lifetime checks.
 | --- | --- | --- |
 | Full bundle: **19/574 native**, both optimization policies; no skipped or pruned functions | Admission of individual functions from the unchanged vendor source | Native initialization, an interactive component, or a native application |
 | Browser Data/UMD probe: **7/7** with manifest, prefix specialization and explicit 1m budget | Ownership and execution of the extracted Data methods and wrapper, including their preserved observations | A real Window, DOM nodes, Bootstrap constructors, event registration |
-| Data session probe: **7/7**, 23 direct calls and 19 typed observations | Nonmovable method table; source methods cannot escape independently; both policies/layouts and strict compile-clean/lifetime gates | Atoms/document ownership and retained DOM keys; existing Map/object carriers remain |
+| Data session probe: **7/7**, 23 direct calls and 19 typed observations | Nonmovable method table owns its outer Map by value; source methods borrow it and cannot escape independently; compile-clean and saved-child/payload lifetime gates | Atoms/document ownership and retained DOM keys; table, child-Map and ordinary object ownership remain |
 | Full bundle: **0/43 globals resolved** | Current module-wide global-name census refuses | This is not a count of 43 missing browser APIs |
-| Generic escape oracle: **40/172 precision**, zero violations in the recorded snapshot | Independent analysis evidence | Native emission does not currently consume its refined contents/verdict queries |
+| Called local array-overwrite fixture: **0/6 → 6/6 native**, both policies | Live own-element write proof, stored-value type joins and direct vector assignments; unchanged source | Structured-loop transport and a preserved vendor admission gain |
+| Generic escape oracle: **40/172 precision**, zero violations in the recorded snapshot | Independent analysis evidence; complete current contents now feed the local vector density check | General retained-graph ownership and refined escape verdicts remain outside native emission |
 
 Fresh full-source IR names the leading first refusals: **272 `this` receivers**,
 **137 own closures**, **70 unproved boxed parameters**, **29 closures passed to
@@ -152,12 +156,13 @@ not add compiler DOM types or increase native Bootstrap admission.
 
 CommonJS replacement/old-exports alias support remains valid provider work, but it
 is not required to take the browser branch of Bootstrap's wrapper. The original
-`confinedArray` now passes its bounded read-only zero/+1 escape proof; the next
-independent step is consuming live contents and index evidence in native lowering.
-Production calls to `computeVerdicts`/`computeArrayContents` currently
-stay inside EscapeAnalysis.cpp; native vector admission uses
-`TypeInference::isDenseVectorSite`. An escape-precision gain needs a real consumer
-and a preserved refused-to-emitted vendor case before it counts as native progress.
+`confinedArray` now passes its bounded read-only zero/+1 escape proof.
+`TypeInference::isDenseVectorSite` now consumes complete current `computeArrayContents`
+write evidence for direct local overwrites. Stored values join the element type;
+admission requires definite Number indices and values, and emission records accesses
+before retyping invalidates the proof. The called fixture preserves its source while
+moving from refusal to execution under both policies. Structured-loop transport,
+retained graph ownership and a preserved vendor admission gain remain separate work.
 
 The `window.scrollTo` receiver in ScrollSpy triggers the current global-object
 escape reason. [Native.cmake](../test/cmake/Native.cmake) also records why removing
