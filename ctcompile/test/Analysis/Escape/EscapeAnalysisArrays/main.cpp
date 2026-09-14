@@ -1,6 +1,7 @@
 // Array/object contents and retention rows share one executable and run in their
 // original order. Topic files keep each matrix beside its live mutation checks.
 #include "Harness.h"
+#include "Induction.h"
 #include "Length.h"
 #include "PrimitiveBinary.h"
 
@@ -21,6 +22,7 @@ int main() {
     checkArrayRetention(context);
     checkLiteralBigIntIndices(context);
     checkDenseArrayLength(context);
+    checkArrayInduction(context);
     checkObjectContents(context);
     checkObjectDeletions(context);
     checkObjectCopies(context);

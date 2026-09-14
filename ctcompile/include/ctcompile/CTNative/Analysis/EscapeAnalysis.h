@@ -544,8 +544,11 @@ struct ArrayContentsEvidence {
 /// and these noncapturing tests separately from known origins. They never authorize
 /// unknown roots, stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
 /// path snapshots are charged to the same work budget. Other unknown forwarded
-/// values refuse; revisiting a block on one path refuses loops. Unvisited blocks
-/// are unreachable independently of solver flags.
+/// values refuse. A certified read-only header/body loop may replay with literal
+/// zero/+1 induction under a strict current own-array length guard, within the
+/// same work budget. Allocation, mutation and nested control in that loop refuse.
+/// Other repeated blocks refuse. Unvisited ordinary blocks are unreachable
+/// independently of solver flags.
 /// An optional imported frame must enter first and exit immediately before
 /// every return; roots name that active frame and an independently known value.
 /// Checked branch arguments may forward the same frame handle.
