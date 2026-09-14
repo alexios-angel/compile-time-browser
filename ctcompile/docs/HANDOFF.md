@@ -6,6 +6,81 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered Button probe and local vector borrows, 2026-09-14 UTC
+
+Resumed dirty **9f66a86d** from the **12:04:21 AGENT-SYNC** recovery,
+explicitly abandoned at **12:07:18**. The seven tracked and three untracked
+paths were predecessor Button/array drafts. Both histories and unmerged branches
+were checked; the September 7 WIP is absent and old lens alternatives remain
+superseded. Three agents recovered the separate array and Button drafts and
+reviewed constructor prerequisites; root completed integration and gates after
+the read-only reviewer reached a service limit. No browser/runtime files changed.
+
+**9115755f** proves a complete connected use census for SCF-selected borrows of
+entry-block vectors. Ordinary vectors own the storage; conditional results carry
+addresses, so shrinking/writing a selection changes its original owner. Escaping
+owners/results, external or region-local origins, loops, mixed storage and growth
+remain refused. Every query rechecks current IR and publishes nothing on failure;
+the existing complete contents/frame proof stays intact. The first gate exposed
+unused SCF mux constants before frame entry; `LiftToSCF` now removes those dead
+constants, including when no loop guard was recovered. Original source bytes stay
+unchanged. Repeated complete queries can be quadratic; caching across mutable IR
+was not introduced without a measured need.
+
+The array gate covers the original 165-byte source, both original flags, unequal
+lengths and selections of already borrowed results: **32 native executions /
+4 distinguishing copy controls / 20 refusals**, both policies/layouts/GCC/Clang.
+The original observes **2** on either branch; a deliberately copied vector yields
+**4**. Unequal observations are **297/322**, nested selections **2134/3214/4231**.
+Focused **5/5 lit PASS in 10.75s**, including existing constructor/SCF controls;
+type inference **0.22s**.
+
+**2bc1fd6d** adds the registered original Button progress gate: **16,194
+source bytes / 86 imported functions / 4 native**, both policies, no skips.
+Vendor Config/BaseComponent/Button and live helpers remain verbatim; the element
+is an explicit JavaScript test double. Node passes **22 lifecycle observations**,
+including config reads, Data identity, two toggles and disposal's event-registry
+mutation. The interpreter instead throws uncaught in `_typeCheckConfig`:
+`Object.entries called on null or undefined`. An original-source prefix and two
+independent witnesses isolate missing static constructor inheritance and inherited
+closure-accessor lookup. The gate pins those measurements and fails if they change;
+it does not treat the failed interpreter run as the oracle for a native lifecycle.
+The intermediate prepared IR uses generic MLIR syntax because upstream's custom
+`cf.switch` parser cannot read a multi-result operand. Focused Button **0.37s**.
+
+Final standard devbox gate: **289 build steps / 600/600 CTests PASS in
+1247.26s**, including **173/173 lit in 878.06s**. All **1,431 frozen
+non-Markdown inputs** match local source and the tested devbox. Stable formatting:
+**824 C++ / 96 Python / 33 web PASS**; the required pinned check retains the
+byte-identical prior **nine-file / 26-diagnostic** baseline. Final Button **0.60s**,
+original Bootstrap DOM Data **59.70s**, existing Data **51.22s**, owned DOM
+**81.30s** and ownership **369.14s**. Both browser and compiler suites passed.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skips/prunes. Original DOM Data remains **7/7 functions / 23 calls / 19
+observations**, all five input-alias partitions and existing lifetime/privacy
+controls. The complete escape oracle remains **222 functions / 861 claims /
+895 observed sites / 35 unclaimed / zero violations / precision 40 of 172**.
+Dense length remains **178 rows / 5,031 cutoffs**; structured contents remains
+**43 rows / 2,228 cutoffs**. No WPT/test262 score remeasurement or push.
+Evidence: `/tmp/ctcompile-button-recovered/{full.log,full-last-test.log,measured.json}`.
+
+**Exact next native boundary:** trusted class-initialization provenance and the
+Stage 60A closed constructor/prototype proof. Imported classes call the mutable
+global `__ctbrowser_class_defined`; its spelling alone cannot authorize deleting
+its descriptor effects. Constructor admission, `makesAnInstance`, method resolution
+and receiver/field proofs must agree before changing the existing refusals.
+Default derived argument forwarding, lexical `super` home, `new.target`, dynamic
+`this.constructor` and inherited static getter receivers remain obligations.
+The old `prototype-written.js` observes only an own field: add a distinguishing
+inherited read/call and late/alias mutation controls when implementing that proof.
+Config still needs real attribute/dataset access, component payloads retain DOM
+and config objects, and disposal cannot omit event-registry mutation. Persistent
+initialization, retained callbacks and the application driver remain unfinished.
+See `bootstrap-native-next.md`. Independent array continuation is loop/CFG or
+region-local ownership transport with explicit lifetimes; no vendor admission gain
+is inferred from the new local-borrow fixture.
+
 ## Original Bootstrap Data with DOM inputs, 2026-09-14 UTC
 
 Resumed clean **1c9f2b18** and the interrupted **10:05:18 AGENT-SYNC**

@@ -10,22 +10,38 @@ Node/interpreter comparison, both policies/layouts/compilers, lifetime sanitizer
 and mutation/privacy controls. See [HANDOFF](HANDOFF.md) for the final gate and
 full-bundle measurements. The earlier survey below records superseded Data steps.
 
-The next compiler step is to preserve an **original Button construction probe**,
-then prove its immutable prototype chain and inherited receiver semantics
-(plan 24, Stage 60A). The existing call in
-`test/Analysis/Types/bootstrap-driver.js:59` catches exceptions and never disposes
-Button; it is not a lifecycle success gate. The hand-written native toggle test
-also does not exercise the original constructor.
+The registered `ctcompile_native_bootstrap_button_probe` now preserves an
+**original Button construction/toggle/disposal probe**: **16,194 bytes / 86
+imported functions / 4 native**, both optimization policies, no skipped functions.
+It retains vendor lines **1–330 and 420–433**, including Config (`W`),
+BaseComponent (`B`), Button (`U`) and live helpers. Its element is an explicit
+JavaScript test double; this is a source/progress gate, not native DOM support.
+Node passes **22 lifecycle observations**, including Data identity, config parsing,
+two toggles and disposal's otherwise easy-to-miss event-registry mutation.
 
-Keep the vendor `W` (Config), `B extends W` (BaseComponent), and `U extends B`
-(Button) bodies and their live dependencies. Resume
-`lib/CTNative/Lowering/ClosureLifting/Constructors.cpp` and the preserved
-`prototype-written.js` / `unwritten-key.js` refusals in
-`test/CTNative/Lowering/Objects/constructor-refusals.mlir`. Default derived
-construction forwards through `super`; inherited getters and `p.constructor`
-cannot be replaced by missing own fields. Measure the new probe's actual refusal
-before broadening the constructor path. Its component payload also retains
-`_element` and `_config`, beyond Data's current scalar-field leaf proof.
+The interpreter fails uncaught in `_typeCheckConfig` with
+`Object.entries called on null or undefined`. A separate original-source prefix
+shows missing inherited `Default`, `DefaultType`, `getInstance`, `DATA_KEY` and
+`EVENT_KEY`, while Button's own `NAME` works. Two independent witnesses isolate
+missing constructor linkage and inherited closure-accessor lookup even after
+explicit linkage. Those measured discrepancies are journaled for Claude; the test
+fails when they change so the next measurement cannot silently reuse them.
+The older driver catches this failure and never disposes Button.
+
+**Next compiler boundary: Stage 60A's closed prototype/inherited receiver proof.**
+Class import includes an ordinary mutable-global call to
+`__ctbrowser_class_defined`; it makes properties non-enumerable. Its spelling
+alone cannot authorize erasing that call. Establish trusted initialization
+provenance and a complete constructor/prototype use census before changing
+`Lowering/ClosureLifting/Constructors.cpp`. `makesAnInstance`, method resolution,
+receiver admission and the scalar-field environment must consume compatible proof.
+Default derived construction forwards through `super`; inherited static getters,
+`this.constructor`, lexical home and `new.target` are separate obligations.
+
+Keep the preserved `prototype-written.js` and `unwritten-key.js` refusals. The
+first only reads an own field, so future admission needs a distinguishing inherited
+read/call and late/aliased prototype-mutation controls. Component publication also
+retains `_element` and `_config`, beyond Data's current scalar-field leaf proof.
 
 Config still reads attributes and dataset when defaults are empty. Public DOM
 attribute access exists; dataset behavior can be lifted from
