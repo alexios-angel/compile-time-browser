@@ -6,6 +6,68 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Structured contents recovery and direct Data members, 2026-09-14 UTC
+
+Resumed three dirty escape files at **1a0d533d**, identified in the 02:54 UTC
+`codex-dom-session` journal and explicit 02:56:23 abandonment. The September 7
+WIP is already an ancestor; the two old lens branches are superseded by
+**6520fcf2**. Recovery was gated and committed first. Three agents split recovery,
+DOM ownership review and a Bootstrap source survey; two hit service limits and
+root completed integration. No browser files changed.
+
+**722ba713** transports exact contents through single-block `scf.if` arms and
+simultaneous `scf.yield` results. Each arm keeps separate aliases, array/object
+contents and read-time scalar facts; nested branches and an implicit empty else
+are covered. Both arms are checked even for constant conditions. Unsupported
+paths and incomplete budgets discard the complete result. Structured loops and
+native alias emission remain outside this proof. Twelve rows exercise **633
+budget cutoffs** and the new transport/refusal boundaries. Focused **17-step
+build / 2/2 escape array and complete-oracle CTests PASS in 1.88s**.
+
+**1b6ec81b** removes three stored capture tuples and their initialization from
+source-proved by-value outer Data Map sessions. Member bodies pass their own
+`&captured_map` directly to the source functions. The table occupies exactly its
+Map storage; it stays noncopyable/nonmovable. Other session environments and the
+ordinary owning-callable provider retain their contracts. The unchanged
+**3218-byte probe / 7/7 functions / 23 calls / 19 Node/VM observations** passes
+both policies/layouts/GCC/Clang, compile-clean, no Script and ASan/UBSan saved-child,
+payload and reentry checks. Focused **19-step build / 31.48s**, then final guarded
+closure check **3-step rebuild / session 1/1 in 31.09s**.
+On both GCC13.3 and Clang18.1.3, the table shrank **48 → 24 bytes**, exactly
+its Map's size. The same generated probe, excluding appended test assertions,
+shrank **50,376 → 48,583 bytes / 1015 → 981 lines**.
+
+Final standard devbox gate: **259-step build / 562/562 CTests PASS in 1210.74s**,
+including **168/168 lit in 871.12s**. Native Data session **63.80s**, native DOM
+**268.88s**, exhaustive Map ownership **339.60s** under full load. All **1415 frozen
+source/test/config inputs** match local/devbox. Stable format passes **823 C++ /
+89 Python / 33 web**; required pinned formatter output is byte-identical to the
+known nine-file / 26-diagnostic baseline. Evidence:
+`/tmp/ctcompile-structured-resume/` (`measured.json`, `size.json`, complete logs
+and generated C++). No browser source/runtime changes, WPT/test262 remeasurement
+or push.
+
+Fresh complete Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skips/prunes. Native DOM remains **18 entries / 42 refusals**. The complete
+escape fixture/snapshot remains **222 functions / 861 claims / 895 observed sites /
+35 unclaimed / zero violations / 40 of 172 precision**; neither source nor
+expected snapshot changed.
+
+**Exact next native boundary:** actual DOM inputs and the nonmovable
+atoms/document/Data owner, with separate DOM-key provenance. Current entry proof
+accepts only the script's three implicit arguments; actual object arguments must
+come from source `CreateObjectOp` allocations. `objectKeys` currently also permits
+payload uses, so it must not be reused for DOM inputs. Initially restrict DOM
+values to outer Data keys, excluding payloads, child keys, snapshots and returns.
+Revalidate the complete family, preserve document identity and the full node ID,
+and reject foreign document domains before dereferencing their owners. Then
+prove detach/reinsert and teardown with preserved original Data methods. No DOM
+key admission or complete Bootstrap startup is claimed by this session.
+
+**Independent escape next:** structured-loop/CFG alias transport in the native
+consumer, then a preserved vendor refused-to-emitted case. Local vector/branch
+proofs alone do not resolve Bootstrap's callback/DOM/capture-heavy arrays.
+
 ## Data Map ownership and native array overwrites, 2026-09-14 UTC
 
 Resumed five dirty EmitC files on **0d5ca5b4**, identified in the 01:59:41 UTC
