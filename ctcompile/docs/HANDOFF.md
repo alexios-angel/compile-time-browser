@@ -51,10 +51,16 @@ String drivers pass **2/2 lit in 14.88s**. Generated C++ was inspected: ordinary
 structs and owning strings, borrowed receiver pointers, free method calls, and no
 Script/VM symbols. Stable formatting passes **825 C++ / 99 Python / 33 web**; the
 required pinned formatter retains the byte-identical **nine-file / 26-diagnostic**
-baseline. Full standard devbox **276-step build PASS**; the **600-test CTest gate is
-running** against **1,438 frozen non-Markdown inputs**. Final full results and fresh
-vendor/oracle counts are pending, not inferred from these local fixtures. Evidence:
-`/tmp/ctcompile-class-methods/{final-focus.log,measured-focus.log,full.log,
+baseline. The standard devbox **276-step build passed**. Its first full run passed
+**599/600 CTests in 1235.45s**, including **175/176 lit in 877.44s**; the sole failure
+was the obsolete `constant.js` refusal in `refusal-corpus-shapes.mlir`. That original
+source is now fully native. It remains unchanged, with positive structure checks
+and **GCC/Clang/Node/interpreter `r=2`** observations added; its focused gate passed
+in **0.60s**. No production code changed after the full run. A **CTest retry of the
+complete lit suite is running**. The only difference between the first and final
+**1,438 frozen inputs** is that test file. Final retry results and vendor/oracle
+summary are pending. Evidence: `/tmp/ctcompile-class-methods/{final-focus.log,
+measured-focus.log,full.log,full-last-test.log,final-correction.log,retry.log,
 frozen-inputs.json,class-method.cpp,string-length.cpp}`.
 
 **Exact next Bootstrap boundary:** prove chained method receivers and constructor
@@ -68,6 +74,9 @@ derived forwarding, lexical `super`, retained DOM/config payloads, dataset,
 disposal/event writes, persistent actions and the application driver remain open.
 Independent next work is definite borrowed String fields and sound mixed/optional
 String field joins; array lifetime boundaries are unchanged.
+`TypeInference::fieldIsAssignedBefore` deliberately requires the same function.
+Borrowed fields need initialization at every actual call site plus callee mutation
+and ordering evidence; module-level dominance cannot replace that proof.
 
 ## Checked base-class initialization and definite string fields, 2026-09-14 UTC
 
