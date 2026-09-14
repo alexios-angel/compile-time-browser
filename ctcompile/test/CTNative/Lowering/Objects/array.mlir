@@ -80,12 +80,12 @@
 // symptom: "returns !ctnative.boxed" would be true of all six and would tell a
 // reader nothing.
 //
-// `a.length = 5` RESIZES. `a.length = 5` on a one-element array gives four
-// holes; `a.length = 0` throws the elements away. Either way `length` stops
-// being `size()`, which is the one equation this stage is built on.
+// `a.length = 5` on a one-element array gives four holes. Only a complete
+// non-growing contents proof admits length assignments; array-shrink.mlir
+// covers the retained dense prefix and clearing to zero.
 //
 // LENGTH: ctjs.func private @grow$1
-// LENGTH-SAME: ctnative.not_native = "an array literal whose `length` is assigned - that resizes it, and a resize leaves holes no `std::vector` can hold"
+// LENGTH-SAME: ctnative.not_native = "an array literal whose assigned `length` lacks a complete non-growing contents proof"
 
 // `a[0] = 9` IS THE CASE THE WRITTEN DESIGN FOR THIS STAGE ADMITTED, and part
 // 24 Stage 57A's own rule is why it does not: "a JavaScript array can be

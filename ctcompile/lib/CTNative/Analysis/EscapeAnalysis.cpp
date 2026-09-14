@@ -1780,10 +1780,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         const mlir::Value value = origin(store.getValue());
                         auto literal =
                             value ? value.getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-                        const auto wanted =
-                            literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())
-                                ? ownArrayIndex(value)
-                                : std::nullopt;
+                        auto wanted = literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())
+                                          ? ownArrayIndex(value)
+                                          : std::nullopt;
+                        // The importer spells source -0 as neg(Number(0)) when
+                        // folding is disabled. Either zero sign means length 0;
+                        // retain the original expression everywhere else.
+                        auto negation =
+                            value ? value.getDefiningOp<ctjs::UnaryOp>() : ctjs::UnaryOp{};
+                        if (!wanted && negation && negation.getKind() == ctjs::UnaryKind::Neg &&
+                            boundedNumber(negation.getOperand()) == 0) {
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            wanted = 0;
+                        }
                         if (!wanted) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                         if (*wanted > elements.size()) {
                             return refuse(ArrayContentsFailure::MissingElement, &op);

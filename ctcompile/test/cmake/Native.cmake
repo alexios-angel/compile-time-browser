@@ -214,6 +214,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   ctcompile_add_native_pipeline(array_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved NO_DEFAULT_OPTIMIZATIONS)
   ctcompile_add_native_pipeline(array_read_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js" value)
   ctcompile_add_native_pipeline(array_read_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js" value NO_DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_pipeline(array_shrink "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js" shortened)
+  ctcompile_add_native_pipeline(array_shrink_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js" shortened NO_DEFAULT_OPTIMIZATIONS)
   ctcompile_add_native_pipeline(array_overwrite_loop "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js")
   ctcompile_add_native_pipeline(array_overwrite_loop_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js" NO_DEFAULT_OPTIMIZATIONS)
 

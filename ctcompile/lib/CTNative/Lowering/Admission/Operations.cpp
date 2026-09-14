@@ -338,7 +338,8 @@ bool admission::op(mlir::Operation * o) {
     if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
         if (nativeObjectFieldGroup(o) >= 0) { return identityField(o); }
         if (isVectorSite(set.getObject())) {
-            return (carrierOf(typeOf(set.getKey())) == carrier::number ||
+            return (ctjs::constantKey(set.getKey()) == "length" ||
+                    carrierOf(typeOf(set.getKey())) == carrier::number ||
                     refuse("dense array writes require definite numeric indices")) &&
                    (carrierOf(typeOf(set.getValue())) == carrier::number ||
                     refuse("dense array storage requires definite numbers"));

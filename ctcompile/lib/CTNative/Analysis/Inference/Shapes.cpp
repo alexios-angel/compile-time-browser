@@ -200,9 +200,10 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 
 // Appends and reads preserve density. An indexed write additionally needs a
 // complete current own-contents proof: the exact store must overwrite an own
-// element on every path. Sparse writes, length changes, deletion and escape
-// still refuse. This use census supplies the local lifetime proof separately;
-// contents evidence alone proves neither native element types nor ownership.
+// element on every path. Literal length assignments may only shrink. Sparse
+// writes, growth, deletion and escape still refuse. This use census supplies
+// local lifetime separately; contents evidence alone proves neither native
+// element types nor ownership.
 // ponytail: direct local uses only; CFG aliases and SCF need transport proofs.
 //
 // WHAT IT DOES NOT PROVE: that nothing planted a numeric own property on
@@ -235,7 +236,8 @@ bool TypeInference::isDenseVectorSite(mlir::Value array) {
             return false;
         }
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0 || snapshot || !constantKey(set.getKey()).empty()) {
+            const llvm::StringRef key = constantKey(set.getKey());
+            if (use.getOperandNumber() != 0 || snapshot || (!key.empty() && key != "length")) {
                 return false;
             }
             if (!contents) {
@@ -243,8 +245,12 @@ bool TypeInference::isDenseVectorSite(mlir::Value array) {
                 if (!function) { return false; }
                 contents = computeArrayContents(function);
             }
-            if (!contents->complete ||
-                !llvm::any_of(contents->writes, [&](const ArrayElementWrite & write) {
+            if (!contents->complete) { return false; }
+            // The complete query checks every length store against its current
+            // dense contents and accepts only an original Number literal that
+            // does not grow them. It publishes no element-write edge for shrink.
+            if (key == "length") { continue; }
+            if (!llvm::any_of(contents->writes, [&](const ArrayElementWrite & write) {
                     return write.by == user && write.position == 2 &&
                            write.array == array.getDefiningOp();
                 })) {

@@ -340,8 +340,8 @@ std::string admission::whyNotDense(mlir::Value array) {
             if (use.getOperandNumber() == 0) {
                 const llvm::StringRef key = ctjs::constantKey(set.getKey());
                 if (key == "length") {
-                    return "an array literal whose `length` is assigned - that resizes it, "
-                           "and a resize leaves holes no `std::vector` can hold";
+                    return "an array literal whose assigned `length` lacks a complete "
+                           "non-growing contents proof";
                 }
                 if (key.empty()) {
                     return "an array literal written through an index - `a[100] = 1` gives "
@@ -381,7 +381,7 @@ std::string admission::whyNotDense(mlir::Value array) {
 }
 
 // A string constant whose every use is the `length` key of a dense array
-// lowers to nothing: the read becomes a call to the size helper.
+// lowers to nothing: reads become the size helper and shrinks become resize.
 //
 // The object-key predicate requires isClosedObject, which is false for
 // an array. Recognizing array keys separately keeps an erased `length`
@@ -393,8 +393,11 @@ bool admission::isVectorKeyString(mlir::Operation * o) {
         return false;
     }
     for (mlir::OpOperand & use : constant.getResult().getUses()) {
-        auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
-        if (!get || use.getOperandNumber() != 1 || !isVectorSite(get.getObject())) { return false; }
+        auto * user = use.getOwner();
+        if (!llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) ||
+            use.getOperandNumber() != 1 || !isVectorSite(user->getOperand(0))) {
+            return false;
+        }
     }
     return true;
 }

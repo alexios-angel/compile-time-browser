@@ -457,7 +457,9 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         appends_[push.getArray()].push_back(push.getElement());
     });
     top->walk([&](ctjs::SetPropertyOp store) {
-        if (!isDenseVectorSite(store.getObject())) { return; }
+        if (constantKey(store.getKey()) == "length" || !isDenseVectorSite(store.getObject())) {
+            return;
+        }
         appends_[store.getObject()].push_back(store.getValue());
     });
     llvm::DenseSet<mlir::Operation *> contentsFunctions;

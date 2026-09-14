@@ -283,6 +283,13 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         swap(convertScalar(b, where, value, resultType));
         return;
     }
+    if (vectorLengthWrites.contains(o)) {
+        ec::VerbatimOp::create(b, where,
+                               "{}.resize(static_cast<std::vector<double>::size_type>({}));",
+                               mlir::ValueRange{o->getOperand(0), o->getOperand(2)});
+        eraseIfUnused(o);
+        return;
+    }
     if (vectorIndexWrites.contains(o)) {
         // EmitC subscript cannot take an opaque lvalue; loading it would copy
         // the vector. Keep this ordinary assignment on the original storage.

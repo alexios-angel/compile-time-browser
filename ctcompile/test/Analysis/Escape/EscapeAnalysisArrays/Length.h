@@ -574,6 +574,20 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                  "  ctjs.set_property %a[%key], %wanted\n" + done,
          .arrays = "a:[]",
          .exit = "length -> {}"});
+    run({.what = "unfolded source negative zero clears length without changing saved values",
+         .body = values + read +
+                 "  %wanted = ctjs.unary neg %zero\n"
+                 "  ctjs.set_property %a[%key], %wanted\n" +
+                 done,
+         .arrays = "a:[]",
+         .exit = "length -> {}"});
+    for (const std::string literal : {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">"}) {
+        run({.what = "negated coercive zero cannot borrow Number length authority",
+             .body = values + "  %input = ctjs.constant " + literal +
+                     "\n  %wanted = ctjs.unary neg %input\n" + read +
+                     "  ctjs.set_property %a[%key], %wanted\n" + done,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
     run({.what = "a saved child remains retained after its array is truncated",
          .body = values + read + "  %saved = ctjs.get_property %a[%zero]\n" + shrink +
                  "  ctjs.return %saved\n",

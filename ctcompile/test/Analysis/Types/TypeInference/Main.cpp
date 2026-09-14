@@ -388,7 +388,30 @@ int main() {
         {"a later call invalidates the whole overwrite proof",
          overwritePrefix + overwrite + "  %call = ctjs.call %p(%a)\n" + overwriteRead,
          "!ctnative.boxed", true},
-        {"even a proved length shrink remains outside native vector uses",
+        {"a shrink preserves an own read of a retained element",
+         overwritePrefix +
+             "  ctjs.append %b to %arr\n"
+             "  %length = ctjs.constant #ctjs.string<\"length\">\n"
+             "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+             "  ctjs.set_property %arr[%length], %one\n" +
+             overwriteRead,
+         "!ctnative.num<i32>", true},
+        {"clearing with negative zero never adds a double to the element schema",
+         prologue() + five +
+             "  %arr = ctjs.create_array [%a] {check}\n"
+             "  %length = ctjs.constant #ctjs.string<\"length\">\n"
+             "  %clear = ctjs.constant " +
+             kNegativeZero +
+             "\n  ctjs.set_property %arr[%length], %clear\n"
+             "  ctjs.return %a\n}\n",
+         "!ctnative.vec<!ctnative.opt<!ctnative.num<i32>>>", true},
+        {"an earlier own read retains its type after clearing the array",
+         overwritePrefix + "  %r = ctjs.get_property %arr[%zero] {check}\n"
+                           "  %length = ctjs.constant #ctjs.string<\"length\">\n"
+                           "  ctjs.set_property %arr[%length], %zero\n"
+                           "  ctjs.return %a\n}\n",
+         "!ctnative.num<i32>", true},
+        {"a missing read after shrink invalidates the whole contents proof",
          overwritePrefix + overwrite +
              "  %length = ctjs.constant #ctjs.string<\"length\">\n"
              "  ctjs.set_property %arr[%length], %zero\n" +

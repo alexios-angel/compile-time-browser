@@ -320,8 +320,12 @@ std::string lowering::provenanceOf(const family & f) const {
 void lowering::collectVector(mlir::Value array) {
     needsVector = true;
     for (mlir::Operation * user : array.getUsers()) {
-        if (llvm::isa<ctjs::SetPropertyOp>(user)) {
-            vectorIndexWrites.insert(user);
+        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+            if (ctjs::constantKey(set.getKey()) == "length") {
+                vectorLengthWrites.insert(user);
+            } else {
+                vectorIndexWrites.insert(user);
+            }
             continue;
         }
         auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
