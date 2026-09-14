@@ -6,6 +6,57 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Private DOM Data storage, 2026-09-14 UTC
+
+Started clean at **993c58d9**. The **09:15:18 AGENT-SYNC** journal and both
+commit histories confirmed the preceding source-owner/array recovery was complete.
+The September 7 WIP is absent; the older unmerged lens alternatives are superseded
+by **6520fcf2**. Resumed the private-storage boundary promised in this handoff.
+Three agents split carriers, lifecycle tests and review; two reached service limits.
+The remaining agent implemented and reviewed the carrier work; root completed the
+session emitter, lifecycle tests and gates. No browser/runtime files changed.
+
+**19bf0463** gives exact DOM element Map keys their public `element_ref` carrier.
+Associative ordering compares document addresses with `std::less` and complete
+node IDs without dereferencing an owner. Raw and owning Maps now share scalar,
+String, object and snapshot read implementations. The independent helper gate
+covers both storage layouts, aliases, slot/generation differences, saved values
+and dangling owner addresses with GCC/Clang and generated-client ASan/UBSan.
+
+**8bc68def** consumes the complete source/input proof for private DOM Data storage.
+Only the proved inert declaration is removed in a private clone; the transformed
+fingerprint is revalidated. Source functions become private session members;
+root/table/Map and scalar observations belong to the nonmovable atoms/document
+owner. Table and root references are private borrows. Source allocations reset
+storage on every invocation. All document domains are checked before any handle
+validation or source effect. Observation accessors use `observe_` prefixes and
+return scalar copies. No callable, root or DOM-bearing table escapes.
+
+Focused final gate: **3/3 lit PASS in 8.31s / 4/4 CTests PASS in 50.22s**.
+New DOM Data **30.85s**, existing Data **31.78s**, owned DOM **50.21s**, types
+**0.24s**. Two preserved source fixtures (`has` and `get`) each import **7 functions**
+and emit **6**, omitting only the declaration. Both policies/layouts/compilers,
+Node/interpreter observations, alias/reentry/interleaving, foreign/dangling-owner
+and invalid-node refusal, retained/detached keys, teardown, missing-reset mutation
+and private-access controls pass. The third snapshot source still refuses with
+`property call lacks a current source getter proof`; its original source and
+Node/interpreter observations remain in the gate. Helper support does not grant
+that missing source proof.
+
+Stable formatting: **824 C++ / 93 Python / 33 web PASS**. The required pinned
+check is byte-identical to the prior **nine-file / 26-diagnostic** baseline.
+Full standard devbox gate is running; final measurements are not yet available.
+Evidence: `/tmp/ctcompile-dom-storage/`.
+
+**Exact next boundary:** prove and gate the original nested Bootstrap Data family
+with explicit DOM inputs, including its child snapshots and saved child aliases.
+The new emitter requires one complete root/table family and refuses additional
+object-global aliases. The preserved flat snapshot refusal above is a concrete
+source-proof probe. Component construction/disposal, event callbacks, persistent
+initialization and the application driver remain unfinished. The entry still
+recreates source storage on every invocation; persistent initialization needs its
+own proof. No full native Bootstrap startup or vendor admission gain is claimed.
+
 ## DOM Data source ownership and native array shrink, 2026-09-14 UTC
 
 Resumed the **08:13:37 / 08:29:58 AGENT-SYNC** source-owner and array-shrink
