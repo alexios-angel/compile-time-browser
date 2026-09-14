@@ -224,6 +224,7 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
                     function.getBody().front().getNumArguments() < 4) {
                     return false;
                 }
+                sessionMapTargets.insert(environmentTarget(closure));
                 aliases.push_back(function.getBody().front().getArgument(3));
             }
             for (ctjs::LoadUpvalueOp read : table.capturedMap->upvalues) {
@@ -315,18 +316,23 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                     arguments += name;
                 }
                 const std::string provenance = target + ", " + siteOfFunction(function);
-                definition += "private:\n  " + environment + " capture_" + key +
-                              ";\npublic:\n  // ctcompile: initialize capture for " + target +
-                              "\n  void initialize_" + key + "(" + environment +
-                              " value) { capture_" + key + " = std::move(value); }\n  " + result +
-                              " m_" + key + "(" + parameters + ");\n";
+                const bool memberMap = sessionMapTargets.contains(target);
+                if (!memberMap) {
+                    definition += "private:\n  " + environment + " capture_" + key +
+                                  ";\npublic:\n  // ctcompile: initialize capture for " + target +
+                                  "\n  void initialize_" + key + "(" + environment +
+                                  " value) { capture_" + key + " = std::move(value); }\n";
+                }
+                definition += "  " + result + " m_" + key + "(" + parameters + ");\n";
                 std::string body = "// ctcompile: session method " + provenance + "\ninline " +
                                    result + " ctnative::method_" + cIdentifier(site) + "::m_" +
                                    key + "(" + parameters + ") {\n  return " +
                                    names.lookup(target) + "(";
                 for (unsigned index = 0; index < captures; ++index) {
                     if (index) { body += ", "; }
-                    body += "std::get<" + std::to_string(index) + ">(capture_" + key + ")";
+                    body += memberMap
+                                ? "&captured_map"
+                                : "std::get<" + std::to_string(index) + ">(capture_" + key + ")";
                 }
                 if (captures && !arguments.empty()) { body += ", "; }
                 callableBuilders.push_back(body + arguments + ");\n}\n");
@@ -355,6 +361,15 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
     }
     mlir::Value value = storage.owner;
     if (llvm::isa<ctjs::ConstructOp>(operation)) {
+        if (llvm::all_of(operation->getResult(0).getUsers(), [](mlir::Operation * user) {
+                return user->hasAttr(kNativeStoredRead) || llvm::isa<ctjs::RootOp>(user);
+            })) {
+            // The Map was constructed with its table above. Only erased
+            // closures borrow it here; no pointer temporary is needed.
+            operation->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context));
+            sessionAllocations.erase(found);
+            return true;
+        }
         value = callWithConstValueOperands(at, where, mlir::TypeRange{storage.borrowedType},
                                            at.getStringAttr("ctnative::invoke_session<&" +
                                                             storage.tableName + "::capture_map>"),
@@ -408,6 +423,12 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
                 mlir::ValueRange{get.getObject()});
             get.getResult().replaceAllUsesWith(value.getResult(0));
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+            auto closure = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            if (closure && sessionTables.contains(site) &&
+                sessionMapTargets.contains(environmentTarget(closure))) {
+                eraseIfUnused(op);
+                return true;
+            }
             const auto helper = sessionTables.contains(site) ? "ctnative::invoke_session<&" + name +
                                                                    "::initialize_" + key.str() + ">"
                                                              : "ctnative::method_set" + member;

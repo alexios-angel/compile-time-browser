@@ -79,8 +79,10 @@ def main():
             storage = re.findall(r"^  (.+) captured_map;$", cpp, re.M)
             if len(storage) != 1 or "std::shared_ptr<" + storage[0] + ">" in cpp:
                 raise RuntimeError("session must own its outer Map by value")
-            if cpp.count("std::tuple<" + storage[0] + " *>") != 3:
-                raise RuntimeError("all Data methods must borrow the same session Map")
+            if "std::tuple<" + storage[0] + " *>" in cpp or re.search(
+                r"\b(?:capture|initialize)_(?:get|set|remove)\b", cpp
+            ):
+                raise RuntimeError("Data members must use their owned Map without stored captures")
             cpp += """
 using session_type = typename decltype(g_globalThis->bootstrap)::element_type;
 static_assert(!std::is_copy_constructible_v<session_type>);
@@ -91,6 +93,8 @@ static_assert(std::is_member_function_pointer_v<decltype(&session_type::m_get)>)
 static_assert(std::is_member_function_pointer_v<decltype(&session_type::m_set)>);
 static_assert(std::is_member_function_pointer_v<decltype(&session_type::m_remove)>);
 static_assert(std::is_pointer_v<decltype(std::declval<session_type &>().capture_map())>);
+static_assert(sizeof(session_type) ==
+              sizeof(std::remove_pointer_t<decltype(std::declval<session_type &>().capture_map())>));
 """
             native = args.work / f"{name}.{mode}.cpp"
             native.write_text(cpp)
@@ -216,7 +220,7 @@ int main() {
         refuse(escaped, fresh, name + "-escaped")
     print(
         "Data session: pinned 3218-byte source, 7/7 functions, 23 direct calls, 19 observations; "
-        "both policies/layouts/GCC/Clang; by-value outer Map, borrowed captures, "
+        "both policies/layouts/GCC/Clang; by-value outer Map, direct member captures, "
         "nonmovable member ABI and ASan/UBSan saved-child/payload lifetimes; "
         "budget/stale/callable-escape refuse"
     )

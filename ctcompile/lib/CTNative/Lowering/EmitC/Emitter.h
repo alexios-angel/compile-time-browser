@@ -176,6 +176,7 @@ struct lowering {
     // Selected only from the final live owner proof, after whole-family admission.
     llvm::StringSet<> sessionTables;
     llvm::StringMap<unsigned> sessionTargets;
+    llvm::StringSet<> sessionMapTargets;
     llvm::DenseMap<mlir::Operation *, std::string> sessionCalls;
     struct sessionMapStorage {
         std::string tableName;

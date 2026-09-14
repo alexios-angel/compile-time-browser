@@ -7,6 +7,12 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateClosureOp made) {
             if (environmentTarget(made).empty()) { return; }
+            if (sessionMapTargets.contains(environmentTarget(made))) {
+                // The member calls its exact owned Map directly. Its source
+                // closure and field initialization disappear together.
+                made->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context));
+                return;
+            }
             const bool stored = made->hasAttr(kNativeStoredCallable);
             if (!sessionTargets.contains(environmentTarget(made)) &&
                 (stored || hasConcreteCallableSignature(made))) {
