@@ -43,8 +43,15 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constant.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=CONSTANT
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/constant.mlir
+// RUN: FileCheck %s --check-prefix=CONSTANT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/constant.mlir
+// RUN: ctjs-opt %t/constant.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/constant.cpp
+// RUN: %gxx -O2 %t/constant.cpp -o %t/constant-gcc
+// RUN: %t/constant-gcc | FileCheck %s --check-prefix=OBSERVATION
+// RUN: %clangxx -O2 %t/constant.cpp -o %t/constant-clang
+// RUN: %t/constant-clang | FileCheck %s --check-prefix=OBSERVATION
+// RUN: %native_reference %t/constant.js | FileCheck %s --check-prefix=OBSERVATION
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/constant.js | FileCheck %s --check-prefix=OBSERVATION
 
 // --- argument 0: the receiver. 8600 refusals, two thirds of the whole census
 //
@@ -80,8 +87,11 @@
 // GLOBAL: ctjs.func {{.*}}@reader$1
 // GLOBAL-SAME: ctnative.not_native = "global `unstored` is !ctnative.boxed, not a number"
 
-// CONSTANT: ctjs.func {{.*}}@s$1
-// CONSTANT-SAME: ctnative.not_native = "a property read on an object that is not a closed-shape literal"
+// The original String length source now has a definite native type and carrier.
+// CONSTANT: emitc.func @main()
+// CONSTANT: emitc.func @s_1
+// CONSTANT: call_opaque "std::size"
+// OBSERVATION: r=2
 
 //--- this.js
 function usesthis(x) { return this ? x : x + 1; }
