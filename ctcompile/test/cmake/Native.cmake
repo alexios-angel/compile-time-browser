@@ -293,6 +293,18 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                    --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-entry
                    --nm ${_native_nm})
   set_tests_properties(ctcompile_native_dom_entry PROPERTIES TIMEOUT 300)
+  add_test(NAME ctcompile_native_dom_session
+           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                   ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_session.py
+                   --translate $<TARGET_FILE:ctjs-translate>
+                   --opt $<TARGET_FILE:ctjs-opt>
+                   --clang ${_native_dom_clang}
+                   --build ${CMAKE_BINARY_DIR}
+                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
+                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-session
+                   --nm ${_native_nm})
+  set_tests_properties(ctcompile_native_dom_session PROPERTIES TIMEOUT 300)
   file(GLOB _session_node_bins LIST_DIRECTORIES TRUE "$ENV{HOME}/tools/node-*/bin")
   find_program(_session_node NAMES node nodejs HINTS ${_session_node_bins} REQUIRED)
   add_test(NAME ctcompile_native_data_session

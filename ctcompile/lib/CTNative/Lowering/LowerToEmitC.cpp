@@ -142,7 +142,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
 
         std::unique_ptr<DOMEntryAnalysis> domEntry;
-        if (hostContract && hostContract->provider == HostContract::Provider::ctbrowserDOM) {
+        if (hostContract &&
+            (hostContract->provider == HostContract::Provider::ctbrowserDOM ||
+             hostContract->provider == HostContract::Provider::ctbrowserDOMSession)) {
             const DOMEntryAnalysis source(module, *hostContract, hostMaxSteps);
             if (!source.proved()) {
                 module.emitError() << "native DOM entry: " << source.reason();
@@ -690,7 +692,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
-            lower.censusDOM(*admittedDOM);
+            lower.censusDOM(*admittedDOM,
+                            hostContract->provider == HostContract::Provider::ctbrowserDOMSession);
         }
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }

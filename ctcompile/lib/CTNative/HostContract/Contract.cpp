@@ -71,11 +71,12 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         return error("host contract must be an object with only supported fields");
     }
     if (object->getInteger("version") != 1) { return error("unsupported host contract version"); }
-    const bool dom = object->getString("provider") == "ctbrowser-dom-v1";
+    const bool domSession = object->getString("provider") == "ctbrowser-dom-session-v1";
+    const bool dom = domSession || object->getString("provider") == "ctbrowser-dom-v1";
     const bool session = object->getString("provider") == "closed-source-session-v1";
     if (!dom && !session && object->getString("provider") != "closed-source-v1") {
         return error("unsupported host provider; expected closed-source-v1, "
-                     "closed-source-session-v1 or ctbrowser-dom-v1");
+                     "closed-source-session-v1, ctbrowser-dom-v1 or ctbrowser-dom-session-v1");
     }
     if (dom ? !keys(*object,
                     {"version", "provider", "module_sha256", "entry", "element_parameters"})
@@ -98,7 +99,8 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     result.moduleSha256 = digest->str();
     result.entry = entry->str();
     if (dom) {
-        result.provider = HostContract::Provider::ctbrowserDOM;
+        result.provider = domSession ? HostContract::Provider::ctbrowserDOMSession
+                                     : HostContract::Provider::ctbrowserDOM;
         const auto * parameters = object->getArray("element_parameters");
         if (!parameters || parameters->empty()) {
             return error("DOM entry requires nonempty element_parameters");
@@ -228,7 +230,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         refusal = "DOM entry source contains unimported functions";
         return;
     }
-    if (contract.provider != HostContract::Provider::ctbrowserDOM ||
+    if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
+         contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
         !contract.undefinedBindings.empty() || !contract.initialIntrinsics.empty() ||

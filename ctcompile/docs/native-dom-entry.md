@@ -104,14 +104,42 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
+## Owned synchronous sessions
+
+Select `ctbrowser-dom-session-v1` with the same fingerprint, entry and
+`element_parameters` fields to emit an additional `<entry_symbol>_session` class.
+It owns an atom table, then its document, then a selector engine when the source
+uses selectors. The class cannot be copied or moved. `document()` provides the
+document for building the page; `selectors()` exposes the owned engine's live
+interactive state when present. `invoke(element_ref, ...)` calls the same proved
+source function with the session's selector engine.
+
+Every supplied element must belong to this session. All document-pointer
+comparisons precede every handle validation and source effect, so even a foreign
+pointer whose document has been destroyed is rejected without dereferencing it.
+Invalid IDs within the session still fail the public DOM validation. Detaching
+a node preserves its identity and does not invalidate its handle. Callers must
+stop using the session's borrowed handles and references before destroying it.
+The ordinary synchronous free function remains available under its existing
+caller-owned-document contract.
+
+The `ctcompile_native_dom_session` CTest checks actions and selectors, both
+optimization policies, both printing layouts and both compilers, with sanitizer
+checks for teardown and dangling foreign pointers. This provider still refuses
+handle returns, retention in Data or properties, and browser callbacks. It does
+not reinterpret source-created ordinary objects as DOM elements.
+
 Next is retained DOM-backed Data ownership: the document must outlive every
 stored key, not merely one call. The document itself borrows an atom table.
 The generated owner must therefore destroy Data/component state first, then
 its document, then its atom table. The current Data contract allows extracted
 callables to outlive their table/root; it cannot safely borrow this entry's DOM
-handles. The next proof needs an owning session with direct/member entry calls
-that cannot escape independently, plus distinct DOM-key provenance preserving
-both document and node identity. No such session or retained key is admitted yet.
+handles. The owning DOM entry now supplies the document lifetime, and the separate
+Data session supplies direct/member calls. Connecting them requires explicit DOM
+input provenance across the complete Data method family, conservative aliasing
+between different inputs, and Data storage that cannot outlive the document.
+The existing shared table/global carriers do not provide that final guarantee.
+Retained DOM keys are not admitted yet.
 Then admit the original Button receiver/action
 and its BaseComponent/Config construction, prototype/static getters and disposal.
 This standalone probe does not change the untouched Bootstrap bundle's admission

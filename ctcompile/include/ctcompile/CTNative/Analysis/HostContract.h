@@ -29,14 +29,19 @@ struct HostContract {
         // generated methods remain attached to their nonmovable owner.
         // This does not authorize DOM keys or externally retained callbacks.
         closedSourceSession,
-        ctbrowserDOM
+        ctbrowserDOM,
+        // The same synchronous source proof with a nonmovable native owner
+        // of the atom table, document and (when needed) selector engine.
+        // Data retention and browser callbacks still require separate proofs.
+        ctbrowserDOMSession
     };
     Provider provider = Provider::closedSource;
     std::string moduleSha256;
     std::string entry;
-    // ctbrowser-dom-v1 invokes one ordinary function with borrowed elements.
+    // Both DOM providers invoke one ordinary function with borrowed elements.
     // Indices name explicit JS parameters, excluding the three implicit ones.
     // The document owns each node and must outlive this synchronous invocation;
+    // ctbrowser-dom-session-v1 generates that nonmovable document owner.
     // identity includes the document, not just the node_id's bits.
     // The provider starts with the standard undefined binding. The complete
     // source proof excludes replacement and external script reentry.

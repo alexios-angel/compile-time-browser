@@ -75,6 +75,9 @@ void lowering::finish() {
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
         }
+        if (!domSessionDefinition.empty()) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(domSessionDefinition));
+        }
         for (const std::string & builder : callableBuilders) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(builder));
         }
@@ -112,6 +115,10 @@ void lowering::declareGlobals() {
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
     ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
     if (needsDOM) {
+        if (!domSessionDefinition.empty()) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("stdexcept"),
+                                  b.getUnitAttr());
+        }
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("ctbrowser/dom/element.hpp"),
                               b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMEntryHelpers));

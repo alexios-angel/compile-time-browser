@@ -56,6 +56,7 @@ struct lowering {
     llvm::SmallVector<mlir::BlockArgument> domStyleParameters;
     llvm::DenseMap<mlir::Value, mlir::Value> domStyles;
     bool needsDOM = false;
+    std::string domSessionDefinition;
     bool needsDOMToggle = false;
     bool needsDOMAttributes = false;
     bool needsDOMAttributeToggle = false;
@@ -64,7 +65,7 @@ struct lowering {
     bool needsDOMContains = false;
     bool needsDOMMatches = false;
     bool needsDOMClosest = false;
-    void censusDOM(const DOMEntryAnalysis & entry);
+    void censusDOM(const DOMEntryAnalysis & entry, bool ownedSession);
     bool replaceDOM(mlir::Operation * operation);
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
     // any is lowered, so a call lowered before its callee already names the
