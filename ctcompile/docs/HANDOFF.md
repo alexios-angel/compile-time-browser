@@ -55,10 +55,15 @@ Both failures were obsolete numeric/Boolean receiver-field expectations.
 **753f4abb** keeps both JavaScript bodies byte-for-byte unchanged and checks exact
 `double`/`bool` fields, receiver pointers, arithmetic and tagged Boolean output;
 its focused **2/2 lit passed in 0.15s**. No production code changed after the full
-run. The **complete CTest lit retry is running**; do not treat it as a pass.
-All **1,438 inputs** are frozen, with only those two tests changed from the first
-run. Evidence is in `/tmp/ctcompile-constructor-finish/` (first and retry logs
-and input snapshots are retained separately).
+run. The **complete CTest lit retry passed 1/1 in 908.59s**, including **176/176 lit
+in 908.52s** (wall time **908.60s**). The other **599 CTests** passed on unchanged
+inputs. All **1,438 final input hashes** match local source and the tested devbox;
+only those two tests differ from the first full run. Evidence is in
+`/tmp/ctcompile-constructor-finish/{full.log,full-last-test.log,correction.log,
+retry.log,retry-last-test.log,measured.json,first-frozen-inputs.json,frozen-inputs.json}`.
+The generated constructor-order and saved-String C++ were inspected: ordinary local
+structs, free function calls, borrowed receiver pointers and owning `std::string`
+copies, with no Script/VM dependency. GCC **13.3.0** and Clang **18.1.3** passed.
 
 **Exact next Bootstrap boundary:** inherited instance methods and static getter
 receivers, default derived forwarding/lexical `super`, and observable
@@ -69,7 +74,7 @@ with DOM Data ownership. Retained DOM/config payloads, dataset extraction, dispo
 and event writes, persistent actions and the application driver remain open.
 The original Button/static-inheritance interpreter discrepancy remains unchanged.
 Independent String continuation is forwarded borrows and mixed/optional storage.
-Fresh full Bootstrap remains **19/574 native**, both policies, with no skipped or
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with no skipped or
 pruned functions. Original DOM Data remains **7/7 functions / 23 calls / 19 observations /
 five alias partitions** (**61.03s**), Button **4/86**, and the complete escape oracle
 **222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
