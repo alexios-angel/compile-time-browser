@@ -29,22 +29,30 @@ Measured final focused gate: **16/16 CTests in 29.60s PASS**. DOM Strings:
 **145 Node/VM observations / eight GCC-Clang binaries / 224 source refusals /
 41 provenance-depth refusals / 24 method provenance checks / four budget-fingerprint
 controls**. Dense lengths: **199 rows / 50 live states / 5,978 retention cutoffs**.
-The complete escape fixture keeps **zero violations / precision40/172**, all
+The complete escape fixture keeps **zero violations / precision 40/172**, all
 **1,123 baseline rows** unchanged. Stable formatting passes **829 C++ / 100 Python /
 33 web**; required pinned formatting matches the existing **nine-file /
 26-diagnostic** baseline byte-for-byte.
 
-The complete **274-step default build passed**. The **602-test CTest gate is
-running**, with four jobs and **1,443 frozen inputs**. No complete-suite result is
-claimed yet. Resume `/tmp/ctcompile-methods-finish/full.log` and `full.sh` if this
-session is interrupted; source is committed and frozen.
+The complete **274-step build / 602/602 CTests in 1440.70s / 176/176 lit in
+988.39s PASS**, with four CTest jobs. DOM entry passed in **207.62s**, session in
+**61.37s**, Strings in **39.42s**, and shared Map ownership in **301.89s**. All
+**1,443 frozen source hashes** match the devbox and local committed source. Logs,
+generated C++ and `measured.json` are retained in `/tmp/ctcompile-methods-finish/`.
+
+Fresh whole Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7** and Button
+**4/86**, with **22 Node lifecycle observations** and its existing interpreter
+inheritance failure. The complete escape dump is byte-identical to the preceding
+gate. No browser/runtime files or WPT/test262 expectations changed; full WPT and
+test262 were not remeasured.
 
 **Exact next boundary:** original Bootstrap's outer captured `F`/`M` graph remains
 unproved. Local object slots do not discharge `H.getDataAttribute` at vendor line
-263. `F` at line243 needs checked captured identity and String/RegExp intrinsic
+263. `F` at line 243 needs checked captured identity and String/RegExp intrinsic
 replacement/execution/property lookup before specializing the literal `"config"`;
 the Object-prototype premise does not grant these intrinsic identities. `M` at
-line230 still normalizes a live attribute through branches, Number/toString,
+line 230 still normalizes a live attribute through branches, Number/toString,
 typeof, URI decoding, JSON and exceptions. Dataset iteration/prototype fallback,
 inherited receivers and retained config/callback ownership remain open. Full
 native Bootstrap and the application driver remain unfinished; no bundle admission
