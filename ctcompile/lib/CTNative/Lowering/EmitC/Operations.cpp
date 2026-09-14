@@ -517,10 +517,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
         mlir::Value value = store.getValue();
-        if (numberStores.erase(o) && value.getType() != f64) {
-            value = callWithConstValueOperands(b, where, mlir::TypeRange{f64},
-                                               b.getStringAttr("ctnative::global_number"),
-                                               mlir::ValueRange{value})
+        if (scalarStores.erase(o) && isObjectValueCarrier(value.getType())) {
+            value = callWithConstValueOperands(
+                        b, where, mlir::TypeRange{carrierType(context, carrier::nullable)},
+                        b.getStringAttr("ctnative::global_scalar"), mlir::ValueRange{value})
                         .getResult(0);
         }
         ec::AssignOp::create(b, where, lvalueOfGlobal(b, where, store.getName()),

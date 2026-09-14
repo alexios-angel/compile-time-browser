@@ -28,6 +28,19 @@ namespace ctcompile::ctnative::lowering_detail {
 
 #include "UnaryPlusIsIdentity.h.inc"
 
+mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives) {
+    using Primitive = PrimitiveAlternatives;
+    const unsigned mask = alternatives.truthy | alternatives.falsy;
+    constexpr unsigned supported =
+        Primitive::Boolean | Primitive::Number | Primitive::Null | Primitive::Undefined;
+    if (!alternatives.known || !mask || (mask & ~supported)) { return {}; }
+    mlir::Type type = BottomType::get(context);
+    if (mask & Primitive::Boolean) { type = meet(type, BoolType::get(context)); }
+    if (mask & Primitive::Number) { type = meet(type, NumType::get(context, NumKind::F64)); }
+    if (mask & (Primitive::Null | Primitive::Undefined)) { type = OptType::get(context, type); }
+    return type;
+}
+
 // What C++ type carries a value of this ctnative type, per the table above.
 // `none` is "not representable here", and is the reason for a refusal.
 carrier carrierOf(mlir::Type type) {

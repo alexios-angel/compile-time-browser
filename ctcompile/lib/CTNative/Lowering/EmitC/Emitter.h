@@ -31,7 +31,7 @@ struct lowering {
     // Actual source-store lattices, joined before any source value is retyped.
     // Observation requests and host categories never choose an output type.
     llvm::StringMap<mlir::Type> globalTypes;
-    llvm::DenseSet<mlir::Operation *> numberStores;
+    llvm::DenseSet<mlir::Operation *> scalarStores;
     llvm::StringSet<> observations;
     bool explicitObservations = false;
     // Committed after whole-function admission while source operations still

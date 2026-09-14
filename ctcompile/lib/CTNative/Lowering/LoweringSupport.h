@@ -5,6 +5,7 @@
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
@@ -74,6 +75,7 @@ inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar"
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
 bool isScalarCarrier(carrier value);
+mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
 bool isNullableCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
 bool isBooleanStringCarrier(mlir::Type type);

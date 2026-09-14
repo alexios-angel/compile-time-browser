@@ -595,9 +595,11 @@ bool admission::op(mlir::Operation * o) {
         // callees and on other paths. A narrowed read cannot select storage.
         const std::string where = ("store to global `" + store.getName() + "`").str();
         const auto storeType = [&](StoreGlobalOp write) -> mlir::Type {
-            if (ownedGlobals && ownedGlobals->returnedScalar(write.getValue()).tag() ==
-                                    mlir::TypeID::get<NumberAttr>()) {
-                return NumType::get(o->getContext(), NumKind::F64);
+            if (ownedGlobals) {
+                if (auto type = scalarObservationType(
+                        o->getContext(), ownedGlobals->returnedScalar(write.getValue()))) {
+                    return type;
+                }
             }
             return typeOf(write.getValue());
         };

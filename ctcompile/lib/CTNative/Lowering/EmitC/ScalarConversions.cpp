@@ -81,12 +81,14 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
         fn.getBody().walk([&](ctjs::StoreGlobalOp store) {
             if (!globals.contains(store.getName())) { return; }
             auto type = typeOf(store.getValue());
-            if (roots && roots->returnedScalar(store.getValue()).tag() ==
-                             mlir::TypeID::get<ctjs::NumberAttr>()) {
-                type = NumType::get(context, NumKind::F64);
-                // Keep the exact store after source calls are erased. The
-                // callee/result census below deliberately retains its broad ABI.
-                numberStores.insert(store);
+            if (roots) {
+                if (auto scalar =
+                        scalarObservationType(context, roots->returnedScalar(store.getValue()))) {
+                    type = scalar;
+                    // Keep the exact store after source calls are erased. The
+                    // callee/result census below deliberately retains its broad ABI.
+                    scalarStores.insert(store);
+                }
             }
             auto [position, inserted] = globalTypes.try_emplace(store.getName(), type);
             if (!inserted) { position->second = meet(position->second, type); }

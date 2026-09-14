@@ -312,9 +312,9 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                 }
                 if (mapKeyUse(use)) { continue; }
                 if (keyInitializations.lookup(use.getOwner()) == value) { continue; }
-                if (llvm::isa<ctjs::StoreGlobalOp>(use.getOwner()) && globals &&
-                    globals->returnedScalar(value).tag() == mlir::TypeID::get<ctjs::NumberAttr>()) {
-                    continue;
+                if (llvm::isa<ctjs::StoreGlobalOp>(use.getOwner()) && globals) {
+                    const auto scalar = globals->returnedScalar(value);
+                    if (scalar.known && (scalar.truthy | scalar.falsy)) { continue; }
                 }
                 if ((comparisonOnly ? comparisonFieldsSafe : fieldsSafe) &&
                     object_detail::scalarFieldUse(use)) {

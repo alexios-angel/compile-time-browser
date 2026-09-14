@@ -15,9 +15,12 @@ struct object_value {
     object_value(bool value) : scalar(value) {}
     object_value(std::shared_ptr<identity_object> value) : object(std::move(value)) {}
 };
-inline double global_number(const object_value & value) {
+inline nullable_scalar global_scalar(const object_value & value) {
     if (value.object) { std::terminate(); }
-    return global_number(value.scalar);
+    return value.scalar;
+}
+inline double global_number(const object_value & value) {
+    return global_number(global_scalar(value));
 }
 inline object_value to_object_value(object_value value) { return value; }
 inline bool object_truthy(const object_value & value) {
