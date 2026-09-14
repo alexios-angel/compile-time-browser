@@ -32,8 +32,8 @@ The older driver catches this failure and never disposes Button.
 Class import includes an ordinary mutable-global call to
 `__ctbrowser_class_defined`; it makes properties non-enumerable. Its spelling
 alone cannot authorize erasing that call. Establish trusted initialization
-provenance and a complete constructor/prototype use census before changing
-`Lowering/ClosureLifting/Constructors.cpp`. `makesAnInstance`, method resolution,
+provenance and a complete constructor/prototype use census before admitting source
+classes. `makesAnInstance`, method resolution,
 receiver admission and the scalar-field environment must consume compatible proof.
 Default derived construction forwards through `super`; inherited static getters,
 `this.constructor`, lexical home and `new.target` are separate obligations.
@@ -42,17 +42,20 @@ Default derived construction forwards through `super`; inherited static getters,
 complete local immutable scalar-prototype census. Defaults initialize fresh fields
 before constructor execution; inherited and constructor reads, conditional shadowing,
 borrowed receivers and independent Number/Boolean instances pass 40 native executions.
-The full constructor proof controls receiver eligibility. The combined 22 refusals
+The full constructor proof controls receiver eligibility. The combined 24 refusals
 retain inherited methods, late/alias/replacement mutation, new.target, constructor
-arguments, the mutable helper and unsupported String/Null/Undefined field storage.
-`unwritten-key.js` still refuses its inherited constructor observation.
+arguments, arrows, the mutable helper and unsupported String/Null/Undefined field storage.
+`unwritten-key.js` still refuses its inherited constructor observation. **158f1fef**
+rejects constructing unused-this arrows. Its preserved source exposes another oracle
+discrepancy: Node throws TypeError, while the interpreter's inline construct opcode
+returns 7. Native refuses; the runtime finding is journaled for Claude.
 
 This does not prove class initialization: HostContract's `initial_intrinsics`
 currently admits only Map and Array, and its realm descriptor guard also rejects
 prototype writes. Extend that existing provenance/use boundary and model the actual
 initialization effects; do not infer an intrinsic from the helper's name.
 Component publication retains `_element` and `_config`, beyond Data's current
-scalar-field leaf proof. See HANDOFF for measured gates and the full lit checkpoint.
+scalar-field leaf proof. See HANDOFF for measured gates and the final full-gate status.
 
 Config still reads attributes and dataset when defaults are empty. Public DOM
 attribute access exists; dataset behavior can be lifted from

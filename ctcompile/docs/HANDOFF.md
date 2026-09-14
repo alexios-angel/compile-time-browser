@@ -32,19 +32,29 @@ argument fixpoint; callee/new.target operands must identify the same closure, an
 `new.target` remains refused. Numeric/Boolean inherited reads, constructor reads, conditional
 shadowing, borrowed receivers and independent instances pass **40 native executions**. The
 original own-field `prototype-written.js` source remains unchanged and now executes. The
-combined prototype gate has **22 refusals**, including late/replacement/alias mutation, methods,
-new.target, constructor arguments, the mutable class helper and unproved primitive field
+combined prototype gate has **24 refusals**, including late/replacement/alias mutation, methods,
+new.target, arrows, constructor arguments, the mutable class helper and unproved primitive field
 storage. The helper's actual global call remains observable (**Node 0 / interpreter 1**); no
 intrinsic is inferred from its spelling. The global `undefined` fixture and the literal
 String/Null/Undefined-field fixture remain preserved refusals.
 
-Focused final gate: **4/4 lit PASS in 27.37s / 4/4 CTests PASS in 7.01s**, including type
-inference **0.21s** and existing constructor units. Stable formatting: **824 C++ / 97 Python /
-33 web PASS**. The required pinned check has the byte-identical preceding **nine-file /
-26-diagnostic** baseline. The standard full build passed **280 steps** and **599/600 CTests**
-have passed, including ownership **359.91s**; the full lit suite is still running. This is an
-interim checkpoint, not a completed full gate. Evidence:
-`/tmp/ctcompile-class-recovered/{full.log,focused3.log,frozen-inputs.json}`.
+**158f1fef** closes the constructor arrow gap found by the follow-up reviewer. Arrows
+must refuse even if they never read lexical `this`. The unchanged regression source
+throws **TypeError in Node**, but the interpreter currently produces **7**: its inline
+`VM_CASE(construct)` in `Script/vm/run_loop.cpp` omits `is_constructor`, although the
+`construct`/`construct_new` helpers check it. CTJS preserves the arrow marker; native
+now gives a named refusal under both policies. The discrepancy is journaled for Claude
+and pinned until the runtime changes; no interpreter fix or native execution is claimed.
+
+Focused gates: initial **4/4 lit in 27.37s / 4/4 CTests in 7.01s**; final arrow/prototype
+**2/2 lit in 9.57s / 4/4 CTests in 7.02s**, type inference **0.21s**. Stable formatting:
+**824 C++ / 97 Python / 33 web PASS**. The required pinned check retains the byte-identical
+preceding **nine-file / 26-diagnostic** baseline. The pre-arrow standard gate passed
+**280 build steps / 600/600 CTests in 1236.67s / 174/174 lit in 876.73s**, matching all
+**1,433 frozen non-Markdown inputs**. A fresh full gate including the arrow fix is running;
+its **262-step build passed**, and CTests are in progress. This is an interim checkpoint.
+Evidence: `/tmp/ctcompile-class-recovered/{full.log,focused-arrow2.log,frozen-inputs.json}`;
+the earlier full gate is archived as `pre-arrow-*` in the same directory.
 
 **Exact next Bootstrap boundary:** trusted class-initialization provenance for the ordinary
 mutable `__ctbrowser_class_defined` lookup, then immutable method/prototype chains and inherited
