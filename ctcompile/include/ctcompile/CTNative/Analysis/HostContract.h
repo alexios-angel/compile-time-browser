@@ -67,15 +67,23 @@ enum class HostDOMMethod {
     setAttribute,
     toggleAttribute,
     hasAttribute,
-    removeAttribute
+    removeAttribute,
+    contains,
+    matches,
+    closest
 };
 
 struct HostDOMCall {
     ctjs::CallOp operation;
     HostDOMMethod kind;
     mlir::Value element;
+    [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
     [[nodiscard]] bool returnsBoolean() const {
-        return kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
+        return !returnsElement() && kind != HostDOMMethod::setAttribute &&
+               kind != HostDOMMethod::removeAttribute;
+    }
+    [[nodiscard]] bool usesStyle() const {
+        return kind == HostDOMMethod::matches || kind == HostDOMMethod::closest;
     }
 };
 
@@ -95,6 +103,8 @@ public:
     [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
     [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return elements; }
     [[nodiscard]] bool isElement(mlir::Value value) const;
+    // Validated parameters or nullable closest results, for equality only.
+    [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;

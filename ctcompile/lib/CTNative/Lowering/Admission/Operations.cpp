@@ -31,7 +31,8 @@ bool admission::op(mlir::Operation * o) {
         if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
         if (auto compare = llvm::dyn_cast<CompareOp>(o);
             compare && compare.getKind() == CompareKind::StrictEq &&
-            domEntry->isElement(compare.getLhs()) && domEntry->isElement(compare.getRhs())) {
+            domEntry->isElementIdentity(compare.getLhs()) &&
+            domEntry->isElementIdentity(compare.getRhs())) {
             return true;
         }
     }

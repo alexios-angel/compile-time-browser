@@ -81,7 +81,10 @@ def CTNative_DOMElementType : CTNative_Type<"DOMElement", "dom_element"> {
     Introduced only by a live, fingerprint-bound native DOM entry proof.
     The document owns the node and outlives the call; identity includes both
     the document address and node_id. This is neither an owning JavaScript
-    object nor a numeric node ID. Retention and borrowed results are refused.
+    object nor a numeric node ID. A local closest result may be a canonical
+    empty handle denoting null; live proof permits only identity comparisons
+    of that nullable result, never dereference. Retention and borrowed function
+    results are refused.
   }];
 }
 

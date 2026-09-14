@@ -53,12 +53,17 @@ struct lowering {
     llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
     llvm::DenseSet<mlir::Operation *> domReads;
     llvm::DenseSet<mlir::Value> domParameters;
+    llvm::SmallVector<mlir::BlockArgument> domStyleParameters;
+    llvm::DenseMap<mlir::Value, mlir::Value> domStyles;
     bool needsDOM = false;
     bool needsDOMToggle = false;
     bool needsDOMAttributes = false;
     bool needsDOMAttributeToggle = false;
     bool needsDOMAttributePresence = false;
     bool needsDOMAttributeRemoval = false;
+    bool needsDOMContains = false;
+    bool needsDOMMatches = false;
+    bool needsDOMClosest = false;
     void censusDOM(const DOMEntryAnalysis & entry);
     bool replaceDOM(mlir::Operation * operation);
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before

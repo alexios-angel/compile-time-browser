@@ -531,7 +531,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
 
     if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && domEntry_) {
         if (const auto * edge = domEntry_->call(call)) {
-            const auto type = edge->returnsBoolean() ? boolType(c) : absentType(c);
+            const mlir::Type type = edge->returnsElement()   ? mlir::Type(DOMElementType::get(c))
+                                    : edge->returnsBoolean() ? boolType(c)
+                                                             : absentType(c);
             propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
             return mlir::success();
         }

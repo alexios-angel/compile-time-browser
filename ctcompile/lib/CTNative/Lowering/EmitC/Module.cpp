@@ -134,6 +134,22 @@ void lowering::declareGlobals() {
             ec::VerbatimOp::create(b, module.getLoc(),
                                    b.getStringAttr(kDOMAttributeRemovalHelpers));
         }
+        if (needsDOMContains) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMContainsHelpers));
+        }
+        if (needsDOMMatches || needsDOMClosest) {
+            for (llvm::StringRef header :
+                 {"ctbrowser/style/engine.hpp", "ctbrowser/style/css/parser.hpp", "stdexcept"}) {
+                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+            }
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMSelectorHelpers));
+        }
+        if (needsDOMMatches) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMMatchesHelpers));
+        }
+        if (needsDOMClosest) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMClosestHelpers));
+        }
     }
     if (!ownedGlobals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
