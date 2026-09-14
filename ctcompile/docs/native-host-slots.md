@@ -56,7 +56,9 @@ ctjs-opt prepared.mlir \
 
 The bounded census admits local base constructors and fresh prototypes with
 unique ordinary methods. Methods have no captures, identity or lexical-home
-observations; their receivers only read and write ordinary scalar fields.
+observations; their receivers read/write ordinary fields or call another proved
+method on that same receiver. Method reads must be used only as direct callees;
+passing or returning the receiver and observing a method identity still refuse.
 Every instance method read must feed its own receiver call. A constructor cannot
 read or write method keys and must return a primitive constant when methods exist.
 This excludes replacement return objects before any method bindings move.
@@ -71,7 +73,7 @@ initialization order and conservatively rejects any other write to a method key
 anywhere in the module. Native construction owns its local struct by value;
 method calls become ordinary free functions with borrowed receiver pointers.
 
-Chained methods, inheritance, executable field initializer closures, observable
+Constructor method calls, inheritance, executable field initializer closures, observable
 constructor identity, prototype mutation and retained receivers still refuse.
 The pass does not yet compose with the DOM Data session or prepare the original
 Bootstrap Button. The original mutable-helper and inherited-getter runtime

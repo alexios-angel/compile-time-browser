@@ -46,11 +46,20 @@ lowering then independently prove initialization order and method-key immutabili
 The gate passes **40 class native executions / 48 unprepared / 30 preparation
 refusals**, plus **8 plain constructed-method native executions / 10 refusals**.
 
-**Next compiler boundary: chained and constructor method receivers, then inherited
-receivers**, followed by composition with DOM Data ownership. Config chains three
-methods; BaseComponent calls `_getConfig` inside construction. The present proof
-forbids both, and `makesAnInstance`, method resolution, receiver admission and the
-scalar-field environment must consume compatible proof before widening.
+**67867ae0** additionally admits chained calls through those immutable local methods,
+reusing the existing receiver fixpoint. Nested mutation, argument evaluation order,
+independent instances and unused receivers pass **72 class native executions**;
+the expanded source gate retains **72 unprepared / 42 preparation refusals**.
+
+**Next compiler boundary: constructor method receivers, then inherited receivers**,
+followed by composition with DOM Data ownership. BaseComponent calls `_getConfig`
+inside construction. Methods must be available before the body runs; current
+prepared bindings are installed afterward. `makesAnInstance`, method resolution,
+receiver admission and the scalar-field environment must consume compatible proof
+without assuming constructor admission circularly. The preserved constructor-call
+and nested-order sources observe **8 / 132** in Node and the interpreter and still
+refuse native preparation. Config's local method-chain prerequisite is narrower
+than its full inheritance, capture and configuration obligations.
 Default derived construction forwards through `super`; inherited static getters,
 `this.constructor`, lexical home and `new.target` are separate obligations.
 
@@ -72,8 +81,11 @@ group to **48 native executions**. Its original saved-string gate passed **8 nat
 executions**. **f854d2f6** adds definite String length inference and `std::size`
 emission; the expanded group passes **32 native executions / 10 refusals**, including
 the unchanged original length source. ND-1's Unicode byte count remains separately
-measured against Node. Mixed/possibly absent strings and borrowed String fields
-remain outside this slice.
+measured against Node. **be8781ac** now carries definite String fields across one
+closed direct object-argument borrow, with exact initialization before every call
+and all callee writes retained in the type join. Saved strings own their bytes.
+Stored methods, forwarded parameters and mixed/possibly absent String storage
+remain separate proofs. See HANDOFF for this session's current gate status.
 
 HostContract now accepts the helper's explicitly declared initial identity as well
 as Map and Array. The local class pass accepts only its helper declaration; the

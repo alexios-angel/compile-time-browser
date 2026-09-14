@@ -6,6 +6,70 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Chained methods and borrowed String fields, 2026-09-14 UTC
+
+Started clean **48a3d5c7** and resumed the **15:54:49 AGENT-SYNC** method-chain
+thread, explicitly abandoned at **15:55:19** before source edits. Both histories
+and unmerged branches were checked; `codex-wip-20260907` is already an ancestor.
+Three agents split source controls, borrowed fields and proof review. Two reached
+service limits after leaving drafts; root completed and gated those drafts.
+No browser/runtime files changed.
+
+**67867ae0** admits calls from one immutable local class method to another through
+the existing receiver fixpoint. The class preparation census still requires exact
+same-receiver calls, unique immutable method keys, closed source and unobserved
+closure/home identities. Constructor method calls retain their separate refusal.
+The gate preserves **36 source observations**, executes **72 native cases**, and
+checks **72 unprepared / 42 preparation refusals**, both policies/layouts/GCC/Clang.
+It covers nested mutation, independent instances, argument evaluation order, unused
+results and constant leaves whose receiver becomes unused. Method replacement,
+callee lookup before argument-side replacement, extracted identities, receiver
+escapes and constructor calls retain their source observations and refusals.
+Empty/method/chained proof inputs first complete at budgets **100 / 166 / 208**;
+preceding cutoffs, forged reports, duplicate closures and nested IR remain gated.
+Plain constructed methods retain **8 native executions / 10 refusals**.
+
+**be8781ac** proves definite field presence across one closed direct object borrow.
+Every actual call must pass a local literal with an exact-key store dominating that
+call in the same function. Private visibility, complete symbol and numeric-closure
+use censuses and closed alias groups are required. All callee writes still enter
+the field type join; no cross-function dominance or schema-wide presence is inferred.
+The first source gate exposed object cells being unboxed after the receiver census.
+An early use of the existing cell proof now exposes only uncaptured local objects;
+a separate temporary census prevents retaining erased store pointers. Captured and
+reassigned bindings keep their existing rules. The original `borrowed.js` and
+`borrowed-equality.js` sources are unchanged and now execute as native C++.
+The String gate passes **72 native executions / 26 refusals**. Saved NUL-containing
+strings remain owning copies across callee mutation. Multiple callers and permuted
+object arguments pass; late/missing/conditional initialization,
+mixed/undefined writes, deletion through aliases, escaped receivers and forwarded
+parameters retain refusals. Stored methods still need a complete callable-use proof.
+
+Final focused **4/4 lit in 25.22s / 3/3 CTests in 0.36s PASS**, including the rebuilt
+type-inference binary; measured drivers pass **2/2 lit in 24.67s**. Stable formatting passes **825 C++ / 99 Python / 33 web**;
+the required pinned formatter retains the byte-identical preceding **nine-file /
+26-diagnostic** baseline. Generated class C++ was inspected: ordinary local structs,
+borrowed receiver pointers and free function calls, with no Script/VM dependency.
+The complete standard devbox gate is **running**, against **1,438 frozen non-Markdown
+inputs**. Do not treat this checkpoint as a full-suite pass. Evidence is in
+`/tmp/ctcompile-method-chains/{full.log,measured-focus.log,measured.json,frozen-inputs.json}`.
+The last complete full-Bootstrap measurement remains **19/574 native / 0 of 43
+globals**, original DOM Data **7/7**, original Button **4/86**, and escape precision
+**40/172 with zero violations**; this session's fresh full measurements are pending.
+
+**Exact next Bootstrap boundary:** methods must be available before constructor
+bodies execute, and constructor receiver origins must be seeded without circularly
+assuming complete constructor admission. Current prepared bindings are installed
+*after* construction. Preserve the constructor-call/order sources and their **8 /
+132** Node/interpreter observations. Then prove inherited/static-getter receivers
+and compose with DOM Data ownership. The original Button/static-inheritance oracle
+discrepancy remains; Config, default derived forwarding, lexical `super`,
+`this.constructor`, retained DOM/config, dataset, disposal/event writes, persistent
+actions and the application driver are unfinished. Independent String continuation
+is stored-method callable provenance, then forwarded borrows and sound mixed/optional
+String storage. EscapeAnalysis transfer rules and array lifetime boundaries did not
+change. Nothing was pushed; WPT/test262 scores were not remeasured.
+
 ## Immutable local class methods and String length, 2026-09-14 UTC
 
 Started clean **93f4b26f**, after the **14:51:45 AGENT-SYNC** completed handoff.
