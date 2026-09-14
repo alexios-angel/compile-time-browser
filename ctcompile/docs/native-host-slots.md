@@ -67,8 +67,9 @@ reflection, captured functions and nested regions fail closed.
 
 After every check succeeds, the pass removes the unused helper and unobservable
 home/backedge setup while preserving prototype method definitions. It also discards
-supplied native reports. Native lowering checks all constructor obligations except
-receiver resolution before seeding the receiver fixpoint from the exact prototype.
+supplied native reports. Native lowering checks constructor identity, construction
+sites, return safety and captures before seeding the receiver fixpoint from the exact
+prototype.
 Later instance stores cannot seed that constructor receiver. Full constructor and
 method admission then verify each dependency; only methods proved during this
 invocation count as already lifted. Whole-module method-key mutation and read

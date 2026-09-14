@@ -17,8 +17,8 @@ The String agent hit a service limit after a draft; root completed and gated it.
 No browser/runtime files changed.
 
 **1fa7709e** preserves immutable prototype methods until constructor lowering,
-so they are available before the body executes. A preliminary constructor check
-proves every obligation except receiver resolution. The existing receiver fixpoint
+so they are available before the body executes. Preliminary checks prove constructor
+identity, construction sites, return safety and captures. The existing receiver fixpoint
 is seeded from the exact prototype, never from later instance stores; full
 constructor admission then checks receiver uses and every method dependency.
 Method fields become direct calls and have no runtime storage. Whole-module key
@@ -49,9 +49,16 @@ No EscapeAnalysis transfer or array lifetime permissions changed.
 Focused **4/4 lit in 38.88s / 3/3 CTests in 0.84s PASS**; the field-carrier structural
 check passed separately in **0.04s**. Stable formatting passes **825 C++ / 99 Python /
 33 web**; the required pinned formatter retains the byte-identical previous
-**nine-file / 26-diagnostic** baseline. The standard full devbox build and CTest gate
-are **running**, with frozen source hashes and logs in
-`/tmp/ctcompile-constructor-finish/`. Do not treat that pending full run as a pass.
+**nine-file / 26-diagnostic** baseline. The standard **280-step build passed**.
+The first full run passed **599/600 CTests in 1290.14s / 174/176 lit in 911.37s**.
+Both failures were obsolete numeric/Boolean receiver-field expectations.
+**753f4abb** keeps both JavaScript bodies byte-for-byte unchanged and checks exact
+`double`/`bool` fields, receiver pointers, arithmetic and tagged Boolean output;
+its focused **2/2 lit passed in 0.15s**. No production code changed after the full
+run. The **complete CTest lit retry is running**; do not treat it as a pass.
+All **1,438 inputs** are frozen, with only those two tests changed from the first
+run. Evidence is in `/tmp/ctcompile-constructor-finish/` (first and retry logs
+and input snapshots are retained separately).
 
 **Exact next Bootstrap boundary:** inherited instance methods and static getter
 receivers, default derived forwarding/lexical `super`, and observable
@@ -62,8 +69,13 @@ with DOM Data ownership. Retained DOM/config payloads, dataset extraction, dispo
 and event writes, persistent actions and the application driver remain open.
 The original Button/static-inheritance interpreter discrepancy remains unchanged.
 Independent String continuation is forwarded borrows and mixed/optional storage.
-No full-Bootstrap admission gain is inferred from these local proofs; fresh bundle,
-Data, Button and escape measurements await the running full gate. Nothing was pushed.
+Fresh full Bootstrap remains **19/574 native**, both policies, with no skipped or
+pruned functions. Original DOM Data remains **7/7 functions / 23 calls / 19 observations /
+five alias partitions** (**61.03s**), Button **4/86**, and the complete escape oracle
+**222 functions / 861 claims / 895 sites / 35 unclaimed / zero violations /
+precision 40/172**. Dense length stays **178 rows / 5,031 cutoffs**; structured
+contents **43 rows / 2,228 cutoffs**. No vendor admission gain is inferred from the
+local proofs. WPT/test262 scores were not remeasured. Nothing was pushed.
 
 ## Chained methods and borrowed String fields, 2026-09-14 UTC
 
