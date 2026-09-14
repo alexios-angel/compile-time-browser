@@ -11,7 +11,7 @@ committing. There is no CI. Do not build on the small local machine.
 Continued the completed **3013a8f0 / e1367f3d** thread from HANDOFF and the
 **22:24 AGENT-SYNC** journal. Both histories and unmerged branches were checked;
 the tree was clean, with no interrupted source or gate remaining. Two agents hit
-service limits; root completed their regression work. A third agent reviewed the
+service limits; root completed the source regression work. A third agent reviewed the
 proof and supplied the synthetic provenance controls.
 
 **0aa8dd47** expands closed, capture-free, straight-line local helpers at their
@@ -34,9 +34,12 @@ the final gate passes. Stable formatting passes **829 C++ / 100 Python / 33 web*
 the required pinned formatter's existing **nine-file / 26-diagnostic** baseline is
 byte-identical. Evidence is in `/tmp/ctcompile-dom-helpers-20260914/`.
 
-The complete default devbox build and **602-test CTest gate are running**, with
-four CTest jobs and **1,443 frozen source inputs**. No full-suite pass is claimed
-yet. No browser/runtime files or WPT/test262 expectations changed.
+The complete **304-step default devbox build and 601 non-lit CTests PASS**,
+with four CTest jobs. The final **176-test lit group is still running** inside the
+602-test gate; no complete-suite pass is claimed yet. DOM entry passed in
+**207.18s**, session in **56.71s**, Strings in **30.97s**, and shared Map ownership
+in **299.44s**. All **1,443 source inputs** remain frozen. No browser/runtime files
+or WPT/test262 expectations changed.
 
 **Exact next boundary:** original Bootstrap's outer-scope and object-held helper
 graph remains beyond this local capture-free proof. `F('config')` can only lose its
