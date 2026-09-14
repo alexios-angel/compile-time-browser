@@ -441,7 +441,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         }
     });
     // THE APPENDS INDEX, beside fieldStores_ and for the same reason: an
-    // element read has to find every value the array was ever built from, and
+    // element read has to find every value appended or stored into the array, and
     // walking the uses at each read would be the same walk done once per read.
     // A literal's own inline elements come first - the importer emits an empty
     // `create_array` and one `append` per element, but the operation carries
@@ -454,6 +454,10 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     top->walk([&](ctjs::AppendOp push) {
         if (!isDenseVectorSite(push.getArray())) { return; }
         appends_[push.getArray()].push_back(push.getElement());
+    });
+    top->walk([&](ctjs::SetPropertyOp store) {
+        if (!isDenseVectorSite(store.getObject())) { return; }
+        appends_[store.getObject()].push_back(store.getValue());
     });
     // THE SHARED-BINDING INDEX, over the group and not over one value - the
     // reason the field index is, one operand along. A `ctjs.cell_set` through

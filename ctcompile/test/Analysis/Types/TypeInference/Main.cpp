@@ -321,6 +321,84 @@ int main() {
     };
 
     for (const row & r : rows) { check(context, r); }
+
+    // The complete contents proof needs a known return; the generic row helper
+    // returns opaque %p. Keep old array controls unchanged and build these whole
+    // functions with a definite scalar return instead.
+    const std::string overwritePrefix = prologue() + five +
+                                        "  %zero = ctjs.constant #ctjs.number<0>\n"
+                                        "  %arr = ctjs.create_array [%a]\n";
+    const std::string overwriteRead = "  %r = ctjs.get_property %arr[%zero] {check}\n"
+                                      "  ctjs.return %a\n}\n";
+    const std::string overwrite = "  ctjs.set_property %arr[%zero], %b\n";
+    const std::vector<row> overwriteRows = {
+        {"a bounded own overwrite joins its wider stored Number",
+         overwritePrefix + "  %wide = ctjs.constant " + kOneAndAHalf +
+             "\n  ctjs.set_property %arr[%zero], %wide\n" + overwriteRead,
+         "!ctnative.opt<!ctnative.num<f64>>", true},
+        {"an overwritten String participates in the complete element join",
+         overwritePrefix +
+             "  %text = ctjs.constant #ctjs.string<\"changed\">\n"
+             "  ctjs.set_property %arr[%zero], %text\n" +
+             overwriteRead,
+         "!ctnative.opt<!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>>", true},
+        {"an overwritten Boolean participates in the complete element join",
+         overwritePrefix +
+             "  %flag = ctjs.constant #ctjs.boolean<true>\n"
+             "  ctjs.set_property %arr[%zero], %flag\n" +
+             overwriteRead,
+         "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>", true},
+        {"an original negative zero overwrites own index zero",
+         overwritePrefix + "  %key = ctjs.constant " + kNegativeZero +
+             "\n  ctjs.set_property %arr[%key], %b\n" + overwriteRead,
+         "!ctnative.opt<!ctnative.num<i32>>", true},
+        {"an out-of-bounds overwrite never borrows a density claim",
+         overwritePrefix + "  ctjs.set_property %arr[%a], %b\n" + overwriteRead, "!ctnative.boxed",
+         true},
+        {"a fractional overwrite never borrows a density claim",
+         overwritePrefix + "  %key = ctjs.constant " + kOneAndAHalf +
+             "\n  ctjs.set_property %arr[%key], %b\n" + overwriteRead,
+         "!ctnative.boxed", true},
+        {"an opaque index refuses the complete overwrite proof",
+         overwritePrefix + "  ctjs.set_property %arr[%p], %b\n" + overwriteRead, "!ctnative.boxed",
+         true},
+        {"an opaque stored value refuses the complete overwrite proof",
+         overwritePrefix + "  ctjs.set_property %arr[%zero], %p\n" + overwriteRead,
+         "!ctnative.boxed", true},
+        {"a later call invalidates the whole overwrite proof",
+         overwritePrefix + overwrite + "  %call = ctjs.call %p(%a)\n" + overwriteRead,
+         "!ctnative.boxed", true},
+        {"even a proved length shrink remains outside native vector uses",
+         overwritePrefix + overwrite +
+             "  %length = ctjs.constant #ctjs.string<\"length\">\n"
+             "  ctjs.set_property %arr[%length], %zero\n" +
+             overwriteRead,
+         "!ctnative.boxed", true},
+        {"a self-stored array fails the separate local-use proof",
+         overwritePrefix + "  ctjs.set_property %arr[%zero], %arr\n" + overwriteRead,
+         "!ctnative.boxed", true},
+    };
+    for (const row & r : overwriteRows) { check(context, r); }
+    {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            overwritePrefix + overwrite + overwriteRead, &context);
+        if (!module) {
+            std::printf("FAIL live array overwrite mutation fixture did not parse\n");
+            ++failures;
+        } else {
+            check(*module, "own overwrite before live mutation",
+                  "!ctnative.opt<!ctnative.num<i32>>");
+            ctcompile::ctjs::SetPropertyOp store;
+            module->walk([&](ctcompile::ctjs::SetPropertyOp found) { store = found; });
+            const mlir::Value key = store.getKey();
+            store->setOperand(1, store.getValue()); // 5, outside the one-element array
+            check(*module, "a changed index discards the earlier density proof", "!ctnative.boxed");
+            store->setOperand(1, key);
+            check(*module, "restoring an own index rebuilds density from current IR",
+                  "!ctnative.opt<!ctnative.num<i32>>");
+        }
+    }
+
     checkIdentityFieldRows(context);
     checkIdentityMapFieldRows(context);
     checkMapZeroSizePresence(context);

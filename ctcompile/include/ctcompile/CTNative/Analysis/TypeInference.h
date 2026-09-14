@@ -204,15 +204,12 @@ public:
         mlir::Operation * top);
 
     /// THE DENSE ARRAY (part 24 Phase 57A, the typing half). An array literal
-    /// whose every use is an `append` onto it, an index read of it, or a read
-    /// of its `length` is a `std::vector` and not a JavaScript array: nothing
-    /// can make it sparse, nothing can rename an element, and it never leaves
-    /// the frame. THE DEFAULT ARM IS THE PROOF - every other use, including
-    /// the two the plan names by hand (`a[i] = v`, which `a[100] = 1` turns
-    /// into a sparse array with `length` 101, and `delete a[0]`, which punches
-    /// a hole in one) opens the site and every read of it is `boxed`.
+    /// whose uses preserve density and local lifetime can use `std::vector`.
+    /// Appends, index/length reads and complete current own-element overwrite
+    /// proofs qualify. Sparse writes, deletion, length changes and escaping or
+    /// transported aliases still open the site; its reads remain `boxed`.
     ///
-    /// For such an array a read of an index is the join of every appended
+    /// For such an array a read of an index is the join of every appended/stored
     /// value, starting from undefined - because an index nothing appended,
     /// and every index past the end, reads `undefined` - and a read of
     /// `length` is a Number.
@@ -278,7 +275,7 @@ private:
     /// solver runs - the closure lift and every rewrite in
     /// `--ctnative-lower-to-emitc` happen before it is loaded.
     mlir::DominanceInfo dominance_{nullptr};
-    // array value -> everything ever appended to it, in source order, for
+    // array value -> everything appended or stored into it, for
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
 
@@ -290,8 +287,8 @@ private:
     llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapValues_;
     mlir::Type mapTypeOf(mlir::Operation * op, mlir::Value map);
 
-    /// The element type of a dense array: the join over everything appended to
-    /// it, from `undefined`. `op` is the operation asking, so every appended
+    /// The element type of a dense array: the join over everything appended or
+    /// stored into it, from `undefined`. `op` is the operation asking, so every
     /// value's lattice subscribes it and a store that widens later re-visits
     /// the read.
     mlir::Type elementTypeOf(mlir::Operation * op, mlir::Value array);

@@ -7,6 +7,13 @@ namespace ctcompile::ctnative::lowering_detail {
 // Retype every JavaScript value in the function from the lattice. Done
 // BEFORE any operation is replaced, so the replacements see carriers.
 void lowering::retype(ctjs::FuncOp fn) {
+    // Current contents evidence is invalidated even by retyping operands.
+    // Capture every admitted vector access before changing the source IR.
+    fn.getBody().walk([&](mlir::Operation * op) {
+        if (op->getNumResults() == 1 && TypeInference::isDenseVectorSite(op->getResult(0))) {
+            collectVector(op->getResult(0));
+        }
+    });
     // Preserve complete receiver schemas before replacements erase solver
     // identities. Read result facts must never choose the storage schema.
     fn.getBody().walk([&](ctjs::CallOp call) {
@@ -164,13 +171,6 @@ void lowering::retype(ctjs::FuncOp fn) {
         mlir::Value parameter = fn.getBody().front().getArgument(static_cast<unsigned>(index));
         parameter.setType(receiverType(shapeAt(parameter)));
     }
-    // AND THE ARRAYS, whose type was taken above; what is left is which
-    // reads are `length` and which are indices.
-    fn.getBody().walk([&](mlir::Operation * op) {
-        if (op->getNumResults() == 1 && TypeInference::isDenseVectorSite(op->getResult(0))) {
-            collectVector(op->getResult(0));
-        }
-    });
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

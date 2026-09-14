@@ -96,7 +96,9 @@
 // read returns.
 //
 // INDEXED: ctjs.func private @stored$1
-// INDEXED-SAME: ctnative.not_native = "an array literal written through an index - `a[100] = 1` gives `length` 101 with one element, so density is not proved"
+// The original uncalled body now proves density, but its unvisited element
+// types still refuse. The separate called array-overwrite.js exercises emission.
+// INDEXED-SAME: ctnative.not_native = "an array whose elements are <unvisited>, not numbers"
 
 // `delete a[0]` punches the hole directly.
 //

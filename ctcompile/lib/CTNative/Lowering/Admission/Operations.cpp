@@ -337,9 +337,13 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
         if (nativeObjectFieldGroup(o) >= 0) { return identityField(o); }
-        // An array literal written through is not a vector site at all, so
-        // the site's own diagnostic names the sparsity route rather than
-        // this one naming a closed shape the program never asked for.
+        if (isVectorSite(set.getObject())) {
+            return (carrierOf(typeOf(set.getKey())) == carrier::number ||
+                    refuse("dense array writes require definite numeric indices")) &&
+                   (carrierOf(typeOf(set.getValue())) == carrier::number ||
+                    refuse("dense array storage requires definite numbers"));
+        }
+        // The site's diagnostic names an unproved write's sparsity route.
         if (set.getObject().getDefiningOp<CreateArrayOp>()) {
             return refuse(whyNotDense(set.getObject()));
         }

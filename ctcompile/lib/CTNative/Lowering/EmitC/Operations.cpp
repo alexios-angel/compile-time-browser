@@ -275,6 +275,15 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                  .getResult(0));
         return;
     }
+    if (vectorIndexWrites.contains(o)) {
+        // EmitC subscript cannot take an opaque lvalue; loading it would copy
+        // the vector. Keep this ordinary assignment on the original storage.
+        ec::VerbatimOp::create(b, where,
+                               "{}[static_cast<std::vector<double>::size_type>({})] = {};",
+                               o->getOperands());
+        eraseIfUnused(o);
+        return;
+    }
     // THE METHOD FIELD IS NOT A FIELD, so its store goes and the closure it
     // held loses its last use and goes in the sweep. `this` is a parameter
     // and the method is a free function; there is nothing to write.

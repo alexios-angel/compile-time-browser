@@ -314,12 +314,16 @@ std::string lowering::provenanceOf(const family & f) const {
     return out;
 }
 
-// The reads of one dense array, sorted into `length` and index. Keys are
+// The proved accesses of one dense array, sorted before retyping. Keys are
 // still lowered: a constant can also be used as ordinary string data.
 // A key used only by erased accesses is removed by the final sweep.
 void lowering::collectVector(mlir::Value array) {
     needsVector = true;
     for (mlir::Operation * user : array.getUsers()) {
+        if (llvm::isa<ctjs::SetPropertyOp>(user)) {
+            vectorIndexWrites.insert(user);
+            continue;
+        }
         auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
         if (!get) { continue; }
         if (ctjs::constantKey(get.getKey()) == "length") {

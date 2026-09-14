@@ -1,4 +1,5 @@
 // Closed shapes, receivers, cells and dense vector use proofs.
+#include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 
@@ -13,6 +14,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
+#include <optional>
 
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
@@ -196,29 +198,12 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
     return out;
 }
 
-// A DENSE ARRAY IS AN ARRAY NOTHING CAN MAKE SPARSE, and the default arm below
-// is the whole proof. Three uses keep a `std::vector` a `std::vector`:
-//
-//   * `ctjs.append` onto it - the elements of the literal, in order, which is
-//     how the bytecode builds `[1, 2, 3]` (CTJS_AppendOp's own description);
-//   * a read of `length`, which is `size()` exactly BECAUSE nothing else in
-//     this list can leave a hole;
-//   * a read through any other key, which is an index.
-//
-// EVERYTHING ELSE OPENS IT, and two of those are why part 24 Stage 57A says
-// "prove density, or box" rather than "prove uniformity":
-//
-//   * `a[i] = v`. `a[100] = 1` on a two-element array gives `length` 101 and
-//     three elements, so `.length` stops being `size()` and the C++ has no
-//     representation for the ninety-eight holes. Refused, which is a
-//     DEVIATION FROM THIS STAGE'S WRITTEN DESIGN (it listed an index store as
-//     a vector use); admitting it would also have made the element join below
-//     unsound, because a stored value it does not see is a value a later read
-//     returns.
-//   * `delete a[0]`, which punches a hole in an array that had none.
-//
-// A return, a call, a store into another object, a loop-carried phi: every one
-// of them is some other use and lands in the default arm too.
+// Appends and reads preserve density. An indexed write additionally needs a
+// complete current own-contents proof: the exact store must overwrite an own
+// element on every path. Sparse writes, length changes, deletion and escape
+// still refuse. This use census supplies the local lifetime proof separately;
+// contents evidence alone proves neither native element types nor ownership.
+// ponytail: direct local uses only; CFG aliases and SCF need transport proofs.
 //
 // WHAT IT DOES NOT PROVE: that nothing planted a numeric own property on
 // `Array.prototype`, which an index past the end would find. That is the same
@@ -228,6 +213,7 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 bool TypeInference::isDenseVectorSite(mlir::Value array) {
     const bool snapshot = isNativeMapSnapshot(array.getDefiningOp());
     if (!array.getDefiningOp<ctjs::CreateArrayOp>() && !snapshot) { return false; }
+    std::optional<ArrayContentsEvidence> contents;
     for (mlir::OpOperand & use : array.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (user->hasAttr(kNativeMapSnapshotCopy) && use.getOperandNumber() == 2 &&
@@ -247,6 +233,24 @@ bool TypeInference::isDenseVectorSite(mlir::Value array) {
             // computed or literal, which is what `a[0]` imports as.
             if (key.empty() || key == "length") { continue; }
             return false;
+        }
+        if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+            if (use.getOperandNumber() != 0 || snapshot || !constantKey(set.getKey()).empty()) {
+                return false;
+            }
+            if (!contents) {
+                auto function = user->getParentOfType<ctjs::FuncOp>();
+                if (!function) { return false; }
+                contents = computeArrayContents(function);
+            }
+            if (!contents->complete ||
+                !llvm::any_of(contents->writes, [&](const ArrayElementWrite & write) {
+                    return write.by == user && write.position == 2 &&
+                           write.array == array.getDefiningOp();
+                })) {
+                return false;
+            }
+            continue;
         }
         return false;
     }

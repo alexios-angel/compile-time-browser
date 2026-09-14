@@ -324,17 +324,15 @@ bool admission::isKeyOnlyString(mlir::Operation * o) {
 }
 
 // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` BY VALUE.
-// TypeInference::isDenseVectorSite is the proof - every use is an append
-// onto it or a read of an index or of `length`, so nothing can make it
-// sparse, nothing renames an element, and it never leaves the frame.
+// TypeInference::isDenseVectorSite proves local lifetime and density for
+// appends, reads and complete current own-element overwrites.
 bool admission::isVectorSite(mlir::Value v) {
     return TypeInference::isDenseVectorSite(v);
 }
 
 // WHY AN ARRAY LITERAL IS NOT A DENSE VECTOR: the first use that is not an
-// append or a read, named by what it is. The two sparsity routes come
-// first, because they are the ones part 24 Stage 57A names by hand and the
-// ones a reader will not expect to be refused.
+// append or a read after the complete density query failed. A write can
+// fail its current contents proof even when it looks locally bounded.
 std::string admission::whyNotDense(mlir::Value array) {
     for (mlir::OpOperand & use : array.getUses()) {
         mlir::Operation * user = use.getOwner();

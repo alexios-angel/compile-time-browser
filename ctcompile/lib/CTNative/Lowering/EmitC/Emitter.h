@@ -140,6 +140,7 @@ struct lowering {
     // emitc.variable and no longer reads as a dense create_array.
     llvm::DenseSet<mlir::Operation *> vectorLengthReads;
     llvm::DenseSet<mlir::Operation *> vectorIndexReads;
+    llvm::DenseSet<mlir::Operation *> vectorIndexWrites;
     // THE RECEIVER LIFT. The alias groups, shared with admission, and per
     // lifted method the lvalue local its `%arg0` is copied into - the one
     // `ctn_x * self;` `self = v0;` pair that `emitc.member_of_ptr` needs.

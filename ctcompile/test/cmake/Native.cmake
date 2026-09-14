@@ -209,6 +209,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/struct.js" swap_answer)
   # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
   ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array.js" sum)
+  # Current own-contents evidence permits only bounded local Number overwrites.
+  ctcompile_add_native_pipeline(array_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved)
+  ctcompile_add_native_pipeline(array_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved NO_DEFAULT_OPTIMIZATIONS)
 
   add_test(NAME ctcompile_native_optimization_defaults
            COMMAND ${CMAKE_COMMAND}
