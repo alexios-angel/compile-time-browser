@@ -223,6 +223,9 @@ void lowering::declareGlobals() {
     if (needsString || needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
     }
+    if (needsString) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("iterator"), b.getUnitAttr());
+    }
     if (needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("exception"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableHelpers));

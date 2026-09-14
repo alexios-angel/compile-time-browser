@@ -336,6 +336,10 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
         if (nativeObjectFieldGroup(o) >= 0) { return identityField(o); }
+        if (carrierOf(typeOf(get.getObject())) == carrier::string &&
+            ctjs::constantKey(get.getKey()) == "length") {
+            return true;
+        }
         if (isVectorSite(get.getObject())) {
             // `length` is `size()`, exactly, BECAUSE the site proof is what
             // rules out a hole; every other key is an index, and the index

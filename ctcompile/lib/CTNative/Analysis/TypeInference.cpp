@@ -654,6 +654,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
     }
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && isProvedString(operands[0]) && constantKey(read.getKey()) == "length") {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{doubleType(c)}));
+        return mlir::success();
+    }
 
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {

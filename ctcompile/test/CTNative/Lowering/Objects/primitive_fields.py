@@ -23,11 +23,15 @@ def main():
         "absent": 12,
         "equality": 111,
         "borrowed-equality": 5,
+        "utf8-length": 7,
+        "empty-length": 0,
+        "unknown-property": 0,
     }.items():
         source = args.fixtures / f"{name}.js"
-        for command in ([args.node, "-e", NODE, str(source)], [args.reference, str(source)]):
-            assert run(command).stdout == f"a={expected}\n", name
-        if name == "equality":
+        node_expected = 4 if name == "utf8-length" else expected
+        assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={node_expected}\n", name
+        assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
+        if name in ("strings", "equality", "utf8-length", "empty-length"):
             checked += check_native(args, source, name, expected)
             continue
         raw = args.work / f"{name}.mlir"

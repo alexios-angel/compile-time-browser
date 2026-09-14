@@ -10,6 +10,16 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         eraseIfUnused(op);
     };
     const auto string = carrierType(context, carrier::string);
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && read.getObject().getType() == string) {
+        // Admission proved the length key before key constants were lowered.
+        // ND-1: the engine's String length counts its stored UTF-8 bytes.
+        auto size = callWithConstValueOperands(
+            b, where, mlir::TypeRange{ec::OpaqueType::get(context, "std::size_t")},
+            b.getStringAttr("std::size"), mlir::ValueRange{read.getObject()});
+        swap(ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0)));
+        return true;
+    }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);
         binary &&
         (binary.getKind() == ctjs::BinaryKind::Add ||

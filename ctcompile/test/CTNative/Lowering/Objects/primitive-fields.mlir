@@ -35,8 +35,7 @@ function borrowed() {
 }
 var a = borrowed();
 
-// String length is still a separate property-read lowering boundary. The
-// preserved cases above refuse; equality exercises storage independently.
+// Equality checks the saved owning bytes independently of length lowering.
 //--- equality.js
 function strings() {
     var left = {text: "a\0b"}, right = {text: "other"};
@@ -54,3 +53,19 @@ function borrowed() {
     return read(value) ? 5 : 0;
 }
 var a = borrowed();
+
+// ND-1 pins the engine's byte count separately from Node's UTF-16 count.
+//--- utf8-length.js
+function length() {
+    var value = {text: "é😀\0"};
+    return value.text.length;
+}
+var a = length();
+
+//--- empty-length.js
+function length() { var value = {text: ""}; return value.text.length; }
+var a = length();
+
+//--- unknown-property.js
+function property() { var value = {text: "abc"}; return value.text.other === void 0 ? 0 : 1; }
+var a = property();
