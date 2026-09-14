@@ -62,24 +62,27 @@ var m1 = mixed();
 
 // --- THE CLASSES ------------------------------------------------------------
 //
-// `{x: 4, bump: <fn>}` in `both` is the SAME `ctn_x` as `{x: 4}` in `passed` -
-// two sites, one class. The method field is not part of the shape key, and
-// being passed to a function does not add one either. CHECK-NEXT pins each
+// `{x: 4, bump: <fn>}` in `both` shares the `ctn_x` template with `{x: 4}` in
+// `passed`. Exact caller initialization proves a double in `passed`; the
+// stored method in `both` still needs nullable storage. Two sites instantiate
+// one class template with those two carriers. The method field is not part of
+// the shape key, and an argument adds no field either. CHECK-NEXT pins each
 // class to exactly its data, so a member for the method - or for a pointer, if
 // a future carrier ever tried to store one - fails the line after.
 //
 // CHECK:      emitc.class @ctn_x
-// CHECK-SAME: (2 sites)
-// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"ctnative::nullable_scalar">
+// CHECK-SAME: (2 sites, 2 instantiations)
+// CHECK-SAME: ctnative.template_params = ["T0"]
+// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"T0">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_a
-// CHECK-NEXT:   emitc.field @a : !emitc.opaque<"ctnative::nullable_scalar">
+// CHECK-NEXT:   emitc.field @a : f64
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_b
-// CHECK-NEXT:   emitc.field @b : !emitc.opaque<"ctnative::nullable_scalar">
+// CHECK-NEXT:   emitc.field @b : f64
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_k
-// CHECK-NEXT:   emitc.field @k : !emitc.opaque<"ctnative::nullable_scalar">
+// CHECK-NEXT:   emitc.field @k : f64
 // CHECK-NEXT: }
 
 // --- THE ADDRESS AT THE CALL SITE, AND THE SIGNATURE IT FEEDS ---------------
@@ -89,10 +92,10 @@ var m1 = mixed();
 // `emitc.address_of` the receiver uses, through the same lambda, which is what
 // stops the two drifting into two spellings of one thing.
 //
-// ONE OBJECT PARAMETER, ALONE: `double fn_2(ctn_x *)`.
+// ONE OBJECT PARAMETER, ALONE: `double fn_2(ctn_x<double> *)`.
 // CHECK:      emitc.func @passed_1
-// CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_x">>
-// CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> f64
+// CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_x<double>">>
+// CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x<double>">>) -> f64
 // CHECK:        emitc.member_of_ptr
 
 // --- THE RECEIVER AND AN ARGUMENT, ON ONE LITERAL ---------------------------
@@ -105,10 +108,10 @@ var m1 = mixed();
 // the method field by name.
 //
 // CHECK:      emitc.func @both_3
-// CHECK:        address_of %[[OBJ:[0-9]+]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
-// CHECK:        address_of %[[OBJ]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
-// CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: f64) -> f64
-// CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> f64
+// CHECK:        address_of %[[OBJ:[0-9]+]] : !emitc.lvalue<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>
+// CHECK:        address_of %[[OBJ]] : !emitc.lvalue<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>
+// CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>, %arg1: f64) -> f64
+// CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x<ctnative::nullable_scalar>">>) -> f64
 
 // --- TWO OBJECT PARAMETERS OF TWO SHAPES ------------------------------------
 //
