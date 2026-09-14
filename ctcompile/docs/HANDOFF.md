@@ -6,6 +6,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered static getters and forwarded fields, 2026-09-14 UTC
+
+Resumed the **18:31 / 18:38 / 18:52 AGENT-SYNC** thread explicitly abandoned
+at **18:56:17**. Seven dirty compiler/test files at **093dcd56** were preserved.
+Both histories and unmerged branches were checked; the September 7 WIP is already
+landed. Agents audited source controls, the forwarded field proof and getter safety.
+Getter agents reached service limits after leaving their findings; root completed
+those controls. No browser/runtime files changed.
+
+**f6ee9bea** admits local scalar static getters and same-constructor dependencies
+through the existing class preparation pass. It proves closure provenance, complete
+uses, no setters/captures/identity observations and an acyclic dependency graph.
+Every transitive clone is budgeted before mutation and expanded at its original
+read. Native type/ownership checks remain separate. Inherited/foreign receivers,
+object-valued getters and closure metadata collisions remain refused.
+
+Focused getter **1/1 lit55.50s / 3/3CTest0.40s PASS**; constructor/prototype
+controls separately passed **2/2 lit**. Class controls preserve **69 observations**
+and pass **152 native executions / 138 unprepared / 82 preparation refusals**;
+plain methods pass **16 native / 20 refusals**. Exact first-complete budgets are
+**100 / 164 / 206 / 204 / 186 / 200 / 264**. New metadata controls measure Node/VM
+**name1/0, length7/0, __home1/0**; `caller`/`arguments` measure **1/1** and retain
+conservative refusals. Original global-effect source is unchanged; its driver now
+checks both **a73/count3**. Stable whole formatting passes **825 C++ / 99 Python /
+33 web**; required pinned formatting has the byte-identical prior **nine-file /
+26-diagnostic** baseline. Evidence: `/tmp/ctcompile-getters-recover/`.
+
+**In flight:** the forwarded String draft's first native gate found the earlier
+object-argument ownership census still rejects forwarding. Its agent is completing
+that existing census and bound-call annotations; this work is not yet committed or
+validated. The full standard gate is pending a frozen final source tree.
+
+**Exact next Bootstrap boundary:** inherited instance/static receivers, default
+derived forwarding, lexical `super` and observable `this.constructor`, then DOM
+Data composition. Config's `Default` and `DefaultType` return fresh objects, beyond
+scalar getter expansion. Retained DOM/config payloads, dataset/disposal/event
+behavior, persistent actions and the application driver remain open. No full-bundle
+admission gain or WPT/test262 remeasurement is claimed from the local getter proof.
+
 ## Constructor methods and stored String fields, 2026-09-14 UTC
 
 Resumed the **16:55:23 / 16:59:50 AGENT-SYNC** constructor-method thread,

@@ -65,6 +65,16 @@ when methods exist. Method writes and replacement return objects remain excluded
 Every call stays within the supplied source; unresolved bindings, dynamic keys,
 reflection, captured functions and nested regions fail closed.
 
+Local static getters may return closed scalar expressions and read other proved
+getters on the same constructor. The complete dependency graph must be acyclic;
+the work budget charges every transitive clone before any mutation. Expansion
+happens at each original read, preserving surrounding evaluation order. Getter
+closures must have one creation site, no captures, no setter and no observed
+callable identity. Inherited/foreign receivers and object-valued getters still
+refuse. Closure metadata keys `name`, `length`, `__home`, `caller` and `arguments`
+remain excluded. The first three have independently measured Node/interpreter
+disagreements; the last two retain the conservative metadata boundary.
+
 After every check succeeds, the pass removes the unused helper and unobservable
 home/backedge setup while preserving prototype method definitions. It also discards
 supplied native reports. Native lowering checks constructor identity, construction

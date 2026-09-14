@@ -59,6 +59,14 @@ now execute as native C++ with results **8 / 132**. The expanded class gate pass
 **104 native executions / 88 unprepared / 50 preparation refusals**, plus ordinary
 method controls. The local proof remains capture-free and does not prepare Button.
 
+**f6ee9bea** admits local scalar static getter chains under that same complete
+class/host proof. Getter dependencies are acyclic and clone work is bounded before
+mutation; every expansion stays at its original read. The class gate now passes
+**152 native executions / 138 unprepared / 82 preparation refusals**, preserving
+**69 source observations**. Static metadata collisions remain refused with separate
+Node/interpreter controls. Bootstrap's inherited receivers and object-valued
+`Default`/`DefaultType` getters are beyond this local scalar proof.
+
 **Next compiler boundary: inherited instance and static-getter receivers**, default
 derived forwarding, lexical `super` and observable `this.constructor`; then compose
 with DOM Data ownership. BaseComponent calls `_getConfig` during construction and
