@@ -51,24 +51,27 @@ reusing the existing receiver fixpoint. Nested mutation, argument evaluation ord
 independent instances and unused receivers pass **72 class native executions**;
 the expanded source gate retains **72 unprepared / 42 preparation refusals**.
 
-**Next compiler boundary: constructor method receivers, then inherited receivers**,
-followed by composition with DOM Data ownership. BaseComponent calls `_getConfig`
-inside construction. Methods must be available before the body runs; current
-prepared bindings are installed afterward. `makesAnInstance`, method resolution,
-receiver admission and the scalar-field environment must consume compatible proof
-without assuming constructor admission circularly. The preserved constructor-call
-and nested-order sources observe **8 / 132** in Node and the interpreter and still
-refuse native preparation. Config's local method-chain prerequisite is narrower
-than its full inheritance, capture and configuration obligations.
-Default derived construction forwards through `super`; inherited static getters,
-`this.constructor`, lexical home and `new.target` are separate obligations.
+**1fa7709e** makes immutable methods available during construction. The exact
+prototype seeds the existing receiver fixpoint after preliminary constructor checks;
+full constructor/method admission still gates lowering. Later instance stores never
+supply earlier constructor methods. The preserved constructor-call/order sources
+now execute as native C++ with results **8 / 132**. The expanded class gate passes
+**104 native executions / 88 unprepared / 50 preparation refusals**, plus ordinary
+method controls. The local proof remains capture-free and does not prepare Button.
+
+**Next compiler boundary: inherited instance and static-getter receivers**, default
+derived forwarding, lexical `super` and observable `this.constructor`; then compose
+with DOM Data ownership. BaseComponent calls `_getConfig` during construction and
+observes `DATA_KEY`. Config merges defaults/dataset/config and reads inherited
+`DefaultType`/`NAME`. These source operations cannot be erased. The interpreter's
+static-inheritance discrepancy remains separately measured.
 
 **3d45614c** now admits the unchanged `prototype-written.js` source through a
 complete local immutable scalar-prototype census. Defaults initialize fresh fields
 before constructor execution; inherited and constructor reads, conditional shadowing,
 borrowed receivers and independent Number/Boolean instances pass 40 native executions.
-The full constructor proof controls receiver eligibility. The combined 24 refusals
-retain inherited methods, late/alias/replacement mutation, new.target, constructor
+The full constructor proof controls receiver eligibility. The original inherited-method source now executes unchanged under **1fa7709e**.
+Remaining refusals retain late/alias/replacement mutation, new.target, constructor
 arguments, arrows, the mutable helper and unsupported String/Null/Undefined field storage.
 `unwritten-key.js` still refuses its inherited constructor observation. **158f1fef**
 rejects constructing unused-this arrows. Its preserved source exposes another oracle
@@ -84,8 +87,10 @@ the unchanged original length source. ND-1's Unicode byte count remains separate
 measured against Node. **be8781ac** now carries definite String fields across one
 closed direct object-argument borrow, with exact initialization before every call
 and all callee writes retained in the type join. Saved strings own their bytes.
-Stored methods, forwarded parameters and mixed/possibly absent String storage
-remain separate proofs. See HANDOFF for this session's current gate status.
+**3e494a80** also proves stored-method callable provenance, keeping initialization
+at every actual direct call and all callee writes in the type join. The String gate
+passes **96 native executions / 30 refusals**. Forwarded parameters and mixed/possibly
+absent String storage remain separate proofs. See HANDOFF for current gate status.
 
 HostContract now accepts the helper's explicitly declared initial identity as well
 as Map and Array. The local class pass accepts only its helper declaration; the

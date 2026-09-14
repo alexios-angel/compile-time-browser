@@ -6,6 +6,65 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor methods and stored String fields, 2026-09-14 UTC
+
+Resumed the **16:55:23 / 16:59:50 AGENT-SYNC** constructor-method thread,
+explicitly abandoned at **17:01:40**. The starting tree at **8f8c39a7** contained
+its two dirty constructor-control fixtures; both were preserved and finished.
+Both histories and unmerged branches were checked; `codex-wip-20260907` is already
+an ancestor. Agents completed source controls and an independent proof review.
+The String agent hit a service limit after a draft; root completed and gated it.
+No browser/runtime files changed.
+
+**1fa7709e** preserves immutable prototype methods until constructor lowering,
+so they are available before the body executes. A preliminary constructor check
+proves every obligation except receiver resolution. The existing receiver fixpoint
+is seeded from the exact prototype, never from later instance stores; full
+constructor admission then checks receiver uses and every method dependency.
+Method fields become direct calls and have no runtime storage. Whole-module key
+mutation and callable-read censuses prevent erasing observed identities.
+Already lifted methods are tracked by an invocation-owned set, not input attributes.
+All prototype writes must precede every construction, including class syntax that
+attaches the prototype before defining methods.
+
+The class gate preserves **44 source observations**, with **104 native executions /
+88 unprepared refusals / 50 preparation refusals**. Original constructor-call/order
+results remain **8 / 132**; chain/constant controls observe **48 / 7**. Four source
+shapes test exact work cutoffs, malformed nested IR, duplicate closures and forged
+reports. Plain methods add **16 native executions / 20 refusals**, including method
+identity after a real call, replacement, and late constructor method stores.
+The unchanged original `inherited-call.js` now passes **eight native executions**.
+
+**3e494a80** completes callable-use evidence for residual stored methods: every
+numeric closure use must be unobservable storage in a closed local alias group,
+with no remaining read of its callable key. Complete symbol-call census and exact
+initialization before every actual call remain mandatory. All callee writes stay
+in the type join. Original `borrowed-method.js` now executes unchanged; the String
+group passes **96 native executions / 30 refusals**, including saved NUL-containing
+strings across mutation and multiple receivers. Mixed, absent, escaping and
+forwarded fields remain refused. The existing numeric object-argument fixture keeps
+its JavaScript and shared-address checks, now with one `ctn_x` holding a `double`.
+No EscapeAnalysis transfer or array lifetime permissions changed.
+
+Focused **4/4 lit in 38.88s / 3/3 CTests in 0.84s PASS**; the field-carrier structural
+check passed separately in **0.04s**. Stable formatting passes **825 C++ / 99 Python /
+33 web**; the required pinned formatter retains the byte-identical previous
+**nine-file / 26-diagnostic** baseline. The standard full devbox build and CTest gate
+are **running**, with frozen source hashes and logs in
+`/tmp/ctcompile-constructor-finish/`. Do not treat that pending full run as a pass.
+
+**Exact next Bootstrap boundary:** inherited instance methods and static getter
+receivers, default derived forwarding/lexical `super`, and observable
+`this.constructor` must share a sound provenance proof. BaseComponent invokes its
+inherited configuration chain inside construction and reads `DATA_KEY`; Config
+merges defaults/dataset/config and reads inherited `DefaultType`/`NAME`. Then compose
+with DOM Data ownership. Retained DOM/config payloads, dataset extraction, disposal
+and event writes, persistent actions and the application driver remain open.
+The original Button/static-inheritance interpreter discrepancy remains unchanged.
+Independent String continuation is forwarded borrows and mixed/optional storage.
+No full-Bootstrap admission gain is inferred from these local proofs; fresh bundle,
+Data, Button and escape measurements await the running full gate. Nothing was pushed.
+
 ## Chained methods and borrowed String fields, 2026-09-14 UTC
 
 Started clean **48a3d5c7** and resumed the **15:54:49 AGENT-SYNC** method-chain

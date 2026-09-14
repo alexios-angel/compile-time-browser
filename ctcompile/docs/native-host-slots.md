@@ -59,21 +59,26 @@ unique ordinary methods. Methods have no captures, identity or lexical-home
 observations; their receivers read/write ordinary fields or call another proved
 method on that same receiver. Method reads must be used only as direct callees;
 passing or returning the receiver and observing a method identity still refuse.
-Every instance method read must feed its own receiver call. A constructor cannot
-read or write method keys and must return a primitive constant when methods exist.
-This excludes replacement return objects before any method bindings move.
+Every instance method read must feed its own receiver call. Constructors may call
+those immutable methods on the same receiver and must return a primitive constant
+when methods exist. Method writes and replacement return objects remain excluded.
 Every call stays within the supplied source; unresolved bindings, dynamic keys,
 reflection, captured functions and nested regions fail closed.
 
 After every check succeeds, the pass removes the unused helper and unobservable
-prototype/home setup, then installs each method immediately after construction.
-It also discards supplied native reports. Ordinary native constructor, method,
-type and ownership admission run independently. The method census verifies
-initialization order and conservatively rejects any other write to a method key
-anywhere in the module. Native construction owns its local struct by value;
-method calls become ordinary free functions with borrowed receiver pointers.
+home/backedge setup while preserving prototype method definitions. It also discards
+supplied native reports. Native lowering checks all constructor obligations except
+receiver resolution before seeding the receiver fixpoint from the exact prototype.
+Later instance stores cannot seed that constructor receiver. Full constructor and
+method admission then verify each dependency; only methods proved during this
+invocation count as already lifted. Whole-module method-key mutation and read
+censuses exclude replacement and callable identity observations. The prototype
+fields are removed only after the proof: methods become direct calls with no runtime
+field, and scalar defaults initialize the local struct before constructor execution.
+Type and ownership admission remain independent. Native construction owns its local
+struct by value; free functions borrow receiver pointers.
 
-Constructor method calls, inheritance, executable field initializer closures, observable
+Inheritance, executable field initializer closures, observable
 constructor identity, prototype mutation and retained receivers still refuse.
 The pass does not yet compose with the DOM Data session or prepare the original
 Bootstrap Button. The original mutable-helper and inherited-getter runtime
