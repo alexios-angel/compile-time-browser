@@ -44,19 +44,31 @@ VM comparisons and wrong-observation controls. Independent Node observations are
 Stable formatter **824 C++ / 91 Python / 33 web PASS**; the required pinned check
 retains the byte-identical prior nine-file / 26-diagnostic baseline.
 
-The frozen full standard devbox gate is **running**, with **1,424 source inputs**.
-Evidence is under `/tmp/ctcompile-dom-owner-complete/`. The last completed full
-Bootstrap measurement remains **19/574 native / 0 of 43 globals**; no fresh vendor
-or full-suite result is claimed yet.
+Final standard devbox gate: **271-step build / 597/597 CTests PASS in
+1221.95s**, including **171/171 lit in 844.66s**. All **1,424 frozen inputs**
+match local source and the tested devbox. Full ownership passes in **344.51s**,
+native DOM in **275.16s**, owned DOM in **81.09s** and existing Data in **50.89s**.
+Evidence: `/tmp/ctcompile-dom-owner-complete/{full.log,full-last-test.log,measured.json}`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skips/prunes. Data remains **3,218 source bytes / 7/7 functions / 23 direct
+calls / 19 observations / three source outer keys**. Native DOM remains
+**18 entries / 42 refusals**; owned DOM remains **three sources / five retention
+refusals**, with generated-client ASan/UBSan against ordinary browser libraries.
+The complete escape oracle remains **222 functions / 861 claims / 895 sites /
+35 unclaimed / zero violations / precision 40 of 172**. The full gate covers
+browser and compiler tests; no WPT/test262 score remeasurement, runtime edit or
+push occurred.
 
 **Exact next native boundary:** integrate the complete owner/input proof into
 private Data storage inside the nonmovable atoms/document owner. In
 `LowerToEmitC.cpp`, omit only the proved inert wrapper in a private clone and
 reprove its transformed fingerprint. Replace the shared root/table/capture
 carriers from `OwnedGlobals.cpp` and `MethodTables.cpp`; do not just remove the
-provider refusal. Admit exact element-key carriers and ordering, keep every
-owner domain check before any node validation/effect, and keep scalar observations
-private to each session. Preserve source allocation/reset on every invocation.
+provider refusal. `LoweringSupport.cpp::mapKeySpelling` and stored callable
+signatures also need exact element carriers and ordering. Keep every owner domain
+check before any node validation/effect, and keep scalar observations private to
+each session. Preserve source allocation/reset on every invocation.
 Then run the real-document alias, retained/detached-key, foreign/dangling-owner,
 interleaving and teardown gate, including the no-snapshot associative case.
 Original nested Bootstrap Data, components, callbacks and the driver follow.
