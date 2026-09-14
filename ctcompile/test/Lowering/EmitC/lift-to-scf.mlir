@@ -103,14 +103,17 @@ ctjs.func @counter(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // literal it is a refusal, because its shape is no longer closed (part 24
 // Phase 56B, obligation O-3). The pass drops the argument first - a trivial
 // phi, Braun et al. 2013 §3.1 - so the loop carries the counter and its
-// post-loop export and nothing else.
+// post-loop export and nothing else. Guard recovery now lets the upstream SCF
+// rewrite merge those duplicate counter slots, leaving one loop argument/result.
 //
 // PROVED LOAD-BEARING: with dropSelfCarriedArguments removed from the pass,
-// this scf.while has four operands and four results, and this line is red.
+// the invariant would remain loop-carried. The report above still checks the
+// CFG removal itself; this shape also checks the subsequent SCF cleanup.
 //
 // CHECK-LABEL: ctjs.func @invariant
 // CHECK-NOT: cf.br
-// CHECK: scf.while ({{.*}}) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value)
+// CHECK: %[[COUNTER:.*]] = scf.while ({{.*}}) : (!ctjs.value) -> !ctjs.value
+// CHECK: ctjs.binary add %[[COUNTER]], %arg4
 ctjs.func @invariant(%receiver: !ctjs.value, %new_target: !ctjs.value,
                      %callee: !ctjs.value, %n: !ctjs.value, %m: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -152,4 +155,276 @@ ctjs.func @guarded(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %b
 ^pad(%p: !ctjs.value):
   ctjs.return %p
+}
+
+// Recover only the importer's exact 1/0 Boolean mux. The upstream while
+// rewrite preserves the guarded effect in the body, after the condition.
+// CHECK-LABEL: ctjs.func @flag_guard
+// CHECK: scf.while
+// CHECK-NOT: scf.if
+// CHECK: scf.condition
+// CHECK: do {
+// CHECK: ctjs.store_global "step"
+// CHECK-NOT: arith.trunci
+// CHECK: ctjs.return
+ctjs.func @flag_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                     %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %result = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %step = ctjs.unary neg %value
+      ctjs.store_global "step", %step
+      scf.yield %step, %one : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  ctjs.return %result
+}
+
+// Two truncates to false, so these flags cannot inherit the branch guard.
+// CHECK-LABEL: ctjs.func @non_boolean_guard
+// CHECK: scf.if
+// CHECK: ctjs.store_global "step"
+// CHECK: arith.trunci
+// CHECK: scf.condition
+ctjs.func @non_boolean_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %two = arith.constant 2 : i32
+  %zero = arith.constant 0 : i32
+  %result = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %step = ctjs.unary neg %value
+      ctjs.store_global "step", %step
+      scf.yield %step, %two : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  ctjs.return %result
+}
+
+// An exit effect must remain in the header, even when the flags are Boolean.
+// CHECK-LABEL: ctjs.func @exit_effect
+// CHECK: scf.if
+// CHECK: else
+// CHECK: ctjs.store_global "exit"
+// CHECK: scf.condition
+ctjs.func @exit_effect(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                      %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %result = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %step = ctjs.unary neg %value
+      scf.yield %step, %one : !ctjs.value, i32
+    } else {
+      ctjs.store_global "exit", %value
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  ctjs.return %result
+}
+
+// Repeated if results must not reach the upstream all-uses replacement bug.
+// CHECK-LABEL: ctjs.func @duplicate_guard
+// CHECK: %[[DUP:.*]]:2 = scf.if
+// CHECK: arith.trunci %[[DUP]]#1
+// CHECK: scf.condition({{.*}}) %[[DUP]]#0, %[[DUP]]#0
+// CHECK: ctjs.store_global "left"
+// CHECK: ctjs.store_global "right"
+ctjs.func @duplicate_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                          %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %result:2 = scf.while (%value = %n) : (!ctjs.value) -> (!ctjs.value, !ctjs.value) {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %step = ctjs.unary neg %value
+      scf.yield %step, %one : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next, %next : !ctjs.value, !ctjs.value
+  } do {
+  ^body(%left: !ctjs.value, %right: !ctjs.value):
+    ctjs.store_global "left", %left
+    ctjs.store_global "right", %right
+    scf.yield %left : !ctjs.value
+  }
+  ctjs.return %result#0
+}
+
+// Normalizing one loop must not visit an unrelated already-Boolean loop.
+// CHECK-LABEL: ctjs.func @unrelated_duplicate_guard
+// CHECK: scf.while
+// CHECK-NOT: scf.if
+// CHECK: scf.condition
+// CHECK: scf.while
+// CHECK: %[[NEXT:.*]] = scf.if
+// CHECK: scf.condition({{.*}}) %[[NEXT]], %[[NEXT]]
+// CHECK: ctjs.store_global "left"
+// CHECK: ctjs.store_global "right"
+ctjs.func @unrelated_duplicate_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                                    %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %first = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %step = ctjs.unary neg %value
+      scf.yield %step, %one : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  %result:2 = scf.while (%value = %first) : (!ctjs.value) -> (!ctjs.value, !ctjs.value) {
+    %guard = ctjs.truthy %value
+    %next = scf.if %guard -> !ctjs.value {
+      %step = ctjs.unary neg %value
+      scf.yield %step : !ctjs.value
+    } else {
+      scf.yield %value : !ctjs.value
+    }
+    scf.condition(%guard) %next, %next : !ctjs.value, !ctjs.value
+  } do {
+  ^body(%left: !ctjs.value, %right: !ctjs.value):
+    ctjs.store_global "left", %left
+    ctjs.store_global "right", %right
+    scf.yield %left : !ctjs.value
+  }
+  ctjs.return %result#0
+}
+
+// Moving the outer then block must not admit an unsafe nested while to the
+// greedy worklist without a fresh check at the actual pattern application.
+// CHECK-LABEL: ctjs.func @nested_duplicate_guard
+// CHECK: scf.while
+// CHECK-NOT: scf.if
+// CHECK: scf.condition
+// CHECK: do {
+// CHECK: scf.while
+// CHECK: %[[INNER:.*]] = scf.if
+// CHECK: scf.condition({{.*}}) %[[INNER]], %[[INNER]]
+// CHECK: ctjs.store_global "left"
+// CHECK: ctjs.store_global "right"
+ctjs.func @nested_duplicate_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                                 %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %result = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %inner:2 = scf.while (%current = %value) : (!ctjs.value) -> (!ctjs.value, !ctjs.value) {
+        %innerGuard = ctjs.truthy %current
+        %step = scf.if %innerGuard -> !ctjs.value {
+          %negative = ctjs.unary neg %current
+          scf.yield %negative : !ctjs.value
+        } else {
+          scf.yield %current : !ctjs.value
+        }
+        scf.condition(%innerGuard) %step, %step : !ctjs.value, !ctjs.value
+      } do {
+      ^innerBody(%left: !ctjs.value, %right: !ctjs.value):
+        ctjs.store_global "left", %left
+        ctjs.store_global "right", %right
+        scf.yield %left : !ctjs.value
+      }
+      scf.yield %inner#0, %one : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  ctjs.return %result
+}
+
+// An inner loop's simplification can introduce duplicate forwarding while
+// its parent is already on the worklist. Revalidate before every match.
+// CHECK-LABEL: ctjs.func @collapsed_duplicate_guard
+// CHECK: scf.while
+// CHECK-NOT: scf.if
+// CHECK: scf.condition
+// CHECK: scf.while
+// CHECK: %[[COLLAPSED:.*]] = scf.if
+// CHECK: scf.condition({{.*}}) %[[COLLAPSED]], %[[COLLAPSED]]
+// CHECK: ctjs.store_global "left"
+// CHECK: ctjs.store_global "right"
+ctjs.func @collapsed_duplicate_guard(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                                    %callee: !ctjs.value, %n: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %one = arith.constant 1 : i32
+  %zero = arith.constant 0 : i32
+  %first = scf.while (%value = %n) : (!ctjs.value) -> !ctjs.value {
+    %guard = ctjs.truthy %value
+    %next, %continue = scf.if %guard -> (!ctjs.value, i32) {
+      %step = ctjs.unary neg %value
+      scf.yield %step, %one : !ctjs.value, i32
+    } else {
+      scf.yield %value, %zero : !ctjs.value, i32
+    }
+    %bit = arith.trunci %continue : i32 to i1
+    scf.condition(%bit) %next : !ctjs.value
+  } do {
+  ^body(%carried: !ctjs.value):
+    scf.yield %carried : !ctjs.value
+  }
+  %result:2 = scf.while (%value = %first) : (!ctjs.value) -> (!ctjs.value, !ctjs.value) {
+    %guard = ctjs.truthy %value
+    %next = scf.if %guard -> !ctjs.value {
+      %step = ctjs.unary neg %value
+      scf.yield %step : !ctjs.value
+    } else {
+      scf.yield %value : !ctjs.value
+    }
+    %stop = arith.constant false
+    %alias = scf.while (%copy = %next) : (!ctjs.value) -> !ctjs.value {
+      scf.condition(%stop) %copy : !ctjs.value
+    } do {
+    ^copyBody(%copy: !ctjs.value):
+      scf.yield %copy : !ctjs.value
+    }
+    scf.condition(%guard) %next, %alias : !ctjs.value, !ctjs.value
+  } do {
+  ^body(%left: !ctjs.value, %right: !ctjs.value):
+    ctjs.store_global "left", %left
+    ctjs.store_global "right", %right
+    scf.yield %left : !ctjs.value
+  }
+  ctjs.return %result#0
 }

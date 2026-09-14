@@ -1,19 +1,18 @@
-// Preserve this called source as the next contents-to-native boundary.
-// A dominating direct array now has a bounded read-only contents certificate,
-// but the importer puts the body in an scf.if inside the scf.while header.
-// That nested control (and its poison/arith flag transport) is not certified.
-// Do not weaken the complete contents proof to accept only the initial write.
-// Measured before/after the direct-array proof: 0/2 native, both policies.
+// The unchanged called source now uses the existing bounded contents proof:
+// LiftToSCF recovers the exact 1/0 guard and upstream moves the guarded body
+// out of the header. No poison, nested header control or escape exemption.
+// Both policies also run through the registered native differential gate.
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Objects/array-overwrite-loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Objects/array-overwrite-loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s
-// CHECK-NOT: emitc.func
-// CHECK: ctjs.func @_script_$0
-// CHECK-SAME: ctnative.not_native
-// CHECK: ctjs.func private @overwritten_loop$1
-// CHECK-SAME: ctnative.not_native = "an array literal written through an index
-// CHECK: ctjs.set_property
+// CHECK-NOT: ctnative.not_native
+// CHECK: emitc.func @main()
+// CHECK: emitc.func @overwritten_loop_1()
+// CHECK: std::vector<double>
+// CHECK: verbatim "{}[static_cast<std::vector<double>::size_type>({})] = {};"
 // CHECK: scf.while
-// CHECK: scf.if
+// CHECK-NOT: scf.if
 // CHECK: scf.condition
-// CHECK-NOT: emitc.func
+// CHECK: do {
+// CHECK: call_opaque "ctnative::vec_at"
+// CHECK-NOT: ctnative.not_native

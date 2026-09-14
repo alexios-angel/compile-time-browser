@@ -212,6 +212,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   # Current own-contents evidence permits only bounded local Number overwrites.
   ctcompile_add_native_pipeline(array_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved)
   ctcompile_add_native_pipeline(array_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved NO_DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_pipeline(array_overwrite_loop "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js")
+  ctcompile_add_native_pipeline(array_overwrite_loop_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js" NO_DEFAULT_OPTIMIZATIONS)
 
   add_test(NAME ctcompile_native_optimization_defaults
            COMMAND ${CMAKE_COMMAND}

@@ -35,13 +35,19 @@
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/CFGToSCF.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/DenseSet.h"
+
+#include <memory>
 
 namespace ctcompile::ctjs {
 
@@ -148,6 +154,86 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
         }
     }
     return dropped;
+}
+
+// WhileMoveIfDown replaces all uses while visiting condition operands. A
+// repeated if result would hide its later occurrences, leaving those body
+// arguments carrying the else value. Other rewrites can introduce aliases or
+// move nested loops, so guard each pattern application on the current IR.
+bool safeWhileInputs(mlir::scf::WhileOp loop) {
+    llvm::DenseSet<mlir::Value> forwarded;
+    for (mlir::Value value : loop.getConditionOp().getArgs()) {
+        if (value.getDefiningOp<mlir::scf::IfOp>() && !forwarded.insert(value).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct CheckedWhilePattern : mlir::RewritePattern {
+    explicit CheckedWhilePattern(std::unique_ptr<mlir::RewritePattern> original)
+        : RewritePattern(mlir::scf::WhileOp::getOperationName(), original->getBenefit(),
+                         original->getContext()),
+          original(std::move(original)) {}
+
+    mlir::LogicalResult matchAndRewrite(mlir::Operation * operation,
+                                        mlir::PatternRewriter & rewriter) const override {
+        if (!safeWhileInputs(llvm::cast<mlir::scf::WhileOp>(operation))) { return mlir::failure(); }
+        return original->matchAndRewrite(operation, rewriter);
+    }
+
+    std::unique_ptr<mlir::RewritePattern> original;
+};
+
+// CFG reconstruction encodes a loop's guard as an if result (1/0), then
+// truncates it back to i1. Recover that exact Boolean identity so upstream's
+// WhileMoveIfDown can put the guarded body in the after region. Neither arm's
+// effects move here, and non-Boolean flags keep their original control flow.
+mlir::FailureOr<bool> recoverLoopGuards(mlir::FunctionOpInterface function,
+                                        mlir::IRRewriter & rewriter) {
+    bool recovered = false;
+    function->walk([&](mlir::scf::WhileOp loop) {
+        auto condition = loop.getConditionOp();
+        auto truncate = condition.getCondition().getDefiningOp<mlir::arith::TruncIOp>();
+        auto result =
+            truncate ? llvm::dyn_cast<mlir::OpResult>(truncate.getIn()) : mlir::OpResult{};
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch || !truncate.getType().isInteger(1) || !truncate->hasOneUse() ||
+            truncate->getNextNode() != condition || branch->getNextNode() != truncate ||
+            !branch.elseBlock() || !llvm::all_of(branch->getUsers(), [&](mlir::Operation * user) {
+                return user == truncate || user == condition;
+            })) {
+            return;
+        }
+        const auto flag = [&](mlir::scf::YieldOp yield, unsigned expected) {
+            auto constant =
+                yield.getOperand(result.getResultNumber()).getDefiningOp<mlir::arith::ConstantOp>();
+            auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                    : mlir::IntegerAttr{};
+            return integer && integer.getValue() == expected;
+        };
+        if (!flag(branch.thenYield(), 1) || !flag(branch.elseYield(), 0)) { return; }
+        if (!safeWhileInputs(loop)) { return; }
+        rewriter.replaceOp(truncate, branch.getCondition());
+        recovered = true;
+    });
+    if (!recovered) { return false; }
+    // Only checked SCF while patterns; never CTJS folding or IfOp's
+    // arbitrary-type select conversion. DCE removes the inert mux constants.
+    mlir::RewritePatternSet patterns(function->getContext());
+    mlir::scf::WhileOp::getCanonicalizationPatterns(patterns, function->getContext());
+    for (auto & pattern : patterns.getNativePatterns()) {
+        pattern = std::make_unique<CheckedWhilePattern>(std::move(pattern));
+    }
+    mlir::GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(mlir::GreedySimplifyRegionLevel::Disabled)
+        .enableFolding(false)
+        .enableConstantCSE(false);
+    if (mlir::failed(mlir::applyPatternsGreedily(function, std::move(patterns), config))) {
+        return mlir::failure();
+    }
+    return true;
 }
 
 struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
@@ -274,9 +360,12 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     }
                     changed |= *lifted;
                 }
+                const auto normalized = recoverLoopGuards(body, rewriter);
+                if (mlir::failed(normalized)) { return mlir::WalkResult::interrupt(); }
+                changed |= *normalized;
                 return mlir::WalkResult::advance();
             });
-        (void)walked;
+        if (walked.wasInterrupted()) { signalPassFailure(); }
 
         if (report) {
             getOperation()->emitRemark()
