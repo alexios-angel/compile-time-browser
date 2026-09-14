@@ -16,6 +16,20 @@ DOM containment and Style matching/closest, including Bootstrap's delegated
 Style engine and keep nullable closest results local to identity comparisons.
 The shared closest implementation preserves `:scope` and shadow boundaries.
 
+The separate `closed-source-session-v1` provider now uses the same manifest fields
+and complete source ownership proof as `closed-source-v1`, and additionally requires
+a captured method table. It emits Data methods as members of a noncopyable,
+nonmovable table, with private capture tuples. Every source method read must feed
+its proved direct call; an extracted callable cannot carry the captures away.
+The existing `closed-source-v1` owning-callable contract stays available.
+
+This completes the method-call prerequisite for a Data + DOM session. The new
+provider still uses the existing owning Map/object carriers and accepts no DOM
+parameters or keys. Owning atoms, document, then Data state in a single session
+and proving document-domain key provenance remain the next browser boundary.
+The registered `ctcompile_native_data_session` gate uses the same pinned Data
+probe, with direct call order, typed Node/VM observations and lifetime checks.
+
 ## What is measured
 
 | Gate | What it establishes | What remains outside it |
@@ -54,8 +68,9 @@ show only each function's first failure; fixing one exposes its downstream failu
    The current Data probe permits extracted callables to outlive their owner;
    borrowing an element into that carrier would dangle. Also, `document` borrows
    its atom table. Prove a nonmovable session owning atoms, document, then Data
-   state in that declaration order, with direct/member calls that cannot escape
-   independently. Keep this distinct from the existing owning Data-callable
+   state in that declaration order. The separate session provider has established
+   direct/member calls that cannot escape independently; extend that proof with
+   document ownership. Keep this distinct from the existing owning Data-callable
    contract, and give DOM keys their own provenance instead of treating them as
    source-created ordinary objects.
    Reuse `ctbrowser::document` and `node_id` from the public DOM API. Bind their
@@ -125,7 +140,8 @@ not add compiler DOM types or increase native Bootstrap admission.
 
 ## Parallel work worth doing
 
-- Compiler: nonescaping Data + DOM session ownership; then the exact
+- Compiler: atoms/document ownership and DOM-key provenance in the direct-method
+  Data session; then the exact
   constructor/prototype/receiver proof required by Button.
 - Browser, in a claimed isolated worktree: shared event/timer behavior and typed
   callback ownership beyond the current token/attribute/selector APIs. Preserve

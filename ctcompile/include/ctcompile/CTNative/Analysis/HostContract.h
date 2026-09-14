@@ -25,6 +25,10 @@ struct HostRootRequest {
 struct HostContract {
     enum class Provider {
         closedSource,
+        // The same closed source proof, with a captured method table whose
+        // generated methods remain attached to their nonmovable owner.
+        // This does not authorize DOM keys or externally retained callbacks.
+        closedSourceSession,
         ctbrowserDOM
     };
     Provider provider = Provider::closedSource;

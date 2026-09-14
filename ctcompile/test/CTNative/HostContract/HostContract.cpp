@@ -12,6 +12,47 @@ using namespace ctcompile::test::host_contract;
 
 namespace {
 
+void checkSessionProvider(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(callableFixture, &context);
+    check(static_cast<bool>(module), "session provider fixture parses");
+    if (!module) { return; }
+    const std::string json = "{\"version\":1,\"provider\":\"closed-source-session-v1\","
+                             "\"module_sha256\":\"" +
+                             hostContractFingerprint(*module) +
+                             "\",\"entry\":\"script$0\","
+                             "\"roots\":[{\"binding\":\"host\",\"properties\":[\"slot\"]}],"
+                             "\"observations\":[\"trace\"],\"absent_bindings\":[],"
+                             "\"undefined_bindings\":[]}";
+    auto parsed = parseHostContract(json);
+    check(parsed && parsed->provider == HostContract::Provider::closedSourceSession &&
+              parsed->roots.size() == 1 && parsed->elementParameters.empty(),
+          "session provider is explicit and preserves the closed-source declaration");
+    if (!parsed) {
+        llvm::consumeError(parsed.takeError());
+        return;
+    }
+    check(HostContractAnalysis(*module, *parsed).proved(),
+          "session provider reuses the complete host proof before stricter owner admission");
+    auto ordinary =
+        parseHostContract(replaced(json, "closed-source-session-v1", "closed-source-v1"));
+    check(ordinary && ordinary->provider == HostContract::Provider::closedSource &&
+              HostContractAnalysis(*module, *ordinary).proved(),
+          "ordinary closed-source declarations retain their owning-callable contract");
+    if (!ordinary) { llvm::consumeError(ordinary.takeError()); }
+    for (llvm::StringRef extra : {"\"element_parameters\":[0]", "\"cpp_type\":\"element_ref\"",
+                                  "\"owning_callables\":false"}) {
+        auto invalid = parseHostContract(replaced(json, "\"roots\"", (extra + ",\"roots\"").str()));
+        check(!invalid, "session parser accepts no DOM positions or unchecked carrier promises");
+        if (!invalid) { llvm::consumeError(invalid.takeError()); }
+    }
+    auto mixed = *parsed;
+    mixed.elementParameters = {0};
+    check(!HostContractAnalysis(*module, mixed).proved() &&
+              !DOMEntryAnalysis(*module, mixed).proved(),
+          "typed session input cannot combine borrowed DOM and closed-source ownership");
+}
+
 void checkDOMEntry(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     constexpr const char * source = R"MLIR(
@@ -792,6 +833,7 @@ int main() {
     checkCallables(context);
     checkCapturedCallables(context);
     checkDOMEntry(context);
+    checkSessionProvider(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
 }

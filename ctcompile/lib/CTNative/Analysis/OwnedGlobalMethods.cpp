@@ -29,6 +29,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     auto capture = host.callables().empty() ? std::optional<HostCapturedMap>{}
                                             : host.callables().front().capturedMap;
+    if (contract.provider == HostContract::Provider::closedSourceSession && !capture) {
+        reject("closed-source session requires a captured method table");
+        return;
+    }
     // An indirect factory has already passed the complete live host proof:
     // its unique wrapper callback produces this exact captured allocation.
     auto factory = directFactory ? directFactory.getTarget()

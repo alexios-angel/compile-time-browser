@@ -72,8 +72,10 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     }
     if (object->getInteger("version") != 1) { return error("unsupported host contract version"); }
     const bool dom = object->getString("provider") == "ctbrowser-dom-v1";
-    if (!dom && object->getString("provider") != "closed-source-v1") {
-        return error("unsupported host provider; expected closed-source-v1 or ctbrowser-dom-v1");
+    const bool session = object->getString("provider") == "closed-source-session-v1";
+    if (!dom && !session && object->getString("provider") != "closed-source-v1") {
+        return error("unsupported host provider; expected closed-source-v1, "
+                     "closed-source-session-v1 or ctbrowser-dom-v1");
     }
     if (dom ? !keys(*object,
                     {"version", "provider", "module_sha256", "entry", "element_parameters"})
@@ -92,6 +94,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         return error("host contract requires a lowercase SHA-256, entry symbol and roots");
     }
     HostContract result;
+    if (session) { result.provider = HostContract::Provider::closedSourceSession; }
     result.moduleSha256 = digest->str();
     result.entry = entry->str();
     if (dom) {
@@ -603,9 +606,10 @@ const HostDOMCall * DOMEntryAnalysis::call(ctjs::CallOp operation) const {
 namespace ctcompile::ctnative::host_detail {
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract) {
-    if (contract.provider != HostContract::Provider::closedSource ||
+    if ((contract.provider != HostContract::Provider::closedSource &&
+         contract.provider != HostContract::Provider::closedSourceSession) ||
         !contract.elementParameters.empty()) {
-        return "closed-source analysis requires the closed-source-v1 host provider";
+        return "closed-source analysis requires a closed-source host provider";
     }
     std::string reason = realmReceiverProblem(contract);
     if (!reason.empty()) { return reason; }

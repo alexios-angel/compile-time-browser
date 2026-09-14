@@ -172,6 +172,11 @@ struct lowering {
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;
     llvm::StringMap<mlir::DictionaryAttr> callableBodies;
+    // Selected only from the final live owner proof, after whole-family admission.
+    llvm::StringSet<> sessionTables;
+    llvm::StringMap<unsigned> sessionTargets;
+    llvm::DenseMap<mlir::Operation *, std::string> sessionCalls;
+    bool censusSession(const OwnedGlobalRoots & roots, llvm::ArrayRef<ctjs::FuncOp> accepted);
     std::string callableTypeSpelling(mlir::Type type);
     bool hasConcreteCallableSignature(ctjs::CreateClosureOp made) const;
     void censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda = false);

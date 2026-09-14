@@ -50,6 +50,10 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
         analyzeMethodTable(module, contract, host, maxSteps);
         return;
     }
+    if (contract.provider == HostContract::Provider::closedSourceSession) {
+        refusal = "closed-source session requires a captured method table";
+        return;
+    }
 
     const auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     llvm::SmallVector<mlir::Operation *> operations;

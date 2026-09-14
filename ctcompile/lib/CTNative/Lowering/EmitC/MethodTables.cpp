@@ -1,3 +1,4 @@
+#include "../../Analysis/OwnedGlobalRoots.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -185,25 +186,99 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
     callableBuilders.push_back(builder + "}\n");
 }
 
+bool lowering::censusSession(const OwnedGlobalRoots & roots,
+                             llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    if (!roots.proved()) { return false; }
+    for (const auto & root : roots.roots()) {
+        if (!root.methodTable) { continue; }
+        const auto & table = *root.methodTable;
+        const auto site = methodTableName(table.table);
+        if (!table.capturedMap || site.empty() || !llvm::is_contained(accepted, table.factory)) {
+            return false;
+        }
+        sessionTables.insert(site);
+        for (const auto & method : table.methods) {
+            if (!llvm::is_contained(accepted, method.function)) { return false; }
+            auto closure = method.closure;
+            sessionTargets.try_emplace(environmentTarget(closure),
+                                       static_cast<unsigned>(closure.getUpvalues().size()));
+        }
+        for (const auto & edge : table.calls) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(edge.call);
+            auto read = edge.read;
+            if (!call || call.getCalleeValue() != read.getResult() ||
+                !sessionTargets.contains(call.getCallee()) ||
+                !llvm::is_contained(accepted, call->getParentOfType<ctjs::FuncOp>())) {
+                return false;
+            }
+            const auto key = ctjs::constantKey(read.getKey());
+            sessionCalls[call] = "ctnative::invoke_session<&ctnative::method_" + cIdentifier(site) +
+                                 "::m_" + key.str() + ">";
+            // The source proof admits this read only as the exact call's callee.
+            // Its emitted value is the table receiver, never an extracted callable.
+            ownedObjectTypes[read.getResult()] =
+                methodTableCarrierType(llvm::cast<MethodTableType>(typeOf(read.getObject())));
+        }
+    }
+    return !sessionTables.empty();
+}
+
 void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp made) {
             const auto site = methodTableName(made);
             if (site.empty()) { return; }
+            const bool session = sessionTables.contains(site);
             std::vector<std::pair<std::string, std::string>> fields;
             for (mlir::Operation * user : made.getResult().getUsers()) {
                 auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
                 if (!set || methodTableName(set) != site) { continue; }
                 const auto key = set->getAttrOfType<mlir::StringAttr>(kNativeTableField).getValue();
                 const auto target = llvm::cast<ClosureType>(typeOf(set.getValue())).getTarget();
-                fields.emplace_back(key.str(), cIdentifier(target));
+                fields.emplace_back(key.str(), target.str());
             }
             llvm::sort(fields);
             std::string definition = "namespace ctnative {\n// ctcompile: returned method table, " +
                                      siteOf(made.getLoc()) + "\nstruct method_" +
                                      cIdentifier(site) + " {\n";
+            if (session) {
+                const auto name = "method_" + cIdentifier(site);
+                definition += "  " + name + "() = default;\n  " + name + "(const " + name +
+                              " &) = delete;\n  " + name + " & operator=(const " + name +
+                              " &) = delete;\n  " + name + "(" + name + " &&) = delete;\n  " +
+                              name + " & operator=(" + name + " &&) = delete;\n";
+            }
             for (const auto & [key, target] : fields) {
-                definition += "  ctn_env_" + target + " m_" + key + ";\n";
+                const auto environment = "ctn_env_" + cIdentifier(target);
+                if (!session) {
+                    definition += "  " + environment + " m_" + key + ";\n";
+                    continue;
+                }
+                auto function = module.lookupSymbol<ctjs::FuncOp>(target);
+                const auto captures = sessionTargets.lookup(target);
+                const auto result = callableTypeSpelling(joinedReturnType(function));
+                std::string parameters, arguments;
+                for (auto [index, argument] : llvm::enumerate(
+                         function.getBody().front().getArguments().drop_front(3 + captures))) {
+                    if (index) { parameters += ", "; }
+                    const auto name = "arg" + std::to_string(index);
+                    parameters += callableTypeSpelling(typeOf(argument)) + " " + name;
+                    if (!arguments.empty()) { arguments += ", "; }
+                    arguments += name;
+                }
+                definition += "private:\n  " + environment + " capture_" + key +
+                              ";\npublic:\n  void initialize_" + key + "(" + environment +
+                              " value) { capture_" + key + " = std::move(value); }\n  " + result +
+                              " m_" + key + "(" + parameters + ");\n";
+                std::string body = "inline " + result + " ctnative::method_" + cIdentifier(site) +
+                                   "::m_" + key + "(" + parameters + ") {\n  return " +
+                                   names.lookup(target) + "(";
+                for (unsigned index = 0; index < captures; ++index) {
+                    if (index) { body += ", "; }
+                    body += "std::get<" + std::to_string(index) + ">(capture_" + key + ")";
+                }
+                if (captures && !arguments.empty()) { body += ", "; }
+                callableBuilders.push_back(body + arguments + ");\n}\n");
             }
             methodTables.push_back(definition + "};\n}\n");
         });
@@ -217,9 +292,12 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         const auto captures = op->getAttrOfType<mlir::IntegerAttr>(kNativeStoredCall).getInt();
         llvm::SmallVector<mlir::Value> args{call.getCalleeValue()};
         llvm::append_range(args, op->getOperands().drop_front(3 + static_cast<size_t>(captures)));
+        const auto session = sessionCalls.find(op);
         auto invoked = callWithConstValueOperands(
             at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
-            at.getStringAttr("ctnative::invoke_callable"), args);
+            at.getStringAttr(session == sessionCalls.end() ? "ctnative::invoke_callable"
+                                                           : session->second),
+            args);
         call.getResult().replaceAllUsesWith(invoked.getResult(0));
         eraseIfUnused(op);
         return true;
@@ -236,14 +314,22 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         const auto key = op->getAttrOfType<mlir::StringAttr>(kNativeTableField).getValue();
         const auto member = "<&" + name + "::m_" + key.str() + ">";
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+            if (sessionTables.contains(site)) {
+                get.getResult().replaceAllUsesWith(get.getObject());
+                eraseIfUnused(op);
+                return true;
+            }
             auto value = callWithConstValueOperands(
                 at, op->getLoc(), mlir::TypeRange{get.getResult().getType()},
                 at.getStringAttr("ctnative::method_get" + member),
                 mlir::ValueRange{get.getObject()});
             get.getResult().replaceAllUsesWith(value.getResult(0));
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+            const auto helper = sessionTables.contains(site) ? "ctnative::invoke_session<&" + name +
+                                                                   "::initialize_" + key.str() + ">"
+                                                             : "ctnative::method_set" + member;
             callWithConstValueOperands(at, op->getLoc(), mlir::TypeRange{},
-                                       at.getStringAttr("ctnative::method_set" + member),
+                                       at.getStringAttr(helper),
                                        mlir::ValueRange{set.getObject(), set.getValue()});
         } else {
             return false;

@@ -8,7 +8,8 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         fn.getBody().walk([&](ctjs::CreateClosureOp made) {
             if (environmentTarget(made).empty()) { return; }
             const bool stored = made->hasAttr(kNativeStoredCallable);
-            if (stored || hasConcreteCallableSignature(made)) {
+            if (!sessionTargets.contains(environmentTarget(made)) &&
+                (stored || hasConcreteCallableSignature(made))) {
                 // Admission has already proved ownership and every invocation.
                 // Choose the existing callable ABI only after its concrete
                 // signature is known; other admitted signatures keep tuples.
@@ -58,13 +59,21 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     }
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](mlir::Operation * op) {
-            if (op->hasAttr(kNativeEnvironmentRead) && callables.contains(environmentTarget(op))) {
+            if (op->hasAttr(kNativeEnvironmentRead) &&
+                (callables.contains(environmentTarget(op)) ||
+                 sessionTargets.contains(environmentTarget(op)))) {
                 // Keep inference's capture operands until the invocation is
                 // replaced. The existing stored-read sweep removes them then.
                 op->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context));
             }
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
             if (!call) { return; }
+            if (sessionCalls.contains(op)) {
+                call->setAttr(kNativeStoredCall,
+                              mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32),
+                                                     sessionTargets.lookup(call.getCallee())));
+                return;
+            }
             const auto found = callables.find(call.getCallee());
             if (found == callables.end()) { return; }
             const auto type = llvm::dyn_cast_or_null<ClosureType>(typeOf(call.getCalleeValue()));
@@ -83,9 +92,10 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
     mlir::OpBuilder at(op);
     mlir::Value result;
     if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
-        const std::string builder = made->hasAttr(kNativeStoredCallable)
-                                        ? "ctn_bind_" + cIdentifier(target)
-                                        : "std::make_tuple";
+        const std::string builder =
+            made->hasAttr(kNativeStoredCallable) && !sessionTargets.contains(target)
+                ? "ctn_bind_" + cIdentifier(target)
+                : "std::make_tuple";
         result = callWithConstValueOperands(at, op->getLoc(),
                                             mlir::TypeRange{made.getResult().getType()},
                                             at.getStringAttr(builder), made.getUpvalues())

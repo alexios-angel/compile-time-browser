@@ -290,6 +290,18 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                    --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-entry
                    --nm ${_native_nm})
   set_tests_properties(ctcompile_native_dom_entry PROPERTIES TIMEOUT 300)
+  file(GLOB _session_node_bins LIST_DIRECTORIES TRUE "$ENV{HOME}/tools/node-*/bin")
+  find_program(_session_node NAMES node nodejs HINTS ${_session_node_bins} REQUIRED)
+  add_test(NAME ctcompile_native_data_session
+           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                   ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Ownership/native_data_session.py
+                   --translate $<TARGET_FILE:ctjs-translate>
+                   --opt $<TARGET_FILE:ctjs-opt>
+                   --node ${_session_node}
+                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
+                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-data-session)
+  set_tests_properties(ctcompile_native_data_session PROPERTIES TIMEOUT 300)
   # `resolved` and `direct` are floors under the closed world. They are 0 on
   # the three real corpora, and THE REASON WRITTEN HERE WAS WRONG. It said all
   # three are open programs - "bootstrap's UMD header passes `globalThis`/

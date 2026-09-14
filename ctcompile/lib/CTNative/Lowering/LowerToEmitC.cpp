@@ -672,6 +672,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusShapes(accepted);
         if (admittedGlobals) { lower.censusOwnedGlobals(*admittedGlobals, accepted); }
         lower.censusIdentityFields(accepted);
+        if (hostContract && hostContract->provider == HostContract::Provider::closedSourceSession &&
+            (!admittedGlobals || !lower.censusSession(*admittedGlobals, accepted))) {
+            module.emitError("native session requires a completely admitted captured method table");
+            return signalPassFailure();
+        }
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
