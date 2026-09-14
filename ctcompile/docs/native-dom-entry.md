@@ -137,8 +137,12 @@ intrinsics) plus the same ordered, nonempty `element_parameters` declaration.
 `--ctnative-host-contract` checks the actual input arguments across the complete
 Data method family. The entry must be unreferenced by source code, uncaptured,
 and declare every explicit parameter as an original JavaScript value.
-The current tests supply explicit IR entry arguments; adapting an imported
-function's inert declaration wrapper to this contract is still separate work.
+The imported function may now have one exact inert source-declaration wrapper.
+It shares the synchronous DOM provider's bounded declaration proof; the complete
+Data census excludes source calls, reads, rewrites and observations of that binding.
+Only a fully successful query exposes `HostContractAnalysis::wrapper()`; no source
+operation is removed by the analysis. Every table read must feed a completed family
+call, so a second uncalled method read or a whole-table global alias also refuses.
 
 Each checked call records `HostMethodArgument.element`, separate from an owning
 source allocation. `HostCapturedMap.outerKeyInputs` lists these inputs in parameter
@@ -162,7 +166,11 @@ Revalidate the complete input family before typing/emission, preserve document p
 node identity, and check every document domain before dereferencing any input or
 performing effects. Gate a source without Map snapshots too: its associative Map
 needs an element-key comparator, whereas Data's child snapshot selects ordered
-storage and hides that path. Retained native DOM keys remain unimplemented.
+storage and hides that path. Preserve source allocation timing: the imported
+`dataEntry` fixture constructs a new root, Map and method table on every invocation.
+Reusing that Map across invocations would change its observable behavior; a separate
+initialization/action split needs its own source proof. Retained native DOM keys
+remain unimplemented.
 
 Original Button/BaseComponent construction, prototype/static getters, disposal,
 retained callbacks and the native application driver follow this ownership step.

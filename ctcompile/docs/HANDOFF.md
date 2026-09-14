@@ -6,6 +6,72 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Imported DOM Data declarations and exact array reads, 2026-09-14 UTC
+
+Resumed the interrupted **07:11:44 AGENT-SYNC** owner/wrapper/lifecycle thread,
+explicitly abandoned at 07:15:55 before edits. The tree was clean at **da9546cd**;
+both histories showed the previous input-provenance work complete and the old
+September 7 WIP already landed. Three agents split proof, lifecycle and array work;
+service limits stopped them, with one contributing the imported-source gate and
+lifetime review. Root integrated and gated the changes. A later independent
+read-only review of acf98caa found no defects. No browser files changed.
+
+**e967db10** shares the bounded inert declaration proof with the DOM Data provider.
+Only a complete query publishes the exact wrapper, and the complete source census
+rejects calls, reads (including inactive code), replacement or observation of its
+binding. Every table use must belong to a completed family call; a fresh detached
+method read and a whole-table alias now refuse. The first source gate exposed the
+detached-read gap; its original source remains a negative control.
+The IR matrix now checks **31 rows in each original/prepared form**, plus live
+mutation and work-budget controls. The new CLI gate imports **seven functions /
+two external keys / zero synthetic objects** and checks **11 source refusals**,
+stale hashes, forged reports and budgets. Separate Node/VM execution checks input
+aliases and fresh allocation on reentry. This flat Data-shaped source is not the
+original nested Bootstrap Data; native DOM-backed Data storage remains refused.
+
+**acf98caa** consumes complete current array-contents evidence in type inference
+for direct own reads. The read joins only its current value origins; the storage
+schema still includes all stored values. Missing reads, fractional keys, unknown
+calls and incomplete proofs retain the conservative fallback. No CFG/SCF alias
+ownership permission was added. Existing read-fed value/index overwrite sources
+now emit unchanged; the new three-function fixture gates both optimization
+policies, both layouts/compilers, signed zero and bad-observation controls.
+The numeric read conversion preserves the existing String snapshot overload.
+
+Corrected focused gates: ownership **1/1 PASS in 248.21s**, final **9-step build /
+2/2 lit PASS in 0.83s / 14/14 CTests PASS in 30.78s**, including Data **30.77s**
+and type inference **0.22s**. The earlier focused DOM entry test passed in
+**178.86s**. Stable formatter **824 C++ / 91 Python / 33 web PASS**; the required
+pinned check retains the byte-identical nine-file / 26-diagnostic baseline.
+
+The final standard devbox build passed **280 steps**. **584 CTests have passed**;
+the serialized **170-test lit suite is still running**. This is not a completed
+full gate. Inputs are frozen in `/tmp/ctcompile-dom-resume/frozen-inputs.json`
+(**1,422 files**); the live log is `/tmp/ctcompile-dom-resume/full.log`. If this
+session is interrupted, finish or rerun that gate before declaring the handoff green.
+
+**Exact next native boundary:** consume and revalidate this complete source/input
+proof in private Data storage inside the nonmovable atoms/document owner. Seed
+explicit `element_ref` types; replace escaping table/global/capture carriers for
+this provider, preserve document plus node identity, and validate every domain
+before any handle dereference or effect. Gate detached retained keys, teardown,
+foreign/dangling owners and the no-snapshot associative comparator. Preserve source
+allocation timing: the imported entry recreates its root/Map/table on every call;
+persistent initialization needs a separate source proof. Then gate the original
+nested Data implementation, component construction/disposal, callbacks and driver.
+
+**Next escape:** broader alias ownership/native consumers and a preserved vendor
+gain. Complete own-read types do not authorize vector alias copies or weaken the
+whole-function contents certificate.
+
+**Known oracle divergence:** the independent Node probe rediscovered ND-8:
+`[1,2][0.5] + [1,2][-0.5]` is NaN in Node but 2 in the VM/native helper. The
+September 5 ledger deliberately chose that compatibility mapping. No runtime or
+native semantics change lands here; a correction must cover numeric/String/
+optimized Map snapshot readers and their existing fixtures together. The red probe
+and investigation patch are retained under `/tmp/ctcompile-dom-resume/` and
+journaled for Claude. Do not silently rebaseline either side.
+
 ## Explicit DOM keys across the Data family, 2026-09-14 UTC
 
 Clean start at **8a8e876f**. The 06:22:24 AGENT-SYNC journal and both commit

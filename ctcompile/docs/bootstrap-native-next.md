@@ -64,12 +64,21 @@ caller allocation roles (**23d360db**). A getter's parameter can retain its role
 when the caller also passes that same object as a sibling payload. DOM origins,
 conservative input aliases and nonescaping storage must still be proved separately.
 
-The subsequent `ctbrowser-dom-data-session-v1` contract now proves explicit DOM
-actual origins across that family, separately from source allocations. Inputs may
-alias: the entry replay preserves both match and miss possibilities for different
-parameters. This contract is analysis-only; native ownership/emission and source
-prefix specialization still refuse it until Data storage is confined to the
-document owner. See [Data input provenance](native-dom-entry.md#data-input-provenance).
+The `ctbrowser-dom-data-session-v1` contract proves explicit DOM actual origins
+across the complete family, separately from source allocations. Inputs may alias.
+**e967db10** also proves the imported inert declaration wrapper and rejects detached
+method reads or whole-table aliases. The CLI gate covers seven imported functions,
+two external inputs, alias/reentry observations and eleven source refusals; the IR
+matrix has 31 rows per source form. Native storage remains refused until it is
+private to the document owner. The source entry recreates Data on each invocation;
+emission must preserve that reset. See [Data input provenance](native-dom-entry.md#data-input-provenance).
+
+**acf98caa** uses the complete current array contents proof to narrow direct reads.
+The original read-fed value/index overwrite sources now emit unchanged, with both
+policies/layouts/compilers and signed-zero observations gated. Whole-function
+failure or an unproved index keeps the optional fallback; no vector alias ownership
+permission was added. Final focused 14/14 CTests pass in 30.78s, including the
+existing Data session and twelve new array checks.
 
 The preserved `array-overwrite-loop.js` now improves **0/2 → 2/2 native**, both
 policies, through **c4b7cf8c**. Exact `1/0` guard recovery exposes the existing
@@ -157,9 +166,10 @@ show only each function's first failure; fixing one exposes its downstream failu
    The remaining implementation spans `OwnedGlobalRoots`, DOM input seeding in
    `TypeInference`, `LoweringSupport.cpp`'s Map/table carriers, and EmitC
    `OwnedGlobals.cpp`, `MethodTables.cpp` and `DOM.cpp`. Replacing only the outer
-   Map leaves shared ownership in the table and global root. The current input
-   tests are an IR matrix; an imported entry's inert declaration wrapper also
-   needs its own source proof before the driver can omit it.
+   Map leaves shared ownership in the table and global root. The imported inert
+   wrapper now has a bounded source proof. Revalidate it before omission, preserve
+   source-driven root/Map/table replacement on each invocation, and keep all Data
+   access private. A persistent initialization/action split needs separate proof.
    This is a **Data + DOM** milestone with its own denominator.
 2. **Compile a real Button action, then its construction and lifetime.**
    [Button.toggle](../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js#L424) toggles
