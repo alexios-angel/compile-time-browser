@@ -55,11 +55,18 @@ mistake. Final focused Phaser checks pass **17.05 / 17.85s** with two CTest jobs
 and **4/4 lit55.81s PASS**, with class/String counts unchanged. These timings have
 different concurrency from the old full gate; no isolated speedup ratio is claimed.
 Stable formatting passes and the pinned baseline is unchanged. The fresh full
-**280-step build and 599 non-lit CTests passed**; Phaser takes **31.00 / 31.01s**
-in that full run and owned-global Map proofs pass in **409.03s**. The complete
-**176-test lit suite is still running** against the same **1,438 frozen inputs**.
-This is not yet a full-suite pass. Evidence includes `slow-full.log`,
-`performance.log`, `performance2.log` and `full.log`.
+**280-step build passed**, followed by **599/600 CTests in 1390.17s**, including
+**176/176 lit in 981.04s**. The earlier checkpoint incorrectly counted a timeout:
+`ctcompile_native_dom_entry` exceeded **300.03s**; it was the sole failing test.
+Phaser takes **31.00 / 31.01s** and owned-global Map proofs **409.03s**. The
+subsequent isolated DOM retry was interrupted before completion.
+
+The next dataset API session preserved every compiler input and completed
+`ctcompile_native_dom_entry` in **213.63s** with four CTest jobs, closing that
+pending compiler gate. This repeat includes the shared dataset API candidate;
+its complete combined **601-test** gate is still running. Evidence is in
+`/tmp/ctcompile-getters-recover/full.log` and
+`/tmp/ctcompile-dataset-20260914/full.log`.
 
 **Exact next Bootstrap boundary:** inherited instance/static receivers, default
 derived forwarding, lexical `super` and observable `this.constructor`, then DOM
