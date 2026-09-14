@@ -23,6 +23,13 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             std::string definition = "namespace ctnative {\nusing " + name + " = std::tuple<";
             for (auto [i, captured] : llvm::enumerate(made.getUpvalues())) {
                 if (i != 0) { definition += ", "; }
+                if (auto found = ownedObjectTypes.find(captured); found != ownedObjectTypes.end()) {
+                    if (auto pointer = llvm::dyn_cast<ec::PointerType>(found->second)) {
+                        definition += llvm::cast<ec::OpaqueType>(pointer.getPointee()).getValue();
+                        definition += " *";
+                        continue;
+                    }
+                }
                 const auto type = typeOf(captured);
                 switch (carrierOf(type)) {
                 case carrier::nullable:

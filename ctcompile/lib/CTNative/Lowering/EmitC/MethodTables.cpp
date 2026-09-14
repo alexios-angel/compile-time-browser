@@ -203,6 +203,46 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
             sessionTargets.try_emplace(environmentTarget(closure),
                                        static_cast<unsigned>(closure.getUpvalues().size()));
         }
+        auto allocation = table.capturedMap->allocation;
+        auto map = llvm::dyn_cast_or_null<MapType>(typeOf(allocation.getResult()));
+        if (map && llvm::isa<MapType>(map.getValueType())) {
+            auto object = table.table;
+            if (allocation->getBlock() != object->getBlock()) { return false; }
+            const auto mapName = "ctnative::map_storage<" + mapKeySpelling(map.getKeyType()).str() +
+                                 ", " + mapValueSpelling(map.getValueType()) + ">";
+            const auto borrowed = ec::PointerType::get(ec::OpaqueType::get(context, mapName));
+            const auto index = static_cast<unsigned>(sessionMaps.size());
+            sessionMaps.push_back({"ctnative::method_" + cIdentifier(site), mapName, borrowed, {}});
+            sessionAllocations[allocation] = index;
+            sessionAllocations[object] = index;
+            llvm::SmallVector<mlir::Value> aliases{allocation.getResult()};
+            for (const auto & method : table.methods) {
+                auto closure = method.closure;
+                auto function = method.function;
+                if (closure.getUpvalues().size() != 1 ||
+                    closure.getUpvalues().front() != allocation.getResult() ||
+                    function.getBody().front().getNumArguments() < 4) {
+                    return false;
+                }
+                aliases.push_back(function.getBody().front().getArgument(3));
+            }
+            for (ctjs::LoadUpvalueOp read : table.capturedMap->upvalues) {
+                aliases.push_back(read.getResult());
+            }
+            // Only this live captured identity borrows the member. Child Maps
+            // retain their owners: saved children can outlive parent deletion.
+            for (size_t i = 0; i < aliases.size(); ++i) {
+                const auto value = aliases[i];
+                if (!ownedObjectTypes.try_emplace(value, borrowed).second) { continue; }
+                for (mlir::Operation * user : value.getUsers()) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    if (call && call.getReceiver() == value && nativeMapAction(call) == "set" &&
+                        llvm::is_contained(table.capturedMap->calls, call)) {
+                        aliases.push_back(call.getResult());
+                    }
+                }
+            }
+        }
         for (const auto & edge : table.calls) {
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(edge.call);
             auto read = edge.read;
@@ -247,6 +287,14 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                               " &) = delete;\n  " + name + " & operator=(const " + name +
                               " &) = delete;\n  " + name + "(" + name + " &&) = delete;\n  " +
                               name + " & operator=(" + name + " &&) = delete;\n";
+                if (auto found = sessionAllocations.find(made); found != sessionAllocations.end()) {
+                    const auto & storage = sessionMaps[found->second];
+                    definition +=
+                        "private:\n  " + storage.mapName +
+                        " captured_map;\npublic:\n  // ctcompile: borrow the session-owned "
+                        "outer Map\n  " +
+                        storage.mapName + " * capture_map() { return &captured_map; }\n";
+                }
             }
             for (const auto & [key, target] : fields) {
                 const auto environment = "ctn_env_" + cIdentifier(target);
@@ -288,7 +336,39 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     }
 }
 
+bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
+    const auto found = sessionAllocations.find(operation);
+    if (found == sessionAllocations.end()) { return false; }
+    auto & storage = sessionMaps[found->second];
+    mlir::OpBuilder at(operation);
+    const auto where = operation->getLoc();
+    if (!storage.owner) {
+        // The complete factory proof excludes callbacks and publication here.
+        // Construct once at the earlier source allocation, in either order.
+        storage.owner =
+            callWithConstValueOperands(
+                at, where,
+                mlir::TypeRange{
+                    ec::OpaqueType::get(context, "std::shared_ptr<" + storage.tableName + ">")},
+                at.getStringAttr("std::make_shared<" + storage.tableName + ">"), mlir::ValueRange{})
+                .getResult(0);
+    }
+    mlir::Value value = storage.owner;
+    if (llvm::isa<ctjs::ConstructOp>(operation)) {
+        value = callWithConstValueOperands(at, where, mlir::TypeRange{storage.borrowedType},
+                                           at.getStringAttr("ctnative::invoke_session<&" +
+                                                            storage.tableName + "::capture_map>"),
+                                           mlir::ValueRange{storage.owner})
+                    .getResult(0);
+    }
+    operation->getResult(0).replaceAllUsesWith(value);
+    sessionAllocations.erase(found);
+    eraseIfUnused(operation);
+    return true;
+}
+
 bool lowering::replaceMethodTable(mlir::Operation * op) {
+    if (replaceSessionAllocation(op)) { return true; }
     mlir::OpBuilder at(op);
     if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
         call && op->hasAttr(kNativeStoredCall)) {

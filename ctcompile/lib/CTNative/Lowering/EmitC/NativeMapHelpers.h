@@ -40,6 +40,7 @@ template <class... T> bool map_key_equal(const std::variant<T...> & a, const std
     }, a, b);
 }
 template <class K, class V> struct map_storage {
+    using key_type = K;
     std::vector<std::pair<K, V>> entries;
     auto find(const K & key) {
         for (auto it = entries.begin(); it != entries.end(); ++it) {
@@ -108,7 +109,7 @@ template <class K> std::shared_ptr<number_map<K>> make_number_map() {
 inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
     return make_number_map<std::string>();
 }
-template <class K, class V> bool map_has(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+template <class Map, class K> bool map_has(const Map & map, const K & key) {
     return map->find(key) != map->end();
 }
 template <class K> nullable_scalar map_get(const std::shared_ptr<number_map<K>> & map, const K & key) {
@@ -122,8 +123,7 @@ template <class K> nullable_scalar map_get(
     if (found != map->end()) { return found->second; }
     return {};
 }
-template <class K, class V> V map_get_present(
-    const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     // Reaching this point contradicts the compiler's dominance/identity proof.
@@ -148,18 +148,18 @@ template <class... T> std::variant<T...> map_normalize_key(const std::variant<T.
         return map_normalize_key(value);
     }, key);
 }
-template <class K, class V> std::shared_ptr<map_storage<K, V>> map_set(
-    const std::shared_ptr<map_storage<K, V>> & map, const K & key, const V & value) {
+template <class Map, class K, class V> Map map_set(
+    const Map & map, const K & key, const V & value) {
     map->insert_or_assign(map_normalize_key(key), value);
     return map;
 }
-template <class K, class V> bool map_delete(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+template <class Map, class K> bool map_delete(const Map & map, const K & key) {
     return map->erase(key) != 0;
 }
-template <class K, class V> void map_clear(const std::shared_ptr<map_storage<K, V>> & map) {
+template <class Map> void map_clear(const Map & map) {
     map->clear();
 }
-template <class K, class V> js_num map_size(const std::shared_ptr<map_storage<K, V>> & map) {
+template <class Map> js_num map_size(const Map & map) {
     return static_cast<js_num>(map->size());
 }
 } // namespace ctnative
@@ -226,15 +226,9 @@ template <class K> std::vector<std::string> map_values(
     for (const auto & entry : map->entries) { out.push_back(entry.second); }
     return out;
 }
-template <class V> std::vector<double> map_keys(const std::shared_ptr<map_storage<double, V>> & map) {
-    std::vector<double> out;
-    out.reserve(map->entries.size());
-    for (const auto & entry : map->entries) { out.push_back(entry.first); }
-    return out;
-}
-template <class V> std::vector<std::string> map_keys(
-    const std::shared_ptr<map_storage<std::string, V>> & map) {
-    std::vector<std::string> out;
+template <class Map> auto map_keys(const Map & map) {
+    using K = typename std::pointer_traits<Map>::element_type::key_type;
+    std::vector<K> out;
     out.reserve(map->entries.size());
     for (const auto & entry : map->entries) { out.push_back(entry.first); }
     return out;

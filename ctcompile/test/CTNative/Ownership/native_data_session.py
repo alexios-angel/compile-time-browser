@@ -76,6 +76,11 @@ def main():
             calls = re.findall(r"ctnative::invoke_session<&[^>\n]+::m_(\w+)>\(", entry[1])
             if calls != expected_calls or len(calls) != 23 or "ctnative::method_get<" in entry[1]:
                 raise RuntimeError("session lost direct Data call order or extracted a method")
+            storage = re.findall(r"^  (.+) captured_map;$", cpp, re.M)
+            if len(storage) != 1 or "std::shared_ptr<" + storage[0] + ">" in cpp:
+                raise RuntimeError("session must own its outer Map by value")
+            if cpp.count("std::tuple<" + storage[0] + " *>") != 3:
+                raise RuntimeError("all Data methods must borrow the same session Map")
             cpp += """
 using session_type = typename decltype(g_globalThis->bootstrap)::element_type;
 static_assert(!std::is_copy_constructible_v<session_type>);
@@ -85,6 +90,7 @@ static_assert(!std::is_move_assignable_v<session_type>);
 static_assert(std::is_member_function_pointer_v<decltype(&session_type::m_get)>);
 static_assert(std::is_member_function_pointer_v<decltype(&session_type::m_set)>);
 static_assert(std::is_member_function_pointer_v<decltype(&session_type::m_remove)>);
+static_assert(std::is_pointer_v<decltype(std::declval<session_type &>().capture_map())>);
 """
             native = args.work / f"{name}.{mode}.cpp"
             native.write_text(cpp)
@@ -107,9 +113,17 @@ int main() {
     auto table = g_globalThis->bootstrap;
     auto element = g_element;
     std::weak_ptr lifetime = table;
+    auto child = ctnative::map_get_present(table->capture_map(), element);
+    auto payload = table->m_get(element, "bs.collapse");
+    std::weak_ptr payload_lifetime = payload.object;
+    std::weak_ptr other_child = ctnative::map_get_present(table->capture_map(), g_other);
+    std::weak_ptr other_key = g_other;
     g_globalThis.reset();
     table->m_remove(element, "bs.collapse");
+    if (ctnative::map_size(child) != 0) { return 7; }
     table->m_set(element, "bs.alert", 47.0);
+    auto replacement = ctnative::map_get_present(table->capture_map(), element);
+    if (replacement == child) { return 8; }
     if (ctnative::global_number(table->m_get(element, "bs.alert")) != 47) { return 2; }
     if (session_entry() != 0) { return 3; }
     if (ctnative::global_number(table->m_get(element, "bs.alert")) != 47) { return 4; }
@@ -117,6 +131,15 @@ int main() {
                                      ctnative::nullable_scalar::null())) { return 5; }
     table.reset();
     if (!lifetime.expired()) { return 6; }
+    if (!other_child.expired() || !other_key.expired()) { return 9; }
+    if (ctnative::map_size(child) != 0 ||
+        ctnative::global_number(ctnative::map_get_present(replacement, std::string("bs.alert")))
+            != 47) { return 10; }
+    if (ctnative::global_number(ctnative::object_get_field_76616c7565(payload)) != 64) {
+        return 11;
+    }
+    payload.object.reset();
+    if (!payload_lifetime.expired()) { return 12; }
     return 0;
 }
 """)
@@ -193,7 +216,8 @@ int main() {
         refuse(escaped, fresh, name + "-escaped")
     print(
         "Data session: pinned 3218-byte source, 7/7 functions, 23 direct calls, 19 observations; "
-        "both policies/layouts/GCC/Clang; nonmovable member ABI and ASan/UBSan lifetimes; "
+        "both policies/layouts/GCC/Clang; by-value outer Map, borrowed captures, "
+        "nonmovable member ABI and ASan/UBSan saved-child/payload lifetimes; "
         "budget/stale/callable-escape refuse"
     )
 

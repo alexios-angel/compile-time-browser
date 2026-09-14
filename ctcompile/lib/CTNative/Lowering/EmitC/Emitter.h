@@ -176,6 +176,15 @@ struct lowering {
     llvm::StringSet<> sessionTables;
     llvm::StringMap<unsigned> sessionTargets;
     llvm::DenseMap<mlir::Operation *, std::string> sessionCalls;
+    struct sessionMapStorage {
+        std::string tableName;
+        std::string mapName;
+        mlir::Type borrowedType;
+        mlir::Value owner;
+    };
+    llvm::SmallVector<sessionMapStorage> sessionMaps;
+    llvm::DenseMap<mlir::Operation *, unsigned> sessionAllocations;
+    bool replaceSessionAllocation(mlir::Operation * operation);
     bool censusSession(const OwnedGlobalRoots & roots, llvm::ArrayRef<ctjs::FuncOp> accepted);
     std::string callableTypeSpelling(mlir::Type type);
     bool hasConcreteCallableSignature(ctjs::CreateClosureOp made) const;
