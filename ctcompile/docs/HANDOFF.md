@@ -46,15 +46,23 @@ throws **TypeError in Node**, but the interpreter currently produces **7**: its 
 now gives a named refusal under both policies. The discrepancy is journaled for Claude
 and pinned until the runtime changes; no interpreter fix or native execution is claimed.
 
-Focused gates: initial **4/4 lit in 27.37s / 4/4 CTests in 7.01s**; final arrow/prototype
-**2/2 lit in 9.57s / 4/4 CTests in 7.02s**, type inference **0.21s**. Stable formatting:
-**824 C++ / 97 Python / 33 web PASS**. The required pinned check retains the byte-identical
-preceding **nine-file / 26-diagnostic** baseline. The pre-arrow standard gate passed
-**280 build steps / 600/600 CTests in 1236.67s / 174/174 lit in 876.73s**, matching all
-**1,433 frozen non-Markdown inputs**. A fresh full gate including the arrow fix is running;
-its **262-step build passed**, and CTests are in progress. This is an interim checkpoint.
-Evidence: `/tmp/ctcompile-class-recovered/{full.log,focused-arrow2.log,frozen-inputs.json}`;
-the earlier full gate is archived as `pre-arrow-*` in the same directory.
+Final standard devbox gate, including the arrow fix: **262 build steps / 600/600 CTests
+PASS in 1240.64s**, including **174/174 lit in 880.76s**. All **1,433 frozen non-Markdown
+inputs** match local source and the tested devbox. Both browser and compiler suites passed.
+Focused checks passed **4/4 lit in 27.37s / 4/4 CTests in 7.01s**, then the arrow/prototype
+checks passed **2/2 lit in 9.57s / 4/4 CTests in 7.02s**. Stable formatting passes **824 C++ /
+97 Python / 33 web**; the required pinned check retains the byte-identical preceding
+**nine-file / 26-diagnostic** baseline. Evidence:
+`/tmp/ctcompile-class-recovered/{full.log,full-last-test.log,measured.json,frozen-inputs.json}`.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, no skips
+or prunes. Original DOM Data stays **7/7 functions / 23 calls / 19 observations**, all five
+alias partitions; final gate **59.73s**. Button stays **16,194 bytes / 4 of 86 native**, with
+its original **22 Node observations** and uncaught interpreter failure preserved (**0.62s**).
+Existing Data passed in **50.88s**, owned DOM in **78.78s**, and ownership in **359.85s**.
+The complete escape oracle stays **222 functions / 861 claims / 895 sites / 35 unclaimed /
+zero violations / precision 40 of 172**. Dense length stays **178 rows / 5,031 cutoffs**;
+structured contents stays **43 rows / 2,228 cutoffs**. No vendor admission gain is inferred.
 
 **Exact next Bootstrap boundary:** trusted class-initialization provenance for the ordinary
 mutable `__ctbrowser_class_defined` lookup, then immutable method/prototype chains and inherited
