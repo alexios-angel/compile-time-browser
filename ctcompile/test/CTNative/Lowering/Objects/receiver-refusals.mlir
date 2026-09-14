@@ -138,12 +138,18 @@
 // --- THE FIELD INDEX IS OVER THE ALIAS GROUP, AND THIS IS ITS PROOF ---------
 //
 // The receiver and literal name the same object: the joined field index
-// preserves the Boolean write. The nullable return keeps its tag at global
-// output instead of converting true to Number 1 or absence to NaN.
+// preserves the Boolean write. Complete callable-use and initialization checks
+// prove a Boolean return; the global boundary preserves that tag when printing.
 // BOOLFIELD-NOT: ctnative.not_native
+// BOOLFIELD: emitc.class @ctn_flag
+// BOOLFIELD-NEXT: emitc.field @flag : i1
+// BOOLFIELD-NEXT: }
 // BOOLFIELD: emitc.global static @g_shown : !emitc.opaque<"ctnative::nullable_scalar">
-// BOOLFIELD: call_opaque "ctnative::print_scalar"
-// BOOLFIELD: emitc.func @look_1() -> !emitc.opaque<"ctnative::nullable_scalar">
+// BOOLFIELD: call_opaque "ctnative::global_boolean"
+// BOOLFIELD-SAME: -> i1
+// BOOLFIELD: call_opaque "printf"
+// BOOLFIELD: emitc.func @look_1() -> i1
+// BOOLFIELD: emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_flag">>) -> i1
 // BOOLFIELD-NOT: ctnative.not_native
 
 // --- A `this.other()` WHOSE CALLEE WAS REFUSED ------------------------------
