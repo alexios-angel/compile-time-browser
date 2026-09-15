@@ -404,6 +404,9 @@ struct DOMSource {
                             if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
                                 callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
                                                     callDepth.lookup(&operation);
+                                if (depth + callDepth[cloned] >= 64) {
+                                    return refuse("DOM helper call tree is recursive or too deep");
+                                }
                             }
                             ++operationCount;
                         }

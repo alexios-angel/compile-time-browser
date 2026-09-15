@@ -812,24 +812,34 @@ def helper_provenance_refusals(args, ir, contract):
         for depth in range(1, 64)
     )
     graph += "return graph63(element);"
-    graph_ir, graph_contract = dom.prepare(
-        args,
-        "capture-graph-depth",
-        f"function capture_graph_depth(element) {{ {graph} }}\n",
-        1,
-        entry_name="capture_graph_depth",
+    nested = "function inner0(target) { return target.getAttribute('x') === null; }\n"
+    nested += "".join(
+        f"function inner{depth}(target) {{ return inner{depth - 1}(target); }}\n"
+        for depth in range(1, 32)
     )
-    diagnostic = dom.lower(
-        args,
-        graph_ir,
-        graph_contract,
-        "capture-graph-depth",
-        max_steps=10000000,
-        success=False,
+    mixed = f"function graph0(target) {{ {nested} return inner31(target); }}\n"
+    mixed += "".join(
+        f"function graph{depth}(target) {{ return graph{depth - 1}(target); }}\n"
+        for depth in range(1, 32)
     )
-    if "error: native DOM source: DOM helper call tree is recursive or too deep" not in diagnostic:
-        raise RuntimeError(f"capture graph depth: wrong refusal\n{diagnostic}")
-    return len(variants) * 4 + 2
+    mixed += "return graph31(element);"
+    for label, body in (("capture-graph-depth", graph), ("capture-mixed-depth", mixed)):
+        graph_ir, graph_contract = dom.prepare(
+            args,
+            label,
+            f"function capture_graph_depth(element) {{ {body} }}\n",
+            1,
+            entry_name="capture_graph_depth",
+        )
+        diagnostic = dom.lower(
+            args, graph_ir, graph_contract, label, max_steps=10000000, success=False
+        )
+        if (
+            "error: native DOM source: DOM helper call tree is recursive or too deep"
+            not in diagnostic
+        ):
+            raise RuntimeError(f"{label}: wrong refusal\n{diagnostic}")
+    return len(variants) * 4 + 3
 
 
 def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
