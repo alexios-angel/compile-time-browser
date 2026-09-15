@@ -208,21 +208,7 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
         break;
     }
     case read_kind::array_buffer: {
-        // The shape install_typed_arrays recognises, so `new Uint8Array(result)`
-        // is a view over these bytes rather than a copy of nothing.
-        auto * buffer = cx.allocate<script::object_object>();
-        value stored = cx.make_array();
-        auto * items = static_cast<script::array_object *>(stored.as_heap());
-        items->elements = script::element_kind::u8;
-        items->items.reserve(bytes.size());
-        for (const char b : bytes) {
-            items->items.push_back(
-                value::number(static_cast<double>(static_cast<unsigned char>(b))));
-        }
-        buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
-        buffer->set("length", value::number(static_cast<double>(bytes.size())));
-        buffer->set("__bytes", stored);
-        reader->set("result", value::object(buffer));
+        reader->set("result", make_array_buffer(cx, std::as_bytes(std::span{bytes})));
         break;
     }
     }
@@ -484,44 +470,18 @@ value dom_bindings::make_response(context & cx, const std::string & url, int sta
     // The bytes, three ways a caller may ask for them. `bytes()` is the
     // newest and p5 prefers it when present; `arrayBuffer()` is what
     // everything else uses, and `blob()` is what an object URL is made from.
-    const auto byte_array = [](context & c, const std::vector<std::byte> & bytes) {
-        const value out = c.make_array();
-        auto * items = static_cast<script::array_object *>(out.as_heap());
-        items->elements = script::element_kind::u8;
-        items->items.reserve(bytes.size());
-        for (const std::byte b : bytes) {
-            items->items.push_back(value::number(static_cast<double>(std::to_integer<int>(b))));
-        }
-        return out;
-    };
-    set_method(cx, *response, "bytes", [body, byte_array](context & c, std::span<value>) {
-        return c.make_promise(byte_array(c, body), false);
+    set_method(cx, *response, "bytes", [body](context & c, std::span<value>) {
+        return c.make_promise(make_u8_array(c, body), false);
     });
-    set_method(cx, *response, "arrayBuffer", [body, byte_array](context & c, std::span<value>) {
-        // The shape install_typed_arrays recognises: an object carrying
-        // `__bytes`, so `new Uint8Array(buffer)` is a view over THIS
-        // storage rather than a copy of it.
-        auto * buffer = c.allocate<script::object_object>();
-        buffer->set("byteLength", value::number(static_cast<double>(body.size())));
-        buffer->set("length", value::number(static_cast<double>(body.size())));
-        buffer->set("__bytes", byte_array(c, body));
-        return c.make_promise(value::object(buffer), false);
+    set_method(cx, *response, "arrayBuffer", [body](context & c, std::span<value>) {
+        return c.make_promise(make_array_buffer(c, body), false);
     });
-    set_method(cx, *response, "blob",
-               [this, body, content_type, byte_array](context & c, std::span<value>) {
-                   // A minimal Blob: its size, its type and its bytes. Enough for a
-                   // page that hands one to URL.createObjectURL, which is the only
-                   // thing anything here does with one.
-                   auto * blob = c.allocate<script::object_object>();
-                   // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
-                   // probe only ever read as passing because the throw in its
-                   // `.then` was lost rather than delivered as a rejection.
-                   if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
-                   blob->set("size", value::number(static_cast<double>(body.size())));
-                   blob->set("type", c.string(content_type));
-                   blob->set("__bytes", byte_array(c, body));
-                   return c.make_promise(value::object(blob), false);
-               });
+    // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob probe only
+    // ever read as passing because the throw in its `.then` was lost rather
+    // than delivered as a rejection.
+    set_method(cx, *response, "blob", [this, body, content_type](context & c, std::span<value>) {
+        return c.make_promise(make_blob(c, make_u8_array(c, body), content_type), false);
+    });
     return cx.make_promise(value::object(response), false);
 }
 

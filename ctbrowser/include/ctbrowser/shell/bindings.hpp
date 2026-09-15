@@ -80,6 +80,27 @@ void define_getter(context & cx, Obj & obj, const std::string & name, script::na
                         attrs);
 }
 
+// Bytes as the u8 array the typed-array builtins recognise, and the
+// ArrayBuffer shape install_typed_arrays reads: an object carrying `__bytes`,
+// so `new Uint8Array(buffer)` is a view over THIS storage rather than a copy.
+[[nodiscard]] inline value make_u8_array(context & cx, std::span<const std::byte> bytes) {
+    const value out = cx.make_array();
+    auto * items = static_cast<script::array_object *>(out.as_heap());
+    items->elements = script::element_kind::u8;
+    items->items.reserve(bytes.size());
+    for (const std::byte b : bytes) {
+        items->items.push_back(value::number(static_cast<double>(std::to_integer<int>(b))));
+    }
+    return out;
+}
+[[nodiscard]] inline value make_array_buffer(context & cx, std::span<const std::byte> bytes) {
+    auto * buffer = cx.allocate<script::object_object>();
+    buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
+    buffer->set("length", value::number(static_cast<double>(bytes.size())));
+    buffer->set("__bytes", make_u8_array(cx, bytes));
+    return value::object(buffer);
+}
+
 // Where an element wrapper keeps its handle. A property rather than a side
 // table, so a wrapper is self-describing and two wrappers for the same element
 // resolve to the same node.
@@ -1665,6 +1686,10 @@ private:
     // Blob.prototype, kept so canvas.toBlob's Blob is one too - `x instanceof
     // Blob` has to be true whoever made it.
     value blob_prototype_;
+    // A Blob: its size, its type and its bytes (a u8 array, see
+    // make_u8_array), on that prototype. Enough for a page that hands one to
+    // URL.createObjectURL or a FileReader, which is everything done with one.
+    [[nodiscard]] value make_blob(context & cx, value bytes, std::string_view type);
 
     // THE CONTEXT INTERFACE OBJECTS - `window.CanvasRenderingContext2D` and
     // friends; the element interfaces live in the table (interface_prototypes_).

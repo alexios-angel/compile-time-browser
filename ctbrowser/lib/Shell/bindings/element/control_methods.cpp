@@ -162,25 +162,11 @@ void dom_bindings::install_control_methods(context & cx) {
     method(canvas, "toBlob", 1, [this, canvas_bytes](context & c, std::span<value> args) {
         const value callback = arg(args, 0);
         if (!callback.is_callable()) { return value::undefined(); }
-        std::vector<std::byte> png = canvas_bytes(c);
-        auto * blob = c.allocate<script::object_object>();
-        value bytes = c.make_array();
-        auto * out = static_cast<script::array_object *>(bytes.as_heap());
-        out->elements = script::element_kind::u8;
-        out->items.reserve(png.size());
-        for (const std::byte b : png) {
-            out->items.push_back(value::number(static_cast<double>(static_cast<unsigned char>(b))));
-        }
-        blob->set("size", value::number(static_cast<double>(png.size())));
-        blob->set("type", c.string("image/png"));
-        blob->set("__bytes", bytes);
-        if (blob_prototype_.is_object()) {
-            blob->prototype = blob_prototype_; // so `x instanceof Blob` is true
-        }
+        const std::vector<std::byte> png = canvas_bytes(c);
         // QUEUED, not called: toBlob is asynchronous, and a page that wraps it in
         // a promise - which is what p5's p5.Image.toBlob does - depends on the
         // callback landing after the call returns.
-        const value blob_value = value::object(blob);
+        const value blob_value = make_blob(c, make_u8_array(c, png), "image/png");
         c.queue_microtask(callback, std::vector<value>{blob_value});
         return value::undefined();
     });
