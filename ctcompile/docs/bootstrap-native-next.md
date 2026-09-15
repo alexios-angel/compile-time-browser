@@ -2,12 +2,16 @@
 
 ## Current boundary, 2026-09-15
 
-Latest slice **ab7bf2a6** compiles verbatim vendor `F("config")` in isolated native
-DOM actions through a checked no-match replacement proof: **365 Node/VM observations /
-eight native binaries**. Full **309-step build / 602/602 CTests / 176/176 lit PASS**.
-Fresh full Bootstrap remains **19/574 native**, DOM Data **7/7**, Button **4/86**.
-The captured H/F/M graph, live M normalization and full initialization still need
-proof; this is an action prerequisite, not full-bundle admission.
+Latest slice **61e47459** extends verbatim vendor `F` to differing constant
+attribute names and forwarded local parameters: **377 Node/VM observations /
+eight native binaries**, final focused **2/2 CTests PASS**. The complete standard
+gate is running; see [HANDOFF](HANDOFF.md) for its recovery paths and status.
+The previous full-bundle measurement remains **19/574 native**, DOM Data **7/7**,
+Button **4/86**; this slice makes no full-bundle admission claim.
+Captured F still refuses: its sibling caller obtains the function through a cell,
+and eager child expansion precedes capture-derived invocation facts. Compose
+those facts through the existing complete source proof, then address live M
+normalization and the full factory/global/H/F/M initialization graph.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
@@ -139,12 +143,12 @@ reads pass **105 Node/VM observations / eight GCC-Clang binaries**. Callable
 identity, captures, recursion and unsupported effects remain refusals; this adds
 no nullable-to-String coercion.
 Bootstrap's original `getDataAttribute` (vendor line **263**) computes its name
-through `F` and feeds the optional result to `M`. `F` still requires regex replace,
-its callback and `toLowerCase`; `M` still requires source branches, `Number`,
-`toString`, `typeof`, URI decoding, JSON parsing and exceptions. Prove those source
-operations and their composition with the DOM entry. Start with `_mergeConfigObj`'s
-actual `H.getDataAttribute(e, "config")` call: the key is constant, so checked source
-specialization may discharge `F` before a general runtime regex backend is needed.
+through `F` and feeds the optional result to `M`. Exact local constant calls to
+verbatim F now prove its replacement callback is never invoked, including distinct
+names. The captured H/F call graph still needs invocation facts before helper
+expansion. `M` still requires source branches, `Number`, `toString`, `typeof`, URI
+decoding, JSON parsing and exceptions. Preserve these source operations when
+composing `_mergeConfigObj`'s actual `H.getDataAttribute(e, "config")` call.
 The exported entry still declares every explicit parameter as an element; local
 helpers receive their proved actual arguments. **1aa5c2c2** now proves unique local
 object-held helper slots and exact method receivers under the isolated standard

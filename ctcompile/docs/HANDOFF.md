@@ -6,6 +6,48 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Distinct String inputs for original Bootstrap F, 2026-09-15 UTC
+
+Continued the completed **3adca7a8 / ab7bf2a6** thread from this handoff and
+AGENT-SYNC's **05:00** journal. Both histories and unmerged branches were checked;
+the September 7 WIP is already an ancestor and the shared tree was clean. There
+was no interrupted source or gate. Parallel agents supplied source regressions
+and proof review; the independent escape audit stopped at a service limit without
+a confirmed finding or edits.
+
+**61e47459** proves a bounded set of String inputs across every exact local helper
+call. Common constants still substitute directly; differing constants and forwarded
+parameter sets let the original F replacement prove no match for every input.
+The result preserves the original receiver at each invocation. One live input
+invalidates the whole parameter. Collection and scans consume the existing budget;
+creator identity, full source census and residual DOM proof are unchanged. No
+RegExp, callback storage or Script dependency reaches generated C++.
+
+Final focused **2/2 CTests in 71.64s PASS**: **377 Node/VM observations / eight
+GCC-Clang binaries / 612 source refusals / 44 provenance-depth / 24 method /
+241 capture / 70 replacement controls**. The former mixed-constant refusal source
+is preserved byte-for-byte and now emits under both providers and policies.
+Distinct attribute values detect accidental first-call substitution. Matching/live
+inputs in either order and poisoned forwarding remain refused. Stable formatting
+passes **829 C++ / 100 Python / 33 web**; the required pinned formatter matches the
+unchanged **nine-file / 26-diagnostic** baseline. Changed C++ passes both formatters.
+
+The complete standard build and **602-test CTest gate are running**, with **1,443
+frozen inputs**. No complete-suite result or new full-bundle coverage is claimed
+yet. Recovery scripts, logs and hashes are in `/tmp/ctcompile-dom-string-set/`,
+particularly `full.sh`, `full.log` and `inputs.json`.
+
+**Exact next boundary:** captured F remains refused when a sibling helper obtains
+it through a cell; eager child expansion precedes capture-derived invocation facts.
+Compose those facts through the checked original factory/global/H/F graph without
+weakening the leaf/census proof. Original M (vendor line **230**) then needs live
+optional-value branches, Number/toString, URI decoding, JSON and exceptions. A
+verbatim Node-only M witness passes **16 observations**, including negative zero,
+NaN/Infinity, JSON objects/arrays and malformed URI fallback; it establishes no
+native or VM coverage. Dataset iteration, inherited receivers, retained config/
+callback ownership and the application driver remain unfinished. No browser/runtime
+or WPT/test262 expectation files changed.
+
 ## Original Bootstrap F no-match proof and exact remainders, 2026-09-15 UTC
 
 Continued the completed **9f45be18 / 823b71b8** table thread from this handoff
