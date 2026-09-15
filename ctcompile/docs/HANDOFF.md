@@ -6,6 +6,69 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared JSON Core prerequisite, 2026-09-15 UTC
+
+Continued the exact JSON prerequisite recorded by **e4318595**. Both recent
+histories, unmerged branches and AGENT-SYNC were checked; the shared tree was clean
+and the September 7 WIP is already an ancestor. No interrupted source remained.
+Three agents prepared the Core parser, regression tests and URI continuation
+review; root adapted the VM binding, reviewed and gated the result.
+
+**c9c2e37b** lifts the existing JSON grammar into `ctbrowser/core/json.hpp`
+and Core. `parse_json(string_view)` returns `expected<json_value, size_t>`: Strings,
+arrays and object members own their data. `JSON.parse` materializes VM values only
+in its adapter, preserving prototypes, error offsets and the reviver; `rawJSON`
+validates through the same parser. Duplicate keys keep their first position and
+last value. All **10 grammar bodies / 1,486 tokens** match after explicit storage
+substitutions. A first Clang build rejected recursive `std::pair`; the public tree
+now uses an ordinary forward-declared `json_value::member {key, value}`.
+
+Measured **171-step focused build / 2/2 new CTests in 0.02s**, followed by
+**931 remaining default build steps / 182/182 browser CTests in 71.25s**.
+Complete **606/606 CTests in 1434.54s /
+176/176 lit in 958.63s PASS**.
+The Core-only client passes with the configured Clang and GCC 13, including GCC
+ASan/UBSan; its binaries contain **no Script symbols**. All **165 JSON test262
+outcomes and failure causes** are byte-identical before/after (**137 PASS / 26 FAIL /
+2 SKIP**). All **13 VM scenarios** also pass against the saved pre-change interpreter
+and the new one. Stable formatting passes **839 C++ / 101 Python / 33 web**; the
+pinned formatter's **nine-file / 26-diagnostic** baseline is byte-identical.
+All **1,453 frozen source hashes** match local, devbox and committed files;
+**113 submodule hashes** match the devbox.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, no
+skips/prunes; DOM Data **7/7**, Button **4/86**, with **22 Node observations** and its
+existing VM inheritance failure. Button/Data reports and all **1,123 escape rows**
+are unchanged. DOM Strings remains **625 observations / eight binaries / 908 source
+refusals**; escape has **zero violations / precision 40/172**. No full-bundle
+admission gain is claimed. Original M still refuses all four provider/policy
+combinations, preserving **24 nine-slot blocks** and its handler at **^bb12**.
+
+The original raw-byte handling, lone-surrogate replacement, out-of-range numeric
+positive zero and unbounded recursive nesting remain inherited oracle limitations.
+Discarded partial/duplicate JSON values and `rawJSON` validation no longer allocate
+transient VM values; this allocation-topology change is journaled. No WPT/test262
+expectation files changed; full WPT/test262 were not remeasured. Logs, source hashes,
+old/new JSON outcomes and detailed continuation: `/tmp/ctcompile-json-core/`.
+
+**Exact next boundary:** admit an explicitly authorized `decodeURIComponent` call
+on a proved String within a preserved acyclic try/catch, with unused catch payload
+and owning String results. Use the existing `optional<string>` Core decoder;
+empty String is success, malformed URI selects the original caught continuation,
+and C++ allocation failure must not become URIError. Keep DOMSource's fingerprinted
+private clone, every budget refusal and exact rollback. Ordinary-call/invoke
+support, complete source effects, independent builtin membership, original handler
+vectors and unused-payload proof remain required. A URI-only manifest must never
+authorize Number. See `/tmp/ctcompile-json-core/uri-boundary-review.md`, including
+**29 Node-only URI observations**, for exact functions and refusal controls.
+
+Original M additionally needs nullable `typeof` narrowing, its complete pre-try
+prefix, JSON/parse identity, sequential URI/JSON failure continuations and mixed
+result ownership. Its JSON receiver/property lookup precedes URI argument
+evaluation; catch returns the original input, not decoded text. JSON Core grants
+no compiler admission authority. Full H/dataset, Bootstrap initialization/inheritance,
+retained config/callbacks and the native application driver remain open.
+
 ## Native DOM Number prefix and held unit steps, 2026-09-15 UTC
 
 Continued the exact Number/toString boundary recorded by **811c1656**. The

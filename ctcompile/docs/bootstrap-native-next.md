@@ -2,6 +2,24 @@
 
 ## Current boundary, 2026-09-15
 
+The shared JSON prerequisite is now **c9c2e37b**: `ctbrowser/core/json.hpp`
+provides `parse_json(string_view)` and ordinary owning JSON data, without Script.
+Complete **606/606 CTests / 176/176 lit PASS**; Core-only GCC/Clang
+clients and GCC ASan/UBSan pass, and all **165 JSON test262 outcomes/causes** plus
+**13 saved-interpreter scenarios** are unchanged. Existing parser Unicode/numeric/
+depth limitations remain; no new native Bootstrap admission is claimed.
+
+The next bounded compiler slice is a proved String-only `decodeURIComponent`
+try/catch with an unobserved catch payload. Preserve the original handler vectors,
+source order and failure assignment state inside DOMSource's private transaction.
+Keep empty decode distinct from failure and C++ allocation failure distinct from
+URIError. Explicit URI authority must not imply Number authority. Original M also
+needs nullable `typeof` narrowing, complete prefix proof, JSON/parse identity,
+sequential fallible calls and mixed-result ownership. Its JSON receiver/property
+lookup happens before URI argument evaluation; catch returns original input.
+Detailed seams and 29 Node-only source observations:
+`/tmp/ctcompile-json-core/uri-boundary-review.md`.
+
 Latest native slice **a8f486c5 / 6482553f** proves held Number-one induction
 steps and the DOM numeric prefix `Number(element.getAttribute("data-bs-config")).toString()`.
 An explicit Number identity premise and complete source census authorize direct
@@ -16,7 +34,10 @@ both providers/policies. Its 24 nine-slot register blocks and original handler a
 ^bb12 remain intact. Next prove provider-authorized URI/JSON failure continuations,
 the unobserved catch payload, complete guarded CFG and mixed-result ownership
 inside the fingerprinted DOMSource transaction. The public URI decoder exists;
-JSON needs a shared RAII core lifted from Script. Full H/dataset, Bootstrap
+**c9c2e37b** now shares the existing JSON grammar through public Core with an
+owning tree; the Script parse/rawJSON adapter preserves all 165 measured JSON
+test262 outcomes. JSON identity, failure continuation and result ownership still
+need compiler proof. Full H/dataset, Bootstrap
 initialization/inheritance, retained config/callbacks and the application driver
 remain unfinished. No full-bundle admission gain is claimed.
 
