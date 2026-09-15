@@ -73,15 +73,11 @@ void browser::run_scripts() {
             }
         },
         [this](node_id id) { (void)focus(id); });
-    // The back end a caller chose before the page loaded - see
-    // browser::prefer_angle_webgl. Applied here because this is the first
-    // moment the object that owns WebGL contexts exists.
     // THE CASCADE'S ENGINE, so `querySelector` runs the matcher a stylesheet runs.
     // reset_document() replaces it on every load and this object is rebuilt after
     // that, so handing it over here is enough - the second call in reset_document
     // covers a reload that keeps these bindings.
     bindings_->observe_style_engine(*styles_);
-    bindings_->prefer_angle(prefer_angle_webgl_);
     bindings_->observe_viewport(layout_viewport_width(), options_.height);
     bindings_->observe_resources(assets_, images_);
     bindings_->allow_network(network_allowed_);

@@ -297,13 +297,6 @@ public:
     // getter.
     [[nodiscard]] dom_bindings & bindings() noexcept { return *bindings_; }
 
-    // WHETHER A PAGE'S WebGL SHOULD RUN ON ANGLE, set BEFORE load_html.
-    //
-    // It lives here rather than on the bindings for exactly the reason above: a
-    // caller would have to know that the bindings are built during the load,
-    // which is a detail of when scripts run. Stage 2 of docs/plans/angle.md
-    // keeps both back ends alive, and this is how a caller chooses.
-    void prefer_angle_webgl(bool on) noexcept { prefer_angle_webgl_ = on; }
     [[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
 
     // A <link rel=stylesheet> that did not resolve. Separate from
@@ -1253,7 +1246,6 @@ private:
     std::vector<std::unique_ptr<script::program>> extra_programs_;
     std::unique_ptr<script::context> script_;
     std::unique_ptr<dom_bindings> bindings_;
-    bool prefer_angle_webgl_ = false;
     std::string script_error_;
     std::string style_error_;
     // Elements whose load/error is owed but not yet queued, and every element
