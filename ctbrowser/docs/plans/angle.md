@@ -212,9 +212,9 @@ ANGLE has **no CMake anywhere**. It is GN plus `depot_tools` plus `gclient`,
 which is the Chromium build system. There is no brew formula and no apt package.
 
 This tree pins every dependency and builds it into an llvm-mingw sysroot with
-CMake — `build-boost-mingw.sh` and its five siblings do exactly that, and the
-newest of them, `build-shaderc-mingw.sh`, configured and built in one command.
-ANGLE will not.
+CMake — `build-boost-mingw.sh` and `build-libs-mingw.sh` do exactly that,
+configured and built in one command (the shaderc one they once had beside them
+was deleted 2026-09-15, unused since ANGLE). ANGLE will not.
 
 **And the Windows half is worse than the Linux half.** ANGLE on Windows is built
 with clang-cl against the MSVC runtime; this engine cross-compiles with
@@ -555,7 +555,7 @@ feed it - and every hour spent on the ANGLE facade was looking in the wrong
 layer. Four wrong guesses in a row is what that looks like from inside.
 
 And there IS a working oracle, which is the cheapest possible next step:
-`tools/corpus/webgl2-ratchet.py` reads 10/10 and its rung is "Babylon renders a scene".
+`tools/corpus/ratchet.py webgl2 ratchet` reads 10/10 and its rung is "Babylon renders a scene".
 So a Babylon scene DOES paint somewhere in this tree. Diff the ratchet's page
 against `examples/pages/babylon-scene.html` - camera, canvas size, engine
 options, the frame loop - rather than reading any more GL code. The difference

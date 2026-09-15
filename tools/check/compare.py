@@ -28,8 +28,8 @@ engine by hand with no venv and nothing downloaded.
 
 Stdlib only, except Playwright - and that is imported only when a real browser
 is actually selected. Unlike the other tools here this one takes arguments, so
-it uses argparse; gen-assets.py and gen-shaders.py take none because they are
-generators with nothing to vary.
+it uses argparse; gen-assets.py takes none because it is a generator with
+nothing to vary.
 """
 
 import argparse

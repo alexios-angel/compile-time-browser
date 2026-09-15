@@ -24,7 +24,6 @@ with it.
 
 - `tools/gen/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
   deterministically, so no foreign binary is committed.
-- `tools/gen/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
 - `tools/check/compare.py` — drives ctbrowser AND Chrome/Firefox through the same
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `ctbrowser/tools/ctdrive/ctdrive.cpp` is the
