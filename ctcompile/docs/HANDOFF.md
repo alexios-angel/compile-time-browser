@@ -44,16 +44,24 @@ sorting. No interpreter semantics or expectations were changed.
 **e81304b4** also checks composed depth after substitution. A mixed nested/captured
 64-helper witness first failed against **18f4519b** because the old compiler emitted
 it; the corrected compiler refuses it. Its three-step rebuild and the final focus
-above pass. The intermediate full test run was deliberately interrupted at 43
-completed tests and is not a complete-suite result.
+above pass.
 
 Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned
-formatting matches the existing **nine-file / 26-diagnostic** baseline. The final
-source is committed and **1,443 input hashes** are frozen. The complete **276-step default build and 601 non-lit CTests passed**. The final
-**176-case lit suite** is running within the 602-test gate; its result is pending.
-DOM entry passed in **216.80s**, session in **61.32s**, Strings in **52.98s** and
-shared Map ownership in **315.53s**. Recovery scripts, focused
-logs and evidence are retained in `/tmp/ctcompile-dom-graphs/`.
+formatting matches the existing **nine-file / 26-diagnostic** baseline.
+
+The complete **276-step default build / 602/602 CTests in 1442.25s /
+176/176 lit in 975.55s PASS**, with four CTest jobs. DOM entry passed in
+**216.80s**, session in **61.32s**, Strings in **52.98s**, and shared Map ownership
+in **315.53s**. All **1,443 frozen hashes** match the devbox, local files and
+committed source. Recovery scripts, full logs, generated C++ and `measured.json`
+are retained in `/tmp/ctcompile-dom-graphs/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with
+no skipped or pruned functions. Original DOM Data remains **7/7**; Button remains
+**4/86**, with **22 Node observations** and its existing interpreter inheritance
+failure. Button and DOM Data reports are unchanged, and all **1,123 escape
+baseline rows** are byte-identical. No browser/runtime files or WPT/test262
+expectations changed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** forwarded upvalues and helpers that create nested closures
 while capturing still refuse, as do captured host entries. Original Bootstrap needs
