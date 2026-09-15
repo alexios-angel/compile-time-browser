@@ -6,6 +6,7 @@
 
 #include "image_data.hpp"
 
+#include <charconv>
 #include <numbers>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
@@ -142,9 +143,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         }
         if (const value * v = o->find("font")) {
             std::string font = c.to_string(*v);
-            canvas->font_size = font_size_from(font);
-            font_face_from(font, canvas->font_family, canvas->font_bold, canvas->font_italic);
-            canvas->font_spec = std::move(font);
+            if (apply_canvas_font(*canvas, font)) { canvas->font_spec = std::move(font); }
         }
         // Kept as the spec's strings rather than parsed here: an unknown value
         // has to behave as the default, and the drawing code is the one place
@@ -559,42 +558,44 @@ float dom_bindings::number(std::span<value> args, std::size_t i) {
     return i < args.size() ? static_cast<float>(context::to_number(args[i])) : 0.0f;
 }
 
-float dom_bindings::font_size_from(std::string_view font) {
-    const std::size_t px = font.find("px");
-    if (px == std::string_view::npos) { return 10; }
-    std::size_t start = px;
-    while (start > 0 && font[start - 1] >= '0' && font[start - 1] <= '9') { --start; }
-    float size = 0;
-    for (std::size_t i = start; i < px; ++i) {
-        size = size * 10 + static_cast<float>(font[i] - '0');
+bool dom_bindings::apply_canvas_font(canvas_context & canvas, std::string_view font) {
+    // The same expansion a stylesheet's `font:` gets, so `bold 16px/1.2 "Fira
+    // Sans", serif`, a numeric weight and a keyword size all mean here what
+    // they mean there. The longhands come back as (name, serialized value).
+    const auto longhands = style::css::expand_cascaded_shorthand("font", font);
+    if (longhands.empty()) { return false; }
+    for (const auto & [name, text] : longhands) {
+        if (name == "font-size") {
+            // ponytail: em/% and the keyword sizes resolve against 16px, the
+            // UA default, rather than the canvas element's computed font.
+            static constexpr std::string_view keywords[] = {"xx-small", "x-small",  "small",
+                                                            "medium",   "large",    "x-large",
+                                                            "xx-large", "xxx-large"};
+            static constexpr float keyword_px[] = {9, 10, 13, 16, 18, 24, 32, 48};
+            const layout::length size = layout::parse_length(text);
+            canvas.font_size = size.is_auto() ? canvas.font_size : size.resolve(16, 16);
+            for (std::size_t i = 0; i < std::size(keywords); ++i) {
+                if (ascii_iequals(text, keywords[i])) { canvas.font_size = keyword_px[i]; }
+            }
+        } else if (name == "font-family") {
+            // The FIRST entry, unquoted - what layout resolves a list to as well.
+            std::string_view first = trim(text.substr(0, text.find(',')), " \t");
+            if (first.size() >= 2 && (first.front() == '"' || first.front() == '\'') &&
+                first.back() == first.front()) {
+                first = first.substr(1, first.size() - 2);
+            }
+            canvas.font_family = std::string{first};
+        } else if (name == "font-weight") {
+            // 600 and up is bold, as layout reads it.
+            int numeric = 0;
+            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), numeric);
+            canvas.font_bold =
+                parsed.ec == std::errc{} ? numeric >= 600 : text == "bold" || text == "bolder";
+        } else if (name == "font-style") {
+            canvas.font_italic = text == "italic" || text == "oblique";
+        }
     }
-    return size > 0 ? size : 10;
-}
-
-void dom_bindings::font_face_from(std::string_view font, std::string & family, bool & bold,
-                                  bool & italic) {
-    family.clear();
-    bold = false;
-    italic = false;
-    const std::size_t px = font.find("px");
-    if (px == std::string_view::npos) { return; }
-
-    // Before the size: the style and weight keywords.
-    const std::string_view before = font.substr(0, px);
-    bold = before.find("bold") != std::string_view::npos;
-    italic = before.find("italic") != std::string_view::npos ||
-             before.find("oblique") != std::string_view::npos;
-
-    // After it: the family list. The FIRST entry, which is what the rest of the
-    // engine resolves too (layout takes the first name of the list as well).
-    std::string_view rest = font.substr(px + 2);
-    if (const std::size_t comma = rest.find(','); comma != std::string_view::npos) {
-        rest = rest.substr(0, comma);
-    }
-    const std::size_t first = rest.find_first_not_of(" \t'\"");
-    if (first == std::string_view::npos) { return; }
-    const std::size_t last = rest.find_last_not_of(" \t'\"");
-    family = rest.substr(first, last - first + 1);
+    return true;
 }
 
 } // namespace ctbrowser::shell

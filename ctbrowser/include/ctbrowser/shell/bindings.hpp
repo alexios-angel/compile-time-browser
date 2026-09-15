@@ -1302,17 +1302,10 @@ private:
 
     [[nodiscard]] static float number(std::span<value> args, std::size_t i);
 
-    // "bold 16px sans-serif" -> 16.
-    [[nodiscard]] static float font_size_from(std::string_view font);
-
-    // ...and -> family "sans-serif", bold, not italic.
-    //
-    // An honest subset of the CSS `font` shorthand: tokens before the <n>px one
-    // supply bold/italic, and the first entry of the family list after it is
-    // the family. Not handled, and not pretended to be: `font-weight: 700` as a
-    // number, `<size>/<line-height>`, and keyword sizes like `medium`.
-    static void font_face_from(std::string_view font, std::string & family, bool & bold,
-                               bool & italic);
+    // `ctx.font = "..."`, read as the CSS `font` shorthand it is: the size in
+    // px, the first family, bold and italic. False for a string that is not
+    // one, which the specification says leaves the font as it was.
+    static bool apply_canvas_font(canvas_context & canvas, std::string_view font);
 
     [[nodiscard]] node_id handle_of(value v);
 
