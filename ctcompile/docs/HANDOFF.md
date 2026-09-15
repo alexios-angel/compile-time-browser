@@ -32,11 +32,19 @@ checks / 45 capture provenance-budget refusals / four existing budget-fingerprin
 controls**. Stable formatting passes **829 C++ / 100 Python / 33 web**; required
 pinned formatting matches the existing **nine-file / 26-diagnostic** baseline.
 
-The complete **276-step default devbox build passed**. The **602-test CTest gate
-is running**, with four jobs and **1,443 frozen inputs**. Final full-suite results
-are not yet claimed.
-Recovery scripts, logs and source hashes are in `/tmp/ctcompile-dom-captures/`.
-No browser/runtime files or WPT/test262 expectations changed.
+The complete **276-step default build / 602/602 CTests in 1426.41s /
+176/176 lit in 969.86s PASS**, with four CTest jobs. DOM entry passed in
+**210.03s**, session in **59.56s**, Strings in **44.36s**, and shared Map ownership
+in **302.86s**. All **1,443 frozen hashes** match the devbox, local files and
+committed source. Recovery scripts, full logs, generated C++ and `measured.json`
+are retained in `/tmp/ctcompile-dom-captures/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with
+no skipped or pruned functions. Original DOM Data remains **7/7**; Button remains
+**4/86**, with **22 Node observations** and its existing interpreter inheritance
+failure. Button and DOM Data reports are unchanged, and all **1,123 escape
+baseline rows** are byte-identical. No browser/runtime files or WPT/test262
+expectations changed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** this admits primitive and DOM captures in local leaf
 helpers, including object-held methods; it does not admit captured callable/holder
