@@ -6,6 +6,53 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exported DOM capture initialization and original subtraction, 2026-09-15 UTC
+
+Resumed the **02:05 codex-dom-host-captures / codex-escape-sub-number** thread
+from AGENT-SYNC, explicitly abandoned by the loop at **02:06:22**. The shared
+`ctcompile-v1` tree was clean at **9806429a**; both histories and unmerged branches
+were checked, and the September 7 WIP was already landed. Three agents supplied
+escape code, source tests and proof review; root finished the frozen test draft
+after the test/review agents reached service limits.
+
+**36683d8c** adds original bounded Number operands to the existing charged
+subtraction proof. Literal, loaded and forwarded values can supply an exact own
+index, offset or non-growing length. Underflow, coercion, stale evidence and retained
+children remain checked. Focused **2/2 CTests in 1.22s PASS**: **262 dense-length
+rows / 113 live states / 9,387 retention cutoffs**, **zero escape violations /
+precision 40/172**.
+
+**4ef7649c** proves a single exported DOM entry initialized from immutable local
+cells, constants and callable/holder graphs. The private candidate appends its
+invocation after the entire wrapper initialization, then reuses the existing
+capture expansion and complete DOM reproof. Exact publication, creator identity,
+source order, implicit arguments, arity and work limits are checked. No cell,
+callable storage or VM dependency reaches generated C++. Block-scoped captures
+are supported; top-level global bindings and factory calls remain separate proofs.
+
+Final focused **2/2 DOM String/host CTests in 52.67s PASS**: **285 Node/VM
+observations / eight GCC-Clang binaries / 392 source refusals / 44 provenance-depth /
+24 method / 113 capture-initialization-budget checks**, plus four existing
+budget/fingerprint controls. Initialization after publication executes correctly;
+forged creator evidence, extra wrapper parameters and observable setup refuse.
+Stable formatting passes **829 C++ / 100 Python / 33 web**. The required pinned
+formatter still reports the unchanged **nine-file / 26-diagnostic** baseline.
+
+The complete default devbox build and **602-test CTest gate are running** against
+**1,443 frozen source hashes**, with four CTest jobs. Do not infer a complete-gate
+pass from the focused results. Recovery: `/tmp/ctcompile-host-resume/full.sh`,
+`full.log`, `inputs.json` and the focused logs. No browser/runtime files or
+WPT/test262 expectations changed; no fresh full-bundle admission gain is claimed.
+
+**Exact next boundary:** original Bootstrap factory/global initialization and the
+complete H/F/M graph still need proof. Wrapper calls and global reads are refused.
+`F("config")` (vendor line 243) needs trusted String/RegExp replacement, execution
+and property lookup before helper expansion; DOMEntryAnalysis still rejects
+`initialIntrinsics`. `M` (line 230) needs live optional-attribute normalization,
+branches, Number/toString, URI decoding, JSON and exceptions. Dataset iteration,
+inherited receivers and retained config/callback ownership follow. Full native
+Bootstrap and the application driver remain unfinished.
+
 ## Nested DOM captures and negated-zero evidence, 2026-09-15 UTC
 
 Continued completed **dd220913 / e81304b4**, found in this handoff and the

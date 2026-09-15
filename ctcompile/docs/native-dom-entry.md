@@ -82,11 +82,17 @@ Forwarded slots have a private DOM proof of the original creator, enclosing slot
 complete local cell uses and immutable target. Symbolic enclosing loads are inserted
 at each call, so forwarding preserves invocation-specific values and assignment
 order. Mixed local/forwarded slots and multiple enclosing levels use the same proof.
-Captured host entries and observable outer initialization remain refused.
+**4ef7649c** also accepts an exported entry capturing immutable block-local setup.
+Its wrapper must publish exactly that source closure and otherwise contain only
+checked constants, cells and local callable/holder initialization. A private call
+runs after all initialization, including assignments after publication, and the
+existing expansion must eliminate all setup storage before complete DOM reproof.
+Original wrapper arguments cannot supply host element values. Top-level globals,
+factory calls and observable outer initialization remain refused.
 
-Only its checked, inert function-declaration wrapper may otherwise be omitted. Skipped
-source, additional initialization effects, calls to the entry from JavaScript,
-captured entry bindings, borrowed returns, handle retention, prototype or method writes,
+Only a checked inert declaration or the proved initialization above may be omitted.
+Skipped source, additional initialization effects, calls to the entry from JavaScript,
+mutable entry bindings, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, and nested control flow refuse. Current operations are
 strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,

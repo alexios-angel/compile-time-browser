@@ -158,8 +158,13 @@ immutable slots at each invocation: **249 Node/VM observations / eight GCC-Clang
 binaries / 336 source refusals / 44 provenance-depth / 24 method / 74 capture controls**.
 The original forwarded optional-return source executes unchanged. Shared leaf queries
 remain unchanged; mixed slots and composed depth receive the private DOM proof.
-Captured host entries remain beyond this proof. Original Bootstrap still needs its
-outer H/F/M source initialization and identities.
+**4ef7649c** additionally proves immutable block-local setup of one exported DOM
+entry: **285 Node/VM observations / eight GCC-Clang binaries / 392 source refusals /
+44 provenance-depth / 24 method / 113 capture-initialization-budget controls**.
+A private invocation follows all initialization, including writes after publication;
+existing expansion eliminates every setup cell/holder/callable before DOM reproof.
+Top-level global bindings and factory calls remain refused. Original Bootstrap still
+needs its factory/global initialization and the complete H/F/M source graph.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities.
