@@ -1258,6 +1258,15 @@ private:
 
     [[nodiscard]] node_id handle_of(value v);
 
+    // A `width`/`height` content attribute as HTML 2.6.9 reflects an unsigned
+    // long: the rules for parsing non-negative integers, and `fallback` when it
+    // is absent, not a number, negative or past 2^31-1. ZERO IS A VALUE - a
+    // `<canvas width=0>` is a canvas nothing can be drawn on, not a 300-wide
+    // one - so the 2D context, the WebGL context, toBlob and `canvas.width`
+    // all read the same number. Defined in element/views.cpp.
+    [[nodiscard]] long long size_attribute(const read_txn & txn, node_id id, std::string_view name,
+                                           long long fallback) const;
+
     [[nodiscard]] std::string text_of(node_id id) const;
 
     void set_text(node_id id, std::string text);

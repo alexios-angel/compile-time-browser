@@ -6,7 +6,6 @@
 
 #include "image_data.hpp"
 
-#include <charconv>
 #include <numbers>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
@@ -92,15 +91,9 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
 
 value dom_bindings::canvas_context_object(context & cx, node_id id) {
     const auto txn = doc_->read();
-    const auto attribute = [&](std::string_view name, int fallback) {
-        const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
-        if (text.empty() || text.front() < '0' || text.front() > '9') { return fallback; }
-        int value = 0;
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-        return parsed.ec != std::errc{} || value == 0 ? fallback : value;
-    };
     canvas_context * canvas =
-        canvases_->context_for(id, attribute("width", 300), attribute("height", 150));
+        canvases_->context_for(id, static_cast<int>(size_attribute(txn, id, "width", 300)),
+                               static_cast<int>(size_attribute(txn, id, "height", 150)));
     if (canvas == nullptr) { return value::null(); }
 
     auto * obj = cx.allocate<script::object_object>();

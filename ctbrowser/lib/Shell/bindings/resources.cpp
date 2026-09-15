@@ -53,17 +53,8 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
                 [this, id, property, natural_only, horizontal, decoded](context &,
                                                                         std::span<value>) {
                     if (!natural_only) {
-                        const auto txn = doc_->read();
-                        const std::string_view text =
-                            txn.attribute_value(id, atoms_->intern(property));
-                        double parsed = 0;
-                        bool any = false;
-                        for (const char c : text) {
-                            if (c < '0' || c > '9') { break; }
-                            parsed = parsed * 10 + (c - '0');
-                            any = true;
-                        }
-                        if (any) { return value::number(parsed); }
+                        const long long given = size_attribute(doc_->read(), id, property, -1);
+                        if (given >= 0) { return value::number(static_cast<double>(given)); }
                     }
                     const std::shared_ptr<const paint::bitmap> image = decoded();
                     if (!image) { return value::number(0); }

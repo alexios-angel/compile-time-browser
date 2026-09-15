@@ -130,19 +130,9 @@ void dom_bindings::install_control_methods(context & cx) {
         // surface yet, and a browser still gives you a transparent PNG of the
         // right size rather than nothing. An empty answer here would look like a
         // broken encoder.
-        const auto number = [&](std::string_view name, int fallback) {
-            const auto txn = doc_->read();
-            const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
-            int out = 0;
-            bool any = false;
-            for (const char digit : text) {
-                if (digit < '0' || digit > '9') { break; }
-                out = out * 10 + (digit - '0');
-                any = true;
-            }
-            return any ? out : fallback;
-        };
-        (void)canvases_->context_for(id, number("width", 300), number("height", 150));
+        const auto txn = doc_->read();
+        (void)canvases_->context_for(id, static_cast<int>(size_attribute(txn, id, "width", 300)),
+                                     static_cast<int>(size_attribute(txn, id, "height", 150)));
         const std::shared_ptr<const paint::bitmap> pixels = canvases_->pixels_of(id);
         return pixels ? encode_png(*pixels) : std::vector<std::byte>{};
     };

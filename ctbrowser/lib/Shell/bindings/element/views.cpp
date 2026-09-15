@@ -17,6 +17,13 @@ using style::css::css_name_of;
 
 } // namespace
 
+long long dom_bindings::size_attribute(const read_txn & txn, node_id id, std::string_view name,
+                                       long long fallback) const {
+    long long parsed = 0;
+    const bool ok = parse_html_integer(txn.attribute_value(id, atoms_->intern(name)), parsed);
+    return ok && parsed >= 0 && parsed <= 2147483647LL ? parsed : fallback;
+}
+
 void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
     // `<style>.sheet` and `<link>.sheet` - the LinkStyle mixin. Here rather than
     // in bindings/stylesheets.cpp for the same reason `style` is here: it is a
@@ -729,11 +736,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // 2147483648` reads back as 300.
     const auto reflect_size = [&](std::string property, long long fallback) {
         const auto read = [this, id](std::string_view name, long long missing) {
-            const auto txn = doc_->read();
-            long long parsed = 0;
-            const bool ok =
-                parse_html_integer(txn.attribute_value(id, atoms_->intern(name)), parsed);
-            return ok && parsed >= 0 && parsed <= 2147483647LL ? parsed : missing;
+            return size_attribute(doc_->read(), id, name, missing);
         };
         obj.define_accessor(
             property,

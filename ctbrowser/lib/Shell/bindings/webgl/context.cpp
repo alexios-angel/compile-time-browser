@@ -23,19 +23,8 @@ void dom_bindings::resize_webgl_context(node_id id, int width, int height) {
 value dom_bindings::webgl_context_object(context & cx, node_id id, int version) {
     if (canvases_ == nullptr) { return value::null(); }
     const auto txn = doc_->read();
-    const auto attribute = [&](std::string_view name, int fallback) {
-        const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
-        int out = 0;
-        bool any = false;
-        for (const char c : text) {
-            if (c < '0' || c > '9') { break; }
-            out = out * 10 + (c - '0');
-            any = true;
-        }
-        return any ? out : fallback;
-    };
-    const int width = attribute("width", 300);
-    const int height = attribute("height", 150);
+    const int width = static_cast<int>(size_attribute(txn, id, "width", 300));
+    const int height = static_cast<int>(size_attribute(txn, id, "height", 150));
     // THE SAME SURFACE THE 2D PATH DRAWS INTO. A canvas has one set of pixels
     // whichever context it handed out, and the painter reads them through
     // canvases_->pixels_of - so a WebGL draw has to land there or nothing
