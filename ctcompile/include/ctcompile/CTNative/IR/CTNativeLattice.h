@@ -128,11 +128,4 @@ mlir::Type meet(mlir::MLIRContext * context, ::llvm::ArrayRef<mlir::Type> types)
 /// spelling of `kDefaultStringEncoding`, so no phase has to name the encoding.
 StrType defaultStringType(mlir::MLIRContext * context);
 
-/// Does this type belong to the ctnative dialect?
-///
-/// The question every consumer of the StaticTyped interface actually asks: not
-/// "is there a type" - there always is - but "did anything prove it". A
-/// `!ctjs.value` or a builtin `i32` answers false.
-bool isNativeType(mlir::Type type);
-
 } // namespace ctcompile::ctnative

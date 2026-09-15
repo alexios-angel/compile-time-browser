@@ -108,7 +108,6 @@ std::string siteOfFunction(ctjs::FuncOp fn);
 std::string cIdentifier(llvm::StringRef symbol);
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
-std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn);
 bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.

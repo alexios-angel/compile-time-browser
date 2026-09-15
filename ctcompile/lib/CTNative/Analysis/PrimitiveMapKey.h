@@ -53,10 +53,7 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
     if (left == right) { return PrimitiveMapKeyRelation::Same; }
     const auto literal = [](mlir::Value value) -> mlir::Attribute {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        if (!constant || !llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                                    ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
-            return {};
-        }
+        if (!constant || !ctjs::isPrimitiveAttr(constant.getValue())) { return {}; }
         return constant.getValue();
     };
     auto lhs = literal(left), rhs = literal(right);
@@ -87,10 +84,9 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
     bool same = lhs == rhs;
     if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(lhs)) {
         auto other = llvm::cast<ctjs::NumberAttr>(rhs);
-        // SameValueZero equates both zeros and all NaN encodings. Bitwise
-        // inequality must never preserve a fact across an aliasing mutation.
-        const double a = number.getDouble(), b = other.getDouble();
-        same = a == b || (std::isnan(a) && std::isnan(b));
+        // Bitwise inequality must never preserve a fact across an aliasing
+        // mutation.
+        same = ctjs::sameValueZero(number.getDouble(), other.getDouble());
     }
     return same ? PrimitiveMapKeyRelation::Same : PrimitiveMapKeyRelation::Distinct;
 }

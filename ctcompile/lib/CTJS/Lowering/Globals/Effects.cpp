@@ -20,16 +20,6 @@
 
 namespace ctcompile::ctjs::globals_detail {
 
-// The function index the importer put after the last `$` of the symbol.
-std::optional<std::uint32_t> function_index_of(FuncOp function) {
-    const llvm::StringRef name = function.getSymName();
-    const std::size_t dollar = name.rfind('$');
-    if (dollar == llvm::StringRef::npos) { return std::nullopt; }
-    std::uint32_t index = 0;
-    if (name.substr(dollar + 1).getAsInteger(10, index)) { return std::nullopt; }
-    return index;
-}
-
 // THE NAMES THE SHELL BINDS THE WINDOW OBJECT TO, AND `self` IS ONE OF THEM.
 //
 // the end of install_window in lib/Shell/bindings/window/window.cpp is three define_global calls of

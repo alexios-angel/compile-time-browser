@@ -644,7 +644,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             } else if (auto load = mlir::dyn_cast<LoadGlobalOp>(op)) {
                 world.bindings[load.getNameAttr()].loads.push_back(load);
             } else if (auto function = mlir::dyn_cast<FuncOp>(op)) {
-                if (const std::optional<std::uint32_t> index = function_index_of(function)) {
+                if (const std::optional<unsigned> index = functionIndex(function)) {
                     world.by_index.try_emplace(*index, function);
                 }
             } else if (mlir::isa<PassNewTargetOp>(op)) {

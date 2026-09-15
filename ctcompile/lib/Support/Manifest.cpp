@@ -1,7 +1,5 @@
 #include <ctcompile/Support/Manifest.hpp>
 
-#include <array>
-#include <cstdio>
 #include <format>
 #include <string_view>
 
@@ -38,10 +36,7 @@ std::string json_string(std::string_view text) {
             // file name would otherwise produce JSON that half the parsers in
             // the world reject and the other half accept differently.
             if (c < 0x20) {
-                std::array<char, 8> escape{};
-                const int written = std::snprintf(escape.data(), escape.size(), "\\u%04x",
-                                                  static_cast<unsigned>(c));
-                if (written > 0) { out.append(escape.data(), static_cast<std::size_t>(written)); }
+                out += std::format("\\u{:04x}", c);
             } else {
                 // BYTES ABOVE 0x7F PASS THROUGH UNTOUCHED, which is correct for
                 // UTF-8 input and is what a name out of a document is. Escaping
@@ -70,7 +65,6 @@ std::string to_json(const manifest & from) {
     field("ctcompile", json_string(from.compiler_version));
     field("engine", json_string(from.engine));
     field("entry", json_string(from.entry));
-    field("mode", json_string(from.mode));
     field("bundle_format", std::to_string(from.bundle_format));
     field("image_format", std::to_string(from.image_format));
     field("engine_fingerprint", json_string(hex(from.engine_fingerprint)));

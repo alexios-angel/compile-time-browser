@@ -13,9 +13,8 @@ bool textWork(prefixAnalysis & prefix, llvm::StringRef text) {
 } // namespace
 
 bool prefixPrimitive(prefixValue value) {
-    return value.kind == prefixValue::Kind::primitive &&
-           llvm::isa_and_nonnull<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                                 ctjs::NumberAttr, ctjs::StringAttr>(value.literal);
+    return value.kind == prefixValue::Kind::primitive && value.literal &&
+           ctjs::isPrimitiveAttr(value.literal);
 }
 
 prefixValue prefixObjectCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,

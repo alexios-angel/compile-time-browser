@@ -14,6 +14,10 @@ inline constexpr llvm::StringLiteral kNativeObjectFieldGroup = "ctnative.object_
 
 int64_t nativeObjectFieldGroup(mlir::Operation * op);
 
+// A use that is the payload of an unboxed cell every capture of which a lifted
+// closure took: the cell is gone by emission, so the use is not an escape.
+bool erasedCapture(mlir::OpOperand & use);
+
 struct NativeObjectFieldPresence {
     bool assigned = false;
     bool exhausted = false;

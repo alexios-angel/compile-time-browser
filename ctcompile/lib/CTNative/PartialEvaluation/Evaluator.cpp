@@ -180,8 +180,7 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
     // but cannot control a branch, participate in a computation or escape.
     if (op->getName().getStringRef() == "ub.poison") { return {}; }
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
-        if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::NullAttr, ctjs::UndefinedAttr,
-                       ctjs::StringAttr>(constant.getValue())) {
+        if (!ctjs::isPrimitiveAttr(constant.getValue())) {
             return fail("unsupported constant kind");
         }
         return value::primitive(constant.getValue());

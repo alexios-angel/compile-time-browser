@@ -29,7 +29,6 @@ will run.
 |---|---|
 | `-o, --output FILE` | where to write the executable (default: the entry's stem) |
 | `--entry FILE` | the page to package, relative to the application directory (default `index.html`) |
-| `--mode MODE` | `vm`, `hybrid` or `aot-only` (see below) |
 | `--manifest FILE` | also write the manifest here, as JSON |
 | `--fonts DIR` | where the vendored faces are (default `$CTBROWSER_FONT_PATH`, else `fonts`) |
 | `--launcher FILE` | the launcher to build the executable from (default: `ctrun` beside this compiler) |
@@ -37,12 +36,12 @@ will run.
 | `--verbose` | report each stage |
 | `-v, --version` | the compiler version and the engine it was built against |
 
-**`--mode`.** `vm` is the semantic reference and the only one this driver is
-wired to. The native EmitC backend exists and runs whole applications with no
-interpreter (`plans/launcher.md`), but packaging is a copy of `ctrun` with a
-bundle appended, and an AOT application needs a link step this tool does not
-have - so `hybrid` (use native code where available) and `aot-only` (require
-it) are refused by name rather than accepted as a flag that changes nothing.
+**There is no `--mode`.** The bundle runs the VM, and that is the only thing
+packaging can produce today: the native EmitC backend exists and runs whole
+applications with no interpreter (`plans/launcher.md`), but packaging is a copy
+of `ctrun` with a bundle appended, and an AOT application needs a link step this
+tool does not have. A flag naming a mode it cannot deliver was refused by name;
+now there is no flag to refuse.
 
 **There is no `--target`.** Nothing here cross-compiles: packaging is a copy of
 a launcher, so the target is whatever that launcher was built for. Point
@@ -63,7 +62,6 @@ same document as one that does not, only slower.
   an application built from one would parse all of its JavaScript at every start
   while every count read a truthful zero.
 * **A script that does not compile.**
-* **`--mode hybrid` and `--mode aot-only`**, as above.
 
 And one thing it only warns about: a resource the page asked for that nothing
 answered. The page already tolerated it during the probe load, so refusing would
@@ -77,7 +75,6 @@ on disk, so this is the last chance anyone hears about it.
   "ctcompile": "0.1.0",
   "engine": "ctbrowser 2.0.0, 93 bytecode operations",
   "entry": "p5-basic.html",
-  "mode": "vm",
   "bundle_format": 1,
   "image_format": 3,
   "engine_fingerprint": "0x1b0fb1310f6b5265",

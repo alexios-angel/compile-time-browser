@@ -10,8 +10,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::scalar(mlir::Operatio
                                                                   flow & state) {
     using kind = fact::kind;
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
-        if (llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::NullAttr, ctjs::UndefinedAttr,
-                      ctjs::StringAttr>(constant.getValue())) {
+        if (ctjs::isPrimitiveAttr(constant.getValue())) {
             return {kind::primitive, BindingTime::Static, constant.getValue(), {}};
         }
     }

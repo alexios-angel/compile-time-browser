@@ -290,18 +290,6 @@ std::string printed(mlir::Type type) {
     return out;
 }
 
-// The function index the importer put after the last `$` of the symbol. The
-// same reading ResolveGlobals does, and the only link there is between a
-// `ctjs.create_closure`'s `$function` attribute and the `ctjs.func` it names.
-std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn) {
-    const llvm::StringRef name = fn.getSymName();
-    const std::size_t dollar = name.rfind('$');
-    if (dollar == llvm::StringRef::npos) { return std::nullopt; }
-    unsigned index = 0;
-    if (name.substr(dollar + 1).getAsInteger(10, index)) { return std::nullopt; }
-    return index;
-}
-
 bool isScriptEntry(ctjs::FuncOp fn) {
     return fn.getSymName() == "_script_$0";
 }

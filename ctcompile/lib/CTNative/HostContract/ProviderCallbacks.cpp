@@ -33,10 +33,7 @@ struct callbackReader {
                 return {};
             }
         }
-        return llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
-                         ctjs::UndefinedAttr>(value.literal)
-                   ? value
-                   : prefixValue{};
+        return ctjs::isPrimitiveAttr(value.literal) ? value : prefixValue{};
     }
 
     bool writable(llvm::StringRef name) {

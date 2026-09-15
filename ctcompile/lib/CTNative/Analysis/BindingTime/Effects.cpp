@@ -108,10 +108,7 @@ effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) 
             continue;
         }
         if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
-            if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
-                           ctjs::UndefinedAttr>(constant.getValue())) {
-                return {};
-            }
+            if (!ctjs::isPrimitiveAttr(constant.getValue())) { return {}; }
             output.tag = operand::kind::primitive;
         } else if (llvm::isa<mlir::arith::ConstantOp>(op)) {
             output.tag = operand::kind::primitive;

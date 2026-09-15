@@ -82,8 +82,6 @@ int main(int argc, char ** argv) try {
          "write the .ctapp bundle alone instead of an executable") //
         ("launcher", po::value<std::string>()->value_name("FILE"),
          "the launcher to build the executable from (default: ctrun beside this compiler)") //
-        ("mode", po::value<std::string>()->value_name("MODE")->default_value("vm"),
-         "vm (the semantic reference), hybrid, or aot-only") //
         ("manifest", po::value<std::string>()->value_name("FILE"),
          "also write the application manifest here, as JSON") //
         ("fonts", po::value<std::string>()->value_name("DIR"),
@@ -132,23 +130,6 @@ int main(int argc, char ** argv) try {
     }
     const bool verbose = options["verbose"].as<bool>();
 
-    // THE THREE MODES ARE PHASE 1'S, AND TWO OF THEM DO NOT EXIST YET. `vm` is
-    // the semantic reference and the only one with anything behind it: there is
-    // no native code to prefer in `hybrid` and none to require in `aot-only`,
-    // so accepting either would be accepting a flag that changes nothing - the
-    // same silence this tool refuses everywhere else. Named in the refusal so
-    // the answer is "not yet, and here is which phase", not "unknown option".
-    const std::string mode = options["mode"].as<std::string>();
-    if (mode != "vm") {
-        if (mode == "hybrid" || mode == "aot-only") {
-            std::cerr << "ctcompile: --mode " << mode
-                      << " needs native code generation, which arrives with the EmitC backend in "
-                         "Phases 10A-10C; only --mode vm works today\n";
-        } else {
-            std::cerr << "ctcompile: --mode " << mode << " is not one of vm, hybrid, aot-only\n";
-        }
-        return 2;
-    }
     const std::filesystem::path entry = options.count("entry") != 0
                                             ? application / options["entry"].as<std::string>()
                                             : application / "index.html";
@@ -287,7 +268,6 @@ int main(int argc, char ** argv) try {
     record.compiler_version = ctcompile::version_string();
     record.engine = ctcompile::engine_summary();
     record.entry = entry.filename().string();
-    record.mode = mode;
     record.bundle_format = ctbrowser::shell::bundle_format_version();
     record.image_format = ctbrowser::script::image_format_version();
     record.engine_fingerprint = ctbrowser::script::image_fingerprint();

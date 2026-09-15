@@ -143,6 +143,8 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
     return !result.wasInterrupted();
 }
 
+} // namespace
+
 bool erasedCapture(mlir::OpOperand & use) {
     auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
     if (!cell || use.getOperandNumber() != 0 || !cell->hasAttr("ctnative.unboxed")) {
@@ -153,8 +155,6 @@ bool erasedCapture(mlir::OpOperand & use) {
                capture.getOperandNumber() >= 2 && capture.getOwner()->hasAttr("ctnative.lifted");
     });
 }
-
-} // namespace
 
 void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots * globals) {
     // Derived from uses, never trusted from a prior lowering or input IR.
