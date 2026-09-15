@@ -751,6 +751,81 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                  "  %index = ctjs.binary mod %zero, %divisor\n" +
                  indexed,
          .failure = ArrayContentsFailure::UnsupportedOperation});
+    run({.what = "a stored unsigned shift keeps its Number after replacement and transport",
+         .body = values + one + read +
+                 "  %shifted = ctjs.binary_static ushr %length, %zero "
+                 "{storage_test_id = \"shifted\"}\n"
+                 "  %saved = ctjs.create_array [%shifted] {storage_test_id = \"saved\"}\n"
+                 "  %loaded = ctjs.get_property %saved[%zero]\n"
+                 "  ctjs.set_property %saved[%zero], %x\n"
+                 "  ctjs.append %zero to %a\n"
+                 "  cf.br ^next(%loaded, %zero : !ctjs.value, !ctjs.value)\n"
+                 "^next(%before: !ctjs.value, %after: !ctjs.value):\n"
+                 "  cf.br ^swapped(%after, %before : !ctjs.value, !ctjs.value)\n"
+                 "^swapped(%replacement: !ctjs.value, %original: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %original, %one\n"
+                 "  ctjs.set_property %a[%index], %replacement\n  ctjs.return %a\n",
+         .arrays = "a:[zero,zero]; saved:[x]",
+         .reads = "saved[0]=shifted",
+         .exit = "a -> {a}"});
+    run({.what = "an unsigned-shift index cannot release a returned saved child",
+         .body = values + read +
+                 "  %index = ctjs.binary_static ushr %length, %length\n"
+                 "  %saved = ctjs.get_property %a[%index]\n" +
+                 overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    for (const auto & [count, result] :
+         {std::pair{"0", "4751297606873776128"},                      // 0 -> 2^32-1
+          std::pair{"9223372036854775808", "4751297606873776128"},    // -0 -> 2^32-1
+          std::pair{"4607182418800017408", "4746794007244308480"},    // 1 -> 2^31-1
+          std::pair{"4629418941960159232", "4607182418800017408"},    // 31 -> 1
+          std::pair{"4629700416936869888", "4751297606873776128"},    // 32 -> 2^32-1
+          std::pair{"4629841154425225216", "4746794007244308480"},    // 33 -> 2^31-1
+          std::pair{"4751297606873776128", "4607182418800017408"}}) { // 2^32-1 -> 1
+        run({.what = "unsigned right shift masks its count and preserves the high-bit operand",
+             .body = values +
+                     "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                     "  %count = ctjs.constant #ctjs.number<" +
+                     count + ">\n  %expected = ctjs.constant #ctjs.number<" + result +
+                     ">\n  %shifted = ctjs.binary_static ushr %bound, %count\n"
+                     "  %index = ctjs.binary sub %shifted, %expected\n" +
+                     indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "the maximum unsigned result remains outside own element indices",
+         .body = values +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                 "  %index = ctjs.binary_static ushr %bound, %zero\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    for (const std::string literal : {"#ctjs.number<4602678819172646912>",  // 0.5
+                                      "#ctjs.number<13830554455654793216>", // -1
+                                      "#ctjs.number<4751297606875873280>",  // 2^32
+                                      "#ctjs.number<9218868437227405312>",  // infinity
+                                      "#ctjs.number<9221120237041090560>",  // NaN
+                                      "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
+                                      "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
+        for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
+            run({.what = "each unsigned-shift operand needs an exact bounded Number",
+                 .body = values + "  %input = ctjs.constant " + literal +
+                         "\n  %index = ctjs.binary_static ushr " + operands + "\n" + indexed,
+                 .failure = ArrayContentsFailure::UnknownIndex});
+        }
+    }
+    for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
+        run({.what = "an unsigned-shift arm cannot borrow another arm's Number",
+             .body = values + read +
+                     "  %flag = ctjs.truthy %zero\n"
+                     "  cf.cond_br %flag, ^join(%zero : !ctjs.value), ^join(%p : !ctjs.value)\n"
+                     "^join(%input: !ctjs.value):\n"
+                     "  %index = ctjs.binary_static ushr " +
+                     operands + "\n" + indexed,
+             .failure = ArrayContentsFailure::UnknownValue});
+    }
     run({.what = "an original bounded Number subtraction supplies its exact computed offset",
          .body = values + one + read +
                  "  %offset = ctjs.binary sub %one, %zero\n"
@@ -951,6 +1026,18 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,index]",
         .exit = "result -> {a,result}"};
     run(remainderShrink);
+    const contents_row shiftShrink{
+        .what = "unsigned shift supplies a non-growing length and keeps the original result",
+        .body = values + one + read +
+                "  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n"
+                "  %index = ctjs.binary_static ushr %negativeZero, %one "
+                "{storage_test_id = \"index\"}\n"
+                "  ctjs.set_property %a[%key], %index\n"
+                "  %result = ctjs.create_array [%a, %index] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,index]",
+        .exit = "result -> {a,result}"};
+    run(shiftShrink);
     const contents_row heldOffsetShrink{
         .what = "a held bounded Number offset supplies an exact non-growing shrink",
         .body = values + one + read +
@@ -1171,8 +1258,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         for (const std::string producer :
              {"ctjs.binary add %input, %zero", "ctjs.binary sub %input, %zero",
               "ctjs.binary mul %input, %zero", "ctjs.binary div %input, %input",
-              "ctjs.binary mod %input, %input", "ctjs.unary plus %input",
-              "ctjs.unary neg %input"}) {
+              "ctjs.binary mod %input, %input", "ctjs.binary_static ushr %input, %input",
+              "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
             run({.what = "a computed shrink needs exact Number operands without coercion",
                  .body = values + "  %input = ctjs.constant " + literal +
                          "\n  %wanted = " + producer +
@@ -1513,7 +1600,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     }
     for (const contents_row & source :
          {originalShrink, computedShrink, literalShrink, productShrink, quotientShrink,
-          remainderShrink, heldOffsetShrink, unaryShrink, negatedShrink}) {
+          remainderShrink, shiftShrink, heldOffsetShrink, unaryShrink, negatedShrink}) {
         auto module = parse(source);
         if (!module) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
@@ -1528,11 +1615,13 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         const mlir::Value value = store.getValue();
         auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         const auto binaryKind = binary ? binary.getKindAttr() : ctjs::BinaryKindAttr{};
+        auto shift = value.getDefiningOp<ctjs::BinaryStaticOp>();
         auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         const auto unaryKind = unary ? unary.getKindAttr() : ctjs::UnaryKindAttr{};
-        auto literal = (binary  ? binary.getRhs()
-                        : unary ? unary.getOperand()
-                                : value)
+        auto literal = (shift    ? shift.getRhs()
+                        : binary ? binary.getRhs()
+                        : unary  ? unary.getOperand()
+                                 : value)
                            .getDefiningOp<ctjs::ConstantOp>();
         if (binary) {
             if (auto offset = binary.getRhs().getDefiningOp<ctjs::BinaryOp>()) {
@@ -1545,6 +1634,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
         store->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0));
         if (binary) { binary->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0)); }
+        if (shift) { shift->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0)); }
         if (unary) { unary->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0)); }
         mlir::DataFlowSolver stale;
         stale.load<mlir::dataflow::DeadCodeAnalysis>();
@@ -1558,7 +1648,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             contents_row current = source;
             current.failure = failure;
             if (retained) {
-                current.arrays = "a:[x]; result:[a,length]";
+                current.arrays = shift ? "a:[x]; result:[a,index]" : "a:[x]; result:[a,length]";
                 current.exit = "result -> {a,result,x}";
             }
             check(*module, current, retained ? "" : "x");
@@ -1576,8 +1666,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         inspect((binary && binary.getKind() == ctjs::BinaryKind::Sub) ||
                         (unary && unary.getKind() == ctjs::UnaryKind::Neg)
                     ? ArrayContentsFailure::UnknownIndex
-                : (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
-                              binary.getKind() == ctjs::BinaryKind::Mod))
+                : shift || (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
+                                       binary.getKind() == ctjs::BinaryKind::Mod))
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::MissingElement);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
@@ -1593,6 +1683,16 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(original);
         inspect(ArrayContentsFailure::None);
         const mlir::Value parameter = function.getBody().front().getArgument(3);
+        if (shift) {
+            const mlir::Value lhs = shift.getLhs();
+            shift->setOperand(0, parameter);
+            inspect(ArrayContentsFailure::UnknownValue);
+            shift->setOperand(0, lhs);
+            shift.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Add));
+            inspect(ArrayContentsFailure::None, true);
+            shift.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::UShr));
+            inspect(ArrayContentsFailure::None);
+        }
         if (binary) {
             const mlir::Value lhs = binary.getLhs();
             binary->setOperand(0, parameter);
