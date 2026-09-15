@@ -216,7 +216,96 @@ struct DOMSource {
         return true;
     }
 
+    bool flattenEntryFactory(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
+        ctjs::StoreGlobalOp publication;
+        for (auto store : wrapper.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
+            if (!step()) { return false; }
+            if (store.getName() != target.getSymName().rsplit('$').first) { continue; }
+            if (publication) { return refuse("DOM entry factory has repeated publication"); }
+            publication = store;
+        }
+        auto * call = publication ? publication.getValue().getDefiningOp() : nullptr;
+        auto indirect = llvm::dyn_cast_or_null<ctjs::CallOp>(call);
+        auto direct = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(call);
+        if (!indirect && !direct) { return true; }
+        auto callee = indirect ? indirect.getCallee() : direct.getCalleeValue();
+        auto receiver = indirect ? indirect.getReceiver() : direct.getReceiver();
+        auto arguments = indirect ? indirect.getArgs() : direct.getArgs();
+        auto closure = callee.getDefiningOp<ctjs::CreateClosureOp>();
+        auto factory = closure && closure.getFunction() >= 0
+                           ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
+                           : ctjs::FuncOp{};
+        if (!factory || factory == target || factory == wrapper || !closure.getUpvalues().empty() ||
+            factory.getUpvalueCount() != 0 ||
+            creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
+            !undefined(receiver) ||
+            (direct &&
+             (direct.getCallee() != factory.getSymName() || !undefined(direct.getNewTarget()))) ||
+            arguments.size() + ctjs::implicit_arguments !=
+                factory.getBody().front().getNumArguments()) {
+            return refuse("DOM entry factory requires one exact uncaptured local call");
+        }
+        if (!checkBody(wrapper, false) || !checkBody(factory, false)) { return false; }
+        if (closure->getBlock() != &wrapper.getBody().front() ||
+            call->getBlock() != closure->getBlock() || !closure->isBeforeInBlock(call)) {
+            return refuse("DOM entry factory lacks local source order");
+        }
+        llvm::SmallVector<ctjs::RootOp> roots;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (auto root = llvm::dyn_cast<ctjs::RootOp>(use.getOwner())) {
+                roots.push_back(root);
+            } else if (use.getOwner() != call || use.getOperandNumber() != (indirect ? 0U : 2U)) {
+                return refuse("DOM entry factory identity escapes or is called repeatedly");
+            }
+        }
+        for (mlir::Operation * use : call->getResult(0).getUsers()) {
+            if (!step()) { return false; }
+            if (use != publication && !llvm::isa<ctjs::RootOp>(use)) {
+                return refuse("DOM entry factory result escapes its unique publication");
+            }
+        }
+        auto & body = factory.getBody().front();
+        auto result = llvm::cast<ctjs::ReturnOp>(body.back());
+        auto entry = result.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        if (!entry || entry.getFunction() < 0 ||
+            static_cast<unsigned>(entry.getFunction()) != *functionIndex(target)) {
+            return refuse("DOM entry factory must return its exact source entry");
+        }
+        // The single invocation moves its local cells with the returned closure.
+        // Only unobserved creator operands change; full capture/source proof runs
+        // on the flattened candidate before any native code can be published.
+        mlir::IRMapping mapping;
+        mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
+        mapping.map(body.getArgument(ctjs::arg_new_target), receiver);
+        mapping.map(body.getArgument(ctjs::arg_callee),
+                    wrapper.getBody().front().getArgument(ctjs::arg_callee));
+        for (auto [formal, actual] :
+             llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments), arguments)) {
+            if (!step()) { return false; }
+            mapping.map(formal, actual);
+        }
+        mlir::OpBuilder at(call);
+        for (mlir::Operation & operation : body) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp>(
+                    operation)) {
+                continue;
+            }
+            at.clone(operation, mapping);
+            ++operationCount;
+        }
+        call->getResult(0).replaceAllUsesWith(mapping.lookup(result.getValue()));
+        call->erase();
+        for (ctjs::RootOp root : roots) { root.erase(); }
+        closure.erase();
+        functions.erase(*functionIndex(factory));
+        factory.erase();
+        return true;
+    }
+
     bool initializeEntry(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
+        if (!flattenEntryFactory(wrapper, target)) { return false; }
         auto & block = wrapper.getBody().front();
         const auto index = functionIndex(target);
         if (!index || *index == 0 || creations.lookup(*index) != 1 ||
@@ -282,19 +371,9 @@ struct DOMSource {
         return true;
     }
 
-    bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false) {
-        if (!step()) { return false; }
-        if (expanded.contains(function)) { return true; }
-        // ponytail: bounded local call trees; recursive source needs a separate
-        // call/lifetime proof, not recursive compiler expansion.
-        if (depth == 64 || !active.insert(function).second) {
-            return refuse("DOM helper call tree is recursive or too deep");
-        }
+    bool checkBody(ctjs::FuncOp function, bool entry) {
         auto & block = function.getBody().front();
         llvm::DenseSet<mlir::Value> values;
-        llvm::SmallVector<ctjs::CreateClosureOp> closures;
-        llvm::SmallVector<ctjs::CreateObjectOp> objects;
-        llvm::SmallVector<ctjs::CreateCellOp> localCells;
         for (mlir::BlockArgument argument : block.getArguments()) {
             if (!step()) { return false; }
             values.insert(argument);
@@ -351,13 +430,35 @@ struct DOMSource {
                      !undefined(closure.getEnclosingThis()))) {
                     return refuse("DOM helper lacks an exact local closure identity");
                 }
-                closures.push_back(closure);
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
                 if (entry || load.getClosure() != block.getArgument(ctjs::arg_callee) ||
                     load.getIndex() < 0 || load.getIndex() >= function.getUpvalueCount()) {
                     return refuse("DOM helper upvalue lacks an exact capture slot");
                 }
+            }
+        }
+        if (!returned) { return refuse("DOM helper has no complete return"); }
+        return true;
+    }
+
+    bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false) {
+        if (!step()) { return false; }
+        if (expanded.contains(function)) { return true; }
+        // ponytail: bounded local call trees; recursive source needs a separate
+        // call/lifetime proof, not recursive compiler expansion.
+        if (depth == 64 || !active.insert(function).second) {
+            return refuse("DOM helper call tree is recursive or too deep");
+        }
+        if (!checkBody(function, entry)) { return false; }
+        auto & block = function.getBody().front();
+        llvm::SmallVector<ctjs::CreateClosureOp> closures;
+        llvm::SmallVector<ctjs::CreateObjectOp> objects;
+        llvm::SmallVector<ctjs::CreateCellOp> localCells;
+        for (mlir::Operation & operation : block) {
+            if (!step()) { return false; }
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
+                closures.push_back(closure);
             }
             if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(operation)) {
                 localCells.push_back(cell);
@@ -366,7 +467,6 @@ struct DOMSource {
                 objects.push_back(object);
             }
         }
-        if (!returned) { return refuse("DOM helper has no complete return"); }
         // Normalize children before asking the unchanged shared leaf query about
         // their parents. Forwarded loads remain symbolic until each parent call.
         for (ctjs::CreateClosureOp closure : closures) {
