@@ -81,6 +81,45 @@ BOOLEAN_CASES = {
     ),
 }
 HELPER_CASES = {
+    "helper_capture": (
+        "function read() { return element.getAttribute('x'); } return read() === null;",
+        "1000",
+    ),
+    "helper_capture_key": (
+        "const key = 'x'; function read(target) { return target.getAttribute(key); } return read(element) === null;",
+        "1000",
+    ),
+    "helper_capture_saved": (
+        r"""const saved = element.getAttribute('x');
+  function compare(target) { return saved === target.getAttribute('x'); }
+  element.setAttribute('x', 'a\0b'); return compare(element);""",
+        "0010",
+    ),
+    "helper_capture_repeated": (
+        """const key = 'x';
+  function read() { return element.getAttribute(key); }
+  const before = read(); element.setAttribute('x', 'after');
+  return before === read();""",
+        "0000",
+    ),
+    "helper_capture_method": (
+        """const key = 'x';
+  const helpers = {read() { return element.getAttribute(key); }};
+  return helpers.read() === null;""",
+        "1000",
+    ),
+    "helper_capture_arrow": (
+        "const key = 'x'; const read = () => element.getAttribute(key); return read() === null;",
+        "1000",
+    ),
+    "helper_capture_local_nested": (
+        """function observe(target, name) {
+    function read() { return target.getAttribute(name); }
+    return read();
+  }
+  return observe(element, 'x') === null;""",
+        "1000",
+    ),
     "helper_read": (
         """function read(target, key) { return target.getAttribute(key); }
   return read(element, 'x') === null;""",
@@ -217,6 +256,8 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "helper_capture_saved": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "helper_capture_repeated": 'assert(doc.read().attribute_value(node, state) == "after");',
     "helper_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_nested": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "helper_object_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
@@ -498,7 +539,17 @@ REFUSALS = {
     "non-string-name": "return element.getAttribute(null);",
 }
 HELPER_REFUSALS = {
-    "helper_capture": "function read() { return element.getAttribute('x'); } return read();",
+    "capture_reassigned": "let key = 'x'; function read() { return element.getAttribute(key); } key = 'y'; return read();",
+    "capture_reassigned_later": "let key = 'x'; function read() { return element.getAttribute(key); } const result = read(); key = 'y'; return result;",
+    "capture_child_write": "let key = 'x'; function read() { key = 'y'; return element.getAttribute(key); } return read();",
+    "capture_early_call": "function read() { return element.getAttribute(key); } const result = read(); var key = 'x'; return result;",
+    "capture_early_read": "function read() { return element.getAttribute(key); } const before = key; var key = 'x'; element.getAttribute(before); return read();",
+    "capture_unknown_effect": "const key = 'x'; function read() { return element.getAttribute(key); } sideEffect(); return read();",
+    "capture_closure_escape": "function read() { return element.getAttribute('x'); } read(); return read;",
+    "capture_borrowed_return": "function read() { element.getAttribute('x'); return element; } return read();",
+    "capture_callable": "function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke();",
+    "capture_forwarded": "function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke();",
+    "capture_holder": "const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke();",
     "helper_this": "function read() { return this.getAttribute('x'); } return read();",
     "helper_new_target": "function read(target) { target.getAttribute('x'); return new.target; } return read(element);",
     "helper_recursive": "function read(target) { return read(target); } return read(element);",
@@ -629,7 +680,7 @@ def helper_provenance_refusals(args, ir, contract):
                 helper,
                 once(helper, "attributes {", "attributes {ctjs.skipped = true, "),
             ),
-            "DOM helper requires complete capture-free source functions",
+            "DOM helper requires complete source functions and an uncaptured entry",
         ),
     }
     if closure not in entry or direct not in entry:
@@ -669,6 +720,76 @@ def helper_provenance_refusals(args, ir, contract):
     diagnostic = dom.lower(args, deep_ir, deep_contract, "helper-depth", success=False)
     if "error: native DOM source: DOM helper call tree is recursive or too deep" not in diagnostic:
         raise RuntimeError(f"helper depth: wrong refusal\n{diagnostic}")
+    return len(variants) * 4 + 1
+
+
+def capture_provenance_refusals(args, ir, contract):
+    original = ir.read_text()
+    closure = "ctjs.create_closure %arg2[2] this %3 captures %2"
+    load = "ctjs.load_upvalue %arg2[0]"
+    store = "    ctjs.cell_set %2, %5\n"
+    if any(original.count(anchor) != 1 for anchor in (closure, load, store)):
+        raise RuntimeError("captured helper provenance anchors changed")
+    cell = "DOM helper capture cell is mutable or escapes"
+    slot = "DOM helper upvalue lacks an exact capture slot"
+    variants = {
+        "foreign-load": (original.replace(load, load.replace("%arg2", "%arg3")), slot),
+        "forged-load-proof": (
+            original.replace(
+                load, load.replace("%arg2", "%arg3") + " {ctnative.host_proved = true}"
+            ),
+            slot,
+        ),
+        "negative-slot": (original.replace(load, load.replace("[0]", "[-1]")), cell),
+        "missing-slot": (original.replace(load, load.replace("[0]", "[1]")), cell),
+        "capture-count": (original.replace("upvalue_count = 1", "upvalue_count = 2"), cell),
+        "non-cell": (
+            original.replace(closure, closure.replace("captures %2", "captures %arg3")),
+            "DOM helper capture lacks a proved local cell",
+        ),
+        "forwarded-slot": (
+            original.replace(
+                closure,
+                closure.replace("captures %2", "captures %3")
+                + " {enclosing_indices = array<i32: 0>}",
+            ),
+            "DOM helper requires an immutable local leaf capture",
+        ),
+        "duplicate-closure": (
+            original.replace(closure, closure + "\n    %duplicate = " + closure),
+            cell,
+        ),
+        "second-write": (original.replace(store, store + store), cell),
+        "late-write": (
+            original.replace(store, "").replace(
+                "    %9 = ctjs.constant", store + "    %9 = ctjs.constant"
+            ),
+            "DOM helper capture assignment does not precede its call",
+        ),
+        "early-read": (
+            original.replace(store, "    %early = ctjs.cell_get %2\n" + store),
+            "DOM helper capture assignment does not precede its read",
+        ),
+    }
+    for name, (text, reason) in variants.items():
+        mutated = args.work / f"capture-provenance-{name}.mlir"
+        mutated.write_text(text)
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    f"capture-provenance-{name}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if f"error: native DOM source: {reason}" not in diagnostic:
+                    raise RuntimeError(f"capture provenance {name}: wrong refusal\n{diagnostic}")
+    diagnostic = dom.lower(args, ir, contract, "capture-budget", max_steps=128, success=False)
+    if "budget exhausted" not in diagnostic:
+        raise RuntimeError(f"capture query: missing work-budget refusal\n{diagnostic}")
     return len(variants) * 4 + 1
 
 
@@ -939,10 +1060,15 @@ function makeElement(value) {
         row for row in prepared if row[0] == "helper_object_method"
     )
     method_checks = method_provenance_checks(args, method_ir, method_contract)
+    _, capture_ir, capture_contract = next(
+        row for row in prepared if row[0] == "helper_capture_key"
+    )
+    capture_checks = capture_provenance_refusals(args, capture_ir, capture_contract)
     print(
         f"native DOM Strings: {9 + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {len(REFUSALS) * 4} source refusal checks, "
-        f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks"
+        f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
+        f"{capture_checks} capture provenance/budget refusals"
     )
 
 
