@@ -148,8 +148,14 @@ with the earlier 41 provenance/depth and four budget/fingerprint controls intact
 methods: **173 Node/VM observations / eight GCC-Clang binaries / 45 capture
 provenance-budget controls**. It reuses the shared cell/closure proof and checks
 assignment-before-read/call, then substitutes each invocation independently.
-Original Bootstrap's outer-scope captured callable/holder graph and forwarded
-upvalues remain beyond this leaf proof.
+**18f4519b** composes local captured callable/holder graphs under the unchanged
+leaf rules: **213 Node/VM observations / eight GCC-Clang binaries / 304 source
+refusals / 42 provenance-depth / 24 method / 53 capture controls**. Consumers
+expand before cells and callable holders are retired; the complete DOM proof still
+gates publication. The original two optional-return sources execute unchanged.
+Forwarded upvalues, capturing helpers that create nested closures and captured host
+entries remain beyond this proof. Original Bootstrap still needs its outer H/F/M
+source initialization and identities.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities.

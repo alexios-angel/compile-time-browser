@@ -73,7 +73,11 @@ escape; the DOM proof additionally requires each assignment to precede every
 read and invocation. Hoisted closure creation may precede the assignment. Captures
 are substituted at each call, preserving copied Strings across later DOM writes.
 Object-held leaf methods use the same proof. Cells never become runtime storage.
-Captured callable/holder graphs, forwarded upvalues, helpers that themselves create
+Captured local callable/holder graphs use this same leaf proof. Consumers expand
+before their cells and holders are retired, exposing callable identities for the
+next checked expansion. Cycles and chains reaching 64 frames refuse; every rescan
+and cloned invocation is charged. The original optional-return callable and holder
+sources execute unchanged. Forwarded upvalues, helpers that themselves create
 closures while capturing, and captured host entries remain refused.
 
 Only its checked, inert function-declaration wrapper may otherwise be omitted. Skipped
@@ -148,14 +152,14 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **173** copied-value and Boolean
+The `ctcompile_native_dom_strings` CTest compares **213** copied-value and Boolean
 observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
 across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-**264** source refusals for unsupported coercion, control flow, handles and retention,
-**41** provenance/depth refusals, **24** method provenance checks, **45** capture
-provenance/budget refusals and four
+**304** source refusals for unsupported coercion, control flow, handles and retention,
+**42** provenance/depth refusals, **24** method provenance checks, **53** capture
+provenance/storage/budget checks and four
 work-budget/fingerprint controls. Helper
 cases preserve argument evaluation order, saved String values, repeated calls and
 nested name construction. These clients link DOM/Core only and reject Script symbols

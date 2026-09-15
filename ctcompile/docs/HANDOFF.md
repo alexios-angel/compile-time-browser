@@ -6,6 +6,56 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured callable/holder graphs and unary Plus evidence, 2026-09-15 UTC
+
+Continued the completed **331d8a52 / d1c1ab96** thread from this handoff and
+**00:37 AGENT-SYNC** journal. Both histories and unmerged branches were checked;
+the tree was clean, no interrupted source/gate remained, and the September 7 WIP
+was confirmed as an ancestor. Three agents supplied source tests, an independent
+escape draft and a proof/archive review; root integrated and gated their work.
+
+**efa13c50** preserves bounded exact Number evidence through unary Plus. It reuses
+held facts and the existing Number parser, charges the exact result, and retains
+saved values and structural alternatives. Coercive/invalid targets and stale or
+forged proofs still refuse. Dense length passes **223 rows / 80 live states / 7,480
+budget cutoffs**; the complete escape fixture retains **zero violations /
+precision 40/172**.
+
+**18f4519b** expands immutable local captured callable and holder graphs before
+DOM admission. Capturing consumers expand at their original call sites; cells stay
+alive until every capture is substituted, then exposed holder reads and callable
+uses receive the existing complete provenance/source-order proof. Each invocation
+gets its own mapping. Dependency rescans and cloned work are charged; cycles and
+64-frame chains refuse. Erased calls lose their method/depth authorization. The
+shared immutable-leaf queries remain unchanged, and the private result still needs
+the complete DOM reproof. Generated code uses ordinary borrowed element handles
+and owning optional Strings; no runtime callable or cell storage is introduced.
+
+Final focused **2/2 DOM String/host CTests in 39.40s PASS**, after the escape and
+host focus passed. Strings: **213 Node/VM observations / eight GCC-Clang binaries /
+304 source refusals / 42 provenance-depth refusals / 24 method checks / 53 capture
+provenance-storage-budget checks / four existing budget-fingerprint controls**.
+Both original optional-return refusal sources are preserved byte-for-byte and now
+execute. Additional controls cover initial-cell storage, assignment-before-call,
+independent callers and argument/DOM write order. The larger oracle exposed a
+test-only sort-by-line versus sort-by-global-name mismatch; the names now govern
+sorting. No interpreter semantics or expectations were changed.
+
+Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned
+formatting matches the existing **nine-file / 26-diagnostic** baseline. The final
+source is committed and **1,443 input hashes** are frozen. The complete **274-step default build passed**; the **602-test CTest gate**
+is running and its final result is pending. Recovery scripts, focused
+logs and evidence are retained in `/tmp/ctcompile-dom-graphs/`.
+
+**Exact next boundary:** forwarded upvalues and helpers that create nested closures
+while capturing still refuse, as do captured host entries. Original Bootstrap needs
+its outer `H`/`F`/`M` source initialization/identity proof, then trusted String/RegExp
+replacement and execution/property lookup for `F("config")` (vendor line 243).
+`M` (line 230) still normalizes live attributes through branches, Number/toString,
+URI decoding, JSON and exceptions. Dataset iteration, inherited receivers and
+retained config/callback ownership remain open. Full native Bootstrap and the
+application driver remain unfinished; no full-bundle admission gain is claimed.
+
 ## Immutable DOM captures and held array offsets, 2026-09-15 UTC
 
 Continued the completed **50266ae7 / 1aa5c2c2** thread from this handoff and
