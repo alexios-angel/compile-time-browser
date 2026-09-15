@@ -1707,10 +1707,7 @@ private:
         if (const std::size_t comma = family.find(','); comma != std::string_view::npos) {
             family = trim(family.substr(0, comma), html_whitespace);
         }
-        if (family.size() >= 2 && (family.front() == '"' || family.front() == '\'') &&
-            family.back() == family.front()) {
-            family = family.substr(1, family.size() - 2);
-        }
+        family = unquoted(family);
         int numeric = 0;
         const auto parsed = std::from_chars(weight.data(), weight.data() + weight.size(), numeric);
         const bool bold = parsed.ec == std::errc{}

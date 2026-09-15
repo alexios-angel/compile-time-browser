@@ -180,6 +180,17 @@ struct stylesheet {
         if (v.child_count == 0) { return {}; }
         return std::span<const component_value>{values}.subspan(v.first_child, v.child_count);
     }
+    // A preserved whitespace token, and a run with those stripped from both
+    // ends - what every reader of a prelude or a value does first.
+    [[nodiscard]] bool is_space(const component_value & v) const noexcept {
+        return v.kind == cv_kind::token && tokens[v.token].type == token_type::whitespace;
+    }
+    [[nodiscard]] std::span<const component_value> trimmed(
+        std::span<const component_value> run) const noexcept {
+        while (!run.empty() && is_space(run.front())) { run = run.subspan(1); }
+        while (!run.empty() && is_space(run.back())) { run = run.subspan(0, run.size() - 1); }
+        return run;
+    }
     [[nodiscard]] std::span<const component_value> values_of(const raw_declaration & d) const {
         if (d.value_count == 0) { return {}; }
         return std::span<const component_value>{values}.subspan(d.first_value, d.value_count);

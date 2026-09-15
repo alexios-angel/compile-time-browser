@@ -74,18 +74,6 @@ bool engine::register_property(std::string_view name, css::property_registration
 // way @font-face's do, and the prelude is a run of component values.
 namespace {
 
-[[nodiscard]] bool is_space(const css::stylesheet & sheet, const css::component_value & v) {
-    return v.kind == css::cv_kind::token &&
-           sheet.tokens[v.token].type == css::token_type::whitespace;
-}
-
-[[nodiscard]] std::span<const css::component_value> trimmed(
-    const css::stylesheet & sheet, std::span<const css::component_value> run) {
-    while (!run.empty() && is_space(sheet, run.front())) { run = run.subspan(1); }
-    while (!run.empty() && is_space(sheet, run.back())) { run = run.subspan(0, run.size() - 1); }
-    return run;
-}
-
 // The token at a run's front, when the front IS a single token.
 [[nodiscard]] const css::css_token * token_at(const css::stylesheet & sheet,
                                               std::span<const css::component_value> run) {
@@ -116,11 +104,11 @@ namespace {
     for (std::size_t i = 0; i < run.size(); ++i) {
         const css::css_token * t = token_at(sheet, run.subspan(i));
         if (t != nullptr && t->type == separator && !(first_only && !pieces.empty())) {
-            pieces.push_back(trimmed(sheet, run.subspan(start, i - start)));
+            pieces.push_back(sheet.trimmed(run.subspan(start, i - start)));
             start = i + 1;
         }
     }
-    pieces.push_back(trimmed(sheet, run.subspan(start)));
+    pieces.push_back(sheet.trimmed(run.subspan(start)));
     return pieces;
 }
 
@@ -128,7 +116,7 @@ namespace {
 // wrapper comes off; nothing at all is `*`.
 [[nodiscard]] std::string syntax_of(const css::stylesheet & sheet,
                                     std::span<const css::component_value> run) {
-    run = trimmed(sheet, run);
+    run = sheet.trimmed(run);
     if (run.empty()) { return "*"; }
     if (run.front().kind == css::cv_kind::function &&
         ascii_iequals(sheet.text_of(sheet.tokens[run.front().token]), "type(")) {
@@ -151,7 +139,7 @@ void engine::register_at_property_rules(const css::stylesheet & sheet) {
     const atom initial_key = atoms_->intern_lower("initial-value");
     for (const css::at_rule_block & rule : sheet.properties) {
         // The prelude: one `--name` ident.
-        const auto prelude = trimmed(sheet, sheet.prelude_of(rule));
+        const auto prelude = sheet.trimmed(sheet.prelude_of(rule));
         const css::css_token * name_token = token_at(sheet, prelude);
         if (prelude.size() != 1 || name_token == nullptr ||
             name_token->type != css::token_type::ident) {
@@ -203,14 +191,14 @@ void engine::register_at_function_rules(const css::stylesheet & sheet, std::uint
     const atom result_key = atoms_->intern_lower("result");
     for (const css::at_rule_block & rule : sheet.functions) {
         // The prelude: `--name(` ... `)`, then `returns <type>`?
-        auto prelude = trimmed(sheet, sheet.prelude_of(rule));
+        auto prelude = sheet.trimmed(sheet.prelude_of(rule));
         if (prelude.empty() || prelude.front().kind != css::cv_kind::function) { continue; }
         const std::string_view head = sheet.text_of(sheet.tokens[prelude.front().token]);
         if (!head.starts_with("--")) { continue; }
         css::custom_function made;
         made.name = std::string{head.substr(0, head.size() - 1)};
         bool valid = true;
-        const auto params = trimmed(sheet, sheet.children_of(prelude.front()));
+        const auto params = sheet.trimmed(sheet.children_of(prelude.front()));
         if (!params.empty()) {
             for (const auto piece : split_at(sheet, params, css::token_type::comma, false)) {
                 css::custom_function::parameter param;
@@ -231,7 +219,7 @@ void engine::register_at_function_rules(const css::stylesheet & sheet, std::uint
             }
         }
         if (!valid) { continue; }
-        prelude = trimmed(sheet, prelude.subspan(1));
+        prelude = sheet.trimmed(prelude.subspan(1));
         if (!prelude.empty()) {
             const css::css_token * word = token_at(sheet, prelude);
             if (word == nullptr || word->type != css::token_type::ident ||

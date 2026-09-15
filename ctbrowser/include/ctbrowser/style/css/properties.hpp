@@ -128,6 +128,13 @@ struct value_check {
     bool substituted = false;
 };
 
+// The CSS-WIDE KEYWORDS, valid for every property including one the table has
+// never heard of: `inherit`, `initial`, `unset`, `revert` and `revert-layer`.
+// The last is in the list because CSS Cascade 5 defines it; the cascade here
+// does not implement layers, so it is accepted and behaves as `revert`, which is
+// what the specification says happens when there is no layer to revert to.
+[[nodiscard]] bool is_wide_keyword(std::string_view word) noexcept;
+
 // `allow_important` is false for the two paths CSSOM says must refuse one - the
 // IDL setter (`el.style.width = "1px !important"`) and `setProperty`'s value
 // argument - and true for the one path CSS syntax allows it on, which is a

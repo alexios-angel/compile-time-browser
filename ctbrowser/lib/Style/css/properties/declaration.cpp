@@ -12,14 +12,6 @@ using namespace detail;
 
 namespace {
 
-// The CSS-WIDE KEYWORDS, valid for every property including one this table has
-// never heard of. `revert-layer` is in the list because CSS Cascade 5 defines
-// it; the cascade here does not implement layers, so it is accepted and
-// behaves as `revert`, which is what the specification says happens when there
-// is no layer to revert to.
-constexpr std::array<std::string_view, 5> wide_keywords{"inherit", "initial", "unset", "revert",
-                                                        "revert-layer"};
-
 // `not X`, `X and Y`, `X or Y`, `(...)` and a bare `( p : v )`. Written over the
 // raw text with a bracket-depth counter rather than over the token stream: the
 // grammar is about the SHAPE of the parentheses, and the tokens have already
@@ -101,6 +93,10 @@ bool condition(std::string_view text, int depth) {
 
 } // namespace
 
+bool is_wide_keyword(std::string_view word) noexcept {
+    return ascii_iequals_any(word, {"inherit", "initial", "unset", "revert", "revert-layer"});
+}
+
 value_check check_declaration(std::string_view property, std::string_view value,
                               bool allow_important) {
     std::string_view text = trim(value, html_whitespace);
@@ -162,7 +158,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // has never heard of, and serialises lowercased.
     if (found.significant.size() == 1) {
         const css_token & only = ts.tokens[found.significant.front()];
-        if (only.type == token_type::ident && ascii_iequals_any(ts.text_of(only), wide_keywords)) {
+        if (only.type == token_type::ident && is_wide_keyword(ts.text_of(only))) {
             return yes(ascii_lower_copy(ts.text_of(only)));
         }
     }

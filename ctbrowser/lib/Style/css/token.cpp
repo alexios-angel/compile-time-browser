@@ -40,17 +40,6 @@ constexpr char32_t max_code_point = 0x10FFFF;
 [[nodiscard]] constexpr bool is_digit(char c) noexcept {
     return c >= '0' && c <= '9';
 }
-[[nodiscard]] constexpr bool is_letter(char c) noexcept {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
-// §4.2. Anything >= 0x80 counts: a UTF-8 lead or continuation byte is a name code
-// point, which is what lets `.café` tokenize byte-wise with no decoding.
-[[nodiscard]] constexpr bool is_name_start(char c) noexcept {
-    return is_letter(c) || c == '_' || static_cast<unsigned char>(c) >= 0x80;
-}
-[[nodiscard]] constexpr bool is_name(char c) noexcept {
-    return is_name_start(c) || is_digit(c) || c == '-';
-}
 // §4.3.8, and NOT `\` followed by anything: a backslash at the end of a line does
 // not escape it, which is what makes an unterminated string recoverable.
 [[nodiscard]] constexpr bool is_valid_escape(std::string_view s, std::size_t at) noexcept {

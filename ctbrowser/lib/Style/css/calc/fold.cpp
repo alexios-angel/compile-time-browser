@@ -30,7 +30,7 @@ namespace detail {
 
 [[nodiscard]] std::string_view name_at(std::string_view value, std::size_t at,
                                        std::span<const std::string_view> names) noexcept {
-    if (at != 0 && is_name_char(value[at - 1])) { return {}; }
+    if (at != 0 && is_name(value[at - 1])) { return {}; }
     for (const std::string_view name : names) {
         if (ascii_iequals(value.substr(at, name.size()), name)) { return name; }
     }

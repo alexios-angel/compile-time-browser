@@ -338,5 +338,7 @@ struct folded_value {
 // dimensioned form is the specification's own spelling too - `calc(NaN * 1px)`,
 // because `NaNpx` is not a token either.
 [[nodiscard]] std::string serialize_calc(const calc_result & value);
+// A bare <number> through the same rules: `0.5`, `12`, `calc(infinity)`.
+[[nodiscard]] std::string serialize_number(double value);
 
 } // namespace ctbrowser::style::css

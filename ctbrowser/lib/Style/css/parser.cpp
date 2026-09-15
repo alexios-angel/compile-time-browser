@@ -520,27 +520,26 @@ private:
     [[nodiscard]] bool is_semicolon(const component_value & v) const {
         return v.kind == cv_kind::token && sheet_.tokens[v.token].type == token_type::semicolon;
     }
-    [[nodiscard]] bool is_whitespace(const component_value & v) const {
-        return v.kind == cv_kind::token && sheet_.tokens[v.token].type == token_type::whitespace;
-    }
 
     void emit_one_declaration(std::span<const component_value> run) {
         // Trim whitespace both ends.
-        while (!run.empty() && is_whitespace(run.front())) { run = run.subspan(1); }
-        while (!run.empty() && is_whitespace(run.back())) { run = run.subspan(0, run.size() - 1); }
+        while (!run.empty() && sheet_.is_space(run.front())) { run = run.subspan(1); }
+        while (!run.empty() && sheet_.is_space(run.back())) {
+            run = run.subspan(0, run.size() - 1);
+        }
         if (run.empty()) { return; }
         // The name must be an ident, and the next non-whitespace thing a colon.
         if (run.front().kind != cv_kind::token) { return; }
         const css_token & name = sheet_.tokens[run.front().token];
         if (name.type != token_type::ident) { return; }
         std::size_t i = 1;
-        while (i < run.size() && is_whitespace(run[i])) { ++i; }
+        while (i < run.size() && sheet_.is_space(run[i])) { ++i; }
         if (i >= run.size() || run[i].kind != cv_kind::token ||
             sheet_.tokens[run[i].token].type != token_type::colon) {
             return; // no colon: not a declaration, and §5.4.5 drops it
         }
         std::span<const component_value> value = run.subspan(i + 1);
-        while (!value.empty() && is_whitespace(value.front())) { value = value.subspan(1); }
+        while (!value.empty() && sheet_.is_space(value.front())) { value = value.subspan(1); }
 
         raw_declaration d;
         const std::string_view property = text(name);
@@ -560,7 +559,7 @@ private:
         {
             std::size_t end = value.size();
             const auto skip_space_back = [&](std::size_t i) {
-                while (i > 0 && is_whitespace(value[i - 1])) { --i; }
+                while (i > 0 && sheet_.is_space(value[i - 1])) { --i; }
                 return i;
             };
             std::size_t i = skip_space_back(end);
@@ -578,7 +577,7 @@ private:
                 }
             }
         }
-        while (!value.empty() && is_whitespace(value.back())) {
+        while (!value.empty() && sheet_.is_space(value.back())) {
             value = value.subspan(0, value.size() - 1);
         }
         if (value.empty()) {
