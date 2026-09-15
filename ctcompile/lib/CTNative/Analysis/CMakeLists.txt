@@ -14,6 +14,7 @@ add_mlir_library(CTNativeAnalysis
   OwnedGlobalRoots.cpp
   OwnedGlobalMethods.cpp
   ../HostContract/Contract.cpp
+  ../HostContract/DOMEntry.cpp
   ../HostContract/DOMSource.cpp
   ../HostContract/Values.cpp
   ../HostContract/CapturedMapBody.cpp
