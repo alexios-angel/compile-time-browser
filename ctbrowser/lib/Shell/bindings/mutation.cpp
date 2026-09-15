@@ -653,157 +653,165 @@ void dom_bindings::install_mutation_observer(context & cx) {
     // --- MutationObserver.prototype ----------------------------------------
     auto * observer_proto = cx.allocate<script::object_object>();
     mutation_observer_prototype_ = value::object(observer_proto);
-    const auto method = [&cx, observer_proto](const char * name, script::native_fn fn) {
-        observer_proto->define(
-            name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-            script::attr_builtin);
-    };
 
-    method("observe", [this](context & c, std::span<value> args) {
-        const std::size_t index = mutation_observer_index(c.current_this());
-        if (index == std::numeric_limits<std::size_t>::max()) {
-            c.throw_error("TypeError", "Illegal invocation");
-            return value::undefined();
-        }
-        if (args.empty()) {
-            c.throw_error("TypeError", "Failed to execute 'observe' on 'MutationObserver': 1 "
-                                       "argument required, but only 0 present.");
-            return value::undefined();
-        }
-        // WHICH NODE. An element wrapper carries its handle; the document
-        // object carries none, this tree builder having no Document node above
-        // `<html>`, so `observe(document, ...)` registers on the root element
-        // and remembers that it stands for the document.
-        node_id target = handle_of(args[0]);
-        bool whole_document = false;
-        // `is_object_like`, because `document` is a Proxy and `is_object()` is
-        // false for one - see make_document_proxy in bindings/document/named_access.cpp.
-        if (!target && args[0].is_object_like() && document_.is_object_like() &&
-            args[0].bits() == document_.bits()) {
-            target = doc_->root();
-            whole_document = true;
-        }
-        if (!target) {
-            c.throw_error("TypeError", "Failed to execute 'observe' on 'MutationObserver': "
-                                       "parameter 1 is not of type 'Node'.");
-            return value::undefined();
-        }
+    set_method(
+        cx, *observer_proto, "observe",
+        [this](context & c, std::span<value> args) {
+            const std::size_t index = mutation_observer_index(c.current_this());
+            if (index == std::numeric_limits<std::size_t>::max()) {
+                c.throw_error("TypeError", "Illegal invocation");
+                return value::undefined();
+            }
+            if (args.empty()) {
+                c.throw_error("TypeError", "Failed to execute 'observe' on 'MutationObserver': 1 "
+                                           "argument required, but only 0 present.");
+                return value::undefined();
+            }
+            // WHICH NODE. An element wrapper carries its handle; the document
+            // object carries none, this tree builder having no Document node above
+            // `<html>`, so `observe(document, ...)` registers on the root element
+            // and remembers that it stands for the document.
+            node_id target = handle_of(args[0]);
+            bool whole_document = false;
+            // `is_object_like`, because `document` is a Proxy and `is_object()` is
+            // false for one - see make_document_proxy in bindings/document/named_access.cpp.
+            if (!target && args[0].is_object_like() && document_.is_object_like() &&
+                args[0].bits() == document_.bits()) {
+                target = doc_->root();
+                whole_document = true;
+            }
+            if (!target) {
+                c.throw_error("TypeError", "Failed to execute 'observe' on 'MutationObserver': "
+                                           "parameter 1 is not of type 'Node'.");
+                return value::undefined();
+            }
 
-        const value init = arg(args, 1);
-        mutation_options options;
-        options.child_list = member_flag(c, init, "childList");
-        options.attributes = member_flag(c, init, "attributes");
-        options.character_data = member_flag(c, init, "characterData");
-        options.subtree = member_flag(c, init, "subtree");
-        options.attribute_old_value = member_flag(c, init, "attributeOldValue");
-        options.character_data_old_value = member_flag(c, init, "characterDataOldValue");
-        const bool has_attributes = member_present(c, init, "attributes");
-        const bool has_character_data = member_present(c, init, "characterData");
-        const bool has_old_value = member_present(c, init, "attributeOldValue");
-        const bool has_data_old_value = member_present(c, init, "characterDataOldValue");
-        options.has_attribute_filter = member_present(c, init, "attributeFilter");
-        if (options.has_attribute_filter) {
-            const value filter = c.lookup_property(init, "attributeFilter");
-            if (filter.is_array()) {
-                for (const value & entry :
-                     static_cast<script::array_object *>(filter.as_heap())->items) {
-                    options.attribute_filter.push_back(c.to_string(entry));
-                }
-            } else if (filter.is_object()) {
-                const double length = context::to_number(c.lookup_property(filter, "length"));
-                for (double i = 0; i < length; ++i) {
-                    options.attribute_filter.push_back(
-                        c.to_string(c.lookup_property(filter, std::to_string(i))));
+            const value init = arg(args, 1);
+            mutation_options options;
+            options.child_list = member_flag(c, init, "childList");
+            options.attributes = member_flag(c, init, "attributes");
+            options.character_data = member_flag(c, init, "characterData");
+            options.subtree = member_flag(c, init, "subtree");
+            options.attribute_old_value = member_flag(c, init, "attributeOldValue");
+            options.character_data_old_value = member_flag(c, init, "characterDataOldValue");
+            const bool has_attributes = member_present(c, init, "attributes");
+            const bool has_character_data = member_present(c, init, "characterData");
+            const bool has_old_value = member_present(c, init, "attributeOldValue");
+            const bool has_data_old_value = member_present(c, init, "characterDataOldValue");
+            options.has_attribute_filter = member_present(c, init, "attributeFilter");
+            if (options.has_attribute_filter) {
+                const value filter = c.lookup_property(init, "attributeFilter");
+                if (filter.is_array()) {
+                    for (const value & entry :
+                         static_cast<script::array_object *>(filter.as_heap())->items) {
+                        options.attribute_filter.push_back(c.to_string(entry));
+                    }
+                } else if (filter.is_object()) {
+                    const double length = context::to_number(c.lookup_property(filter, "length"));
+                    for (double i = 0; i < length; ++i) {
+                        options.attribute_filter.push_back(
+                            c.to_string(c.lookup_property(filter, std::to_string(i))));
+                    }
                 }
             }
-        }
-        // THE DICTIONARY'S OWN DEFAULTING, DOM 4.3.1 steps 3-5, and it is
-        // "exists" rather than "is true": `{ attributeOldValue: false }` turns
-        // attribute observation ON, which MutationObserver-sanity.html tests
-        // both ways round.
-        if ((has_old_value || options.has_attribute_filter) && !has_attributes) {
-            options.attributes = true;
-        }
-        if (has_data_old_value && !has_character_data) { options.character_data = true; }
-        if (!options.child_list && !options.attributes && !options.character_data) {
-            c.throw_error("TypeError", "Failed to execute 'observe' on 'MutationObserver': The "
-                                       "options object must set at least one of 'attributes', "
-                                       "'characterData', or 'childList' to true.");
-            return value::undefined();
-        }
-        if (options.attribute_old_value && !options.attributes) {
-            c.throw_error("TypeError",
-                          "Failed to execute 'observe' on 'MutationObserver': The options object "
-                          "may only set 'attributeOldValue' to true when 'attributes' is true or "
-                          "not present.");
-            return value::undefined();
-        }
-        if (options.has_attribute_filter && !options.attributes) {
-            c.throw_error("TypeError",
-                          "Failed to execute 'observe' on 'MutationObserver': The options object "
-                          "may only set 'attributeFilter' when 'attributes' is true or not "
-                          "present.");
-            return value::undefined();
-        }
-        if (options.character_data_old_value && !options.character_data) {
-            c.throw_error("TypeError",
-                          "Failed to execute 'observe' on 'MutationObserver': The options object "
-                          "may only set 'characterDataOldValue' to true when 'characterData' is "
-                          "true or not present.");
-            return value::undefined();
-        }
+            // THE DICTIONARY'S OWN DEFAULTING, DOM 4.3.1 steps 3-5, and it is
+            // "exists" rather than "is true": `{ attributeOldValue: false }` turns
+            // attribute observation ON, which MutationObserver-sanity.html tests
+            // both ways round.
+            if ((has_old_value || options.has_attribute_filter) && !has_attributes) {
+                options.attributes = true;
+            }
+            if (has_data_old_value && !has_character_data) { options.character_data = true; }
+            if (!options.child_list && !options.attributes && !options.character_data) {
+                c.throw_error("TypeError", "Failed to execute 'observe' on 'MutationObserver': The "
+                                           "options object must set at least one of 'attributes', "
+                                           "'characterData', or 'childList' to true.");
+                return value::undefined();
+            }
+            if (options.attribute_old_value && !options.attributes) {
+                c.throw_error(
+                    "TypeError",
+                    "Failed to execute 'observe' on 'MutationObserver': The options object "
+                    "may only set 'attributeOldValue' to true when 'attributes' is true or "
+                    "not present.");
+                return value::undefined();
+            }
+            if (options.has_attribute_filter && !options.attributes) {
+                c.throw_error(
+                    "TypeError",
+                    "Failed to execute 'observe' on 'MutationObserver': The options object "
+                    "may only set 'attributeFilter' when 'attributes' is true or not "
+                    "present.");
+                return value::undefined();
+            }
+            if (options.character_data_old_value && !options.character_data) {
+                c.throw_error(
+                    "TypeError",
+                    "Failed to execute 'observe' on 'MutationObserver': The options object "
+                    "may only set 'characterDataOldValue' to true when 'characterData' is "
+                    "true or not present.");
+                return value::undefined();
+            }
 
-        // OBSERVING THE SAME TARGET TWICE REPLACES THE REGISTRATION rather
-        // than adding a second one - MutationObserver-disconnect.html
-        // re-observes the same node three times and counts on getting one
-        // record per change rather than three.
-        const auto existing =
-            std::ranges::find_if(mutation_registrations_, [&](const mutation_registration & reg) {
-                return reg.observer == index && reg.target == target;
+            // OBSERVING THE SAME TARGET TWICE REPLACES THE REGISTRATION rather
+            // than adding a second one - MutationObserver-disconnect.html
+            // re-observes the same node three times and counts on getting one
+            // record per change rather than three.
+            const auto existing = std::ranges::find_if(
+                mutation_registrations_, [&](const mutation_registration & reg) {
+                    return reg.observer == index && reg.target == target;
+                });
+            if (existing != mutation_registrations_.end()) {
+                existing->options = std::move(options);
+                existing->whole_document = whole_document;
+            } else {
+                mutation_registrations_.push_back(
+                    mutation_registration{index, target, whole_document, std::move(options)});
+            }
+            // THE SNAPSHOT IS TAKEN HERE, which is what makes the diff mean
+            // "since you started observing" rather than "since the page loaded".
+            take_mutation_snapshot();
+            sync_mutation_roots();
+            return value::undefined();
+        },
+        script::attr_builtin);
+
+    set_method(
+        cx, *observer_proto, "disconnect",
+        [this](context & c, std::span<value>) {
+            const std::size_t index = mutation_observer_index(c.current_this());
+            if (index == std::numeric_limits<std::size_t>::max()) { return value::undefined(); }
+            std::erase_if(mutation_registrations_, [index](const mutation_registration & reg) {
+                return reg.observer == index;
             });
-        if (existing != mutation_registrations_.end()) {
-            existing->options = std::move(options);
-            existing->whole_document = whole_document;
-        } else {
-            mutation_registrations_.push_back(
-                mutation_registration{index, target, whole_document, std::move(options)});
-        }
-        // THE SNAPSHOT IS TAKEN HERE, which is what makes the diff mean
-        // "since you started observing" rather than "since the page loaded".
-        take_mutation_snapshot();
-        sync_mutation_roots();
-        return value::undefined();
-    });
+            // ...AND THE QUEUE WITH THEM. `disconnect()` empties the record list,
+            // which is the whole point of the second half of
+            // MutationObserver-disconnect.html: mutations made before it are
+            // discarded rather than delivered late.
+            if (script::object_object * observer = mutation_observer_at(index)) {
+                observer->define(observer_records_key, c.make_array(), script::attr_none);
+            }
+            take_mutation_snapshot();
+            sync_mutation_roots();
+            return value::undefined();
+        },
+        script::attr_builtin);
 
-    method("disconnect", [this](context & c, std::span<value>) {
-        const std::size_t index = mutation_observer_index(c.current_this());
-        if (index == std::numeric_limits<std::size_t>::max()) { return value::undefined(); }
-        std::erase_if(mutation_registrations_,
-                      [index](const mutation_registration & reg) { return reg.observer == index; });
-        // ...AND THE QUEUE WITH THEM. `disconnect()` empties the record list,
-        // which is the whole point of the second half of
-        // MutationObserver-disconnect.html: mutations made before it are
-        // discarded rather than delivered late.
-        if (script::object_object * observer = mutation_observer_at(index)) {
-            observer->define(observer_records_key, c.make_array(), script::attr_none);
-        }
-        take_mutation_snapshot();
-        sync_mutation_roots();
-        return value::undefined();
-    });
-
-    method("takeRecords", [this](context & c, std::span<value>) {
-        const std::size_t index = mutation_observer_index(c.current_this());
-        if (index == std::numeric_limits<std::size_t>::max()) { return c.make_array(); }
-        script::array_object * queue = mutation_records_of(index);
-        if (queue == nullptr) { return c.make_array(); }
-        const value taken = value::object(queue);
-        if (script::object_object * observer = mutation_observer_at(index)) {
-            observer->define(observer_records_key, c.make_array(), script::attr_none);
-        }
-        sync_mutation_roots();
-        return taken;
-    });
+    set_method(
+        cx, *observer_proto, "takeRecords",
+        [this](context & c, std::span<value>) {
+            const std::size_t index = mutation_observer_index(c.current_this());
+            if (index == std::numeric_limits<std::size_t>::max()) { return c.make_array(); }
+            script::array_object * queue = mutation_records_of(index);
+            if (queue == nullptr) { return c.make_array(); }
+            const value taken = value::object(queue);
+            if (script::object_object * observer = mutation_observer_at(index)) {
+                observer->define(observer_records_key, c.make_array(), script::attr_none);
+            }
+            sync_mutation_roots();
+            return taken;
+        },
+        script::attr_builtin);
 
     // --- the constructor ---------------------------------------------------
     auto * ctor = cx.allocate<script::native_object>(

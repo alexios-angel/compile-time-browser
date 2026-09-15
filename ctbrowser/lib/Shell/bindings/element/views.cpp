@@ -183,14 +183,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     reseed(cx, *held);
     const value target = value::object(held);
     auto * handler = cx.allocate<script::object_object>();
-    const auto trap = [&](std::string name, script::native_fn fn) {
-        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // `length`, `cssText` and the indexed properties are COMPUTED here rather
     // than stored. Storing them would put `length: 5` in the element's style
     // attribute - the store IS the declaration list, and anything in it that is
     // not a declaration has to be filtered back out by every reader.
-    trap("get", [reseed](context & c, std::span<value> args) {
+    set_method(cx, *handler, "get", [reseed](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
         reseed(c, *store);
@@ -248,7 +245,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         return c.string(read_declaration(*store, c, css));
     });
-    trap("set", [this, reseed, wrote](context & c, std::span<value> args) {
+    set_method(cx, *handler, "set", [this, reseed, wrote](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
         reseed(c, *store);
@@ -293,62 +290,61 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // `setProperty` / `getPropertyValue` / `removeProperty` take the CSS
     // spelling rather than the IDL one, so they are the only way to reach a
     // custom property (`--x`) - which no identifier can name.
-    const auto declaration_method = [&](std::string name, script::native_fn fn) {
-        held->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // A NON-CUSTOM PROPERTY NAME IS LOWERCASED, a custom one is not: `--X` and
     // `--x` are two different properties and `COLOR` and `color` are one.
     const auto asked_name = [](context & c, std::span<value> args) {
         const std::string given = arg_string(c, args, 0);
         return given.starts_with("--") ? given : ascii_lower_copy(given);
     };
-    declaration_method(
-        "setProperty", [this, held, asked_name, reseed, wrote](context & c, std::span<value> args) {
-            // "If priority is not the empty string and is not an ASCII
-            // case-insensitive match for 'important', return." - CSSOM 6.7.2.
-            // The VALUE may not carry one; the third argument is the only way
-            // a page can ask for it.
-            // [LegacyNullToEmptyString], and optional: null and undefined are "".
-            const std::string priority =
-                args.size() > 2 && !args[2].is_nullish() ? c.to_string(args[2]) : std::string{};
-            if (!priority.empty() && !ascii_iequals(priority, "important")) {
-                return value::undefined();
-            }
-            reseed(c, *held);
-            // [LegacyNullToEmptyString]: null is "", and an undefined value is
-            // the string "undefined", which no grammar accepts.
-            const std::string text =
-                args.size() > 1 && !args[1].is_null() ? c.to_string(args[1]) : std::string{};
-            if (store_declaration(*held, c, asked_name(c, args), text, !priority.empty())) {
-                wrote(c, *held);
-                mutated();
-            }
-            return value::undefined();
-        });
+    set_method(cx, *held, "setProperty",
+               [this, held, asked_name, reseed, wrote](context & c, std::span<value> args) {
+                   // "If priority is not the empty string and is not an ASCII
+                   // case-insensitive match for 'important', return." - CSSOM 6.7.2.
+                   // The VALUE may not carry one; the third argument is the only way
+                   // a page can ask for it.
+                   // [LegacyNullToEmptyString], and optional: null and undefined are "".
+                   const std::string priority = args.size() > 2 && !args[2].is_nullish()
+                                                    ? c.to_string(args[2])
+                                                    : std::string{};
+                   if (!priority.empty() && !ascii_iequals(priority, "important")) {
+                       return value::undefined();
+                   }
+                   reseed(c, *held);
+                   // [LegacyNullToEmptyString]: null is "", and an undefined value is
+                   // the string "undefined", which no grammar accepts.
+                   const std::string text =
+                       args.size() > 1 && !args[1].is_null() ? c.to_string(args[1]) : std::string{};
+                   if (store_declaration(*held, c, asked_name(c, args), text, !priority.empty())) {
+                       wrote(c, *held);
+                       mutated();
+                   }
+                   return value::undefined();
+               });
     // ...and it ANSWERS with the value it removed, which is what CSSOM says and
     // what a page toggling a property reads to put it back.
-    declaration_method("removeProperty", [this, held, asked_name, reseed,
-                                          wrote](context & c, std::span<value> args) {
-        reseed(c, *held);
-        bool removed = false;
-        const std::string was = remove_stored_declaration(*held, c, asked_name(c, args), removed);
-        if (removed) {
-            wrote(c, *held);
-            mutated();
-        }
-        return c.string(was);
-    });
-    declaration_method("getPropertyValue",
-                       [held, asked_name, reseed](context & c, std::span<value> args) {
-                           reseed(c, *held);
-                           return c.string(read_declaration(*held, c, asked_name(c, args)));
-                       });
-    declaration_method("getPropertyPriority",
-                       [held, asked_name, reseed](context & c, std::span<value> args) {
-                           reseed(c, *held);
-                           return c.string(read_priority(*held, c, asked_name(c, args)));
-                       });
-    declaration_method("item", [held, reseed](context & c, std::span<value> args) {
+    set_method(cx, *held, "removeProperty",
+               [this, held, asked_name, reseed, wrote](context & c, std::span<value> args) {
+                   reseed(c, *held);
+                   bool removed = false;
+                   const std::string was =
+                       remove_stored_declaration(*held, c, asked_name(c, args), removed);
+                   if (removed) {
+                       wrote(c, *held);
+                       mutated();
+                   }
+                   return c.string(was);
+               });
+    set_method(cx, *held, "getPropertyValue",
+               [held, asked_name, reseed](context & c, std::span<value> args) {
+                   reseed(c, *held);
+                   return c.string(read_declaration(*held, c, asked_name(c, args)));
+               });
+    set_method(cx, *held, "getPropertyPriority",
+               [held, asked_name, reseed](context & c, std::span<value> args) {
+                   reseed(c, *held);
+                   return c.string(read_priority(*held, c, asked_name(c, args)));
+               });
+    set_method(cx, *held, "item", [held, reseed](context & c, std::span<value> args) {
         reseed(c, *held);
         double want = args.empty() ? 0 : context::to_number(args[0]);
         if (!(want >= 0)) { return c.string(""); }
@@ -408,20 +404,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // on the wrapper. As properties, assigning markup stored a string, built no
     // nodes, rendered nothing and reported nothing - and reading one back gave
     // whatever the page last wrote rather than what the DOM actually holds.
-    const auto tree_property = [&](std::string property, script::native_fn read,
-                                   script::native_fn write) {
-        obj.define_accessor(
-            property, value::object(cx.allocate<script::native_object>(property, std::move(read))),
-            value::object(cx.allocate<script::native_object>(property, std::move(write))));
-    };
-    tree_property(
-        "innerHTML", [this, id](context & c, std::span<value>) { return c.string(inner_html(id)); },
+    define_getter(
+        cx, obj, "innerHTML",
+        [this, id](context & c, std::span<value>) { return c.string(inner_html(id)); },
         [this, id](context & c, std::span<value> a) {
             set_inner_html(id, arg_string(c, a, 0));
             return value::undefined();
         });
-    tree_property(
-        "outerHTML", [this, id](context & c, std::span<value>) { return c.string(outer_html(id)); },
+    define_getter(
+        cx, obj, "outerHTML",
+        [this, id](context & c, std::span<value>) { return c.string(outer_html(id)); },
         [this, id](context & c, std::span<value> a) {
             set_outer_html(c, id, arg_string(c, a, 0));
             return value::undefined();
@@ -441,8 +433,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     }();
     for (const char * spelling : {"data", "nodeValue"}) {
         if (!character_data && spelling[0] == 'd') { continue; }
-        tree_property(
-            spelling,
+        define_getter(
+            cx, obj, spelling,
             [this, id](context & c, std::span<value>) {
                 const auto txn = doc_->read();
                 const node_kind kind = txn.kind(id).value_or(node_kind::element);
@@ -471,8 +463,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // of `Node-textContent.html` that a doctype gets.
     const bool doctype =
         doc_->read().kind(id).value_or(node_kind::element) == node_kind::document_type;
-    tree_property(
-        "textContent",
+    define_getter(
+        cx, obj, "textContent",
         [this, id, doctype](context & c, std::span<value>) {
             return doctype ? value::null() : c.string(text_content(id));
         },
@@ -548,14 +540,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // wrapper built when an element was detached and refreshed later would hand
     // back the parent it had at wrapping time, which for an element p5 creates
     // and then appends is null forever.
-    const auto navigate = [&](std::string property, script::native_fn fn) {
-        obj.define_accessor(
-            property, value::object(cx.allocate<script::native_object>(property, std::move(fn))),
-            value::undefined());
-    };
     // `dom_parent`, not `parent()`: the document element's parent is the
     // Document, which `wrap` hands back as the page's own `document`.
-    navigate("parentNode", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "parentNode", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
         return wrap(c, dom_parent(txn, id));
     });
@@ -563,7 +550,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // element, which is exactly the case a tree-walking page tests to know it
     // has reached the top: `<html>`'s parent is the DOCUMENT, and answering
     // with it made the walk run one level past the root.
-    navigate("parentElement", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "parentElement", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
         const node_id parent = txn.parent(id);
         if (!parent || txn.kind(parent).value_or(node_kind::element) != node_kind::element) {
@@ -576,7 +563,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // still in `shadow_roots_`, `getRootNode()` on a node inside it still
     // answers with it, and only this one accessor refuses to hand it over.
     // That is the whole of what `mode: "closed"` means.
-    navigate("shadowRoot", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "shadowRoot", [this, id](context & c, std::span<value>) {
         const node_id root = shadow_root_of(id);
         const shadow_tree * tree = shadow_tree_of(root);
         if (tree == nullptr || !tree->open) { return value::null(); }
@@ -587,7 +574,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // question `getRootNode({composed: true})` answers. A node inside a shadow
     // tree whose host is in the document IS connected, which is what
     // `Node-isConnected-shadow-dom.html` is a file about.
-    navigate("isConnected", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "isConnected", [this, id](context & c, std::span<value>) {
         (void)c;
         const auto txn = doc_->read();
         const node_id top = root_of_tree(txn, id, true);
@@ -596,7 +583,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // `baseURI` is the node document's base URL, DOM 4.4 - the document's
     // address here, there being no <base>; the same string `document.baseURI`
     // answers, connected or not. Node-baseURI.html compares the two.
-    navigate("baseURI", [this](context & c, std::span<value>) {
+    define_getter(cx, obj, "baseURI", [this](context & c, std::span<value>) {
         return c.string(secondary_ ? std::string{"about:blank"} : location_href_);
     });
     // --- ParentNode and NonDocumentTypeChildNode -----------------------------
@@ -620,21 +607,24 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         return out;
     };
-    navigate("firstElementChild", [this, id, element_children](context & c, std::span<value>) {
-        const auto txn = doc_->read();
-        const std::vector<node_id> kids = element_children(txn, id);
-        return kids.empty() ? value::null() : wrap(c, kids.front());
-    });
-    navigate("lastElementChild", [this, id, element_children](context & c, std::span<value>) {
-        const auto txn = doc_->read();
-        const std::vector<node_id> kids = element_children(txn, id);
-        return kids.empty() ? value::null() : wrap(c, kids.back());
-    });
-    navigate("childElementCount", [this, id, element_children](context & c, std::span<value>) {
-        (void)c;
-        const auto txn = doc_->read();
-        return value::number(static_cast<double>(element_children(txn, id).size()));
-    });
+    define_getter(cx, obj, "firstElementChild",
+                  [this, id, element_children](context & c, std::span<value>) {
+                      const auto txn = doc_->read();
+                      const std::vector<node_id> kids = element_children(txn, id);
+                      return kids.empty() ? value::null() : wrap(c, kids.front());
+                  });
+    define_getter(cx, obj, "lastElementChild",
+                  [this, id, element_children](context & c, std::span<value>) {
+                      const auto txn = doc_->read();
+                      const std::vector<node_id> kids = element_children(txn, id);
+                      return kids.empty() ? value::null() : wrap(c, kids.back());
+                  });
+    define_getter(cx, obj, "childElementCount",
+                  [this, id, element_children](context & c, std::span<value>) {
+                      (void)c;
+                      const auto txn = doc_->read();
+                      return value::number(static_cast<double>(element_children(txn, id).size()));
+                  });
     // A SIBLING WALK NEEDS THE PARENT, because the tree is stored as a child
     // list rather than as sibling links: the element's position among its
     // parent's children is the only place the answer lives. A node with no
@@ -671,24 +661,28 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         return value::null();
     };
-    navigate("firstChild", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "firstChild", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
         const std::span<const node_id> kids = txn.children(id);
         return kids.empty() ? value::null() : wrap(c, kids.front());
     });
-    navigate("lastChild", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "lastChild", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
         const std::span<const node_id> kids = txn.children(id);
         return kids.empty() ? value::null() : wrap(c, kids.back());
     });
-    navigate("nextSibling",
-             [id, sibling](context & c, std::span<value>) { return sibling(c, id, true, false); });
-    navigate("previousSibling",
-             [id, sibling](context & c, std::span<value>) { return sibling(c, id, false, false); });
-    navigate("nextElementSibling",
-             [id, sibling](context & c, std::span<value>) { return sibling(c, id, true, true); });
-    navigate("previousElementSibling",
-             [id, sibling](context & c, std::span<value>) { return sibling(c, id, false, true); });
+    define_getter(cx, obj, "nextSibling", [id, sibling](context & c, std::span<value>) {
+        return sibling(c, id, true, false);
+    });
+    define_getter(cx, obj, "previousSibling", [id, sibling](context & c, std::span<value>) {
+        return sibling(c, id, false, false);
+    });
+    define_getter(cx, obj, "nextElementSibling", [id, sibling](context & c, std::span<value>) {
+        return sibling(c, id, true, true);
+    });
+    define_getter(cx, obj, "previousElementSibling", [id, sibling](context & c, std::span<value>) {
+        return sibling(c, id, false, true);
+    });
     // `childNodes` is EVERY child, text nodes included; `children` is the
     // elements only. Both exist because they answer different questions, and a
     // page that wants the text nodes has no other way to reach them.
@@ -696,7 +690,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // el.childNodes` is Node-childNodes.html's first assertion. It is kept on
     // the wrapper under a symbol key, which is what roots it and what keeps it
     // out of `for...in` and getOwnPropertyNames.
-    navigate("childNodes", [this, id, self = &obj](context & c, std::span<value>) {
+    define_getter(cx, obj, "childNodes", [this, id, self = &obj](context & c, std::span<value>) {
         constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
         if (const value * held = self->find(key); held != nullptr) { return *held; }
         const value list = make_live_collection(
@@ -713,7 +707,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // AN HTMLCollection, LIVE - not an Array. `children` is the one of these
     // navigations the DOM gives an interface to, and `ParentNode-children.html`
     // checks liveness by appending and then asks what the thing IS.
-    navigate("children", [this, id](context & c, std::span<value>) {
+    define_getter(cx, obj, "children", [this, id](context & c, std::span<value>) {
         return make_live_collection(c, [this, id] {
             const auto txn = doc_->read();
             std::vector<node_id> found;
@@ -873,77 +867,75 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const auto has = [](const std::vector<std::string> & tokens, const std::string & token) {
             return std::find(tokens.begin(), tokens.end(), token) != tokens.end();
         };
-        const auto list_method = [&](std::string name, script::native_fn fn) {
-            list->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-        };
-        list_method("add",
-                    [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
-                        std::vector<std::string> given;
-                        if (!valid_tokens(c, args, given)) { return value::undefined(); }
-                        std::vector<std::string> tokens = tokens_now();
-                        for (const std::string & token : given) {
-                            if (!has(tokens, token)) { tokens.push_back(token); }
-                        }
-                        update(tokens);
-                        return value::undefined();
-                    });
-        list_method("remove",
-                    [tokens_now, update, valid_tokens](context & c, std::span<value> args) {
-                        std::vector<std::string> given;
-                        if (!valid_tokens(c, args, given)) { return value::undefined(); }
-                        std::vector<std::string> tokens = tokens_now();
-                        for (const std::string & token : given) { std::erase(tokens, token); }
-                        update(tokens);
-                        return value::undefined();
-                    });
-        list_method("contains", [tokens_now, has](context & c, std::span<value> args) {
+        set_method(cx, *list, "add",
+                   [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
+                       std::vector<std::string> given;
+                       if (!valid_tokens(c, args, given)) { return value::undefined(); }
+                       std::vector<std::string> tokens = tokens_now();
+                       for (const std::string & token : given) {
+                           if (!has(tokens, token)) { tokens.push_back(token); }
+                       }
+                       update(tokens);
+                       return value::undefined();
+                   });
+        set_method(cx, *list, "remove",
+                   [tokens_now, update, valid_tokens](context & c, std::span<value> args) {
+                       std::vector<std::string> given;
+                       if (!valid_tokens(c, args, given)) { return value::undefined(); }
+                       std::vector<std::string> tokens = tokens_now();
+                       for (const std::string & token : given) { std::erase(tokens, token); }
+                       update(tokens);
+                       return value::undefined();
+                   });
+        set_method(cx, *list, "contains", [tokens_now, has](context & c, std::span<value> args) {
             return value::boolean(has(tokens_now(), arg_string(c, args, 0)));
         });
         // `toggle(token, force)`, DOM 7.1 - and a no-op runs NO update steps:
         // `toggle("c", false)` on `class="a a"` leaves the duplicate in place.
-        list_method("toggle", [this, id, attribute_name,
-                               report_token_error](context & c, std::span<value> args) {
-            const std::string token = args.empty() ? "undefined" : c.to_string(args.front());
-            const bool forced = args.size() > 1 && !args[1].is_undefined();
-            const auto result =
-                toggle_token(*doc_, id, atoms_->intern(attribute_name), token,
-                             forced ? std::optional{context::truthy(args[1])} : std::nullopt);
-            if (!result) {
-                report_token_error(c, token, result.error());
-                return value::undefined();
-            }
-            if (!result->update || *result->update) { mutated(); }
-            return value::boolean(result->present);
-        });
+        set_method(
+            cx, *list, "toggle",
+            [this, id, attribute_name, report_token_error](context & c, std::span<value> args) {
+                const std::string token = args.empty() ? "undefined" : c.to_string(args.front());
+                const bool forced = args.size() > 1 && !args[1].is_undefined();
+                const auto result =
+                    toggle_token(*doc_, id, atoms_->intern(attribute_name), token,
+                                 forced ? std::optional{context::truthy(args[1])} : std::nullopt);
+                if (!result) {
+                    report_token_error(c, token, result.error());
+                    return value::undefined();
+                }
+                if (!result->update || *result->update) { mutated(); }
+                return value::boolean(result->present);
+            });
         // `replace(token, newToken)`: "replace within an ordered set" - the
         // FIRST of either becomes the new token and every other instance of
         // either goes, so `class="a b c"` replacing c with a is "a b".
-        list_method("replace",
-                    [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
-                        if (args.size() < 2) {
-                            c.throw_error("TypeError", "replace: 2 arguments required");
-                            return value::undefined();
-                        }
-                        std::vector<std::string> given;
-                        if (!valid_tokens(c, args.subspan(0, 2), given, true)) {
-                            return value::undefined();
-                        }
-                        std::vector<std::string> tokens = tokens_now();
-                        if (!has(tokens, given[0])) { return value::boolean(false); }
-                        std::vector<std::string> replaced;
-                        bool done = false;
-                        for (const std::string & token : tokens) {
-                            if (token != given[0] && token != given[1]) {
-                                replaced.push_back(token);
-                            } else if (!done) {
-                                replaced.push_back(given[1]);
-                                done = true;
-                            }
-                        }
-                        update(replaced);
-                        return value::boolean(true);
-                    });
-        list_method("item", [tokens_now](context & c, std::span<value> args) {
+        set_method(cx, *list, "replace",
+                   [tokens_now, update, valid_tokens, has](context & c, std::span<value> args) {
+                       if (args.size() < 2) {
+                           c.throw_error("TypeError", "replace: 2 arguments required");
+                           return value::undefined();
+                       }
+                       std::vector<std::string> given;
+                       if (!valid_tokens(c, args.subspan(0, 2), given, true)) {
+                           return value::undefined();
+                       }
+                       std::vector<std::string> tokens = tokens_now();
+                       if (!has(tokens, given[0])) { return value::boolean(false); }
+                       std::vector<std::string> replaced;
+                       bool done = false;
+                       for (const std::string & token : tokens) {
+                           if (token != given[0] && token != given[1]) {
+                               replaced.push_back(token);
+                           } else if (!done) {
+                               replaced.push_back(given[1]);
+                               done = true;
+                           }
+                       }
+                       update(replaced);
+                       return value::boolean(true);
+                   });
+        set_method(cx, *list, "item", [tokens_now](context & c, std::span<value> args) {
             const std::vector<std::string> tokens = tokens_now();
             const auto i = static_cast<std::ptrdiff_t>(
                 context::to_number(args.empty() ? value::undefined() : args[0]));
@@ -954,7 +946,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // supported tokens at all - which is `class` - and otherwise an ASCII
         // case-insensitive membership test.
         const std::string supported_tokens{supported};
-        list_method("supports", [supported_tokens](context & c, std::span<value> args) {
+        set_method(cx, *list, "supports", [supported_tokens](context & c, std::span<value> args) {
             if (supported_tokens.empty()) {
                 c.throw_error("TypeError", "DOMTokenList has no supported tokens");
                 return value::undefined();
@@ -964,7 +956,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         });
         // `value` IS the attribute, verbatim in both directions - it is what a
         // `PutForwards=value` assignment writes - and it is the stringifier.
-        list_method("toString", [attribute_now](context & c, std::span<value>) {
+        set_method(cx, *list, "toString", [attribute_now](context & c, std::span<value>) {
             return c.string(attribute_now());
         });
         const auto write_attribute = [this, id, attribute_name](std::string_view text) {

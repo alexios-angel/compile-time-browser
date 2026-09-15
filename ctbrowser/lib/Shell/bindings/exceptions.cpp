@@ -167,24 +167,24 @@ void dom_bindings::install_dom_exception(context & cx) {
             return held == nullptr ? fallback : *held;
         };
     };
-    const auto accessor = [&](const char * name, script::native_fn fn) {
-        proto->define_accessor(
-            name, value::object(cx.allocate<script::native_object>(std::string{"get "} + name, fn)),
-            value::undefined(), script::attr_configurable);
-    };
-    accessor("name", reader(std::string{private_key}, cx.string("Error")));
-    accessor("message", reader(std::string{message_key}, cx.string("")));
+    define_getter(cx, *proto, "name", reader(std::string{private_key}, cx.string("Error")), {},
+                  script::attr_configurable);
+    define_getter(cx, *proto, "message", reader(std::string{message_key}, cx.string("")), {},
+                  script::attr_configurable);
     // `code` is DERIVED, never stored: the specification defines it as a
     // function of the name, and two fields that must agree are two fields that
     // eventually will not.
-    accessor("code", [](context & c, std::span<value>) {
-        const value self = c.current_this();
-        if (!self.is_object()) { return value::number(0); }
-        const value * held =
-            static_cast<script::object_object *>(self.as_heap())->find(std::string{private_key});
-        if (held == nullptr) { return value::number(0); }
-        return value::number(static_cast<double>(code_for(c.to_string(*held))));
-    });
+    define_getter(
+        cx, *proto, "code",
+        [](context & c, std::span<value>) {
+            const value self = c.current_this();
+            if (!self.is_object()) { return value::number(0); }
+            const value * held = static_cast<script::object_object *>(self.as_heap())
+                                     ->find(std::string{private_key});
+            if (held == nullptr) { return value::number(0); }
+            return value::number(static_cast<double>(code_for(c.to_string(*held))));
+        },
+        {}, script::attr_configurable);
 
     // `new DOMException(message, name)`, in that order - message first, which
     // is the opposite of every internal helper here and is what the IDL says.

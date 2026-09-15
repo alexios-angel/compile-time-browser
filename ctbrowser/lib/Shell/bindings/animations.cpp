@@ -674,17 +674,6 @@ value dom_bindings::make_animation(context & cx, std::size_t effect) {
 
 void dom_bindings::install_animations(context & cx) {
     if (animation_interface_ != nullptr) { return; }
-    const auto method = [&cx](script::object_object * on, const char * name, script::native_fn fn) {
-        on->define(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-                   script::attr_builtin);
-    };
-    const auto accessor = [&cx](script::object_object * on, const char * name,
-                                script::native_fn get, script::native_fn set = {}) {
-        on->define_accessor(
-            name, value::object(cx.allocate<script::native_object>(name, std::move(get))),
-            set ? value::object(cx.allocate<script::native_object>(name, std::move(set)))
-                : value::undefined());
-    };
     const auto illegal = [](context & c) {
         c.throw_error("TypeError", "Illegal invocation");
         return value::undefined();
@@ -692,8 +681,8 @@ void dom_bindings::install_animations(context & cx) {
 
     // --- DocumentTimeline, and the one the document has -------------------
     auto * timeline_proto = cx.allocate<script::object_object>();
-    accessor(timeline_proto, "currentTime",
-             [this](context &, std::span<value>) { return value::number(now_ms_); });
+    define_getter(cx, *timeline_proto, "currentTime",
+                  [this](context &, std::span<value>) { return value::number(now_ms_); });
     auto * timeline_ctor = cx.allocate<script::native_object>(
         "DocumentTimeline", [timeline_proto](context & c, std::span<value>) {
             const value self = c.current_this();
@@ -716,15 +705,16 @@ void dom_bindings::install_animations(context & cx) {
         const std::size_t i = effect_index(c.current_this());
         return i == no_record ? nullptr : &effects_[i];
     };
-    accessor(effect_proto, "target", [this, effect_of, illegal](context & c, std::span<value>) {
-        const keyframe_effect_record * e = effect_of(c);
-        if (e == nullptr) { return illegal(c); }
-        return e->target ? wrap(c, e->target) : value::null();
-    });
-    accessor(effect_proto, "pseudoElement",
-             [](context &, std::span<value>) { return value::null(); });
-    accessor(
-        effect_proto, "composite",
+    define_getter(cx, *effect_proto, "target",
+                  [this, effect_of, illegal](context & c, std::span<value>) {
+                      const keyframe_effect_record * e = effect_of(c);
+                      if (e == nullptr) { return illegal(c); }
+                      return e->target ? wrap(c, e->target) : value::null();
+                  });
+    define_getter(cx, *effect_proto, "pseudoElement",
+                  [](context &, std::span<value>) { return value::null(); });
+    define_getter(
+        cx, *effect_proto, "composite",
         [effect_of, illegal](context & c, std::span<value>) {
             const keyframe_effect_record * e = effect_of(c);
             return e == nullptr ? illegal(c) : c.string(e->composite);
@@ -739,35 +729,40 @@ void dom_bindings::install_animations(context & cx) {
             }
             return value::undefined();
         });
-    method(effect_proto, "getKeyframes", [effect_of, illegal](context & c, std::span<value>) {
-        const keyframe_effect_record * e = effect_of(c);
-        if (e == nullptr) { return illegal(c); }
-        const value list = c.make_array();
-        for (const animation_keyframe & k : e->keyframes) {
-            auto * frame = c.allocate<script::object_object>();
-            frame->set("offset", k.offset_given ? value::number(k.offset) : value::null());
-            frame->set("computedOffset", value::number(k.offset));
-            frame->set("easing", c.string(k.easing));
-            frame->set("composite", c.string(k.composite));
-            for (const auto & [name, text] : k.values) {
-                frame->set(name.starts_with("--") ? name : style::css::idl_name_of(name),
-                           c.string(text));
+    set_method(
+        cx, *effect_proto, "getKeyframes",
+        [effect_of, illegal](context & c, std::span<value>) {
+            const keyframe_effect_record * e = effect_of(c);
+            if (e == nullptr) { return illegal(c); }
+            const value list = c.make_array();
+            for (const animation_keyframe & k : e->keyframes) {
+                auto * frame = c.allocate<script::object_object>();
+                frame->set("offset", k.offset_given ? value::number(k.offset) : value::null());
+                frame->set("computedOffset", value::number(k.offset));
+                frame->set("easing", c.string(k.easing));
+                frame->set("composite", c.string(k.composite));
+                for (const auto & [name, text] : k.values) {
+                    frame->set(name.starts_with("--") ? name : style::css::idl_name_of(name),
+                               c.string(text));
+                }
+                static_cast<script::array_object *>(list.as_heap())
+                    ->items.push_back(value::object(frame));
             }
-            static_cast<script::array_object *>(list.as_heap())
-                ->items.push_back(value::object(frame));
-        }
-        return list;
-    });
-    method(effect_proto, "setKeyframes",
-           [this, effect_of, illegal](context & c, std::span<value> args) {
-               keyframe_effect_record * e = effect_of(c);
-               if (e == nullptr) { return illegal(c); }
-               std::vector<animation_keyframe> fresh;
-               if (!read_keyframes(c, arg(args, 0), fresh)) { return value::undefined(); }
-               e->keyframes = std::move(fresh);
-               ++animation_generation_;
-               return value::undefined();
-           });
+            return list;
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *effect_proto, "setKeyframes",
+        [this, effect_of, illegal](context & c, std::span<value> args) {
+            keyframe_effect_record * e = effect_of(c);
+            if (e == nullptr) { return illegal(c); }
+            std::vector<animation_keyframe> fresh;
+            if (!read_keyframes(c, arg(args, 0), fresh)) { return value::undefined(); }
+            e->keyframes = std::move(fresh);
+            ++animation_generation_;
+            return value::undefined();
+        },
+        script::attr_builtin);
     const auto timing_object = [](context & c, const effect_timing & t) {
         auto * o = c.allocate<script::object_object>();
         o->set("delay", value::number(t.delay));
@@ -780,45 +775,51 @@ void dom_bindings::install_animations(context & cx) {
         o->set("easing", c.string(t.easing));
         return o;
     };
-    method(effect_proto, "getTiming",
-           [effect_of, illegal, timing_object](context & c, std::span<value>) {
-               const keyframe_effect_record * e = effect_of(c);
-               if (e == nullptr) { return illegal(c); }
-               return value::object(timing_object(c, e->timing));
-           });
-    method(effect_proto, "getComputedTiming",
-           [this, effect_of, illegal, timing_object](context & c, std::span<value>) {
-               const keyframe_effect_record * e = effect_of(c);
-               if (e == nullptr) { return illegal(c); }
-               script::object_object * o = timing_object(c, e->timing);
-               const double active = e->timing.duration == 0 || e->timing.iterations == 0
-                                         ? 0
-                                         : e->timing.duration * e->timing.iterations;
-               o->set("activeDuration", value::number(active));
-               o->set("endTime", value::number(effect_end_time(*e)));
-               o->set("fill", c.string(e->timing.fill == "auto" ? "none" : e->timing.fill));
-               // The animation this effect belongs to, for its local time.
-               double local = nan;
-               for (const animation_record & a : animations_) {
-                   if (a.effect != no_record && &effects_[a.effect] == e) {
-                       local = animation_current_time(a);
-                   }
-               }
-               o->set("localTime", unresolved(local) ? value::null() : value::number(local));
-               o->set("progress", value::null());
-               o->set("currentIteration", value::null());
-               return value::object(o);
-           });
-    method(effect_proto, "updateTiming",
-           [this, effect_of, illegal](context & c, std::span<value> args) {
-               keyframe_effect_record * e = effect_of(c);
-               if (e == nullptr) { return illegal(c); }
-               effect_timing fresh = e->timing;
-               if (!read_timing(c, arg(args, 0), fresh)) { return value::undefined(); }
-               e->timing = fresh;
-               ++animation_generation_;
-               return value::undefined();
-           });
+    set_method(
+        cx, *effect_proto, "getTiming",
+        [effect_of, illegal, timing_object](context & c, std::span<value>) {
+            const keyframe_effect_record * e = effect_of(c);
+            if (e == nullptr) { return illegal(c); }
+            return value::object(timing_object(c, e->timing));
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *effect_proto, "getComputedTiming",
+        [this, effect_of, illegal, timing_object](context & c, std::span<value>) {
+            const keyframe_effect_record * e = effect_of(c);
+            if (e == nullptr) { return illegal(c); }
+            script::object_object * o = timing_object(c, e->timing);
+            const double active = e->timing.duration == 0 || e->timing.iterations == 0
+                                      ? 0
+                                      : e->timing.duration * e->timing.iterations;
+            o->set("activeDuration", value::number(active));
+            o->set("endTime", value::number(effect_end_time(*e)));
+            o->set("fill", c.string(e->timing.fill == "auto" ? "none" : e->timing.fill));
+            // The animation this effect belongs to, for its local time.
+            double local = nan;
+            for (const animation_record & a : animations_) {
+                if (a.effect != no_record && &effects_[a.effect] == e) {
+                    local = animation_current_time(a);
+                }
+            }
+            o->set("localTime", unresolved(local) ? value::null() : value::number(local));
+            o->set("progress", value::null());
+            o->set("currentIteration", value::null());
+            return value::object(o);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *effect_proto, "updateTiming",
+        [this, effect_of, illegal](context & c, std::span<value> args) {
+            keyframe_effect_record * e = effect_of(c);
+            if (e == nullptr) { return illegal(c); }
+            effect_timing fresh = e->timing;
+            if (!read_timing(c, arg(args, 0), fresh)) { return value::undefined(); }
+            e->timing = fresh;
+            ++animation_generation_;
+            return value::undefined();
+        },
+        script::attr_builtin);
     auto * effect_ctor = cx.allocate<script::native_object>(
         "KeyframeEffect", [this](context & c, std::span<value> args) {
             const value self = c.current_this();
@@ -846,8 +847,8 @@ void dom_bindings::install_animations(context & cx) {
         if (i == no_record) { (void)illegal(c); }
         return i;
     };
-    accessor(
-        proto, "effect",
+    define_getter(
+        cx, *proto, "effect",
         [this, self_index](context & c, std::span<value>) {
             const std::size_t i = self_index(c);
             if (i == no_record) { return value::undefined(); }
@@ -867,9 +868,10 @@ void dom_bindings::install_animations(context & cx) {
             update_finished_state(c, i);
             return value::undefined();
         });
-    accessor(proto, "timeline", [this](context &, std::span<value>) { return timeline_; });
-    accessor(
-        proto, "startTime",
+    define_getter(cx, *proto, "timeline",
+                  [this](context &, std::span<value>) { return timeline_; });
+    define_getter(
+        cx, *proto, "startTime",
         [this, self_index](context & c, std::span<value>) {
             const std::size_t i = self_index(c);
             if (i == no_record) { return value::undefined(); }
@@ -886,8 +888,8 @@ void dom_bindings::install_animations(context & cx) {
             update_finished_state(c, i);
             return value::undefined();
         });
-    accessor(
-        proto, "currentTime",
+    define_getter(
+        cx, *proto, "currentTime",
         [this, self_index](context & c, std::span<value>) {
             const std::size_t i = self_index(c);
             if (i == no_record) { return value::undefined(); }
@@ -915,8 +917,8 @@ void dom_bindings::install_animations(context & cx) {
             update_finished_state(c, i);
             return value::undefined();
         });
-    accessor(
-        proto, "playbackRate",
+    define_getter(
+        cx, *proto, "playbackRate",
         [this, self_index](context & c, std::span<value>) {
             const std::size_t i = self_index(c);
             return i == no_record ? value::undefined()
@@ -932,20 +934,21 @@ void dom_bindings::install_animations(context & cx) {
             update_finished_state(c, i);
             return value::undefined();
         });
-    accessor(proto, "playState", [this, self_index](context & c, std::span<value>) {
+    define_getter(cx, *proto, "playState", [this, self_index](context & c, std::span<value>) {
         const std::size_t i = self_index(c);
         if (i == no_record) { return value::undefined(); }
         update_finished_state(c, i);
         return c.string(std::string{play_state(animations_[i])});
     });
-    accessor(proto, "replaceState",
-             [](context & c, std::span<value>) { return c.string("active"); });
-    accessor(proto, "pending", [](context &, std::span<value>) { return value::boolean(false); });
-    accessor(proto, "ready", [this, self_index](context & c, std::span<value>) {
+    define_getter(cx, *proto, "replaceState",
+                  [](context & c, std::span<value>) { return c.string("active"); });
+    define_getter(cx, *proto, "pending",
+                  [](context &, std::span<value>) { return value::boolean(false); });
+    define_getter(cx, *proto, "ready", [this, self_index](context & c, std::span<value>) {
         const std::size_t i = self_index(c);
         return i == no_record ? value::undefined() : c.make_promise(animations_[i].self, false);
     });
-    accessor(proto, "finished", [this, self_index](context & c, std::span<value>) {
+    define_getter(cx, *proto, "finished", [this, self_index](context & c, std::span<value>) {
         const std::size_t i = self_index(c);
         if (i == no_record) { return value::undefined(); }
         update_finished_state(c, i);
@@ -976,87 +979,106 @@ void dom_bindings::install_animations(context & cx) {
         }
         update_finished_state(c, i);
     };
-    method(proto, "play", [self_index, play](context & c, std::span<value>) {
-        const std::size_t i = self_index(c);
-        if (i != no_record) { play(c, i); }
-        return value::undefined();
-    });
-    method(proto, "pause", [this, self_index](context & c, std::span<value>) {
-        const std::size_t i = self_index(c);
-        if (i == no_record) { return value::undefined(); }
-        animation_record & a = animations_[i];
-        if (unresolved(a.hold_time)) {
-            const double current = animation_current_time(a);
-            if (a.playback_rate >= 0) {
-                a.hold_time = unresolved(current) ? 0 : current;
-            } else {
-                const double end = a.effect == no_record ? 0 : effect_end_time(effects_[a.effect]);
-                if (std::isinf(end)) {
-                    throw_dom_exception(c, "InvalidStateError",
-                                        "cannot pause an infinite animation played backwards");
-                    return value::undefined();
-                }
-                a.hold_time = unresolved(current) ? end : current;
-            }
-        }
-        a.start_time = nan;
-        update_finished_state(c, i);
-        return value::undefined();
-    });
-    method(proto, "finish", [this, self_index](context & c, std::span<value>) {
-        const std::size_t i = self_index(c);
-        if (i == no_record) { return value::undefined(); }
-        animation_record & a = animations_[i];
-        const double end = a.effect == no_record ? 0 : effect_end_time(effects_[a.effect]);
-        if (a.playback_rate == 0 || (a.playback_rate > 0 && std::isinf(end))) {
-            throw_dom_exception(c, "InvalidStateError", "the animation cannot be finished");
+    set_method(
+        cx, *proto, "play",
+        [self_index, play](context & c, std::span<value>) {
+            const std::size_t i = self_index(c);
+            if (i != no_record) { play(c, i); }
             return value::undefined();
-        }
-        const double limit = a.playback_rate > 0 ? end : 0;
-        set_animation_current_time(a, limit);
-        if (unresolved(a.start_time)) { a.start_time = now_ms_ - limit / a.playback_rate; }
-        update_finished_state(c, i);
-        return value::undefined();
-    });
-    method(proto, "cancel", [this, self_index](context & c, std::span<value>) {
-        const std::size_t i = self_index(c);
-        if (i == no_record) { return value::undefined(); }
-        animation_record & a = animations_[i];
-        if (play_state(a) != "idle") {
-            if (!a.finished_settled) {
-                c.settle_promise(a.finished,
-                                 make_dom_exception(c, "AbortError", "The user aborted a request."),
-                                 true);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "pause",
+        [this, self_index](context & c, std::span<value>) {
+            const std::size_t i = self_index(c);
+            if (i == no_record) { return value::undefined(); }
+            animation_record & a = animations_[i];
+            if (unresolved(a.hold_time)) {
+                const double current = animation_current_time(a);
+                if (a.playback_rate >= 0) {
+                    a.hold_time = unresolved(current) ? 0 : current;
+                } else {
+                    const double end =
+                        a.effect == no_record ? 0 : effect_end_time(effects_[a.effect]);
+                    if (std::isinf(end)) {
+                        throw_dom_exception(c, "InvalidStateError",
+                                            "cannot pause an infinite animation played backwards");
+                        return value::undefined();
+                    }
+                    a.hold_time = unresolved(current) ? end : current;
+                }
             }
-            a.finished = c.make_pending_promise();
-            a.finished_settled = false;
-        }
-        a.hold_time = nan;
-        a.start_time = nan;
-        ++animation_generation_;
-        sync_animation_roots();
-        return value::undefined();
-    });
-    method(proto, "reverse", [this, self_index, play](context & c, std::span<value>) {
-        const std::size_t i = self_index(c);
-        if (i == no_record) { return value::undefined(); }
-        animation_record & a = animations_[i];
-        const double current = animation_current_time(a);
-        a.playback_rate = -a.playback_rate;
-        if (!unresolved(current)) { set_animation_current_time(a, current); }
-        play(c, i);
-        return value::undefined();
-    });
-    method(proto, "updatePlaybackRate", [this, self_index](context & c, std::span<value> args) {
-        const std::size_t i = self_index(c);
-        if (i == no_record) { return value::undefined(); }
-        animation_record & a = animations_[i];
-        const double current = animation_current_time(a);
-        a.playback_rate = arg_number(args, 0);
-        if (!unresolved(current)) { set_animation_current_time(a, current); }
-        update_finished_state(c, i);
-        return value::undefined();
-    });
+            a.start_time = nan;
+            update_finished_state(c, i);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "finish",
+        [this, self_index](context & c, std::span<value>) {
+            const std::size_t i = self_index(c);
+            if (i == no_record) { return value::undefined(); }
+            animation_record & a = animations_[i];
+            const double end = a.effect == no_record ? 0 : effect_end_time(effects_[a.effect]);
+            if (a.playback_rate == 0 || (a.playback_rate > 0 && std::isinf(end))) {
+                throw_dom_exception(c, "InvalidStateError", "the animation cannot be finished");
+                return value::undefined();
+            }
+            const double limit = a.playback_rate > 0 ? end : 0;
+            set_animation_current_time(a, limit);
+            if (unresolved(a.start_time)) { a.start_time = now_ms_ - limit / a.playback_rate; }
+            update_finished_state(c, i);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "cancel",
+        [this, self_index](context & c, std::span<value>) {
+            const std::size_t i = self_index(c);
+            if (i == no_record) { return value::undefined(); }
+            animation_record & a = animations_[i];
+            if (play_state(a) != "idle") {
+                if (!a.finished_settled) {
+                    c.settle_promise(
+                        a.finished,
+                        make_dom_exception(c, "AbortError", "The user aborted a request."), true);
+                }
+                a.finished = c.make_pending_promise();
+                a.finished_settled = false;
+            }
+            a.hold_time = nan;
+            a.start_time = nan;
+            ++animation_generation_;
+            sync_animation_roots();
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "reverse",
+        [this, self_index, play](context & c, std::span<value>) {
+            const std::size_t i = self_index(c);
+            if (i == no_record) { return value::undefined(); }
+            animation_record & a = animations_[i];
+            const double current = animation_current_time(a);
+            a.playback_rate = -a.playback_rate;
+            if (!unresolved(current)) { set_animation_current_time(a, current); }
+            play(c, i);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "updatePlaybackRate",
+        [this, self_index](context & c, std::span<value> args) {
+            const std::size_t i = self_index(c);
+            if (i == no_record) { return value::undefined(); }
+            animation_record & a = animations_[i];
+            const double current = animation_current_time(a);
+            a.playback_rate = arg_number(args, 0);
+            if (!unresolved(current)) { set_animation_current_time(a, current); }
+            update_finished_state(c, i);
+            return value::undefined();
+        },
+        script::attr_builtin);
     auto * ctor =
         cx.allocate<script::native_object>("Animation", [this](context & c, std::span<value> args) {
             const value self = c.current_this();
@@ -1088,38 +1110,43 @@ void dom_bindings::install_animations(context & cx) {
         auto * element_proto = static_cast<script::object_object *>(element.as_heap());
         // §5.5, "the animate() method": a KeyframeEffect, an Animation over it,
         // the `id` option, then play().
-        method(element_proto, "animate", [this, play](context & c, std::span<value> args) {
-            const node_id id = receiver(c);
-            if (!id) {
-                c.throw_error("TypeError", "Illegal invocation");
-                return value::undefined();
-            }
-            const value effect = make_keyframe_effect(c, id, arg(args, 0), arg(args, 1));
-            if (!effect.is_object()) { return value::undefined(); }
-            const value animation = make_animation(c, effect_index(effect));
-            const value options = arg(args, 1);
-            if (options.is_object()) {
-                const value name = c.lookup_property(options, "id");
-                if (!name.is_undefined()) {
-                    static_cast<script::object_object *>(animation.as_heap())
-                        ->set("id", c.string(c.to_string(name)));
+        set_method(
+            cx, *element_proto, "animate",
+            [this, play](context & c, std::span<value> args) {
+                const node_id id = receiver(c);
+                if (!id) {
+                    c.throw_error("TypeError", "Illegal invocation");
+                    return value::undefined();
                 }
-            }
-            play(c, animation_index(animation));
-            return animation;
-        });
-        method(element_proto, "getAnimations",
-               [this, animations_array](context & c, std::span<value> args) {
-                   const node_id id = receiver(c);
-                   if (!id) {
-                       c.throw_error("TypeError", "Illegal invocation");
-                       return value::undefined();
-                   }
-                   const value options = arg(args, 0);
-                   const bool subtree = options.is_object() &&
-                                        context::truthy(c.lookup_property(options, "subtree"));
-                   return animations_array(c, animations_on(id, subtree));
-               });
+                const value effect = make_keyframe_effect(c, id, arg(args, 0), arg(args, 1));
+                if (!effect.is_object()) { return value::undefined(); }
+                const value animation = make_animation(c, effect_index(effect));
+                const value options = arg(args, 1);
+                if (options.is_object()) {
+                    const value name = c.lookup_property(options, "id");
+                    if (!name.is_undefined()) {
+                        static_cast<script::object_object *>(animation.as_heap())
+                            ->set("id", c.string(c.to_string(name)));
+                    }
+                }
+                play(c, animation_index(animation));
+                return animation;
+            },
+            script::attr_builtin);
+        set_method(
+            cx, *element_proto, "getAnimations",
+            [this, animations_array](context & c, std::span<value> args) {
+                const node_id id = receiver(c);
+                if (!id) {
+                    c.throw_error("TypeError", "Illegal invocation");
+                    return value::undefined();
+                }
+                const value options = arg(args, 0);
+                const bool subtree =
+                    options.is_object() && context::truthy(c.lookup_property(options, "subtree"));
+                return animations_array(c, animations_on(id, subtree));
+            },
+            script::attr_builtin);
     }
     if (script::object_object * doc = document_object()) {
         doc->define_accessor(
@@ -1128,18 +1155,21 @@ void dom_bindings::install_animations(context & cx) {
                 "timeline", [this](context &, std::span<value>) { return timeline_; })),
             value::undefined());
         // Every animation whose target is in the document, in creation order.
-        method(doc, "getAnimations", [this, animations_array](context & c, std::span<value>) {
-            std::vector<std::size_t> which;
-            const auto txn = doc_->read();
-            for (std::size_t i = 0; i < animations_.size(); ++i) {
-                const animation_record & a = animations_[i];
-                if (a.effect == no_record || play_state(a) == "idle") { continue; }
-                node_id up = effects_[a.effect].target;
-                while (up && txn.parent(up) && txn.parent(up) != up) { up = txn.parent(up); }
-                if (up && up == txn.root()) { which.push_back(i); }
-            }
-            return animations_array(c, which);
-        });
+        set_method(
+            cx, *doc, "getAnimations",
+            [this, animations_array](context & c, std::span<value>) {
+                std::vector<std::size_t> which;
+                const auto txn = doc_->read();
+                for (std::size_t i = 0; i < animations_.size(); ++i) {
+                    const animation_record & a = animations_[i];
+                    if (a.effect == no_record || play_state(a) == "idle") { continue; }
+                    node_id up = effects_[a.effect].target;
+                    while (up && txn.parent(up) && txn.parent(up) != up) { up = txn.parent(up); }
+                    if (up && up == txn.root()) { which.push_back(i); }
+                }
+                return animations_array(c, which);
+            },
+            script::attr_builtin);
     }
     sync_animation_roots();
 }

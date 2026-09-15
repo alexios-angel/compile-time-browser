@@ -271,20 +271,17 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     // receiver names the node; a wrapper is only made after the interfaces
     // are, so the fallback below is for an embedder that built none.
     bool installed = false;
-    const auto getter = [&](script::object_object & on, const char * name, script::native_fn read) {
-        on.define_accessor(name,
-                           value::object(cx.allocate<script::native_object>(
-                               std::string{"get "} + name, std::move(read))),
-                           value::undefined(), script::attr_configurable);
-    };
     for (const std::string_view name : {"HTMLStyleElement", "HTMLLinkElement"}) {
         script::object_object * proto = as_object(interface_prototype(name));
         if (proto == nullptr) { continue; }
         installed = true;
         if (proto->find_accessor("sheet") != nullptr) { continue; }
-        getter(*proto, "sheet", [this](context & c, std::span<value>) {
-            return sheet_object_of(c, handle_of(c.current_this()));
-        });
+        define_getter(
+            cx, *proto, "sheet",
+            [this](context & c, std::span<value>) {
+                return sheet_object_of(c, handle_of(c.current_this()));
+            },
+            {}, script::attr_configurable);
         if (name == "HTMLStyleElement") {
             // `HTMLStyleElement.disabled` is the SHEET's flag, not an attribute:
             // false while the element has no sheet, and a write then does
@@ -364,9 +361,12 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     // the same two members the document has, over the shadow tree alone.
     if (script::object_object * proto = as_object(interface_prototype("ShadowRoot"));
         proto != nullptr && proto->find_accessor("styleSheets") == nullptr) {
-        getter(*proto, "styleSheets", [this](context & c, std::span<value>) {
-            return shadow_sheet_list(c, handle_of(c.current_this()));
-        });
+        define_getter(
+            cx, *proto, "styleSheets",
+            [this](context & c, std::span<value>) {
+                return shadow_sheet_list(c, handle_of(c.current_this()));
+            },
+            {}, script::attr_configurable);
         proto->define_accessor("adoptedStyleSheets",
                                value::object(cx.allocate<script::native_object>(
                                    "get adoptedStyleSheets",

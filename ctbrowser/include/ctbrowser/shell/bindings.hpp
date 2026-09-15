@@ -57,6 +57,29 @@ using ctbrowser::script::value;
     return i < args.size() ? args[i] : value::undefined();
 }
 
+// Installing natives. One function object, and the two ways the bindings hang
+// one on an object: as a data property (`attrs` is what `define` takes, and
+// `attr_default` means a plain `set`, which keeps an existing property's
+// attributes) or as an accessor. An accessor's natives are named the way
+// WebIDL names them - `get x` and `set x`.
+[[nodiscard]] inline value native(context & cx, std::string name, script::native_fn fn) {
+    return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
+}
+template <class Obj>
+void set_method(context & cx, Obj & obj, const std::string & name, script::native_fn fn,
+                std::uint8_t attrs = script::attr_default) {
+    obj.set(name, native(cx, name, std::move(fn)));
+    if (attrs != script::attr_default) { obj.set_attrs(name, attrs); }
+}
+template <class Obj>
+void define_getter(context & cx, Obj & obj, const std::string & name, script::native_fn get,
+                   script::native_fn set = {},
+                   std::uint8_t attrs = script::attr_enumerable | script::attr_configurable) {
+    obj.define_accessor(name, native(cx, "get " + name, std::move(get)),
+                        set ? native(cx, "set " + name, std::move(set)) : value::undefined(),
+                        attrs);
+}
+
 // Where an element wrapper keeps its handle. A property rather than a side
 // table, so a wrapper is self-describing and two wrappers for the same element
 // resolve to the same node.
@@ -1368,35 +1391,29 @@ private:
         {
             auto * headers = cx.allocate<script::object_object>();
             headers->set("__contentType", cx.string(content_type));
-            const auto header_method = [&](std::string name, script::native_fn fn) {
-                headers->set(
-                    name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-            };
             const auto is_content_type = [](std::string_view wanted) {
                 return ascii_iequals(wanted, "content-type");
             };
-            header_method("get", [content_type, is_content_type](context & c, std::span<value> a) {
-                if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {
-                    return value::null();
-                }
-                return c.string(content_type);
-            });
-            header_method("has", [content_type, is_content_type](context & c, std::span<value> a) {
-                return value::boolean(is_content_type(arg_string(c, a, 0)) &&
-                                      !content_type.empty());
-            });
+            set_method(cx, *headers, "get",
+                       [content_type, is_content_type](context & c, std::span<value> a) {
+                           if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {
+                               return value::null();
+                           }
+                           return c.string(content_type);
+                       });
+            set_method(cx, *headers, "has",
+                       [content_type, is_content_type](context & c, std::span<value> a) {
+                           return value::boolean(is_content_type(arg_string(c, a, 0)) &&
+                                                 !content_type.empty());
+                       });
             response->set("headers", value::object(headers));
         }
 
         const std::string text{reinterpret_cast<const char *>(body.data()), body.size()};
-        const auto method = [&](std::string name, script::native_fn fn) {
-            response->set(name,
-                          value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-        };
-        method("text", [text](context & c, std::span<value>) {
+        set_method(cx, *response, "text", [text](context & c, std::span<value>) {
             return c.make_promise(c.string(text), false);
         });
-        method("json", [text](context & c, std::span<value>) {
+        set_method(cx, *response, "json", [text](context & c, std::span<value>) {
             // Through the standard library's JSON.parse, so one parser decides
             // what JSON means here.
             const value parser = c.global("JSON");
@@ -1423,10 +1440,10 @@ private:
             }
             return out;
         };
-        method("bytes", [body, byte_array](context & c, std::span<value>) {
+        set_method(cx, *response, "bytes", [body, byte_array](context & c, std::span<value>) {
             return c.make_promise(byte_array(c, body), false);
         });
-        method("arrayBuffer", [body, byte_array](context & c, std::span<value>) {
+        set_method(cx, *response, "arrayBuffer", [body, byte_array](context & c, std::span<value>) {
             // The shape install_typed_arrays recognises: an object carrying
             // `__bytes`, so `new Uint8Array(buffer)` is a view over THIS
             // storage rather than a copy of it.
@@ -1436,20 +1453,21 @@ private:
             buffer->set("__bytes", byte_array(c, body));
             return c.make_promise(value::object(buffer), false);
         });
-        method("blob", [this, body, content_type, byte_array](context & c, std::span<value>) {
-            // A minimal Blob: its size, its type and its bytes. Enough for a
-            // page that hands one to URL.createObjectURL, which is the only
-            // thing anything here does with one.
-            auto * blob = c.allocate<script::object_object>();
-            // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
-            // probe only ever read as passing because the throw in its
-            // `.then` was lost rather than delivered as a rejection.
-            if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
-            blob->set("size", value::number(static_cast<double>(body.size())));
-            blob->set("type", c.string(content_type));
-            blob->set("__bytes", byte_array(c, body));
-            return c.make_promise(value::object(blob), false);
-        });
+        set_method(cx, *response, "blob",
+                   [this, body, content_type, byte_array](context & c, std::span<value>) {
+                       // A minimal Blob: its size, its type and its bytes. Enough for a
+                       // page that hands one to URL.createObjectURL, which is the only
+                       // thing anything here does with one.
+                       auto * blob = c.allocate<script::object_object>();
+                       // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
+                       // probe only ever read as passing because the throw in its
+                       // `.then` was lost rather than delivered as a rejection.
+                       if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
+                       blob->set("size", value::number(static_cast<double>(body.size())));
+                       blob->set("type", c.string(content_type));
+                       blob->set("__bytes", byte_array(c, body));
+                       return c.make_promise(value::object(blob), false);
+                   });
         return cx.make_promise(value::object(response), false);
     }
 

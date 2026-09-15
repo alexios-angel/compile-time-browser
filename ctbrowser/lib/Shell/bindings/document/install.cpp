@@ -9,14 +9,11 @@ using namespace detail;
 
 void dom_bindings::install_document(context & cx) {
     auto * doc = cx.allocate<script::object_object>();
-    const auto method = [&](std::string name, script::native_fn fn) {
-        doc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
 
-    method("getElementById", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "getElementById", [this](context & c, std::span<value> args) {
         return wrap(c, find_by_id(arg_string(c, args, 0)));
     });
-    method("createElement", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createElement", [this](context & c, std::span<value> args) {
         // A DOMString, so `createElement(null)` asks for an element called
         // "null" and `createElement(undefined)` for one called "undefined" -
         // both legal names, and the suite checks both.
@@ -46,7 +43,7 @@ void dom_bindings::install_document(context & cx) {
         const node_ns kind = type == "application/xhtml+xml" ? node_ns::html : node_ns::other;
         return wrap(c, doc_->create_element(atoms_->intern(name), kind));
     });
-    method("createTextNode", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
     });
     // `createComment` and `createDocumentFragment` - the two other node
@@ -65,7 +62,7 @@ void dom_bindings::install_document(context & cx) {
     // a prefix with no namespace, `xml:` outside the XML namespace, and `xmlns`
     // anywhere but the XMLNS namespace (and that namespace used for anything
     // else) are all NamespaceError.
-    method("createElementNS", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createElementNS", [this](context & c, std::span<value> args) {
         // A NULLABLE DOMString: null and undefined are both the null namespace,
         // and so is the empty string. The qualified name is an ordinary
         // DOMString, so null there is the four characters "null".
@@ -92,7 +89,7 @@ void dom_bindings::install_document(context & cx) {
     });
     // `getElementsByTagNameNS(namespace, localName)`, with "*" meaning any on
     // either half. Live, like its two siblings.
-    method("getElementsByTagNameNS", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "getElementsByTagNameNS", [this](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         const std::string ns =
             given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
@@ -113,7 +110,7 @@ void dom_bindings::install_document(context & cx) {
             return found;
         });
     });
-    method("createComment", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createComment", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_comment(arg_string(c, args, 0)));
     });
     // `importNode(node, deep)`, DOM 4.5: a COPY of a node from any document in
@@ -123,7 +120,7 @@ void dom_bindings::install_document(context & cx) {
     // reading the OWNER's tree, so a `<div>` made by createHTMLDocument comes
     // back with `ownerDocument === document` - Document-importNode.html's
     // whole question.
-    method("importNode", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "importNode", [this](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         if (is_a_document(given)) {
             throw_dom_exception(c, "NotSupportedError",
@@ -154,7 +151,7 @@ void dom_bindings::install_document(context & cx) {
     // handed back, now over a node in this document's slab. A template's
     // contents fragment has no parent, so for it the method returns the node
     // untouched, which is the specification's early return by another route.
-    method("adoptNode", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "adoptNode", [this](context & c, std::span<value> args) {
         const value given = arg(args, 0);
         if (is_a_document(given)) {
             throw_dom_exception(c, "NotSupportedError", "adoptNode: a Document cannot be adopted");
@@ -181,11 +178,11 @@ void dom_bindings::install_document(context & cx) {
         }
         return given;
     });
-    method("createDocumentFragment",
-           [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
+    set_method(cx, *doc, "createDocumentFragment",
+               [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
     // `createCDATASection(data)`, DOM 4.5: an XML document's only, and the
     // data may not contain `]]>` because that is what ends one.
-    method("createCDATASection", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createCDATASection", [this](context & c, std::span<value> args) {
         if (!doc_->xml()) {
             throw_dom_exception(c, "NotSupportedError",
                                 "createCDATASection: this is an HTML document");
@@ -207,7 +204,7 @@ void dom_bindings::install_document(context & cx) {
     // ends a processing instruction and a PI that cannot be serialised is not
     // one. The target is interned AS WRITTEN: a PI is XML syntax and XML is
     // case-sensitive.
-    method("createProcessingInstruction", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createProcessingInstruction", [this](context & c, std::span<value> args) {
         const std::string target = arg_string(c, args, 0);
         const std::string data = arg_string(c, args, 1);
         if (!is_xml_name(target) || data.find("?>") != std::string::npos) {
@@ -218,7 +215,7 @@ void dom_bindings::install_document(context & cx) {
         }
         return wrap(c, doc_->create_processing_instruction(atoms_->intern(target), data));
     });
-    method("addEventListener", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "addEventListener", [this](context & c, std::span<value> args) {
         add_listener(make_listener(c, path_step{node_id{}, listen_on::document}, args));
         return value::undefined();
     });
@@ -243,7 +240,7 @@ void dom_bindings::install_document(context & cx) {
     // dictionary - it passes an object with a `capture` getter and watches
     // whether the getter runs - so the read has to happen even when the answer
     // is the same as the boolean spelling's.
-    method("removeEventListener", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "removeEventListener", [this](context & c, std::span<value> args) {
         const std::string type = arg_string(c, args, 0);
         const value callback = arg(args, 1);
         const value options = arg(args, 2);
@@ -261,14 +258,14 @@ void dom_bindings::install_document(context & cx) {
     // `for (i = 0; i < n; i++)` reads, and it is; what it is NOT is live, and
     // it is not `instanceof HTMLCollection` either, and it accepted
     // `list[0] = 42`. Three subtests in three files ask each of those in turn.
-    method("getElementsByTagName", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "getElementsByTagName", [this](context & c, std::span<value> args) {
         const std::string wanted = arg_string(c, args, 0);
         return make_live_collection(c, [this, wanted] { return all_by_tag(wanted); });
     });
     // Live for the same reason, and the difference is not decoration: five of
     // the suite's own tests take the collection, mutate the document and read
     // the collection again. See make_live_collection.
-    method("getElementsByClassName", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "getElementsByClassName", [this](context & c, std::span<value> args) {
         const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
         return make_live_collection(c, [this, tokens] { return all_by_class(node_id{}, tokens); });
     });
@@ -279,7 +276,7 @@ void dom_bindings::install_document(context & cx) {
     // Document that is the other interface, and
     // `document.getElementsByName-liveness.html` asserts `e instanceof NodeList`
     // before it checks a single length.
-    method("getElementsByName", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "getElementsByName", [this](context & c, std::span<value> args) {
         const std::string name = arg_string(c, args, 0);
         return make_live_collection(c, [this, name] { return all_by_name(name); }, "NodeList");
     });
@@ -312,8 +309,9 @@ void dom_bindings::install_document(context & cx) {
     // NOTHING HERE SETS THE INITIALISED FLAG. Leaving it clear is the point:
     // an event `createEvent` made and `initEvent` has not touched must not be
     // dispatchable.
-    method("createRange", [this](context & c, std::span<value>) { return create_range(c); });
-    method("createEvent", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "createRange",
+               [this](context & c, std::span<value>) { return create_range(c); });
+    set_method(cx, *doc, "createEvent", [this](context & c, std::span<value> args) {
         const std::string want = ascii_lower_copy(arg_string(c, args, 0));
         struct alias {
             std::string_view spelling;
@@ -377,7 +375,7 @@ void dom_bindings::install_document(context & cx) {
     // conversion before the method runs at all - and answering "nothing
     // cancelled it" for an event that was never supplied tells a page its
     // dispatch worked.
-    method("dispatchEvent", [this](context & c, std::span<value> args) {
+    set_method(cx, *doc, "dispatchEvent", [this](context & c, std::span<value> args) {
         const value event = arg(args, 0);
         if (!event.is_object()) {
             c.throw_error("TypeError", "Failed to execute 'dispatchEvent' on 'Document': "
@@ -401,30 +399,32 @@ void dom_bindings::install_document(context & cx) {
         c.throw_error("TypeError", std::string{who} + ": 1 argument required, but only 0 present");
         return false;
     };
-    method("querySelector", [this, needs_selector](context & c, std::span<value> args) {
-        if (!needs_selector(c, args, "querySelector")) { return value::undefined(); }
-        bool invalid = false;
-        const std::string selector = arg_string(c, args, 0);
-        const std::vector<node_id> found = query(selector, node_id{}, &invalid, true);
-        if (invalid) {
-            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
-            return value::undefined();
-        }
-        return found.empty() ? value::null() : wrap(c, found.front());
-    });
-    method("querySelectorAll", [this, needs_selector](context & c, std::span<value> args) {
-        if (!needs_selector(c, args, "querySelectorAll")) { return value::undefined(); }
-        bool invalid = false;
-        const std::string selector = arg_string(c, args, 0);
-        const std::vector<node_id> found = query(selector, node_id{}, &invalid);
-        if (invalid) {
-            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
-            return value::undefined();
-        }
-        // A STATIC NodeList: the members are fixed at the call.
-        return make_live_collection(c, [found] { return found; }, "NodeList");
-    });
-    method("hasFocus", [](context &, std::span<value>) {
+    set_method(
+        cx, *doc, "querySelector", [this, needs_selector](context & c, std::span<value> args) {
+            if (!needs_selector(c, args, "querySelector")) { return value::undefined(); }
+            bool invalid = false;
+            const std::string selector = arg_string(c, args, 0);
+            const std::vector<node_id> found = query(selector, node_id{}, &invalid, true);
+            if (invalid) {
+                throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
+                return value::undefined();
+            }
+            return found.empty() ? value::null() : wrap(c, found.front());
+        });
+    set_method(
+        cx, *doc, "querySelectorAll", [this, needs_selector](context & c, std::span<value> args) {
+            if (!needs_selector(c, args, "querySelectorAll")) { return value::undefined(); }
+            bool invalid = false;
+            const std::string selector = arg_string(c, args, 0);
+            const std::vector<node_id> found = query(selector, node_id{}, &invalid);
+            if (invalid) {
+                throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
+                return value::undefined();
+            }
+            // A STATIC NodeList: the members are fixed at the call.
+            return make_live_collection(c, [found] { return found; }, "NodeList");
+        });
+    set_method(cx, *doc, "hasFocus", [](context &, std::span<value>) {
         // There is one window and a page in it is the thing being looked at.
         // A page asks this to decide whether to keep animating; answering
         // false would make every sketch stop.
@@ -498,16 +498,17 @@ void dom_bindings::install_document(context & cx) {
             mutated();
             return value::undefined();
         };
-        method("write", [write_markup](context & c, std::span<value> args) {
+        set_method(cx, *doc, "write", [write_markup](context & c, std::span<value> args) {
             return write_markup(c, args, false);
         });
-        method("writeln", [write_markup](context & c, std::span<value> args) {
+        set_method(cx, *doc, "writeln", [write_markup](context & c, std::span<value> args) {
             return write_markup(c, args, true);
         });
         // `close` ends the parse a `document.open` started, and there is never
         // one open here - so it is a no-op that succeeds rather than a missing
         // method, which is what a page that writes and then closes needs.
-        method("close", [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *doc, "close",
+                   [](context &, std::span<value>) { return value::undefined(); });
     }
 
     // 'complete' BY THE TIME SCRIPT RUNS, which is this engine's model: a page
@@ -627,10 +628,6 @@ void dom_bindings::install_document(context & cx) {
     // question every browser now answers yes to.
     {
         auto * fonts = cx.allocate<script::object_object>();
-        const auto font_method = [&](std::string name, script::native_fn fn) {
-            fonts->set(name,
-                       value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-        };
         {
             // THE SET IS ROOTED THROUGH THE GETTER, the same channel
             // `element.attributes` uses: a C++ lambda's captures are invisible
@@ -648,22 +645,28 @@ void dom_bindings::install_document(context & cx) {
         }
         fonts->set("status", cx.string("loaded"));
         fonts->set("size", value::number(0));
-        font_method("check", [](context &, std::span<value>) { return value::boolean(true); });
-        font_method("load", [](context & c, std::span<value>) {
+        set_method(cx, *fonts, "check",
+                   [](context &, std::span<value>) { return value::boolean(true); });
+        set_method(cx, *fonts, "load", [](context & c, std::span<value>) {
             return c.make_promise(c.make_array(), false);
         });
-        font_method("forEach", [](context &, std::span<value>) { return value::undefined(); });
-        font_method("clear", [](context &, std::span<value>) { return value::undefined(); });
-        font_method("delete", [](context &, std::span<value>) { return value::boolean(false); });
-        font_method("has", [](context &, std::span<value>) { return value::boolean(false); });
+        set_method(cx, *fonts, "forEach",
+                   [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *fonts, "clear",
+                   [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *fonts, "delete",
+                   [](context &, std::span<value>) { return value::boolean(false); });
+        set_method(cx, *fonts, "has",
+                   [](context &, std::span<value>) { return value::boolean(false); });
         // `add` is the one that would need a font store behind it. It accepts
         // and does nothing, which is what a page adding a face it then never
         // measures already gets.
-        font_method("add", [](context &, std::span<value>) { return value::undefined(); });
-        font_method("addEventListener",
-                    [](context &, std::span<value>) { return value::undefined(); });
-        font_method("removeEventListener",
-                    [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *fonts, "add",
+                   [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *fonts, "addEventListener",
+                   [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *fonts, "removeEventListener",
+                   [](context &, std::span<value>) { return value::undefined(); });
         doc->set("fonts", value::object(fonts));
     }
 
@@ -795,10 +798,6 @@ void dom_bindings::install_document(context & cx) {
     // from the cause and about a method nobody was missing.
     {
         auto * implementation = cx.allocate<script::object_object>();
-        const auto method = [&](std::string name, script::native_fn fn) {
-            implementation->set(
-                name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-        };
         // ALWAYS TRUE, and that is the specification rather than a shortcut.
         // hasFeature was a way to ask whether a DOM module was supported, the
         // answers were never reliable, and the DOM standard now defines it to
@@ -806,7 +805,8 @@ void dom_bindings::install_document(context & cx) {
         // stops steering pages down worse paths. Returning false, or the truth
         // about this engine, would be the wrong answer to the question actually
         // being asked.
-        method("hasFeature", [](context &, std::span<value>) { return value::boolean(true); });
+        set_method(cx, *implementation, "hasFeature",
+                   [](context &, std::span<value>) { return value::boolean(true); });
         // `createDocumentType(name, publicId, systemId)`: a real DocumentType
         // node, detached, in THIS document - the one whose implementation made
         // it. `createDocument` copies it into the document it builds.
@@ -817,17 +817,19 @@ void dom_bindings::install_document(context & cx) {
         // suite's own table is 81 names of which exactly two throw. See
         // is_valid_doctype_name. Interned AS WRITTEN - `nodeName` reports
         // "HTML" for createDocumentType("HTML"), and only the parser folds.
-        method("createDocumentType", [this](context & c, std::span<value> args) {
-            const std::string name = arg_string(c, args, 0);
-            if (!is_valid_doctype_name(name)) {
-                throw_dom_exception(c, "InvalidCharacterError",
-                                    "createDocumentType: '" + name +
-                                        "' cannot be written as a doctype name");
-                return value::undefined();
-            }
-            return wrap(c, doc_->create_document_type(atoms_->intern(name), arg_string(c, args, 1),
-                                                      arg_string(c, args, 2)));
-        });
+        set_method(cx, *implementation, "createDocumentType",
+                   [this](context & c, std::span<value> args) {
+                       const std::string name = arg_string(c, args, 0);
+                       if (!is_valid_doctype_name(name)) {
+                           throw_dom_exception(c, "InvalidCharacterError",
+                                               "createDocumentType: '" + name +
+                                                   "' cannot be written as a doctype name");
+                           return value::undefined();
+                       }
+                       return wrap(c, doc_->create_document_type(atoms_->intern(name),
+                                                                 arg_string(c, args, 1),
+                                                                 arg_string(c, args, 2)));
+                   });
         // `createHTMLDocument` and `createDocument`, each returning a REAL
         // second Document - see "A SECOND DOCUMENT" below for what that is and,
         // more usefully, for what it still does not do.

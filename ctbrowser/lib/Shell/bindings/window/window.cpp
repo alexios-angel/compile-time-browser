@@ -75,29 +75,25 @@ void dom_bindings::install_window(context & cx) {
         auto * items = cx.allocate<script::object_object>();
         const value backing = value::object(items);
         store->set("__items", backing);
-        const auto method = [&](std::string method_name, script::native_fn fn) {
-            store->set(method_name, value::object(cx.allocate<script::native_object>(
-                                        method_name, std::move(fn))));
-        };
-        method("getItem", [items](context & c, std::span<value> args) {
+        set_method(cx, *store, "getItem", [items](context & c, std::span<value> args) {
             value * held = items->find(arg_string(c, args, 0));
             // A MISS IS null, not undefined - pages branch on `=== null`.
             return held == nullptr ? value::null() : *held;
         });
-        method("setItem", [items](context & c, std::span<value> args) {
+        set_method(cx, *store, "setItem", [items](context & c, std::span<value> args) {
             items->set(arg_string(c, args, 0), c.string(arg_string(c, args, 1)));
             return value::undefined();
         });
-        method("removeItem", [items](context & c, std::span<value> args) {
+        set_method(cx, *store, "removeItem", [items](context & c, std::span<value> args) {
             (void)items->erase(arg_string(c, args, 0));
             return value::undefined();
         });
-        method("clear", [items](context &, std::span<value>) {
+        set_method(cx, *store, "clear", [items](context &, std::span<value>) {
             items->props.clear();
             items->index.clear();
             return value::undefined();
         });
-        method("key", [items](context & c, std::span<value> args) {
+        set_method(cx, *store, "key", [items](context & c, std::span<value> args) {
             const auto at =
                 static_cast<std::size_t>(std::max(0.0, script::context::to_number(arg(args, 0))));
             return at < items->props.size() ? c.string(items->props[at].first) : value::null();
@@ -426,18 +422,15 @@ void dom_bindings::install_window(context & cx) {
             url_proto->define("constructor", value::object(url), script::attr_builtin);
             url->set("prototype", url_prototype);
         }
-        const auto url_method = [&](std::string name, script::native_fn fn) {
-            url->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-        };
         // `URL.canParse` and `URL.parse`: the constructor's answer without
         // the throw.
-        url_method("canParse", [](context & c, std::span<value> a) {
+        set_method(cx, *url, "canParse", [](context & c, std::span<value> a) {
             const std::string given = arg_string(c, a, 0);
             const std::string href =
                 a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
             return value::boolean(!location_parts(href).protocol.empty());
         });
-        url_method("parse", [](context & c, std::span<value> a) {
+        set_method(cx, *url, "parse", [](context & c, std::span<value> a) {
             const value ctor = c.global("URL");
             const std::string given = arg_string(c, a, 0);
             const std::string href =
@@ -446,7 +439,7 @@ void dom_bindings::install_window(context & cx) {
             const value args[1] = {c.string(href)};
             return c.construct(ctor, args);
         });
-        url_method("createObjectURL", [this](context & c, std::span<value> a) {
+        set_method(cx, *url, "createObjectURL", [this](context & c, std::span<value> a) {
             if (assets_ == nullptr || a.empty() || !a[0].is_object()) { return c.string(""); }
             const value held = c.lookup_property(a[0], "__bytes");
             std::vector<std::byte> bytes;
@@ -463,7 +456,7 @@ void dom_bindings::install_window(context & cx) {
             assets_->add(name, std::move(bytes));
             return c.string(name);
         });
-        url_method("revokeObjectURL", [this](context & c, std::span<value> a) {
+        set_method(cx, *url, "revokeObjectURL", [this](context & c, std::span<value> a) {
             // Replaced with nothing rather than erased: the registry has no
             // remove, and an empty entry is indistinguishable from a missing one
             // to every reader. A page that revokes and then loads gets the 404
@@ -771,10 +764,6 @@ void dom_bindings::install_window(context & cx) {
     // sketch writes `function setup() {}` at its top level, which is a global.
     auto * window_handler = cx.allocate<script::object_object>();
     const value window_target = window_;
-    const auto window_trap = [&](std::string name, script::native_fn fn) {
-        window_handler->set(name,
-                            value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // NAMED ACCESS ON THE WINDOW - `window.someId`, and `window.someName` for the
     // handful of elements whose `name` attribute is exposed that way. It is HTML
     // 7.3.3, it is why an inline `onclick="doThing(theForm)"` works at all, and
@@ -877,31 +866,36 @@ void dom_bindings::install_window(context & cx) {
         if (index >= frames.size()) { return value::undefined(); }
         return c.lookup_property(wrap(c, frames[index]), "contentWindow");
     };
-    window_trap("get", [named_value, frame_at](context & c, std::span<value> args) {
-        if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
-        auto * target = static_cast<script::object_object *>(args[0].as_heap());
-        const std::string name = c.to_string(args[1]);
-        if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
-            return c.lookup_property(args[0], name);
-        }
-        if (const value frame = frame_at(c, name); !frame.is_undefined()) { return frame; }
-        // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
-        if (c.has_global(name)) { return c.global(name); }
-        // ...then a named element, which comes BEFORE the prototype chain and
-        // after everything a page defined for itself. Several of one name is an
-        // HTMLCollection rather than the first of them, which is what makes
-        // `window.radios.length` answer.
-        if (const value named = named_value(c, name); !named.is_undefined()) { return named; }
-        // AND FAILING THAT, THE PROTOTYPE CHAIN - `window` is an ordinary
-        // object as well as the global scope, so `window.hasOwnProperty(...)`
-        // has to reach Object.prototype like any other object's would. Stopping
-        // at the globals meant it read `undefined`, and that is the single most
-        // common feature-detection idiom there is: Phaser asks
-        // `window.hasOwnProperty('HTMLVideoElement')` before it will build a
-        // texture, so every texture in the framework threw instead.
-        return c.lookup_property(args[0], name);
-    });
-    window_trap("set", [](context & c, std::span<value> args) {
+    set_method(cx, *window_handler, "get",
+               [named_value, frame_at](context & c, std::span<value> args) {
+                   if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+                   auto * target = static_cast<script::object_object *>(args[0].as_heap());
+                   const std::string name = c.to_string(args[1]);
+                   if (target->find(name) != nullptr || target->find_accessor(name) != nullptr) {
+                       return c.lookup_property(args[0], name);
+                   }
+                   if (const value frame = frame_at(c, name); !frame.is_undefined()) {
+                       return frame;
+                   }
+                   // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
+                   if (c.has_global(name)) { return c.global(name); }
+                   // ...then a named element, which comes BEFORE the prototype chain and
+                   // after everything a page defined for itself. Several of one name is an
+                   // HTMLCollection rather than the first of them, which is what makes
+                   // `window.radios.length` answer.
+                   if (const value named = named_value(c, name); !named.is_undefined()) {
+                       return named;
+                   }
+                   // AND FAILING THAT, THE PROTOTYPE CHAIN - `window` is an ordinary
+                   // object as well as the global scope, so `window.hasOwnProperty(...)`
+                   // has to reach Object.prototype like any other object's would. Stopping
+                   // at the globals meant it read `undefined`, and that is the single most
+                   // common feature-detection idiom there is: Phaser asks
+                   // `window.hasOwnProperty('HTMLVideoElement')` before it will build a
+                   // texture, so every texture in the framework threw instead.
+                   return c.lookup_property(args[0], name);
+               });
+    set_method(cx, *window_handler, "set", [](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
@@ -915,18 +909,20 @@ void dom_bindings::install_window(context & cx) {
         }
         return value::boolean(true);
     });
-    window_trap("has", [named_element, frame_at](context & c, std::span<value> args) {
-        if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
-        const std::string name = c.to_string(args[1]);
-        // `'x' in window` has to agree with `window.x`, or a page's feature
-        // detection and its use of the feature disagree - and with a bare
-        // `x`: global_or_named asks this before deciding a name is
-        // unresolvable, so the WHOLE chain counts (`toString` is
-        // Object.prototype's, `addEventListener` is on the interface), and a
-        // named frame is a window property too.
-        return value::boolean(c.has_property(args[0], args[1]) || c.has_global(name) ||
-                              !frame_at(c, name).is_undefined() || !named_element(name).empty());
-    });
+    set_method(cx, *window_handler, "has",
+               [named_element, frame_at](context & c, std::span<value> args) {
+                   if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
+                   const std::string name = c.to_string(args[1]);
+                   // `'x' in window` has to agree with `window.x`, or a page's feature
+                   // detection and its use of the feature disagree - and with a bare
+                   // `x`: global_or_named asks this before deciding a name is
+                   // unresolvable, so the WHOLE chain counts (`toString` is
+                   // Object.prototype's, `addEventListener` is on the interface), and a
+                   // named frame is a window property too.
+                   return value::boolean(c.has_property(args[0], args[1]) || c.has_global(name) ||
+                                         !frame_at(c, name).is_undefined() ||
+                                         !named_element(name).empty());
+               });
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
     cx.define_global("window", window_view);

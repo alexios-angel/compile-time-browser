@@ -18,9 +18,6 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
     // through" still holds.
     auto * store = cx.allocate<script::object_object>();
     auto * handler = cx.allocate<script::object_object>();
-    const auto trap = [&](std::string name, script::native_fn fn) {
-        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // ONE ATTRIBUTE, FOUND THE WAY THE SPECIFICATION FINDS IT: by computing
     // every supported property name from the attribute list and comparing, not
     // by mangling the key and looking that up. The two disagree exactly where
@@ -37,21 +34,21 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
     const auto refilled_key = [store](const std::string & key) {
         return store->find(key) != nullptr;
     };
-    trap("get", [value_of, refilled_key](context & c, std::span<value> args) {
+    set_method(cx, *handler, "get", [value_of, refilled_key](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::undefined(); }
         const std::string key = c.to_string(args[1]);
         if (const std::optional<std::string> found = value_of(key)) { return c.string(*found); }
         if (refilled_key(key)) { return value::undefined(); }
         return c.lookup_property(args[0], key);
     });
-    trap("has", [value_of, refilled_key](context & c, std::span<value> args) {
+    set_method(cx, *handler, "has", [value_of, refilled_key](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::boolean(false); }
         const std::string key = c.to_string(args[1]);
         if (value_of(key)) { return value::boolean(true); }
         if (refilled_key(key)) { return value::boolean(false); }
         return value::boolean(!c.lookup_property(args[0], key).is_undefined());
     });
-    trap("set", [this, id](context & c, std::span<value> args) {
+    set_method(cx, *handler, "set", [this, id](context & c, std::span<value> args) {
         if (args.size() < 3) { return value::boolean(false); }
         const std::string key = c.to_string(args[1]);
         std::string name;
@@ -90,34 +87,38 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
     // `-` and lowercase, `data-` in front, remove the attribute); anything
     // else is an ordinary delete on the target, which is how `dataset['-foo']`
     // leaves `data--foo` alone: that attribute answers to `Foo`, not `-foo`.
-    trap("deleteProperty", [this, id, value_of](context & c, std::span<value> args) {
-        if (args.size() < 2) { return value::boolean(false); }
-        const std::string key = c.to_string(args[1]);
-        if (!value_of(key)) { return value::boolean(c.delete_own_property(args[0], key)); }
-        std::string name;
-        (void)dataset_attribute_of(key, name);
-        (void)doc_->remove_attribute_ns(id, "", name);
-        mutated();
-        return value::boolean(true);
-    });
+    set_method(cx, *handler, "deleteProperty",
+               [this, id, value_of](context & c, std::span<value> args) {
+                   if (args.size() < 2) { return value::boolean(false); }
+                   const std::string key = c.to_string(args[1]);
+                   if (!value_of(key)) {
+                       return value::boolean(c.delete_own_property(args[0], key));
+                   }
+                   std::string name;
+                   (void)dataset_attribute_of(key, name);
+                   (void)doc_->remove_attribute_ns(id, "", name);
+                   mutated();
+                   return value::boolean(true);
+               });
     // A supported name is an own DATA property of the map - { value, writable,
     // enumerable, configurable } all true (Web IDL 3.9.3 step 2.3) - read off
     // the DOCUMENT, not the store: `dataset-binding.window.js` sets the
     // attribute after taking `dataset` and asks at once.
-    trap("getOwnPropertyDescriptor", [value_of, refilled_key](context & c, std::span<value> args) {
-        if (args.size() < 2) { return value::undefined(); }
-        const std::string key = c.to_string(args[1]);
-        context::property_descriptor found;
-        if (const std::optional<std::string> held = value_of(key)) {
-            found = context::property_descriptor::data(
-                c.string(*held),
-                script::attr_writable | script::attr_enumerable | script::attr_configurable);
-            return c.from_property_descriptor(found);
-        }
-        if (refilled_key(key)) { return value::undefined(); }
-        return c.own_property(args[0], key, found) ? c.from_property_descriptor(found)
-                                                   : value::undefined();
-    });
+    set_method(cx, *handler, "getOwnPropertyDescriptor",
+               [value_of, refilled_key](context & c, std::span<value> args) {
+                   if (args.size() < 2) { return value::undefined(); }
+                   const std::string key = c.to_string(args[1]);
+                   context::property_descriptor found;
+                   if (const std::optional<std::string> held = value_of(key)) {
+                       found = context::property_descriptor::data(
+                           c.string(*held), script::attr_writable | script::attr_enumerable |
+                                                script::attr_configurable);
+                       return c.from_property_descriptor(found);
+                   }
+                   if (refilled_key(key)) { return value::undefined(); }
+                   return c.own_property(args[0], key, found) ? c.from_property_descriptor(found)
+                                                              : value::undefined();
+               });
     const value proxy = value::object(
         cx.allocate<script::proxy_object>(value::object(store), value::object(handler)));
     // AN ACCESSOR, so the target can be refilled before the page sees it.

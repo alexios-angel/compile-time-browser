@@ -139,9 +139,6 @@ namespace {
 
 void dom_bindings::install_webgl_methods(context & cx, script::object_object * obj,
                                          webgl_context * gl, canvas_context * surface) {
-    const auto method = [&](std::string name, script::native_fn fn) {
-        obj->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // Every draw touches the canvas, and the browser learns a canvas changed by
     // its revision moving - so a call that writes pixels has to say so or the
     // frame shows the previous one.
@@ -164,16 +161,16 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::object(out);
     };
 
-    method("createBuffer", [gl, handle](context & c, std::span<value>) {
+    set_method(cx, *obj, "createBuffer", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_buffer(), "buffer");
     });
-    method("createTexture", [gl, handle](context & c, std::span<value>) {
+    set_method(cx, *obj, "createTexture", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_texture(), "texture");
     });
-    method("createProgram", [gl, handle](context & c, std::span<value>) {
+    set_method(cx, *obj, "createProgram", [gl, handle](context & c, std::span<value>) {
         return handle(c, gl->create_program(), "program");
     });
-    method("createShader", [gl, handle](context & c, std::span<value> a) {
+    set_method(cx, *obj, "createShader", [gl, handle](context & c, std::span<value> a) {
         return handle(c, gl->create_shader(enum_at(a, 0)), "shader");
     });
     // THE ENTRY POINT NAMES THE KIND, and the kind has to travel with the
@@ -194,22 +191,22 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         {"deleteFramebuffer", object_kind::framebuffer},
         {"deleteRenderbuffer", object_kind::renderbuffer}};
     for (const auto & [name, kind] : deleters) {
-        method(name, [gl, kind = kind](context & c, std::span<value> a) {
+        set_method(cx, *obj, name, [gl, kind = kind](context & c, std::span<value> a) {
             gl->delete_object(kind, id_of(c, a.empty() ? value::undefined() : a[0]));
             return value::undefined();
         });
     }
 
-    method("bindBuffer", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "bindBuffer", [gl](context & c, std::span<value> a) {
         gl->bind_buffer(enum_at(a, 0), id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
-    method("bufferSubData", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "bufferSubData", [gl](context & c, std::span<value> a) {
         const std::vector<std::byte> bytes = bytes_of(c, a.size() > 2 ? a[2] : value::undefined());
         gl->buffer_sub_data(enum_at(a, 0), int_at(a, 1), bytes);
         return value::undefined();
     });
-    method("bufferData", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "bufferData", [gl](context & c, std::span<value> a) {
         // `bufferData(target, size, usage)` ALLOCATES rather than uploading -
         // a page that means to reserve space passes a number, and treating that
         // as data would upload one float where it asked for a megabyte.
@@ -225,16 +222,16 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     });
 
     // --- shaders and programs
-    method("shaderSource", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "shaderSource", [gl](context & c, std::span<value> a) {
         gl->shader_source(id_of(c, a.empty() ? value::undefined() : a[0]),
                           a.size() > 1 ? c.to_string(a[1]) : std::string{});
         return value::undefined();
     });
-    method("compileShader", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "compileShader", [gl](context & c, std::span<value> a) {
         gl->compile_shader(id_of(c, a.empty() ? value::undefined() : a[0]));
         return value::undefined();
     });
-    method("getShaderParameter", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getShaderParameter", [gl](context & c, std::span<value> a) {
         const std::uint32_t which = enum_at(a, 1);
         if (which == gl_enum::compile_status) {
             return value::boolean(
@@ -242,20 +239,21 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         }
         return value::boolean(true);
     });
-    method("getShaderInfoLog", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getShaderInfoLog", [gl](context & c, std::span<value> a) {
         return c.string(gl->shader_log(id_of(c, a.empty() ? value::undefined() : a[0])));
     });
-    method("attachShader", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "attachShader", [gl](context & c, std::span<value> a) {
         gl->attach_shader(id_of(c, a.empty() ? value::undefined() : a[0]),
                           id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
-    method("detachShader", [](context &, std::span<value>) { return value::undefined(); });
-    method("linkProgram", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "detachShader",
+               [](context &, std::span<value>) { return value::undefined(); });
+    set_method(cx, *obj, "linkProgram", [gl](context & c, std::span<value> a) {
         gl->link_program(id_of(c, a.empty() ? value::undefined() : a[0]));
         return value::undefined();
     });
-    method("getProgramParameter", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getProgramParameter", [gl](context & c, std::span<value> a) {
         const std::uint32_t which = enum_at(a, 1);
         const std::uint32_t program = id_of(c, a.empty() ? value::undefined() : a[0]);
         if (which == gl_enum::link_status || which == 0x8B83) {
@@ -290,13 +288,13 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         made->set("type", value::number(v.type));
         return out;
     };
-    method("getActiveUniform", [gl, active_info](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getActiveUniform", [gl, active_info](context & c, std::span<value> a) {
         const auto all = gl->active_uniforms(id_of(c, a.empty() ? value::undefined() : a[0]));
         const auto i = static_cast<std::size_t>(std::max(0.0f, number(a, 1)));
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });
-    method("getActiveAttrib", [gl, active_info](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getActiveAttrib", [gl, active_info](context & c, std::span<value> a) {
         const auto all = gl->active_attributes(id_of(c, a.empty() ? value::undefined() : a[0]));
         const auto i = static_cast<std::size_t>(std::max(0.0f, number(a, 1)));
         if (i >= all.size()) { return value::null(); }
@@ -306,38 +304,39 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     // GPU shader cannot fail per fragment - this evaluator can, and a draw that
     // silently wrote nothing is the hardest kind of failure to diagnose. Named
     // with the engine's prefix so nobody mistakes it for standard surface.
-    method("ctbrowserShaderError",
-           [gl](context & c, std::span<value>) { return c.string(gl->shader_error()); });
-    method("getProgramInfoLog", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "ctbrowserShaderError",
+               [gl](context & c, std::span<value>) { return c.string(gl->shader_error()); });
+    set_method(cx, *obj, "getProgramInfoLog", [gl](context & c, std::span<value> a) {
         return c.string(gl->program_log(id_of(c, a.empty() ? value::undefined() : a[0])));
     });
-    method("validateProgram", [](context &, std::span<value>) { return value::undefined(); });
-    method("useProgram", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "validateProgram",
+               [](context &, std::span<value>) { return value::undefined(); });
+    set_method(cx, *obj, "useProgram", [gl](context & c, std::span<value> a) {
         gl->use_program(id_of(c, a.empty() ? value::undefined() : a[0]));
         return value::undefined();
     });
 
     // --- attributes
-    method("getAttribLocation", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getAttribLocation", [gl](context & c, std::span<value> a) {
         return value::number(
             gl->attribute_location(id_of(c, a.empty() ? value::undefined() : a[0]),
                                    a.size() > 1 ? c.to_string(a[1]) : std::string{}));
     });
-    method("bindAttribLocation", [](context &, std::span<value>) {
+    set_method(cx, *obj, "bindAttribLocation", [](context &, std::span<value>) {
         // Locations are assigned at link time in declaration order here, so this
         // cannot be honoured. Silent rather than an error: a page calls it
         // defensively, and the locations it would ask for are the ones it gets.
         return value::undefined();
     });
-    method("enableVertexAttribArray", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "enableVertexAttribArray", [gl](context &, std::span<value> a) {
         gl->enable_attribute(int_at(a, 0), true);
         return value::undefined();
     });
-    method("disableVertexAttribArray", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "disableVertexAttribArray", [gl](context &, std::span<value> a) {
         gl->enable_attribute(int_at(a, 0), false);
         return value::undefined();
     });
-    method("vertexAttribPointer", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "vertexAttribPointer", [gl](context &, std::span<value> a) {
         gl->attribute_pointer(int_at(a, 0), int_at(a, 1), enum_at(a, 2),
                               a.size() > 3 && context::truthy(a[3]), int_at(a, 4), int_at(a, 5));
         return value::undefined();
@@ -354,7 +353,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     // binds it. Refused by name, these three left Babylon's every matrix reading
     // zero while its shaders linked and its draws were issued - a collapsed
     // scene on a canvas showing exactly the colour it was cleared to.
-    method("getUniformBlockIndex", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getUniformBlockIndex", [gl](context & c, std::span<value> a) {
         const int index =
             gl->get_uniform_block_index(id_of(c, a.empty() ? value::undefined() : a[0]),
                                         a.size() > 1 ? c.to_string(a[1]) : std::string{});
@@ -362,18 +361,18 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         // block the shader does not have is a legitimate question.
         return index < 0 ? value::number(4294967295.0) : value::number(index);
     });
-    method("uniformBlockBinding", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "uniformBlockBinding", [gl](context & c, std::span<value> a) {
         gl->uniform_block_binding(id_of(c, a.empty() ? value::undefined() : a[0]),
                                   static_cast<std::uint32_t>(int_at(a, 1)),
                                   static_cast<std::uint32_t>(int_at(a, 2)));
         return value::undefined();
     });
-    method("bindBufferBase", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "bindBufferBase", [gl](context & c, std::span<value> a) {
         gl->bind_buffer_base(enum_at(a, 0), static_cast<std::uint32_t>(int_at(a, 1)),
                              id_of(c, a.size() > 2 ? a[2] : value::undefined()));
         return value::undefined();
     });
-    method("getUniformLocation", [](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getUniformLocation", [](context & c, std::span<value> a) {
         if (a.size() < 2) { return value::null(); }
         auto * out = c.allocate<script::object_object>();
         out->set("__name", c.string(c.to_string(a[1])));
@@ -399,55 +398,57 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
           uniform_shape{"uniform3fv", 3, 1, false}, uniform_shape{"uniform4fv", 4, 1, false},
           uniform_shape{"uniform1iv", 1, 1, true}, uniform_shape{"uniform2iv", 2, 1, true},
           uniform_shape{"uniform3iv", 3, 1, true}, uniform_shape{"uniform4iv", 4, 1, true}}) {
-        method(shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
-            gl->set_uniform(uniform_name(c, a),
-                            make_uniform(c, a, 1, shape.rows, shape.cols, shape.integer));
-            return value::undefined();
-        });
+        set_method(
+            cx, *obj, shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
+                gl->set_uniform(uniform_name(c, a),
+                                make_uniform(c, a, 1, shape.rows, shape.cols, shape.integer));
+                return value::undefined();
+            });
     }
     for (const uniform_shape & shape : {uniform_shape{"uniformMatrix2fv", 2, 2, false},
                                         uniform_shape{"uniformMatrix3fv", 3, 3, false},
                                         uniform_shape{"uniformMatrix4fv", 4, 4, false}}) {
-        method(shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
-            // ARGUMENT 1 IS `transpose`, and the value is argument 2 - a
-            // signature that catches everyone once. WebGL 1 requires transpose to
-            // be false, so it is read and ignored rather than honoured.
-            gl->set_uniform(uniform_name(c, a),
-                            make_uniform(c, a, 2, shape.rows, shape.cols, shape.integer));
-            return value::undefined();
-        });
+        set_method(
+            cx, *obj, shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
+                // ARGUMENT 1 IS `transpose`, and the value is argument 2 - a
+                // signature that catches everyone once. WebGL 1 requires transpose to
+                // be false, so it is read and ignored rather than honoured.
+                gl->set_uniform(uniform_name(c, a),
+                                make_uniform(c, a, 2, shape.rows, shape.cols, shape.integer));
+                return value::undefined();
+            });
     }
 
     // --- state
-    method("viewport", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "viewport", [gl](context &, std::span<value> a) {
         gl->viewport(int_at(a, 0), int_at(a, 1), int_at(a, 2), int_at(a, 3));
         return value::undefined();
     });
-    method("scissor", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "scissor", [gl](context &, std::span<value> a) {
         gl->scissor(int_at(a, 0), int_at(a, 1), int_at(a, 2), int_at(a, 3));
         return value::undefined();
     });
-    method("enable", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "enable", [gl](context &, std::span<value> a) {
         gl->set_enabled(enum_at(a, 0), true);
         return value::undefined();
     });
-    method("disable", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "disable", [gl](context &, std::span<value> a) {
         gl->set_enabled(enum_at(a, 0), false);
         return value::undefined();
     });
-    method("depthFunc", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "depthFunc", [gl](context &, std::span<value> a) {
         gl->depth_func(enum_at(a, 0));
         return value::undefined();
     });
-    method("depthMask", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "depthMask", [gl](context &, std::span<value> a) {
         gl->depth_mask(!a.empty() && context::truthy(a[0]));
         return value::undefined();
     });
-    method("blendFunc", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "blendFunc", [gl](context &, std::span<value> a) {
         gl->blend_func(enum_at(a, 0), enum_at(a, 1));
         return value::undefined();
     });
-    method("blendFuncSeparate", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "blendFuncSeparate", [gl](context &, std::span<value> a) {
         // The RGB pair only: this rasteriser blends alpha with the same factors,
         // which is what softgl.hpp's blend state can express. A page separating
         // them gets the colour pair applied to both.
@@ -478,49 +479,50 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
           "stencilFuncSeparate", "stencilOp", "stencilOpSeparate", "stencilMask",
           "stencilMaskSeparate", "clearStencil", "colorMask", "polygonOffset", "sampleCoverage",
           "hint", "lineWidth", "pixelStorei", "generateMipmap", "flush", "finish"}) {
-        method(name, [](context &, std::span<value>) { return value::undefined(); });
+        set_method(cx, *obj, name, [](context &, std::span<value>) { return value::undefined(); });
     }
-    method("cullFace", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "cullFace", [gl](context &, std::span<value> a) {
         gl->cull_face(enum_at(a, 0));
         return value::undefined();
     });
-    method("frontFace", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "frontFace", [gl](context &, std::span<value> a) {
         gl->front_face(enum_at(a, 0));
         return value::undefined();
     });
-    method("clearColor", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "clearColor", [gl](context &, std::span<value> a) {
         gl->clear_color(static_cast<float>(number_at(a, 0)), static_cast<float>(number_at(a, 1)),
                         static_cast<float>(number_at(a, 2)), static_cast<float>(number_at(a, 3)));
         return value::undefined();
     });
-    method("clearDepth", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "clearDepth", [gl](context &, std::span<value> a) {
         gl->clear_depth(static_cast<float>(number_at(a, 0)));
         return value::undefined();
     });
-    method("clearStencil", [](context &, std::span<value>) { return value::undefined(); });
-    method("clear", touches([gl](context &, std::span<value> a) {
-               gl->clear(enum_at(a, 0));
-               return value::undefined();
-           }));
+    set_method(cx, *obj, "clearStencil",
+               [](context &, std::span<value>) { return value::undefined(); });
+    set_method(cx, *obj, "clear", touches([gl](context &, std::span<value> a) {
+                   gl->clear(enum_at(a, 0));
+                   return value::undefined();
+               }));
 
     // --- textures
-    method("bindTexture", [gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "bindTexture", [gl](context & c, std::span<value> a) {
         gl->bind_texture(enum_at(a, 0), id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
-    method("activeTexture", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "activeTexture", [gl](context &, std::span<value> a) {
         gl->active_texture(enum_at(a, 0));
         return value::undefined();
     });
-    method("texParameteri", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "texParameteri", [gl](context &, std::span<value> a) {
         gl->texture_parameter(enum_at(a, 0), enum_at(a, 1), enum_at(a, 2));
         return value::undefined();
     });
-    method("texParameterf", [gl](context &, std::span<value> a) {
+    set_method(cx, *obj, "texParameterf", [gl](context &, std::span<value> a) {
         gl->texture_parameter(enum_at(a, 0), enum_at(a, 1), enum_at(a, 2));
         return value::undefined();
     });
-    method("texImage2D", [this, gl](context & c, std::span<value> a) {
+    set_method(cx, *obj, "texImage2D", [this, gl](context & c, std::span<value> a) {
         // TWO SIGNATURES, and they are told apart by how many arguments arrived:
         // (target, level, internalformat, width, height, border, format, type,
         // pixels) is nine, and (target, level, internalformat, format, type,
@@ -549,7 +551,8 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         }
         return value::undefined();
     });
-    method("texSubImage2D", [](context &, std::span<value>) { return value::undefined(); });
+    set_method(cx, *obj, "texSubImage2D",
+               [](context &, std::span<value>) { return value::undefined(); });
 }
 
 } // namespace ctbrowser::shell

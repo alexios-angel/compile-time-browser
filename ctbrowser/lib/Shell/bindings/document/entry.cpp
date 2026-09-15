@@ -460,14 +460,12 @@ void dom_bindings::install_navigation(context & cx) {
 
 value dom_bindings::make_location(context & cx) {
     auto * loc = cx.allocate<script::object_object>();
-    const auto method = [&](std::string name, script::native_fn fn) {
-        loc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    method("reload", [this](context &, std::span<value>) {
+    set_method(cx, *loc, "reload", [this](context &, std::span<value>) {
         reload_requested_ = true;
         return value::undefined();
     });
-    method("toString", [this](context & c, std::span<value>) { return c.string(location_href_); });
+    set_method(cx, *loc, "toString",
+               [this](context & c, std::span<value>) { return c.string(location_href_); });
     loc->set("href", cx.string(location_href_));
     loc->set("hash", cx.string(location_hash_));
     write_location_parts(cx, *loc);

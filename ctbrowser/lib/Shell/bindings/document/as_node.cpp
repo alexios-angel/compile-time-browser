@@ -253,10 +253,6 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // property gets that backwards in the worst direction - the assignment
     // sticks and the document reports a lie for the rest of the page's life.
     // The same trap `document.head` was in before it became an accessor.
-    const auto read_only = [&](std::string name, script::native_fn getter) {
-        const value fn = value::object(cx.allocate<script::native_object>(name, std::move(getter)));
-        doc.define_accessor(name, fn, value::undefined());
-    };
     // THE DOCUMENT'S ONE ELEMENT CHILD, by the same route the `documentElement`
     // accessor takes, so the two cannot name different nodes: the ROOT, when
     // it is an element. Not `find_by_tag("html")` - `createDocument(null,
@@ -311,7 +307,8 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // NULL FOR A DOCUMENT, per the table in DOM 4.4 - not "". The distinction is
     // the whole of `Node-textContent.html`'s document section, and `""` would
     // tell a page the document is empty.
-    read_only("textContent", [](context &, std::span<value>) { return value::null(); });
+    define_getter(cx, doc, "textContent",
+                  [](context &, std::span<value>) { return value::null(); });
     // `getRootNode()` - a Document's root is itself. The `composed` option is
     // ACCEPTED AND IGNORED, which is the right answer rather than a shortcut:
     // composed asks for the shadow-including root and there are no shadow trees,
@@ -326,18 +323,19 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     };
     // A live NodeList, the same one every read - see the element's in
     // element/views.cpp.
-    read_only("childNodes", [this, children_now, self = &doc](context & c, std::span<value>) {
-        constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
-        if (const value * held = self->find(key); held != nullptr) { return *held; }
-        const value list = make_live_collection(c, children_now, "NodeList");
-        self->define(key, list, script::attr_none);
-        return list;
-    });
-    read_only("firstChild", [this, children_now](context & c, std::span<value>) {
+    define_getter(cx, doc, "childNodes",
+                  [this, children_now, self = &doc](context & c, std::span<value>) {
+                      constexpr std::string_view key = "@@sym:ctbrowser:childNodes";
+                      if (const value * held = self->find(key); held != nullptr) { return *held; }
+                      const value list = make_live_collection(c, children_now, "NodeList");
+                      self->define(key, list, script::attr_none);
+                      return list;
+                  });
+    define_getter(cx, doc, "firstChild", [this, children_now](context & c, std::span<value>) {
         const std::vector<node_id> kids = children_now();
         return kids.empty() ? value::null() : wrap(c, kids.front());
     });
-    read_only("lastChild", [this, children_now](context & c, std::span<value>) {
+    define_getter(cx, doc, "lastChild", [this, children_now](context & c, std::span<value>) {
         const std::vector<node_id> kids = children_now();
         return kids.empty() ? value::null() : wrap(c, kids.back());
     });
