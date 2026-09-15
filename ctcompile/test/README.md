@@ -17,7 +17,7 @@ separate homes.
 | `CTNative/HostContract/` | Host proof unit tests, source checks and `Provider/` state, read and mutation cases |
 | `CTNative/ExceptionRecovery/` | Exception-region recovery unit tests |
 | `CTNative/Fixtures/` | Pipeline inputs grouped into `Maps/`, `Objects/`, `Closures/`, `Scalars/`, `ControlFlow/` and `Optimization/` |
-| `CTNative/Checks/` | Shared native pipeline, standalone compilation and snapshot checks |
+| `CTNative/Checks/` | The build's native pipeline script and the python gates (compilation unit, clean compile, printing) every fixture `.test` runs |
 | `Runtime/` | Runtime library checks and `Differential/`, `Modules/`, `GC/`, `Linking/`, `Reference/` and `Launcher/` tests |
 | `Lowering/` | CTJS-to-runtime and boxed EmitC lowering |
 | `Target/Cpp/` | C++ emission and upstream translation cases |
@@ -32,7 +32,9 @@ shared header. Python execution suites use ordinary modules: lit puts `test/`
 on `PYTHONPATH`, so a driver imports a sibling as `from CTNative.Exports import
 boundary` and shares `CTNative/harness.py` (`run`, `find_compilers`); Node and
 the interpreter reference arrive as `--node %node --reference %native_reference`
-on the RUN line. A hand run needs the same `PYTHONPATH` and both flags. Lit cases remain
+on the RUN line. A hand run needs the same `PYTHONPATH` and both flags. The former
+`cmake -P` checks are `.test` files too, beside what they gate (a fixture's `.test` sits
+beside its `.js` and reads the build's `<name>.pipeline*.emitc.mlir`). Lit cases remain
 with their pass or target; `.mlir`, `.td` and `.test` files are discovered by lit,
 including the two handwritten EmitC fixtures under `CTNative/Fixtures/`.
 
