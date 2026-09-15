@@ -147,7 +147,7 @@ config.substitutions.insert(
 )
 # The modules the build writes for every native fixture (Native.cmake's
 # ctcompile_add_native_pipeline: <name>.pipeline{,.deduced,.mutated}.emitc.mlir)
-# - the same files CTNative/Checks/snapshot.sh measures a refactor against, so
+# - the same files docs/refactor-goldens.md measures a refactor against, so
 # the gate and the instrument read one artefact.
 config.substitutions.append(("%{obj}", config.test_exec_root))
 config.substitutions.append(("%{monorepo}", config.monorepo_root))

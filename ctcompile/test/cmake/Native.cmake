@@ -60,7 +60,7 @@ endif()
 # compile and the printing gate - see CTNative/Fixtures/*/*.test). One
 # function, one line per program: the module, its printing-policy twin and
 # the pin mutation are built here because lit cannot, and
-# CTNative/Checks/snapshot.sh measures a refactor against the same files.
+# docs/refactor-goldens.md measures a refactor against the same files.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   # PHASE 63 STEP 7: the generated file compiles clean on BOTH toolchains the
   # plan names (compile-clean.py). Two compilers are required, not "whatever
