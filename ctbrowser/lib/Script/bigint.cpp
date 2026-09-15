@@ -5,6 +5,7 @@
 #include <limits>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/core/number_format.hpp>
 
 // The header says what each of these is for. This says how, and records the two
 // places where cpp_int and JavaScript disagree about what an operation means.
@@ -85,11 +86,6 @@ std::optional<bigint> bigint_from_double(double v) {
     if (!std::isfinite(v) || v != std::trunc(v)) { return std::nullopt; }
     return bigint{v};
 }
-
-// StringToBigInt strips the same StrWhiteSpaceChar set StringToNumber does -
-// defined in number_format.cpp beside that one, and declared here rather than
-// in the public header because nothing outside these two files wants it.
-[[nodiscard]] std::string_view trim_js_space(std::string_view text);
 
 std::optional<bigint> bigint_from_string(std::string_view text) {
     const std::string_view body = trim_js_space(text);
