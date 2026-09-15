@@ -6,6 +6,48 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Structured DOM helpers and Number masks, 2026-09-15 UTC
+
+Resumed the **07:10 helper-control-flow / bitmask** thread from five dirty
+ctcompile files and the AGENT-SYNC draft journal, explicitly abandoned at
+**07:12:58**. Both histories and unmerged branches were checked; the September 7
+WIP is already an ancestor. Three agents reviewed escape facts, recovered source
+tests and audited helper expansion; root completed integration and gates.
+
+**41f200f6** proves bounded exact Number bitwise AND facts for dense arrays.
+Both operands must be known uint32 Numbers and the result sign bit must be clear.
+The original SSA result and charged held-state proof are preserved. The existing
+zero-mask source now admits without changing its body. Dense arrays measure
+**455 rows / 231 live states / 17,437 retention cutoffs**; the escape fixture has
+**zero violations / precision 40/172**.
+
+**755af20b** expands structured local DOM helpers, including simple early returns
+already lifted to `scf.if`. Every arm, operand, yield and shadow-frame exit is
+checked; loads of immutable captures are substituted at each invocation inside
+their original arms. Existing DOM proof then checks complete residual source and
+emits ordinary C++ branches and owning optional Strings. Local callable identities
+and calls in branch arms remain refused. The preserved three-return draft source
+needs completion dispatch (`scf.index_switch` and poison); it is now an explicit
+refusal control, alongside a separate supported nested-helper source.
+
+Focused **4/4 CTests in 96.06s PASS**: **481 Node/VM observations / eight GCC-Clang
+binaries / 764 source refusals / 44 provenance-depth / 24 method / 241 capture /
+101 replacement / 22 branch depth-budget controls**. Required pinned formatting
+matches the unchanged **nine-file / 26-diagnostic** baseline; changed C++ and Python
+pass formatting. Stable formatter check and the complete default build/CTest gate
+are running. **1,443 source inputs** are frozen. Recovery scripts, logs and the
+fresh continuation probe are in `/tmp/ctcompile-helper-resume/`.
+
+**Exact next boundary:** original M/F/H.getDataAttribute still refuses the complete
+single-block helper census under both providers and policies. Prove completion
+control flow and exceptions before Number/toString, URI decoding, JSON and catch
+fallback. Reuse the existing exception recovery/SCF machinery without removing
+source effects or accepting unproved carriers. Full H/dataset, Bootstrap
+initialization, inheritance, retained config/callback ownership and the application
+driver remain unfinished. The preceding full gate measured Bootstrap **19/574**,
+DOM Data **7/7**, Button **4/86**; this session's full-bundle measurement is pending.
+No browser/runtime or WPT/test262 expectation files changed.
+
 ## Structured DOM branches and signed shifts, 2026-09-15 UTC
 
 Resumed the interrupted **06:23 DOM branch / signed-shift** thread from the

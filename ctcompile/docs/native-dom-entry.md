@@ -50,8 +50,8 @@ translation. The existing host-contract and prefix analyses for
 entry and a fresh live source proof, never printed proof attributes.
 
 The emitted translation unit exports the selected function without a launcher.
-Local capture-free, straight-line helpers may be expanded at their original call
-sites. Their exact closure identities, direct-call targets, unused implicit
+Local helpers with structured `if`/`else` bodies may be expanded at their original
+call sites. Their exact closure identities, direct-call targets, unused implicit
 arguments, arity and complete source census are checked first. Nested helpers,
 String/Boolean/element arguments and local returned element aliases use the same
 proof; every explicit entry parameter must still be an element. The call tree is
@@ -145,9 +145,13 @@ Joins carry Booleans, definite Strings, or owning `std::optional<std::string>` f
 String/null alternatives. Incompatible alternatives and borrowed or callable
 joins refuse. Strings widen to optionals at the existing region boundary, while
 source effects remain inside their selected arm. Work uses the existing host
-budget, and nesting reaching 64 branches refuses. Helper bodies remain
-straight-line: early returns, helper control flow, loops and exceptions need
-separate source and lifetime proofs before original Bootstrap M can compile.
+budget, and nesting reaching 64 branches refuses. **755af20b** applies complete
+arm/operand/yield proof to local helpers before expansion. Simple early returns
+that lift to `scf.if` are accepted when both arms have matching frame state;
+checked frame bookkeeping disappears while cloning, and branch-local immutable
+capture loads bind at each invocation. Callable/cell/object identities and local
+helper calls inside branch arms remain refused. Completion dispatch with poison,
+loops and exceptions need separate proofs before original Bootstrap M can compile.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified
