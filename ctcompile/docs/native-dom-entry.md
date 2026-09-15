@@ -150,8 +150,15 @@ arm/operand/yield proof to local helpers before expansion. Simple early returns
 that lift to `scf.if` are accepted when both arms have matching frame state;
 checked frame bookkeeping disappears while cloning, and branch-local immutable
 capture loads bind at each invocation. Callable/cell/object identities and local
-helper calls inside branch arms remain refused. Completion dispatch with poison,
-loops and exceptions need separate proofs before original Bootstrap M can compile.
+helper calls inside branch arms remain refused. **83da7d42** additionally proves
+acyclic completion dispatch: a bounded private rewrite carries exact yields into
+each branch continuation and selects only constant completion tags. Every original
+operation must be visited, and observing an inactive poison value refuses. Source
+effects and frame exits remain in their original paths; the unchanged proof checks
+the resulting branches. Three/four-return helpers and captured String snapshots
+compile; unknown selectors, unvisited arms, invalid frame exits, loops and
+exceptions remain refused. Original M still needs its exception CFG and builtin
+normalization proof.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified

@@ -6,6 +6,57 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## DOM completion paths and Number OR/XOR, 2026-09-15 UTC
+
+Continued the completed **a932998e / 755af20b** thread recorded in this handoff
+and AGENT-SYNC's **07:53** journal. Both histories and unmerged branches were
+checked; the September 7 WIP is already an ancestor. The shared tree was clean
+and no interrupted source or gate remained. Three agents supplied source tests,
+escape work and proof review; root completed integration after a test-child
+service limit.
+
+**0f90cfca** extends the existing bounded uint32 Number facts to OR/XOR. Both
+operands must be proved Numbers and the result sign bit must be clear; XOR may
+cancel equal high bits. Original SSA identity, signed-zero conversion, retention
+and charged work remain checked. Dense arrays measure **529 rows / 271 live
+states / 20,362 retention cutoffs**; the escape fixture has **zero violations /
+precision 40/172**. Existing static-producer sources were preserved.
+
+**83da7d42** proves acyclic DOM helper completion paths before expansion. A
+bounded private rewrite carries exact yields into each branch's continuation,
+resolves only constant completion selectors and rejects observed poison. Every
+original operation must be visited. Frame exits and source effects stay on their
+original paths; unchanged DOM/frame proof checks the result. Mapping copies,
+clones and cleanup consume the host budget; nesting is bounded. String input
+facts follow replaced formals. Only inert completion arithmetic disappears.
+
+The unchanged three-return helper now compiles. Four-return effects and captured
+optional String snapshots pass along with **27 completion provenance/budget
+controls**, including poisoned observations, live/negative selectors, missing
+frame exit and unvisited switch arms. Focused **4/4 CTests in 100.59s PASS**:
+**493 Node/VM observations / eight GCC-Clang binaries / 780 source refusals /
+44 provenance-depth / 24 method / 241 capture / 101 replacement / 22 branch controls**.
+Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned
+formatting matches the unchanged **nine-file / 26-diagnostic** baseline.
+
+The complete default build/CTest gate is **running**, on **1,443 frozen source
+inputs** matching local files and committed source. No final full-suite result is
+claimed yet. Recovery scripts, logs and continuation probes are in
+`/tmp/ctcompile-completion/`.
+
+**Exact next boundary:** a fresh verbatim M/F/H.getDataAttribute probe still
+refuses the complete single-block helper census under both providers/policies.
+M's original exception CFG needs preserved register vectors and recovery at its
+original handler-installation site, after the prefix returns. The current lift
+preservation filter excludes M's property/builtin calls, recovery requires an
+entry-block handler, and host contracts skip ordinary exception recovery. Do not
+hoist the handler over the pre-try Number/toString operations. Builtin identity,
+Number/toString, fallible URI/JSON calls, catch-state and heterogeneous return
+ownership require separate proof. Full H/dataset, Bootstrap initialization,
+inheritance, retained config/callback ownership and the application driver remain
+unfinished. No full-bundle admission gain is claimed. No browser/runtime or
+WPT/test262 expectation files changed; full WPT/test262 were not remeasured.
+
 ## Structured DOM helpers and Number masks, 2026-09-15 UTC
 
 Resumed the **07:10 helper-control-flow / bitmask** thread from five dirty
