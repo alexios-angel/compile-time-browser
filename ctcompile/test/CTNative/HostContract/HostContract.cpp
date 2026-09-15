@@ -8,6 +8,7 @@
 
 #include "DOMNumbers.h"
 #include "DOMURI.h"
+#include "Fingerprint.h"
 
 using namespace ctcompile::test::host_contract;
 
@@ -833,6 +834,7 @@ int main() {
           "a missing declared output root refuses the contract");
     checkCallables(context);
     checkCapturedCallables(context);
+    checkFingerprint(context);
     checkDOMEntry(context);
     checkDOMNumbers(context);
     checkDOMURI(context);

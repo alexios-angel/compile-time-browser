@@ -222,11 +222,24 @@ void clearHostContractReports(mlir::ModuleOp module) {
 }
 
 std::string hostContractFingerprint(mlir::ModuleOp module) {
-    mlir::OwningOpRef<mlir::ModuleOp> copy = module.clone();
-    clearHostContractReports(*copy);
+    const auto reports = module.walk<mlir::WalkOrder::PreOrder>([](mlir::Operation * operation) {
+        for (mlir::NamedAttribute attribute : operation->getAttrs()) {
+            if (attribute.getName().getValue().starts_with("ctnative.host_")) {
+                return mlir::WalkResult::interrupt();
+            }
+        }
+        return mlir::WalkResult::advance();
+    });
+    // Report-free source needs no copy. Each call still hashes the complete current IR.
+    mlir::OwningOpRef<mlir::ModuleOp> copy;
+    if (reports.wasInterrupted()) {
+        copy = module.clone();
+        clearHostContractReports(*copy);
+        module = *copy;
+    }
     std::string text;
     llvm::raw_string_ostream stream(text);
-    copy->print(stream, mlir::OpPrintingFlags().printGenericOpForm().enableDebugInfo(false));
+    module.print(stream, mlir::OpPrintingFlags().printGenericOpForm().enableDebugInfo(false));
     const auto digest = llvm::SHA256::hash(llvm::ArrayRef<std::uint8_t>(
         reinterpret_cast<const std::uint8_t *>(text.data()), text.size()));
     constexpr char hex[] = "0123456789abcdef";
