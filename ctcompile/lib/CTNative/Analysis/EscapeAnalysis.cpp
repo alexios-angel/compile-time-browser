@@ -1078,15 +1078,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             stride = value.integerNumber ? value.integerNumber : boundedNumber(value.origin());
         }
         if (!stride || *stride == 0) { return unsupported; }
-        // Initialization may be a saved empty length or an exact arithmetic
-        // result. Check both the original input and its transported snapshot;
-        // neither source spelling nor a different path's Number supplies zero.
+        // Initialization may be a saved length or an exact arithmetic result.
+        // The original input and its transported snapshot must independently
+        // supply the same bounded Number on this exact path.
+        std::optional<std::size_t> start;
         for (mlir::Value value : {initial[index.getArgNumber()], mlir::Value{index}}) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-            const ContentsValue start = held(value);
-            if ((start.integerNumber ? start.integerNumber : boundedNumber(start.origin())) != 0) {
-                return unsupported;
-            }
+            const ContentsValue input = held(value);
+            const auto number =
+                input.integerNumber ? input.integerNumber : boundedNumber(input.origin());
+            if (!number || (start && start != number)) { return unsupported; }
+            start = number;
         }
         // ponytail: one read-only header/body pair; nested control, allocation
         // and mutation need a separate instance/lifetime proof. Primitive kinds
@@ -1116,12 +1118,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
         const std::size_t size = found->second.size();
-        // The last body index is a multiple of the invariant positive stride.
-        // Bound its final update before addition; overshooting length is valid,
-        // but every replayed Number must stay in the exact bounded range.
-        const std::size_t last = size == 0 ? 0 : (size - 1) / *stride * *stride;
-        if (size != 0 && *stride > 4294967295ULL - last) { return unsupported; }
-        const std::size_t finalIndex = size == 0 ? 0 : last + *stride;
+        // A zero-trip loop preserves its original index. Otherwise find the last
+        // visited index relative to the start, and bound its final update before
+        // addition; overshooting length must stay in the exact Number range.
+        std::size_t finalIndex = *start;
+        if (*start < size) {
+            const std::size_t last = size - 1 - (size - 1 - *start) % *stride;
+            if (*stride > 4294967295ULL - last) { return unsupported; }
+            finalIndex = last + *stride;
+        }
         state.loop = CountedLoop{header, body, index, array, found->first, size, finalIndex};
         return ArrayContentsFailure::None;
     };

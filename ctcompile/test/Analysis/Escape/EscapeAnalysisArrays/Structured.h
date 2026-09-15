@@ -169,6 +169,36 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]; seed:[one]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const std::string nonzeroStart = replace(computedStart, "unary plus %zero", "unary plus %one");
+    rows.push_back({.what = "structured induction starts from a computed nonzero Number",
+                    .body = nonzeroStart,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[1]=y",
+                    .exit = "y -> {y}"});
+    const std::string alternateStart =
+        replace(computedStart, "  %start = ctjs.unary plus %zero\n",
+                "  %start = scf.if %flag -> (!ctjs.value) {\n"
+                "    %zeroResult = ctjs.unary plus %zero\n"
+                "    scf.yield %zeroResult : !ctjs.value\n"
+                "  } else {\n    scf.yield %one : !ctjs.value\n  }\n");
+    rows.push_back({.what = "structured predecessor starts keep their exact separate paths",
+                    .body = alternateStart,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[1]=y",
+                    .exit = "y -> {y}; y -> {y}"});
+    rows.push_back(
+        {.what = "a structured start keeps its saved length after its array is emptied",
+         .body = replace(replace(savedLength, "%seed = ctjs.create_array []",
+                                 "%seed = ctjs.create_array [%one]"),
+                         "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %zero"),
+         .arrays = "a:[x,y]; seed:[]",
+         .reads = "a[1]=y",
+         .exit = "y -> {y}"});
+    rows.push_back({.what = "a structured start at length keeps the initial saved child",
+                    .body = replace(replace(nonzeroStart, "  ctjs.append %y to %a\n", ""),
+                                    "%saved = %zero", "%saved = %x"),
+                    .arrays = "a:[x]",
+                    .exit = "x -> {x}"});
     const std::string makeUnit = "  %unit = ctjs.unary plus %one\n";
     const std::string unitLoop = replace(loop, "add %i, %one", "add %i, %unit");
     const std::string computedUnit = prefix + makeUnit + unitLoop + "  ctjs.return %result\n";
@@ -271,6 +301,30 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
          .body = replace(replace(maxStride, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
          .arrays = "a:[]",
          .exit = "zero -> {}"});
+    rows.push_back({.what = "structured overshoot is relative to its nonzero start",
+                    .body = replace(replace(stride, "%index = %zero", "%index = %one"),
+                                    "  ctjs.return %result",
+                                    "  ctjs.append %zero to %finalArray\n"
+                                    "  ctjs.append %x to %finalArray\n"
+                                    "  %after = ctjs.get_property %finalArray[%finalIndex]\n"
+                                    "  ctjs.return %after"),
+                    .arrays = "a:[x,y,zero,x]",
+                    .reads = "a[1]=y; a[3]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "the largest structured start preserves its zero-trip Number",
+                    .body = replace(replace(maxStride, "%index = %zero", "%index = %unit"),
+                                    "  ctjs.return %result",
+                                    "  %slot = ctjs.binary sub %finalIndex, %unit\n"
+                                    "  %after = ctjs.get_property %finalArray[%slot]\n"
+                                    "  ctjs.return %after"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back(
+        {.what = "a nonzero structured start skips an empty array's body",
+         .body = replace(replace(nonzeroStart, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+         .arrays = "a:[]",
+         .exit = "zero -> {}"});
     rows.push_back(
         {.what = "a zero-trip structured loop returns its initial scalar",
          .body = replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
@@ -319,20 +373,17 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                 ArrayContentsFailure::UnsupportedControlFlow) {
         rows.push_back({.what = what, .body = std::move(body), .failure = failure});
     };
-    reject("structured induction still refuses a computed nonzero start",
-           replace(computedStart, "unary plus %zero", "unary plus %one"));
-    reject("structured induction cannot recover zero by converting a String start",
+    reject("structured induction refuses a computed negative start",
+           replace(computedStart, "unary plus %zero", "unary neg %one"));
+    reject("structured induction cannot convert a String start into a Number proof",
            replace(computedStart, "ctjs.unary plus %zero", "ctjs.constant #ctjs.string<\"0\">"));
-    reject("a structured initializer cannot borrow zero from another exact path",
-           replace(computedStart, "  %start = ctjs.unary plus %zero\n",
-                   "  %start = scf.if %flag -> (!ctjs.value) {\n"
-                   "    %zeroResult = ctjs.unary plus %zero\n"
-                   "    scf.yield %zeroResult : !ctjs.value\n"
-                   "  } else {\n    scf.yield %one : !ctjs.value\n  }\n"));
-    reject("a structured saved nonzero length stays nonzero after its array is emptied",
-           replace(replace(savedLength, "%seed = ctjs.create_array []",
-                           "%seed = ctjs.create_array [%one]"),
-                   "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %zero"));
+    reject("a structured initializer cannot borrow another path's nonnegative Number",
+           replace(alternateStart, "unary plus %zero", "unary neg %one"));
+    reject("a structured start beyond the bounded Number range remains unproved",
+           replace(computedStart, "ctjs.unary plus %zero",
+                   "ctjs.constant #ctjs.number<4751297606875873280>"));
+    reject("a structured nonzero start cannot overflow on its last stride update",
+           replace(maxStride, "%index = %zero", "%index = %one"));
     reject("structured induction refuses an exact computed zero step",
            replace(computedUnit, "unary plus %one", "unary plus %zero"));
     reject("a structured String step cannot become a proved Number one",
@@ -421,6 +472,11 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    rows.push_back({.what = "direct-array structured induction preserves a nonzero start",
+                    .body = replace(direct, "%index = %zero", "%index = %one"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[1]=y",
+                    .exit = "y -> {y}"});
     rows.push_back({.what = "computed zero also initializes an invariant direct-array loop",
                     .body = prefix + "  %start = ctjs.unary plus %zero\n" +
                             replace(directLoop, "%index = %zero", "%index = %start") +
@@ -462,8 +518,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .exit = "y -> {y}; x -> {x}"});
     reject("an outer opaque parameter is not a dominating direct array",
            replace(direct, "%length = ctjs.get_property %a", "%length = ctjs.get_property %p"));
-    reject("direct arrays still require zero initial induction",
-           replace(direct, "%index = %zero", "%index = %one"));
+    reject("direct-array nonzero starts preserve own-bound checks on every read",
+           replace(replace(replace(direct, "%index = %zero", "%index = %one"),
+                           "  ctjs.append %y to %a\n",
+                           "  ctjs.append %y to %a\n"
+                           "  %b = ctjs.create_array [%x]\n"),
+                   "%read = ctjs.get_property %a", "%read = ctjs.get_property %b"),
+           ArrayContentsFailure::MissingElement);
     reject("direct array induction cannot hide a mutation",
            replace(direct, "    %read =", "    ctjs.set_property %a[%zero], %y\n    %read ="));
     reject("direct array length cannot certify another shorter array",
