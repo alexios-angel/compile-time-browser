@@ -97,12 +97,6 @@ function(ctbrowser_test path)
   set_tests_properties(${name} PROPERTIES ENVIRONMENT "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts")
 endfunction()
 
-# The GPU benchmark is the one target that MUST be run as a Windows .exe to
-# mean anything on a WSL2 machine: Linux binaries there see no Vulkan adapter
-# but lavapipe, so a "GPU" number measured under WSL is two CPU implementations
-# racing. Build it with `cmake --preset windows` (or ./tools/remote-build.sh
-# windows) and run the .exe from Windows, where the driver reaches the GPU.
-#
 # Benchmarks are NOT ctest gates - the numbers move with the machine, and a
 # perf regression should be read, not silently failed. Build and run by hand.
 function(ctbrowser_bench path)

@@ -11,7 +11,7 @@ something lives.**
 |---|---|
 | [`architecture.md`](architecture.md) | where everything lives, the ten subsystems, and how to add a file to one |
 | [`build.md`](build.md) | why the build takes as long as it does, the formatting gate, the runtime profiler |
-| [`platform.md`](platform.md) | **a Linux binary here sees only lavapipe** — real hardware needs the Windows `.exe`. The cross-build and the devbox. Read before drawing conclusions from a Linux run |
+| [`platform.md`](platform.md) | **the ANGLE goldens are pinned to SwiftShader**, the Windows cross-build, and the devbox. Read before drawing conclusions from a Linux run |
 | [`performance.md`](performance.md) | **where the time actually goes, measured** — how to profile on WSL2, what landed, and the three confident hypotheses that measured wrong. **Read before optimising anything** |
 | [`script.md`](script.md) | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name |
 | [`test262.md`](test262.md) | **the official ECMAScript conformance suite, and what it measures**: the harness decision, the pinned corpus, `$262`, the negative proofs, and the baseline per area with its date |

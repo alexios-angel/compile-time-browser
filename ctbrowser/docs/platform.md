@@ -1,26 +1,9 @@
-# Platform — GPU, the Windows cross-build, and the working environment
+# Platform — the Windows cross-build, and the working environment
 
-Where the code runs and what each host can actually do. Read before
-concluding anything about GPU behaviour from a Linux run here.
-
-## GPU: Linux binaries here see no adapter — WINDOWS ONES DO (2026-07-25)
-
-`lib/GPU` (SDL3 `SDL_GPUDevice`) builds and RUNS under this WSL2, but the only
-Vulkan ICD that survives loading is **lavapipe** (`lvp_icd.json`) — every
-hardware ICD is dropped with "not having any physical devices". `/dev/dxg` and
-`/usr/lib/wsl/lib/libd3d12.so` exist, but no `dzn`/`d3d12` Vulkan ICD bridges to
-them. `SDL_GetGPUDeviceDriver` says "vulkan" either way — the adapter name
-(`SDL_PROP_GPU_DEVICE_NAME_STRING`, exposed as `sdl_gpu_backend::adapter()`) is
-what tells you, and `adapter_is_software()` checks it.
-
-**The cross-compiled .exe sees the real GPU.** Run under WSL interop,
-`build-windows/unittests/ctbrowser-test-gpu_basics.exe` selects
-**`Intel(R) Arc(TM) Graphics`** and its render matches the software one exactly
-(0 of 120000 pixels differ). So GPU **correctness** is verifiable both ways, and
-GPU **performance** numbers must come from the Windows build — `bench_gpu`
-prints a loud banner on Linux here because its numbers would be two CPU
-implementations racing. Headless GPU runs need `SDL_VIDEODRIVER=offscreen`;
-`dummy` has no Vulkan surface support and fails device creation outright.
+Where the code runs and what each host can actually do. The section this page
+opened with - the gpu subsystem's Linux-sees-only-lavapipe finding - went with
+that subsystem on 2026-09-11; ANGLE renders on SwiftShader on every machine, so
+the question it answered no longer arises.
 
 ## THE ANGLE GOLDENS ARE PINNED TO A SOFTWARE RASTERISER (2026-08-08)
 

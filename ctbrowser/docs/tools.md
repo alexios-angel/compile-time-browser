@@ -61,7 +61,7 @@ with it.
   proves the tool measures anything - a checker that has never caught something
   is not known to work. `ctcompile-test-type-oracle` produces the recordings and
   is a SECOND implementation of the same check, compared against this one by
-  `ctcompile/test/check-type-oracle.cmake`.
+  `ctcompile/test/Analysis/Types/check-oracle.cmake`.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
@@ -85,9 +85,7 @@ with it.
   cpptrace (tests only, optional: a missing trace makes a failure harder to
   read, not wrong - llvm-mingw has no `<stacktrace>`). Versions are pinned on
   purpose and three of them match `tools/Brewfile`'s; `tools/remote-build.sh
-  windows` runs it. Was four scripts until 2026-09-15. `build-gmp-mingw.sh` was
-  deleted 2026-09-10 with the GMP BigInt backend; `docs/script.md` keeps the
-  measurement that retired it.
+  windows` runs it. Was four scripts until 2026-09-15.
 - `tools/fetch-test262.sh` — shallow-fetches the OFFICIAL ECMAScript conformance
   suite at a PINNED commit into `~/.cache/ctbrowser/test262` and verifies the
   hash. The corpus is 53,580 files and is NEVER vendored; this is the one place

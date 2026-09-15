@@ -67,7 +67,7 @@ TLS - worse than one that refuses to configure. `find_package(CURL REQUIRED)`.
 
 That removed it from two more places, which is where a dependency actually
 lives: `ctbrowser/unittests/unit/net_basics.cpp` stood up its loopback server with Asio, and
-`examples/cli/ctdrive.cpp` ran its command socket on it. Both are plain BSD
+`tools/ctdrive/ctdrive.cpp` ran its command socket on it. Both are plain BSD
 sockets now - roughly fifty lines each, `#if defined(_WIN32)` for the Winsock
 spelling - because a harness that reintroduces the dependency the engine just
 dropped has not dropped it.
