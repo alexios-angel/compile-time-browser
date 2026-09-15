@@ -17,10 +17,12 @@ struct DOMSource {
     unsigned operationCount = 0;
     std::string reason;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
+    llvm::DenseMap<unsigned, unsigned> creations;
     llvm::DenseSet<mlir::Operation *> active, expanded;
     struct Capture {
         ctjs::CreateCellOp cell;
         ctjs::CellSetOp write;
+        int32_t enclosingIndex = -1;
         mlir::Value value() { return write ? write.getValue() : cell.getInitial(); }
     };
     llvm::DenseMap<mlir::Value, Capture> cells;
@@ -50,6 +52,47 @@ struct DOMSource {
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
     }
 
+    bool captureTarget(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
+        if (!chargeCaptureQuery()) { return false; }
+        if (!target || !expanded.contains(target) ||
+            closure.getUpvalues().size() != target.getUpvalueCount()) {
+            return refuse("DOM helper capture target has not been completely expanded");
+        }
+        const auto indices = closure.getEnclosingIndicesAttr();
+        const bool forwarded =
+            indices && llvm::any_of(indices.asArrayRef(), [](int32_t index) { return index >= 0; });
+        if (!forwarded) {
+            if (immutableClosureTarget(closure, closure->getParentOfType<mlir::ModuleOp>()) !=
+                target) {
+                return refuse("DOM helper requires an immutable local leaf capture");
+            }
+            return true;
+        }
+        // The shared leaf query intentionally excludes forwarding. Here every
+        // child has already been expanded, and the original creator census plus
+        // the enclosing slot prove which invocation supplies each remaining load.
+        auto parent = closure->getParentOfType<ctjs::FuncOp>();
+        if (creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
+            indices.size() != closure.getUpvalues().size()) {
+            return refuse("DOM helper forwarded capture identity is ambiguous");
+        }
+        for (auto [index, value] : llvm::zip(indices.asArrayRef(), closure.getUpvalues())) {
+            if (!step()) { return false; }
+            if (index < -1 ||
+                (index >= 0 &&
+                 (static_cast<unsigned>(index) >= parent.getUpvalueCount() || !undefined(value)))) {
+                return refuse("DOM helper forwarded capture lacks an exact enclosing slot");
+            }
+        }
+        for (mlir::Operation & operation : target.getBody().front()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::StoreUpvalueOp, ctjs::CreateClosureOp>(operation)) {
+                return refuse("DOM helper forwarded capture is mutable or unexpanded");
+            }
+        }
+        return true;
+    }
+
     bool captureStorage(mlir::OpOperand & use) {
         if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner())) {
             auto found = cells.find(cell.getResult());
@@ -65,14 +108,22 @@ struct DOMSource {
     }
 
     bool resolveCell(ctjs::CreateCellOp cell) {
-        auto module = cell->getParentOfType<mlir::ModuleOp>();
+        unsigned writes = 0;
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             if (!step()) { return false; }
-            if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) && !chargeCaptureQuery()) {
-                return false;
+            auto * operation = use.getOwner();
+            if (llvm::isa<ctjs::RootOp, ctjs::CellGetOp>(operation)) { continue; }
+            if (llvm::isa<ctjs::CellSetOp>(operation) && use.getOperandNumber() == 0) {
+                if (++writes <= 1) { continue; }
+            } else if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+                       closure && use.getOperandNumber() >= 2) {
+                const auto indices = closure.getEnclosingIndicesAttr();
+                if ((!indices || indices[use.getOperandNumber() - 2] == -1) &&
+                    captureTarget(closure,
+                                  functions.lookup(static_cast<unsigned>(closure.getFunction())))) {
+                    continue;
+                }
             }
-        }
-        if (!immutableCaptureCell(cell, module)) {
             return refuse("DOM helper capture cell is mutable or escapes");
         }
         auto write = captureCellWrite(cell);
@@ -250,6 +301,13 @@ struct DOMSource {
             }
         }
         if (!returned) { return refuse("DOM helper has no complete return"); }
+        // Normalize children before asking the unchanged shared leaf query about
+        // their parents. Forwarded loads remain symbolic until each parent call.
+        for (ctjs::CreateClosureOp closure : closures) {
+            auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
+            if (!target) { return refuse("DOM helper closure target is missing"); }
+            if (!expand(target, depth + 1)) { return false; }
+        }
         for (ctjs::CreateCellOp cell : localCells) {
             if (!resolveCell(cell)) { return false; }
         }
@@ -313,13 +371,14 @@ struct DOMSource {
                 }
                 llvm::SmallVector<Capture> captures;
                 if (!closure.getUpvalues().empty()) {
-                    if (!chargeCaptureQuery()) { return false; }
-                    if (immutableClosureTarget(
-                            closure, closure->getParentOfType<mlir::ModuleOp>()) != target) {
-                        return refuse("DOM helper requires an immutable local leaf capture");
-                    }
-                    for (mlir::Value capture : closure.getUpvalues()) {
+                    if (!captureTarget(closure, target)) { return false; }
+                    const auto indices = closure.getEnclosingIndicesAttr();
+                    for (auto [slot, capture] : llvm::enumerate(closure.getUpvalues())) {
                         if (!step()) { return false; }
+                        if (indices && indices[slot] >= 0) {
+                            captures.push_back({{}, {}, indices[slot]});
+                            continue;
+                        }
                         const auto found = cells.find(capture);
                         if (found == cells.end()) {
                             return refuse("DOM helper capture lacks a proved local cell");
@@ -394,8 +453,17 @@ struct DOMSource {
                         if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
                             // Read the checked cell at this invocation, never bind a
                             // shared helper body to its first caller's SSA values.
-                            mapping.map(load.getResult(),
-                                        captures[static_cast<unsigned>(load.getIndex())].value());
+                            auto & capture = captures[static_cast<unsigned>(load.getIndex())];
+                            mlir::Value value;
+                            if (capture.enclosingIndex >= 0) {
+                                value = ctjs::LoadUpvalueOp::create(
+                                    at, load.getLoc(), load.getType(),
+                                    block.getArgument(ctjs::arg_callee), capture.enclosingIndex);
+                                ++operationCount;
+                            } else {
+                                value = capture.value();
+                            }
+                            mapping.map(load.getResult(), value);
                         } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                             call.operation->getResult(0).replaceAllUsesWith(
                                 mapping.lookup(result.getValue()));
@@ -442,9 +510,13 @@ struct DOMSource {
 
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps) {
     DOMSource source(maxSteps);
-    candidate.walk([&](mlir::Operation *) {
+    candidate.walk([&](mlir::Operation * operation) {
         if (!source.step()) { return mlir::WalkResult::interrupt(); }
         ++source.operationCount;
+        if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+            closure && closure.getFunction() >= 0) {
+            ++source.creations[static_cast<unsigned>(closure.getFunction())];
+        }
         return mlir::WalkResult::advance();
     });
     auto target = candidate.lookupSymbol<ctjs::FuncOp>(entry);

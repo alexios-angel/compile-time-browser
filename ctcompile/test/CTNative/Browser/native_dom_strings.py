@@ -38,6 +38,7 @@ WIDE = r"""function readWideName(element) {
 CAPTURE_RETURNS = {
     "capture_callable": "function invalid(element) { function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke(); }\n",
     "capture_holder": "function invalid(element) { const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke(); }\n",
+    "capture_forwarded": "function invalid(element) { function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke(); }\n",
 }
 CAPTURE_SOURCE = "".join(
     f"const {name} = (() => {{\n{source}return invalid;\n}})();\n"
@@ -190,6 +191,82 @@ HELPER_CASES = {
   return invoke(element.getAttribute('x'));""",
         "0010",
     ),
+    "helper_capture_nonleaf": (
+        """const key = 'x';
+  function read(target) {
+    function identity(name) { return name; }
+    return target.getAttribute(identity(key));
+  }
+  return read(element) === null;""",
+        "1000",
+    ),
+    "helper_capture_forwarded_mixed": (
+        """const key = 'x';
+  function invoke(target) {
+    function read() { return target.getAttribute(key); }
+    return read();
+  }
+  return invoke(element) === null;""",
+        "1000",
+    ),
+    "helper_capture_forwarded_chain": (
+        """const key = 'x';
+  function outer() {
+    function invoke() {
+      function read() { return element.getAttribute(key); }
+      return read();
+    }
+    return invoke();
+  }
+  return outer() === null;""",
+        "1000",
+    ),
+    "helper_capture_forwarded_alias": (
+        """const key = 'x';
+  function invoke(target) {
+    const name = key;
+    function read() { return target.getAttribute(name); }
+    return read();
+  }
+  return invoke(element) === null;""",
+        "1000",
+    ),
+    "helper_capture_forwarded_callers": (
+        """const prefix = '';
+  function read(target, key) {
+    function name() { return prefix + key; }
+    return target.getAttribute(name());
+  }
+  return read(element, 'x') === read(element, 'missing');""",
+        "1000",
+    ),
+    "helper_capture_forwarded_callable": (
+        """function read(target) { return target.getAttribute('x'); }
+  function invoke() {
+    function nested() { return read(element); }
+    return nested();
+  }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_forwarded_holder": (
+        """const helpers = {read(target) { return target.getAttribute('x'); }};
+  function invoke() {
+    function nested() { return helpers.read(element); }
+    return nested();
+  }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_forwarded_order": (
+        r"""const saved = element.getAttribute('x');
+  function invoke() {
+    function compare() { return saved === element.getAttribute('x'); }
+    return compare();
+  }
+  element.setAttribute('x', 'a\0b'); return invoke();""",
+        "0010",
+    ),
     "helper_read": (
         """function read(target, key) { return target.getAttribute(key); }
   return read(element, 'x') === null;""",
@@ -330,6 +407,7 @@ BOOLEAN_CHECKS = {
     "helper_capture_repeated": 'assert(doc.read().attribute_value(node, state) == "after");',
     "helper_capture_callable_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_capture_holder_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "helper_capture_forwarded_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_nested": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "helper_object_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
@@ -349,8 +427,8 @@ const names = [];
 assert.equal(readNames({getAttribute(name) { names.push(name); return name; }}), 'a\0b');
 assert.deepEqual(names, ['bad name', '', 'a\0b']);
 assert.equal(readWideName({getAttribute(name) { return name; }}), '\ud800');
-for (const entry of [readAttribute, savedAttribute, capture_callable, capture_holder]) {
-  const key = entry === capture_callable || entry === capture_holder ? 'x' : 'DATA-State';
+for (const entry of [readAttribute, savedAttribute, capture_callable, capture_holder, capture_forwarded]) {
+  const key = entry === readAttribute || entry === savedAttribute ? 'DATA-State' : 'x';
   for (const expected of [null, '', 'a\0b', '\u00e9']) {
     let value = expected;
     const calls = [];
@@ -621,7 +699,15 @@ HELPER_REFUSALS = {
     "capture_unknown_effect": "const key = 'x'; function read() { return element.getAttribute(key); } sideEffect(); return read();",
     "capture_closure_escape": "function read() { return element.getAttribute('x'); } read(); return read;",
     "capture_borrowed_return": "function read() { element.getAttribute('x'); return element; } return read();",
-    "capture_forwarded": "function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke();",
+    "capture_forwarded_reassigned": "let key = 'x'; function invoke() { function read() { return element.getAttribute(key); } return read(); } key = 'y'; return invoke();",
+    "capture_forwarded_reassigned_later": "let key = 'x'; function invoke() { function read() { return element.getAttribute(key); } return read(); } const saved = invoke(); key = 'y'; return saved;",
+    "capture_forwarded_parent_write": "let key = 'x'; function invoke() { key = 'y'; function read() { return element.getAttribute(key); } return read(); } return invoke();",
+    "capture_forwarded_child_write": "let key = 'x'; function invoke() { function read() { key = 'y'; return element.getAttribute(key); } return read(); } return invoke();",
+    "capture_forwarded_early_call": "function invoke() { function read() { return element.getAttribute(key); } return read(); } const saved = invoke(); var key = 'x'; return saved;",
+    "capture_forwarded_escape": "function invoke() { function read() { return element.getAttribute('x'); } read(); return read; } return invoke();",
+    "capture_forwarded_unused": "function invoke() { function read() { return element.getAttribute('x'); } return element.getAttribute('x'); } return invoke();",
+    "capture_forwarded_receiver": "function invoke() { const read = () => { this.saved = element; return element.getAttribute('x'); }; return read(); } return invoke();",
+    "capture_forwarded_unknown_effect": "function invoke() { function read() { sideEffect(); return element.getAttribute('x'); } return read(); } return invoke();",
     "capture_callable_reassigned": "let read = target => target.getAttribute('x'); function invoke() { return read(element); } read = target => target.getAttribute('y'); return invoke();",
     "capture_callable_reassigned_later": "let read = target => target.getAttribute('x'); function invoke() { return read(element); } const saved = invoke(); read = target => target.getAttribute('y'); return saved;",
     "capture_callable_escape": "function read(target) { return target.getAttribute('x'); } function invoke() { read(element); return read; } return invoke();",
@@ -823,7 +909,14 @@ def helper_provenance_refusals(args, ir, contract):
         for depth in range(1, 32)
     )
     mixed += "return graph31(element);"
-    for label, body in (("capture-graph-depth", graph), ("capture-mixed-depth", mixed)):
+    forwarded = "return element.getAttribute('x') === null;"
+    for depth in reversed(range(64)):
+        forwarded = f"function forward{depth}() {{ {forwarded} }} return forward{depth}();"
+    for label, body in (
+        ("capture-graph-depth", graph),
+        ("capture-mixed-depth", mixed),
+        ("capture-forwarded-depth", forwarded),
+    ):
         graph_ir, graph_contract = dom.prepare(
             args,
             label,
@@ -839,7 +932,7 @@ def helper_provenance_refusals(args, ir, contract):
             not in diagnostic
         ):
             raise RuntimeError(f"{label}: wrong refusal\n{diagnostic}")
-    return len(variants) * 4 + 3
+    return len(variants) * 4 + 4
 
 
 def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
@@ -859,9 +952,12 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
             ),
             slot,
         ),
-        "negative-slot": (original.replace(load, load.replace("[0]", "[-1]")), cell),
-        "missing-slot": (original.replace(load, load.replace("[0]", "[1]")), cell),
-        "capture-count": (original.replace("upvalue_count = 1", "upvalue_count = 2"), cell),
+        "negative-slot": (original.replace(load, load.replace("[0]", "[-1]")), slot),
+        "missing-slot": (original.replace(load, load.replace("[0]", "[1]")), slot),
+        "capture-count": (
+            original.replace("upvalue_count = 1", "upvalue_count = 2"),
+            "DOM helper capture target has not been completely expanded",
+        ),
         "non-cell": (
             original.replace(closure, closure.replace("captures %2", "captures %arg3")),
             "DOM helper capture lacks a proved local cell",
@@ -872,11 +968,11 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
                 closure.replace("captures %2", "captures %3")
                 + " {enclosing_indices = array<i32: 0>}",
             ),
-            "DOM helper requires an immutable local leaf capture",
+            "DOM helper forwarded capture lacks an exact enclosing slot",
         ),
         "duplicate-closure": (
             original.replace(closure, closure + "\n    %duplicate = " + closure),
-            cell,
+            "DOM helper requires an immutable local leaf capture",
         ),
         "second-write": (original.replace(store, store + store), cell),
         "late-write": (
@@ -940,6 +1036,59 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
                 elif f"error: native DOM source: {reason}" not in result:
                     raise RuntimeError(f"capture storage {name}: wrong refusal\n{result}")
     return len(variants) * 4 + 9
+
+
+def forwarded_provenance_checks(args, ir, contract):
+    original = ir.read_text()
+    closure = "ctjs.create_closure %arg2[3] this %2 captures %1"
+    indices = "enclosing_indices = array<i32: 0>"
+    if any(original.count(anchor) != 1 for anchor in (closure, indices)):
+        raise RuntimeError("forwarded capture provenance anchors changed")
+    slot = "DOM helper forwarded capture lacks an exact enclosing slot"
+    variants = {
+        "missing-parent-slot": (original.replace(indices, indices.replace("0>", "1>")), slot),
+        "forged-parent-slot": (
+            original.replace(
+                indices, indices.replace("0>", "1>") + ", ctnative.host_proved = true"
+            ),
+            slot,
+        ),
+        "local-placeholder": (
+            original.replace(indices, indices.replace("0>", "-1>")),
+            "DOM helper capture lacks a proved local cell",
+        ),
+        "foreign-parent": (
+            original.replace(closure, closure.replace("%arg2[", "%arg0[")),
+            "DOM helper lacks an exact local closure identity",
+        ),
+        "duplicate-creator": (
+            original.replace(
+                closure + " {" + indices + "}",
+                closure + " {" + indices + "}\n    %duplicate = " + closure + " {" + indices + "}",
+            ),
+            "DOM helper forwarded capture identity is ambiguous",
+        ),
+    }
+    for name, (text, reason) in variants.items():
+        mutated = args.work / f"forwarded-provenance-{name}.mlir"
+        mutated.write_text(text)
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    f"forwarded-provenance-{name}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if f"error: native DOM source: {reason}" not in diagnostic:
+                    raise RuntimeError(f"forwarded provenance {name}: wrong refusal\n{diagnostic}")
+    diagnostic = dom.lower(args, ir, contract, "forwarded-budget", max_steps=128, success=False)
+    if "budget exhausted" not in diagnostic:
+        raise RuntimeError(f"forwarded capture: missing work-budget refusal\n{diagnostic}")
+    return len(variants) * 4 + 1
 
 
 def method_provenance_checks(args, ir, contract):
@@ -1232,6 +1381,10 @@ function makeElement(value) {
     capture_checks = capture_provenance_checks(
         args, capture_ir, capture_contract, graph_ir, graph_contract
     )
+    _, forwarded_ir, forwarded_contract = next(
+        row for row in prepared if row[0] == "capture_forwarded"
+    )
+    capture_checks += forwarded_provenance_checks(args, forwarded_ir, forwarded_contract)
     print(
         f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {len(REFUSALS) * 4} source refusal checks, "
