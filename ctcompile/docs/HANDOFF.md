@@ -39,18 +39,26 @@ frame exit and unvisited switch arms. Focused **4/4 CTests in 100.59s PASS**:
 Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned
 formatting matches the unchanged **nine-file / 26-diagnostic** baseline.
 
-The complete default build/CTest gate is **running**, on **1,443 frozen source
-inputs** matching local files and committed source. No final full-suite result is
-claimed yet. Recovery scripts, logs and continuation probes are in
+Complete **274-step default build / 602/602 CTests in 1452.69s /
+176/176 lit in 971.29s PASS**. All **1,443 frozen hashes** match devbox,
+local files and committed source. Recovery scripts, focused/full logs, generated
+C++, `measured.json` and precise continuation notes are in
 `/tmp/ctcompile-completion/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. DOM Data remains **7/7**, Button **4/86**
+with **22 Node observations** and its existing VM inheritance failure. Button/Data
+reports and all **1,123 escape baseline rows** are byte-identical to the prior gate.
 
 **Exact next boundary:** a fresh verbatim M/F/H.getDataAttribute probe still
 refuses the complete single-block helper census under both providers/policies.
 M's original exception CFG needs preserved register vectors and recovery at its
 original handler-installation site, after the prefix returns. The current lift
 preservation filter excludes M's property/builtin calls, recovery requires an
-entry-block handler, and host contracts skip ordinary exception recovery. Do not
-hoist the handler over the pre-try Number/toString operations. Builtin identity,
+entry-block handler, and host contracts skip ordinary exception recovery. The
+recovery transaction also deletes every non-entry block, so relaxing the entry
+check alone would erase M's prefix. Preserve that prefix and do not hoist the
+handler over the pre-try Number/toString operations. Builtin identity,
 Number/toString, fallible URI/JSON calls, catch-state and heterogeneous return
 ownership require separate proof. Full H/dataset, Bootstrap initialization,
 inheritance, retained config/callback ownership and the application driver remain

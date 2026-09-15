@@ -6,8 +6,9 @@ Latest slice **83da7d42** proves complete acyclic DOM helper completion paths.
 The unchanged three-return source now compiles; all original operations, effects
 and frame exits are checked, and observed poison or unknown selectors refuse.
 Focused **4/4 CTests PASS**: **493 Node/VM observations / eight native binaries /
-780 source refusals / 27 completion controls**. The full default build/CTest gate
-is running on **1,443 frozen source inputs**; see [HANDOFF](HANDOFF.md) for status.
+780 source refusals / 27 completion controls**. Complete **274-step build /
+602/602 CTests / 176/176 lit PASS**; all **1,443 frozen hashes** match devbox,
+local files and committed source. See [HANDOFF](HANDOFF.md) for measurements.
 
 A fresh original M/F/H.getDataAttribute probe still refuses the multi-block helper
 under both providers/policies. Next: preserve M's complete register vectors, recover
@@ -17,8 +18,8 @@ host contracts skip that recovery. Builtin identity, fallible URI/JSON calls,
 catch-state and heterogeneous result ownership still need proof. Full H dataset
 iteration, Bootstrap initialization, inherited receivers, retained config/callback
 ownership and the application driver remain unfinished. No full-bundle admission
-gain is claimed; previous complete measurements remain Bootstrap **19/574 native**,
-DOM Data **7/7**, Button **4/86**, pending this gate's measurements.
+gain is claimed; fresh measurements remain Bootstrap **19/574 native**,
+DOM Data **7/7**, Button **4/86**.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
