@@ -1,7 +1,9 @@
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
@@ -575,6 +577,201 @@ struct DOMSource {
         return true;
     }
 
+    bool normalizeCompletion(ctjs::FuncOp function) {
+        bool dispatch = false;
+        const auto walked = function.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            dispatch |= llvm::isa<mlir::scf::IndexSwitchOp>(operation);
+            return mlir::WalkResult::advance();
+        });
+        if (walked.wasInterrupted()) { return false; }
+        if (!dispatch) { return true; }
+
+        // Keep the original body until every completion path has been copied.
+        // A yield supplies the exact values for its continuation; inactive
+        // poison slots may be forwarded but must never be observed.
+        struct Continuation {
+            mlir::Block * block;
+            mlir::Block::iterator next;
+            mlir::ValueRange results;
+            const Continuation * outer;
+        };
+        mlir::Region normalized;
+        auto & destination = normalized.emplaceBlock();
+        mlir::IRMapping mapping;
+        mlir::DominanceInfo dominance(function);
+        llvm::DenseSet<mlir::Operation *> visited;
+        for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
+            if (!step()) { return false; }
+            mapping.map(argument, destination.addArgument(argument.getType(), argument.getLoc()));
+        }
+        const auto emit = [&](auto && self, mlir::Block & body, mlir::Block::iterator begin,
+                              mlir::IRMapping & values, mlir::OpBuilder & at,
+                              const Continuation * continuation, unsigned depth) -> mlir::Value {
+            if (depth >= 64) {
+                refuse("DOM helper completion nesting is too deep");
+                return {};
+            }
+            for (auto cursor = begin; cursor != body.end(); ++cursor) {
+                if (!step()) { return {}; }
+                auto & operation = *cursor;
+                visited.insert(&operation);
+                for (mlir::Value operand : operation.getOperands()) {
+                    if (!step()) { return {}; }
+                    if (!values.contains(operand) || !dominance.dominates(operand, &operation)) {
+                        refuse("DOM helper completion operand has no preceding local definition");
+                        return {};
+                    }
+                }
+                if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
+                    if (!continuation ||
+                        yield.getOperandTypes() != continuation->results.getTypes()) {
+                        refuse("DOM helper completion lost its result correspondence");
+                        return {};
+                    }
+                    for (auto [result, operand] :
+                         llvm::zip(continuation->results, yield.getOperands())) {
+                        if (!step()) { return {}; }
+                        values.map(result, values.lookupOrDefault(operand));
+                    }
+                    return self(self, *continuation->block, continuation->next, values, at,
+                                continuation->outer, depth);
+                }
+                if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation)) {
+                    values.map(poison.getResult(), poison.getResult());
+                    continue;
+                }
+                for (mlir::Value operand : operation.getOperands()) {
+                    if (!step()) { return {}; }
+                    if (values.lookupOrDefault(operand).getDefiningOp<mlir::ub::PoisonOp>()) {
+                        refuse("DOM helper completion observes an inactive value");
+                        return {};
+                    }
+                }
+                if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                    if (continuation) {
+                        refuse("DOM helper completion returns inside a source region");
+                        return {};
+                    }
+                    return values.lookupOrDefault(result.getValue());
+                }
+                Continuation tail{&body, std::next(cursor), operation.getResults(), continuation};
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    // ponytail: duplicate bounded continuations, preserving their
+                    // effects in each arm. Large trees stop at the work budget.
+                    auto copied =
+                        mlir::scf::IfOp::create(at, branch.getLoc(), function.getResultTypes(),
+                                                values.lookupOrDefault(branch.getCondition()));
+                    ++operationCount;
+                    for (auto [source, target] :
+                         llvm::zip(branch->getRegions(), copied->getRegions())) {
+                        for (const auto & item : values.getValueMap()) {
+                            (void)item;
+                            if (!step()) { return {}; }
+                        }
+                        for (const auto & item : values.getOperationMap()) {
+                            (void)item;
+                            if (!step()) { return {}; }
+                        }
+                        mlir::IRMapping path(values);
+                        target.emplaceBlock();
+                        mlir::OpBuilder nested(&target.front(), target.front().begin());
+                        mlir::Value returned;
+                        if (source.empty() && branch.getNumResults() == 0) {
+                            returned =
+                                self(self, body, tail.next, path, nested, continuation, depth + 1);
+                        } else if (source.hasOneBlock() && source.front().getNumArguments() == 0) {
+                            returned = self(self, source.front(), source.front().begin(), path,
+                                            nested, &tail, depth + 1);
+                        }
+                        if (!returned) {
+                            refuse("DOM helper completion has an incomplete branch");
+                            return {};
+                        }
+                        mlir::scf::YieldOp::create(nested, branch.getLoc(), returned);
+                        ++operationCount;
+                    }
+                    return copied.getResult(0);
+                }
+                if (auto switcher = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(operation)) {
+                    auto selector = values.lookupOrDefault(switcher.getArg());
+                    if (auto cast = selector.getDefiningOp<mlir::arith::IndexCastUIOp>()) {
+                        selector = cast.getIn();
+                    }
+                    auto constant = selector.getDefiningOp<mlir::arith::ConstantOp>();
+                    auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                            : mlir::IntegerAttr{};
+                    if (!integer || integer.getValue().isNegative() ||
+                        integer.getValue().getActiveBits() > 63) {
+                        refuse("DOM helper completion selector is not an exact constant");
+                        return {};
+                    }
+                    auto * selected = &switcher.getDefaultRegion();
+                    for (auto [index, key] : llvm::enumerate(switcher.getCases())) {
+                        if (!step()) { return {}; }
+                        if (key == integer.getInt()) {
+                            selected = &switcher.getCaseRegions()[index];
+                        }
+                    }
+                    if (!selected->hasOneBlock() || selected->front().getNumArguments()) {
+                        refuse("DOM helper completion has an incomplete switch arm");
+                        return {};
+                    }
+                    return self(self, selected->front(), selected->front().begin(), values, at,
+                                &tail, depth + 1);
+                }
+                if (operation.getNumRegions() || operation.getNumSuccessors()) {
+                    refuse("DOM helper completion requires acyclic structured source");
+                    return {};
+                }
+                at.clone(operation, values);
+                ++operationCount;
+            }
+            refuse("DOM helper completion has no return or yield");
+            return {};
+        };
+        mlir::OpBuilder at(function.getContext());
+        at.setInsertionPointToStart(&destination);
+        auto & body = function.getBody().front();
+        auto result = emit(emit, body, body.begin(), mapping, at, nullptr, 0);
+        if (!result) { return false; }
+        const auto complete = function.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (operation != function && !visited.contains(operation)) {
+                refuse("DOM helper completion contains unvisited source operations");
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (complete.wasInterrupted()) { return false; }
+        ctjs::ReturnOp::create(at, function.getLoc(), result);
+        // Only inert completion arithmetic is removed. Source effects remain
+        // for the unchanged complete DOM/frame proof below.
+        llvm::SmallVector<mlir::Operation *> arithmetic;
+        const auto cleanup = normalized.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
+                arithmetic.push_back(operation);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (cleanup.wasInterrupted()) { return false; }
+        for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
+            if (!step()) { return false; }
+            if (operation->use_empty()) { operation->erase(); }
+        }
+        for (mlir::BlockArgument argument : body.getArguments()) {
+            if (!step()) { return false; }
+            auto found = stringInputs.find(argument);
+            if (found == stringInputs.end()) { continue; }
+            auto inputs = std::move(found->second);
+            stringInputs.erase(found);
+            stringInputs[mapping.lookup(argument)] = std::move(inputs);
+        }
+        function.getBody().takeBody(normalized);
+        return true;
+    }
+
     bool checkBody(ctjs::FuncOp function, bool entry) {
         auto & block = function.getBody().front();
         llvm::DenseSet<mlir::Value> values;
@@ -708,7 +905,7 @@ struct DOMSource {
         if (depth == 64 || !active.insert(function).second) {
             return refuse("DOM helper call tree is recursive or too deep");
         }
-        if (!checkBody(function, entry)) { return false; }
+        if (!normalizeCompletion(function) || !checkBody(function, entry)) { return false; }
         // Parameters with nested source functions may have an otherwise local
         // cell. Resolve those reads before specializing their intrinsic calls;
         // captured cells still wait for the unchanged child/capture proof.

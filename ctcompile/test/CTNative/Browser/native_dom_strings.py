@@ -158,7 +158,40 @@ BOOLEAN_CASES.update(
         ),
     }
 )
+# Preserve the original three-return source while proving LLVM completion dispatch.
+HELPER_COMPLETION_SOURCE = """function observe(target) {
+    function read(name) {
+      if (target.getAttribute(name) === null) return false;
+      if (target.getAttribute(name) === '') return true;
+      return false;
+    }
+    return read('x');
+  }
+  return observe(element);"""
 HELPER_CASES = {
+    "helper_branch_completion_dispatch": (HELPER_COMPLETION_SOURCE, "0100"),
+    "helper_completion_effects": (
+        r"""function change(target) {
+    const saved = target.getAttribute('x');
+    if (saved === null) { target.setAttribute('marker', 'missing'); return true; }
+    if (saved === '') { target.setAttribute('marker', 'empty'); return false; }
+    if (saved === 'a\0b') { target.setAttribute('marker', 'nul'); return true; }
+    target.setAttribute('marker', 'wide'); return false;
+  }
+  return change(element);""",
+        "1010",
+    ),
+    "helper_completion_capture_snapshot": (
+        """const saved = element.getAttribute('x');
+  function read(target) {
+    if (saved === null) { target.setAttribute('marker', 'missing'); return null; }
+    if (saved === '') { target.setAttribute('marker', 'empty'); return ''; }
+    target.setAttribute('marker', 'present'); return saved;
+  }
+  element.setAttribute('x', 'after');
+  return !read(element);""",
+        "1100",
+    ),
     "helper_branch": (
         "function read(target) { if (target.hasAttribute('x')) return true; return false; } return read(element);",
         "0111",
@@ -915,6 +948,12 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "helper_completion_effects": r"""assert(doc.read().attribute_value(node, atoms.intern("marker")) ==
+            (!value ? "missing" : value->empty() ? "empty" :
+             *value == std::string_view("a\0b", 3) ? "nul" : "wide"));""",
+    "helper_completion_capture_snapshot": """assert(doc.read().attribute_value(node, state) == "after");
+        assert(doc.read().attribute_value(node, atoms.intern("marker")) ==
+            (!value ? "missing" : value->empty() ? "empty" : "present"));""",
     "helper_branch_effects": 'assert(doc.read().has_attribute(node, atoms.intern("marker")) == result);',
     "helper_branch_saved": 'assert(doc.read().attribute_value(node, state) == "after");',
     "helper_branch_capture": 'assert(doc.read().attribute_value(node, state) == "after");',
@@ -1241,16 +1280,11 @@ REFUSALS = {
     "non-string-name": "return element.getAttribute(null);",
 }
 HELPER_REFUSALS = {
-    # Preserve the draft source: LLVM completion dispatch still needs its own proof.
-    "helper_branch_completion_dispatch": """function observe(target) {
-    function read(name) {
-      if (target.getAttribute(name) === null) return false;
-      if (target.getAttribute(name) === '') return true;
-      return false;
-    }
-    return read('x');
-  }
-  return observe(element);""",
+    "helper_completion_unsafe_middle": "function read(target) { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') { target.unknown(); return true; } return false; } return read(element);",
+    "helper_completion_unsafe_tail": "function read(target) { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') return true; target.unknown(); return false; } return read(element);",
+    "helper_completion_mixed_return": "function read(target) { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') return 'text'; return false; } return read(element);",
+    "helper_completion_optional_undefined": "function read(target) { if (target.getAttribute('x') === null) return null; if (target.getAttribute('x') === '') return undefined; return target.getAttribute('x'); } return read(element);",
+    "helper_completion_exception": "function read(target) { try { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') return true; return false; } catch (error) { return true; } } return read(element);",
     "helper_branch_unsafe_then": "function read(target) { if (target.hasAttribute('x')) { target.unknown(); } return target.getAttribute('x'); } return read(element);",
     "helper_branch_unsafe_else": "function read(target) { if (target.hasAttribute('x')) { return target.getAttribute('x'); } else { target.unknown(); return null; } } return read(element);",
     "helper_branch_loop": "function read(target) { while (target.hasAttribute('x')) { target.removeAttribute('x'); } return target.getAttribute('x'); } return read(element);",
@@ -1482,6 +1516,55 @@ def emitted(args, module, name, *, optional_read=True):
             f"{name}: expected an ordinary optional String using the shared DOM API\n{cpp}"
         )
     return cpp, entries[0]
+
+
+def completion_provenance_checks(args, ir, contract):
+    original = ir.read_text()
+    helper = next(
+        body
+        for body in re.findall(r"^  ctjs\.func [^\n]+\n.*?^  }\n", original, re.M | re.S)
+        if "@read$3(" in body.splitlines()[0]
+    )
+    variants = {
+        "poison-return": ("scf.yield %20, %c1_i32", "scf.yield %0, %c1_i32"),
+        "poison-observation": ("ctjs.compare strict_eq %5, %6", "ctjs.compare strict_eq %0, %6"),
+        "live-selector": (
+            "%10 = arith.index_castui %9#1",
+            "%live = arith.extui %8 : i1 to i32\n    %10 = arith.index_castui %live",
+        ),
+        "negative-selector": ("arith.constant 1 : i32", "arith.constant -1 : i32"),
+        "frame-exit": ("ctjs.frame_exit %1", ""),
+        "unvisited-arm": (
+            "    default {",
+            "    case 99 {\n      %unvisited = ctjs.constant #ctjs.boolean<true>\n"
+            "      scf.yield %unvisited : !ctjs.value\n    }\n    default {",
+        ),
+    }
+    for name, (before, after) in variants.items():
+        if before not in helper:
+            raise RuntimeError(f"completion provenance anchor changed: {name}")
+        mutated = args.work / f"completion-{name}.mlir"
+        mutated.write_text(original.replace(helper, helper.replace(before, after, 1)))
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    f"completion-{name}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if "error: native DOM source:" not in diagnostic:
+                    raise RuntimeError(f"completion {name}: wrong refusal\n{diagnostic}")
+    for budget in (0, 32, 128):
+        diagnostic = dom.lower(
+            args, ir, contract, f"completion-budget-{budget}", max_steps=budget, success=False
+        )
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(f"completion budget {budget}: wrong refusal\n{diagnostic}")
+    return 4 * len(variants) + 3
 
 
 def helper_provenance_refusals(args, ir, contract):
@@ -2249,6 +2332,10 @@ function makeElement(value) {
                 )
                 if "DOM" not in diagnostic:
                     raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+    _, completion_ir, completion_contract = next(
+        row for row in prepared if row[0] == "helper_branch_completion_dispatch"
+    )
+    completion_checks = completion_provenance_checks(args, completion_ir, completion_contract)
     _, branch_ir, branch_contract = next(row for row in prepared if row[0] == "branch_nested")
     for budget in (0, 1, 32):
         diagnostic = dom.lower(
@@ -2382,7 +2469,8 @@ function makeElement(value) {
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks; "
-        f"{replacement_checks} replacement provenance/budget checks; 22 branch depth/budget checks"
+        f"{replacement_checks} replacement provenance/budget checks; 22 branch depth/budget checks; "
+        f"{completion_checks} completion provenance/budget checks"
     )
 
 
