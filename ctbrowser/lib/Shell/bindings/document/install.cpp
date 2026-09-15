@@ -81,7 +81,7 @@ void dom_bindings::install_document(context & cx) {
         // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag
         // here, and folding it would lose the case an XML document depends on.
         const node_id made = doc_->create_element(atoms_->intern(qualified), kind, prefixed);
-        if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(pack(made), ns); }
+        if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(made.key(), ns); }
         if (kind == node_ns::html && split_qualified(qualified).local == "script") {
             note_unstarted_script(made);
         }

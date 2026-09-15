@@ -154,7 +154,7 @@ namespace {
 } // namespace
 
 std::string dom_bindings::namespace_of(node_id id) const {
-    if (const auto it = namespaces_.find(pack(id)); it != namespaces_.end()) { return it->second; }
+    if (const auto it = namespaces_.find(id.key()); it != namespaces_.end()) { return it->second; }
     switch (doc_->read().element_ns(id)) {
     case node_ns::svg: return std::string{svg_namespace};
     case node_ns::html: return std::string{xhtml_namespace};

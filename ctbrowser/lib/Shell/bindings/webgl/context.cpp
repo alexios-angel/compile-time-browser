@@ -8,13 +8,13 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 void dom_bindings::resize_webgl_context(node_id id, int width, int height) {
-    const auto found = webgl_contexts_.find(pack(id));
+    const auto found = webgl_contexts_.find(id.key());
     if (found == webgl_contexts_.end() || !found->second || canvases_ == nullptr) { return; }
     canvas_context * surface = canvases_->context_for(id, width, height);
     if (surface == nullptr) { return; }
     found->second->resize(const_cast<paint::bitmap *>(surface->surface().get()), width, height);
     // The page reads these, and p5 reads them to size its projection matrix.
-    if (const auto seen = webgl_objects_.find(pack(id)); seen != webgl_objects_.end()) {
+    if (const auto seen = webgl_objects_.find(id.key()); seen != webgl_objects_.end()) {
         seen->second->set("drawingBufferWidth", value::number(width));
         seen->second->set("drawingBufferHeight", value::number(height));
     }
@@ -32,7 +32,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     canvas_context * surface = canvases_->context_for(id, width, height);
     if (surface == nullptr) { return value::null(); }
 
-    auto & made = webgl_contexts_[pack(id)];
+    auto & made = webgl_contexts_[id.key()];
     // `made` IS A REFERENCE INTO THE MAP, so it is non-null from here on
     // whatever happened - which is why the freshness has to be captured before
     // the create rather than tested after it. Checking `made != nullptr`
@@ -71,7 +71,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // the spec, and a page compares what it gets - `if (this.gl !== canvas
     // .getContext('webgl'))` is a real pattern - so handing back a fresh wrapper
     // each call is observably wrong even when the state behind it is shared.
-    if (const auto seen = webgl_objects_.find(pack(id)); seen != webgl_objects_.end()) {
+    if (const auto seen = webgl_objects_.find(id.key()); seen != webgl_objects_.end()) {
         // A CANVAS HAS ONE CONTEXT TYPE, FOR EVER. The spec is explicit: once
         // a canvas has a context, asking for a DIFFERENT id returns null - it
         // does not convert, and it does not hand back the one it has under the
@@ -91,7 +91,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // from both tests that a browser would give it.
     const value & interface_prototype = webgl2 ? webgl2_prototype_ : webgl_prototype_;
     if (interface_prototype.is_object()) { obj->prototype = interface_prototype; }
-    webgl_objects_[pack(id)] = obj;
+    webgl_objects_[id.key()] = obj;
     obj->set("canvas", wrap(cx, id));
     obj->set("drawingBufferWidth", value::number(width));
     obj->set("drawingBufferHeight", value::number(height));

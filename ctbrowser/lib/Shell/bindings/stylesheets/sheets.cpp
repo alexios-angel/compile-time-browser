@@ -42,7 +42,7 @@ std::string_view dom_bindings::preferred_sheet_title() {
 }
 
 bool dom_bindings::link_explicitly_enabled(node_id id) const {
-    return std::ranges::find(enabled_links_, pack(id)) != enabled_links_.end();
+    return std::ranges::find(enabled_links_, id.key()) != enabled_links_.end();
 }
 
 std::string dom_bindings::resolve_sheet_href(std::string_view base, std::string_view reference) {
@@ -319,7 +319,7 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                     if (is_style) {
                         for (const node_id child : txn.children(at)) {
                             made.text += txn.text(child);
-                            made.children += std::to_string(pack(child)) + ',';
+                            made.children += std::to_string(child.key()) + ',';
                         }
                     }
                     found.push_back(std::move(made));
@@ -344,15 +344,15 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
             std::uint64_t earliest = 0;
             for (const found_sheet & each : found) {
                 if (each.title.empty()) { continue; }
-                if (css_preferred_title_.empty() || pack(each.owner) < earliest) {
+                if (css_preferred_title_.empty() || each.owner.key() < earliest) {
                     css_preferred_title_ = each.title;
-                    earliest = pack(each.owner);
+                    earliest = each.owner.key();
                 }
             }
         }
     }
     for (const found_sheet & each : found) {
-        const std::uint64_t key = pack(each.owner);
+        const std::uint64_t key = each.owner.key();
         const auto it = css_sheet_by_owner_.find(key);
         bool fresh = false;
         std::size_t at = no_index;

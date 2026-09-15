@@ -1067,7 +1067,7 @@ void dom_bindings::install_node_methods(context & cx) {
         const std::vector<node_id> theirs = chain(other);
         if (mine.back() != theirs.back()) {
             return value::number(disconnected | implementation_specific |
-                                 (pack(other) < pack(self) ? preceding : following));
+                                 (other.key() < self.key() ? preceding : following));
         }
         if (std::ranges::find(mine, other) != mine.end()) {
             return value::number(contains | preceding);

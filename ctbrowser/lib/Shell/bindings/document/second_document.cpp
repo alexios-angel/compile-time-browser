@@ -142,7 +142,7 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
                                  qualified_name.find(':') != std::string_view::npos);
         fresh.set_document_element(root);
         if (kind == node_ns::other || ns.empty()) {
-            made.namespaces_.emplace(made.pack(root), std::string{ns});
+            made.namespaces_.emplace(root.key(), std::string{ns});
         }
     }
     made.install_document(cx);
@@ -192,7 +192,7 @@ value dom_bindings::parse_from_string(context & cx, std::string_view markup,
             fresh.set_document_element(error);
         }
         made.namespaces_.emplace(
-            made.pack(error), std::string{"http://www.mozilla.org/newlayout/xml/parsererror.xml"});
+            error.key(), std::string{"http://www.mozilla.org/newlayout/xml/parsererror.xml"});
     }
     made.install_document(cx);
     if (const value proto = interface_prototype("XMLDocument"); proto.is_object()) {

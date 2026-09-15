@@ -275,7 +275,7 @@ void dom_bindings::take_mutation_snapshot() {
         observed.clear();
         collect_observed(txn, reg.target, reg.options.subtree, observed);
         for (const node_id at : observed) {
-            const std::uint64_t key = pack(at);
+            const std::uint64_t key = at.key();
             if (mutation_snapshot_.find(key) != mutation_snapshot_.end()) { continue; }
             mutation_node_state state;
             for (const node_id child : txn.children(at)) { state.children.push_back(child); }
@@ -357,7 +357,7 @@ void dom_bindings::record_mutations() {
         observed.clear();
         collect_observed(txn, reg.target, reg.options.subtree, observed);
         for (const node_id at : observed) {
-            const auto found = mutation_snapshot_.find(pack(at));
+            const auto found = mutation_snapshot_.find(at.key());
             // A node that was not in the snapshot is one that has only just
             // come under observation - a descendant appended a moment ago. It
             // has no "before", so it has no differences; the addition itself is
@@ -369,7 +369,7 @@ void dom_bindings::record_mutations() {
             // --- childList ------------------------------------------------
             if (reg.options.child_list && replace_all_ && replace_all_->parent == at) {
                 // "Replace all", as noted by the caller - see replace_all_.
-                if (first_time(reg.observer, pack(at), 1, std::string{})) {
+                if (first_time(reg.observer, at.key(), 1, std::string{})) {
                     const value record = make_mutation_record(cx, "childList", at);
                     auto * held = static_cast<script::object_object *>(record.as_heap());
                     for (const auto & [name, list] :
@@ -445,7 +445,7 @@ void dom_bindings::record_mutations() {
                         // two children of one parent may move in one call, and
                         // a key that named only the parent would collapse both
                         // removals into one record.
-                        if (!first_time(reg.observer, pack(was.children[i]), 0, std::string{})) {
+                        if (!first_time(reg.observer, was.children[i].key(), 0, std::string{})) {
                             continue;
                         }
                         const value record = make_mutation_record(cx, "childList", at);
@@ -468,7 +468,7 @@ void dom_bindings::record_mutations() {
                     // children is a single record naming both lists, which
                     // MutationObserver-textContent.html asserts three ways.
                     if (!gone.empty() || !added.empty()) {
-                        const bool fresh = first_time(reg.observer, pack(at), 1, std::string{});
+                        const bool fresh = first_time(reg.observer, at.key(), 1, std::string{});
                         if (fresh) {
                             const value record = make_mutation_record(cx, "childList", at);
                             auto * held = static_cast<script::object_object *>(record.as_heap());
@@ -550,7 +550,7 @@ void dom_bindings::record_mutations() {
                 const auto report = [&](const attribute & which, const std::string * old_value) {
                     const std::string local{attribute_local_name(*atoms_, which)};
                     if (!wanted(local)) { return; }
-                    if (!first_time(reg.observer, pack(at), 2,
+                    if (!first_time(reg.observer, at.key(), 2,
                                     std::string{atoms_->text(which.name)})) {
                         return;
                     }
@@ -603,7 +603,7 @@ void dom_bindings::record_mutations() {
                         return note.text && note.node == at;
                     });
                 if ((now_text != was.text || written) &&
-                    first_time(reg.observer, pack(at), 3, std::string{})) {
+                    first_time(reg.observer, at.key(), 3, std::string{})) {
                     const value record = make_mutation_record(cx, "characterData", at);
                     auto * held = static_cast<script::object_object *>(record.as_heap());
                     if (reg.options.character_data_old_value) {

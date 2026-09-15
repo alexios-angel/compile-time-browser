@@ -207,7 +207,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         bool moved = here.moved;
         if (txn.kind(here.at).value_or(node_kind::text) == node_kind::element &&
             txn.element_ns(here.at) == node_ns::html) {
-            const std::uint64_t key = pack(here.at);
+            const std::uint64_t key = here.at.key();
             const auto found = custom_elements_.find(key);
             if (found == custom_elements_.end()) {
                 const std::size_t index = custom_definition_for(txn, here.at);
@@ -298,7 +298,7 @@ void dom_bindings::flush_custom_element_reactions() {
     while (!custom_reactions_.empty()) {
         const custom_element_reaction reaction = std::move(custom_reactions_.front());
         custom_reactions_.erase(custom_reactions_.begin());
-        const auto found = custom_elements_.find(pack(reaction.target));
+        const auto found = custom_elements_.find(reaction.target.key());
         if (found == custom_elements_.end()) { continue; }
         // COPIED OUT: a callback may define another element and grow the
         // vector under a reference.
@@ -367,13 +367,13 @@ void dom_bindings::install_custom_elements(context & cx) {
             // object, done to the instance `new` made, whose prototype is the
             // author's class.
             auto * obj = static_cast<script::object_object *>(self.as_heap());
-            obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(made))));
+            obj->set(std::string{handle_property}, value::number(static_cast<double>(made.key())));
             install_element_views(c, *obj, made);
             refresh_element(c, *obj, made);
-            wrappers_.emplace(pack(made), obj);
+            wrappers_.emplace(made.key(), obj);
             custom_element_state state;
             state.definition = index;
-            custom_elements_.emplace(pack(made), std::move(state));
+            custom_elements_.emplace(made.key(), std::move(state));
             return self;
         });
     html_element_ctor->set("prototype", value::object(html_element_proto));

@@ -84,7 +84,7 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
     // read the element, so nothing about it is stale.
     const std::string key = ns + '\0' + local;
     if (owner) {
-        for (const auto & [known, obj] : attr_objects_[pack(owner)]) {
+        for (const auto & [known, obj] : attr_objects_[owner.key()]) {
             if (known == key) { return value::object(obj); }
         }
     }
@@ -103,12 +103,12 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
         attr->prototype = proto;
     }
     bind_attr_object(cx, *attr, owner, held);
-    if (owner) { attr_objects_[pack(owner)].emplace_back(key, attr); }
+    if (owner) { attr_objects_[owner.key()].emplace_back(key, attr); }
     return value::object(attr);
 }
 
 void dom_bindings::forget_attr_object(node_id owner, std::string_view ns, std::string_view local) {
-    const auto it = attr_objects_.find(pack(owner));
+    const auto it = attr_objects_.find(owner.key());
     if (it == attr_objects_.end()) { return; }
     const std::string key = std::string{ns} + '\0' + std::string{local};
     std::erase_if(it->second, [&key](const auto & entry) { return entry.first == key; });
@@ -470,7 +470,7 @@ void dom_bindings::install_named_node_map(context & cx) {
         self.mutated();
         auto * attached = static_cast<script::object_object *>(given.as_heap());
         self.bind_attr_object(c, *attached, at.id, written);
-        self.attr_objects_[pack(at.id)].emplace_back(ns + '\0' + std::string{local}, attached);
+        self.attr_objects_[at.id.key()].emplace_back(ns + '\0' + std::string{local}, attached);
         refreshed(c, at);
         return old;
     };

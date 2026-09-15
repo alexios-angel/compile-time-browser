@@ -165,14 +165,13 @@ void dom_bindings::reconcile_frames() {
             const auto txn = doc_->read();
             src = std::string{txn.attribute_value(id, atoms_->intern("src"))};
         }
-        const std::uint64_t key = pack(id);
         const auto seen =
-            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.key == key; });
+            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.element == id; });
         if (seen != frames_.end() && seen->src == src) {
             still.push_back(*seen);
             continue;
         }
-        still.push_back(frame_entry{key, src, load_frame(*cx_, id, src)});
+        still.push_back(frame_entry{id, src, load_frame(*cx_, id, src)});
     }
     // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
     // secondary bindings stay in `secondary_documents_` because a page may

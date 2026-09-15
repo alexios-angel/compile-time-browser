@@ -248,7 +248,7 @@ public:
     [[nodiscard]] std::vector<loaded_frame> loaded_frames() const {
         std::vector<loaded_frame> out;
         for (const frame_entry & entry : frames_) {
-            if (entry.bindings != nullptr) { out.push_back({unpack(entry.key), entry.bindings}); }
+            if (entry.bindings != nullptr) { out.push_back({entry.element, entry.bindings}); }
         }
         return out;
     }
@@ -415,7 +415,8 @@ private:
     // about the live element rather than about a snapshot.
     [[nodiscard]] value wrap(context & cx, node_id id);
 
-    [[nodiscard]] static std::uint64_t pack(node_id id);
+    // The inverse of handle::key(), which is how a wrapper's `__node` number
+    // and every per-node table here spell a node.
     [[nodiscard]] static node_id unpack(std::uint64_t bits);
 
     // The element a native was called on. Returns an empty handle when the
@@ -1386,7 +1387,7 @@ private:
     // compares against - a page that assigns the same src twice must not
     // reload, and one that assigns a different one must.
     struct frame_entry {
-        std::uint64_t key; // pack(id) of the <iframe>
+        node_id element; // the <iframe>
         std::string src;
         dom_bindings * bindings; // over the frame's document
     };
@@ -2037,7 +2038,7 @@ private:
                                                     const std::string & qualified);
     // ONE Attr OBJECT PER (element, namespace, local name), so that
     // `el.getAttributeNode("x") === el.attributes[0]` - an Attr is a node and
-    // a node has an identity. Keyed by pack(element), then by the pair; rooted
+    // a node has an identity. Keyed by element.key(), then by the pair; rooted
     // by mark_roots like wrappers_; an entry goes when the attribute does.
     flat_map<std::uint64_t, std::vector<std::pair<std::string, script::object_object *>>>
         attr_objects_;

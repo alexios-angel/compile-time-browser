@@ -189,7 +189,7 @@ void dom_bindings::install(context & cx) {
 }
 
 // THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this
-// checks. `pack(node_id)` is a slot and a generation into ONE slab, so the
+// checks. `node_id.key()` is a slot and a generation into ONE slab, so the
 // same number names a different node in a different document - and there are
 // two documents now. Reading a foreign wrapper's handle would hand back
 // whatever node happens to sit in that slot HERE, which is exactly the silent

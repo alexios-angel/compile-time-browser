@@ -719,7 +719,7 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         // differently now has been changed since and reloads it.
         // ponytail: a setAttribute("nonce", <the same text>) after an IDL set
         // is not seen; an attribute-change hook in attributes.cpp would be.
-        const auto slot = nonce_slots_.find(pack(id));
+        const auto slot = nonce_slots_.find(id.key());
         if (slot != nonce_slots_.end() && slot->second.second == raw) {
             return cx.string(slot->second.first);
         }
@@ -866,7 +866,7 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
             const auto txn = doc_->read();
             current = std::string{txn.attribute_value(id, name)};
         }
-        nonce_slots_[pack(id)] = {arg_string(cx, args, 0), std::move(current)};
+        nonce_slots_[id.key()] = {arg_string(cx, args, 0), std::move(current)};
         return value::undefined();
     }
     case reflect_type::dom_string:

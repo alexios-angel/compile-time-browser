@@ -67,8 +67,8 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         // AND ITS NAMESPACE, which is not on the node: a clone of an element
         // createElementNS made must report the same namespaceURI, and reading
         // it off `element_ns` alone would answer for the wrong one.
-        if (const auto it = src.namespaces_.find(pack(source)); it != src.namespaces_.end()) {
-            namespaces_.emplace(pack(made), it->second);
+        if (const auto it = src.namespaces_.find(source.key()); it != src.namespaces_.end()) {
+            namespaces_.emplace(made.key(), it->second);
         }
         // THE WHOLE ATTRIBUTE, namespace and all. Copying `(name, value)` put
         // a cloned `xlink:href` in no namespace, and `Node-cloneNode-svg.html`
@@ -170,13 +170,13 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
                                                      node_kind::document_fragment;
         made = fragment ? doc_->create_fragment() : clone_node(from, source, true, owner);
         const auto rebind = [&](auto && self, node_id old, node_id fresh) -> void {
-            if (const auto it = owner->wrappers_.find(pack(old)); it != owner->wrappers_.end()) {
+            if (const auto it = owner->wrappers_.find(old.key()); it != owner->wrappers_.end()) {
                 script::object_object * obj = it->second;
                 owner->wrappers_.erase(it);
-                owner->adopted_away_[pack(old)] = obj;
+                owner->adopted_away_[old.key()] = obj;
                 obj->set(std::string{handle_property},
-                         value::number(static_cast<double>(pack(fresh))));
-                wrappers_.emplace(pack(fresh), obj);
+                         value::number(static_cast<double>(fresh.key())));
+                wrappers_.emplace(fresh.key(), obj);
                 install_element_views(cx, *obj, fresh);
                 refresh_element(cx, *obj, fresh);
             }

@@ -48,7 +48,7 @@ value dom_bindings::sheet_object_of(context & cx, node_id owner) {
             (void)shadow_sheet_list(cx, root);
         }
     }
-    const auto it = css_sheet_by_owner_.find(pack(owner));
+    const auto it = css_sheet_by_owner_.find(owner.key());
     if (it == css_sheet_by_owner_.end() || it->second >= css_sheets_.size() ||
         !css_sheets_[it->second]->attached) {
         return value::null();
@@ -289,7 +289,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
             // getter/setter").
             const auto owned = [this](context & c) -> css_sheet_record * {
                 sync_style_sheets(c);
-                const auto it = css_sheet_by_owner_.find(pack(handle_of(c.current_this())));
+                const auto it = css_sheet_by_owner_.find(handle_of(c.current_this()).key());
                 if (it == css_sheet_by_owner_.end() || it->second >= css_sheets_.size()) {
                     return nullptr;
                 }
@@ -349,7 +349,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
                                        } else {
                                            (void)doc_->remove_attribute(id, name);
                                            if (!link_explicitly_enabled(id)) {
-                                               enabled_links_.push_back(pack(id));
+                                               enabled_links_.push_back(id.key());
                                            }
                                        }
                                        mutated();
