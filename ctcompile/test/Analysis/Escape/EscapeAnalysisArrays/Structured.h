@@ -149,6 +149,26 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const std::string computedStart = prefix + "  %start = ctjs.unary plus %zero\n" +
+                                      replace(loop, "%index = %zero", "%index = %start") +
+                                      "  ctjs.return %result\n";
+    rows.push_back({.what = "structured induction accepts a transported computed Number zero",
+                    .body = computedStart,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    const std::string savedLength = prefix +
+                                    "  %seed = ctjs.create_array [] {storage_test_id = \"seed\"}\n"
+                                    "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                                    "  %start = ctjs.get_property %seed[%name]\n"
+                                    "  ctjs.append %one to %seed\n" +
+                                    replace(loop, "%index = %zero", "%index = %start") +
+                                    "  ctjs.return %result\n";
+    rows.push_back({.what = "a saved zero length survives mutation before structured induction",
+                    .body = savedLength,
+                    .arrays = "a:[x,y]; seed:[one]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     rows.push_back(
         {.what = "a zero-trip structured loop returns its initial scalar",
          .body = replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
@@ -197,6 +217,20 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                 ArrayContentsFailure::UnsupportedControlFlow) {
         rows.push_back({.what = what, .body = std::move(body), .failure = failure});
     };
+    reject("structured induction still refuses a computed nonzero start",
+           replace(computedStart, "unary plus %zero", "unary plus %one"));
+    reject("structured induction cannot recover zero by converting a String start",
+           replace(computedStart, "ctjs.unary plus %zero", "ctjs.constant #ctjs.string<\"0\">"));
+    reject("a structured initializer cannot borrow zero from another exact path",
+           replace(computedStart, "  %start = ctjs.unary plus %zero\n",
+                   "  %start = scf.if %flag -> (!ctjs.value) {\n"
+                   "    %zeroResult = ctjs.unary plus %zero\n"
+                   "    scf.yield %zeroResult : !ctjs.value\n"
+                   "  } else {\n    scf.yield %one : !ctjs.value\n  }\n"));
+    reject("a structured saved nonzero length stays nonzero after its array is emptied",
+           replace(replace(savedLength, "%seed = ctjs.create_array []",
+                           "%seed = ctjs.create_array [%one]"),
+                   "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %zero"));
     reject("a structured inclusive guard does not prove an own index",
            replace(original, "compare lt", "compare le"));
     reject("a structured guard must read the current array length",
@@ -251,6 +285,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     const std::string direct = prefix + directLoop + "  ctjs.return %result\n";
     rows.push_back({.what = "SCF may remove an invariant dominating array parameter",
                     .body = direct,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "computed zero also initializes an invariant direct-array loop",
+                    .body = prefix + "  %start = ctjs.unary plus %zero\n" +
+                            replace(directLoop, "%index = %zero", "%index = %start") +
+                            "  ctjs.return %result\n",
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});

@@ -1039,8 +1039,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             (!(carriedArray && carriedArray.getOwner() == header) && !directArray) ||
             length->getBlock() != header ||
             ownObjectKey(length->getOperand(1)) !=
-                mlir::StringAttr::get(function.getContext(), "length") ||
-            boundedNumber(initial[index.getArgNumber()]) != 0) {
+                mlir::StringAttr::get(function.getContext(), "length")) {
             return unsupported;
         }
         // Read actual/formal transport, not register numbers or source names.
@@ -1054,6 +1053,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             fromHeader(step.getLhs()) != index || boundedNumber(step.getRhs()) != 1 ||
             (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
+        }
+        // Initialization may be a saved empty length or an exact arithmetic
+        // result. Check both the original input and its transported snapshot;
+        // neither source spelling nor a different path's Number supplies zero.
+        for (mlir::Value value : {initial[index.getArgNumber()], mlir::Value{index}}) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            const ContentsValue start = held(value);
+            if ((start.integerNumber ? start.integerNumber : boundedNumber(start.origin())) != 0) {
+                return unsupported;
+            }
         }
         // ponytail: one read-only header/body pair; nested control, allocation
         // and mutation need a separate instance/lifetime proof. Primitive kinds
@@ -1078,8 +1087,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return unsupported;
         }
         auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
-        if (found == state.arrays.end() || found->second.size() > 4294967295ULL ||
-            boundedNumber(origin(index)) != 0) {
+        if (found == state.arrays.end() || found->second.size() > 4294967295ULL) {
             return unsupported;
         }
         state.loop = CountedLoop{header, body, index, array, found->first, found->second.size()};

@@ -85,6 +85,51 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .reads = "a[0]=one; a[1]=x",
          .exit = "zero -> {}"},
         "x");
+    const std::string makeStart =
+        "  %start = ctjs.binary sub %one, %one {storage_test_id = \"start\"}\n";
+    const std::string computed =
+        prefix + makeStart + replace(loop, "^header(%a, %zero, %zero", "^header(%a, %start, %zero");
+    run({.what = "an exact computed zero initializes the existing unit-step induction",
+         .body = computed,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const std::string computedChild = replace(savedChild, "  cf.br ^header(%a, %zero, %zero",
+                                              makeStart + "  cf.br ^header(%a, %start, %zero");
+    run({.what = "computed-zero induction retains the exact returned child",
+         .body = computedChild,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "computed-zero induction confines children only when no result retains them",
+         .body = replace(computedChild, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    const std::string savedLength =
+        prefix +
+        "  %seed = ctjs.create_array [] {storage_test_id = \"seed\"}\n"
+        "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+        "  %start = ctjs.get_property %seed[%name]\n"
+        "  ctjs.append %one to %seed\n" +
+        replace(loop, "^header(%a, %zero, %zero", "^header(%a, %start, %zero");
+    run({.what = "a saved empty length starts at zero after its source array grows",
+         .body = savedLength,
+         .arrays = "a:[one,two,three]; seed:[one]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const std::string alternateStart =
+        prefix + makeStart +
+        "  %choice = ctjs.truthy %zero\n"
+        "  cf.cond_br %choice, ^entry(%start : !ctjs.value), ^entry(%zero : !ctjs.value)\n"
+        "^entry(%initial: !ctjs.value):\n" +
+        replace(loop, "^header(%a, %zero, %zero", "^header(%a, %initial, %zero");
+    run({.what = "separate literal and computed zeros survive predecessor transport",
+         .body = alternateStart,
+         .arrays = "a:[one,two,three] | a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three; a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}; added -> {}"});
     run({.what = "unrelated registers swap simultaneously on each backedge",
          .body = prefix + "  cf.br ^header(%a, %zero, %one, %two : !ctjs.value, !ctjs.value, "
                           "!ctjs.value, !ctjs.value)\n"
@@ -112,6 +157,21 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                                 ArrayContentsFailure::UnsupportedControlFlow) {
         run({.what = what, .body = std::move(body), .failure = failure});
     };
+    reject("a computed nonzero start cannot borrow the zero induction certificate",
+           replace(computed, "binary sub %one, %one", "binary sub %two, %one"));
+    reject("an old nonempty length cannot borrow a subsequently emptied array's zero",
+           replace(replace(savedLength, "%seed = ctjs.create_array []",
+                           "%seed = ctjs.create_array [%one]"),
+                   "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %zero"));
+    reject("even an untaken predecessor must independently supply an exact zero",
+           replace(alternateStart, "^entry(%start :", "^entry(%one :"));
+    for (const std::string constant :
+         {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">", "#ctjs.number<4602678819172646912>"}) {
+        reject("coercible and fractional starts do not become exact Number zero",
+               replace(computed, "ctjs.binary sub %one, %one", "ctjs.constant " + constant));
+    }
+    reject("a computed start leaves every indexed read subject to the original own bound",
+           replace(computed, "%base[%i]", "%base[%three]"), ArrayContentsFailure::MissingElement);
     reject("inclusive guards do not prove an own index",
            replace(original, "compare lt", "compare le"));
     reject("inverted guards do not borrow strict induction",
@@ -197,6 +257,56 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(original, "%base[%i]", "%base[%s]"), "^header(%base, %step, %added",
                    "^header(%base, %step, %p"),
            ArrayContentsFailure::UnknownIndex);
+    contents_row live{.what = "live initialization facts override stale solver and forged markers",
+                      .body = replace(computedChild, "ctjs.return %result", "ctjs.return %zero"),
+                      .arrays = "a:[one,x]",
+                      .reads = "a[0]=one; a[1]=x",
+                      .exit = "zero -> {}"};
+    unsigned liveStates = 0;
+    if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + live.body + "}\n", &context)) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::BinaryOp start;
+        mlir::Value zero;
+        module->walk([&](ctjs::BinaryOp op) { start = op; });
+        module->walk([&](ctjs::ConstantOp op) {
+            if (contentsLabel(op) == "zero") { zero = op.getResult(); }
+        });
+        const mlir::Value one = start.getRhs();
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        start->setAttr("ctnative.array_index", builder.getI64IntegerAttr(0));
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*module))) {
+            fail(row{.what = live.what, .body = live.body, .expected = ""},
+                 "the initialization stale solver did not converge");
+        }
+        for (mlir::Value rhs : {one, zero, one}) {
+            start->setOperand(1, rhs);
+            const bool complete = rhs == one;
+            live.failure = complete ? ArrayContentsFailure::None
+                                    : ArrayContentsFailure::UnsupportedControlFlow;
+            checkArrayContents(*module, live);
+            budgets += checkArrayRetention(*module, {.what = live.what,
+                                                     .body = live.body,
+                                                     .discharged = complete ? "x" : "",
+                                                     .complete = complete});
+            const auto verdicts = computeVerdicts(stale, function);
+            if (verdicts.arrayRetentionComplete != complete ||
+                verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+                fail(row{.what = live.what, .body = live.body, .expected = ""},
+                     "stale solver or forged marker supplied zero initialization authority");
+            }
+            ++liveStates;
+        }
+    } else {
+        fail(row{.what = live.what, .body = live.body, .expected = ""},
+             "the live initialization fixture did not parse");
+    }
     std::string many = "%one";
     for (unsigned i = 1; i < 32; ++i) { many += ", %one"; }
     const std::string longLoop = replace(original, "%one, %two, %three", many);
@@ -218,7 +328,8 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         fail(row{.what = "finite induction work budget", .body = longLoop, .expected = ""},
              "the long induction fixture did not parse");
     }
-    std::printf("array induction: %u rows, %zu retention budget cutoffs\n", rows, budgets);
+    std::printf("array induction: %u rows, %u live states, %zu retention budget cutoffs\n", rows,
+                liveStates, budgets);
 }
 
 } // namespace ctcompile::test::escape::arrays
