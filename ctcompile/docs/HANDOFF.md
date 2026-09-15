@@ -40,12 +40,17 @@ matches the unchanged **nine-file / 26-diagnostic** baseline. All changed C++ fi
 pass both formatters. The NUL regression checks an attribute value: a NUL in an
 attribute name correctly throws in the real DOM.
 
-The complete default build and **602-test CTest gate are running** at four jobs
-against **1,443 frozen inputs**. No final full-suite result is claimed yet.
-Recovery: `/tmp/ctcompile-dom-regexp/full.sh`, `full.log`, `inputs.json` and focused
-logs. Source is committed; no browser/runtime or WPT/test262 expectations changed.
-The preceding full-bundle measurement remains **19/574 native / 0 of 43 globals**,
-DOM Data **7/7**, Button **4/86**; fresh full-gate measurements are pending.
+Complete **309-step default build / 602/602 CTests in 1435.66s /
+176/176 lit in 970.34s PASS**. All **1,443 frozen hashes** match devbox, local files
+and committed source. Recovery scripts, focused/full logs, generated C++, the static
+continuation audit and `measured.json` are in `/tmp/ctcompile-dom-regexp/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with no
+skipped or pruned functions. Original DOM Data remains **7/7**; Button remains
+**4/86**, with **22 Node observations** and its existing VM inheritance failure.
+Button/Data reports and all **1,123 escape baseline rows** are byte-identical to
+the prior gate. No full-bundle admission gain is claimed. No browser/runtime or
+WPT/test262 expectations changed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** compose the original factory/global/H/F/M graph. The new
 F proof covers exact local calls with one constant argument; Bootstrap's captured

@@ -2,6 +2,13 @@
 
 ## Current boundary, 2026-09-15
 
+Latest slice **ab7bf2a6** compiles verbatim vendor `F("config")` in isolated native
+DOM actions through a checked no-match replacement proof: **365 Node/VM observations /
+eight native binaries**. Full **309-step build / 602/602 CTests / 176/176 lit PASS**.
+Fresh full Bootstrap remains **19/574 native**, DOM Data **7/7**, Button **4/86**.
+The captured H/F/M graph, live M normalization and full initialization still need
+proof; this is an action prerequisite, not full-bundle admission.
+
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
 23 calls and 19 observations**. The nonmovable document session privately owns
