@@ -38,22 +38,31 @@ forged creator evidence, extra wrapper parameters and observable setup refuse.
 Stable formatting passes **829 C++ / 100 Python / 33 web**. The required pinned
 formatter still reports the unchanged **nine-file / 26-diagnostic** baseline.
 
-The complete **275-step default build passed**. Of the **601 non-lit CTests**,
-**600 passed**; DOM entry still correctly refuses its source but an old assertion
-expects the word `wrapper` instead of the new initialization diagnostic. The only
-uncommitted change updates two assertions in `native_dom.py` to the exact new
-messages; their sources and refusal requirements are unchanged. The **176-case lit
-group is running**, followed by the queued complete DOM entry rerun. The full run
-uses **1,443 frozen source hashes** and four CTest jobs. Recovery:
-`/tmp/ctcompile-host-resume/full.sh`, `full.log`, `inputs.json`, `rerun.sh` and
-`rerun.log`. No browser/runtime files or WPT/test262 expectations changed; no fresh
-full-bundle admission gain is claimed.
+Complete **275-step default build / 176/176 lit in 970.84s PASS**. The standard
+CTest run passed **601/602 in 1436.12s**; its sole failure was an old diagnostic
+substring assertion, with the source still correctly refused. **00fef26b** replaces
+two assertions with the exact new initialization diagnostics, preserving both source
+bodies and rejection requirements. The complete affected DOM entry CTest then
+passed **1/1 in 175.12s**. All **602 CTest cases** are validated across these runs;
+compiler code remained frozen, and only that Python test's diagnostics changed.
+All **1,443 final hashes** match devbox, local files and committed source; **1,442**
+are unchanged from the full run. Evidence and recovery scripts are retained in
+`/tmp/ctcompile-host-resume/`, including `full-last-test.log`, `rerun-last-test.log`,
+`final-inputs.json`, generated C++ and `measured.json`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7**; Button
+remains **4/86**, with **22 Node observations** and the existing VM inheritance
+failure. Button/Data reports and all **1,123 escape baseline rows** are byte-identical
+to the prior gate. No browser/runtime files or WPT/test262 expectations changed;
+full WPT/test262 were not remeasured. No full-bundle admission gain is claimed.
 
 **Exact next boundary:** original Bootstrap factory/global initialization and the
 complete H/F/M graph still need proof. Wrapper calls and global reads are refused.
 `F("config")` (vendor line 243) needs trusted String/RegExp replacement, execution
 and property lookup before helper expansion; DOMEntryAnalysis still rejects
-`initialIntrinsics`. `M` (line 230) needs live optional-attribute normalization,
+`initialIntrinsics`; the existing partial evaluator also refuses String property
+lookup outside its evaluated heap. `M` (line 230) needs live optional-attribute normalization,
 branches, Number/toString, URI decoding, JSON and exceptions. Dataset iteration,
 inherited receivers and retained config/callback ownership follow. Full native
 Bootstrap and the application driver remain unfinished.
