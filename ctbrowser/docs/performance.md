@@ -949,7 +949,7 @@ closures hold nothing at all** and the loop exits on an empty vector.
 ### Numbers: the one that paid, and it is `std` rather than Boost
 
 `context::to_string` was `std::to_string(double)` - `%f` to six decimals - and
-`to_number` was `std::stod` inside a `try`/`catch`. See `script/number_format.hpp`
+`to_number` was `std::stod` inside a `try`/`catch`. See `core/number_format.hpp`
 for what was wrong with each; the short version is that `String(1/3)` was
 "0.333333", everything below about 1e-7 printed as "0", and all of it read
 `LC_NUMERIC` in a repository that byte-compares goldens across two toolchains.

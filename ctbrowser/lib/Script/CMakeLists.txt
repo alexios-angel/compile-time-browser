@@ -24,7 +24,6 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/bigint.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/compile.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/source_lines.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/number_format.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/type_record.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp"

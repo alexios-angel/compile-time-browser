@@ -17,15 +17,6 @@
 
 namespace ctbrowser::script {
 
-namespace {
-
-// Is this key an index into `items`, and which one?
-[[nodiscard]] bool index_key(const std::string & name, std::uint32_t & out) {
-    return object_object::array_index_key(name, out);
-}
-
-} // namespace
-
 // ArraySetLength's shrink (10.4.2.4 steps 12-19): the elements from the top
 // down are deleted one by one and a non-configurable one STOPS it - the
 // length lands one above that element and the answer is false, which
@@ -205,7 +196,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         std::uint32_t at = 0;
-        if (index_key(name, at)) {
+        if (object_object::array_index_key(name, at)) {
             if (arr->is_view()) {
                 if (at < arr->length()) {
                     out =
@@ -255,7 +246,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         std::uint32_t at = 0;
-        if (index_key(name, at) && at < text.size()) {
+        if (object_object::array_index_key(name, at) && at < text.size()) {
             out = property_descriptor::data(string(std::string{text[at]}), attr_enumerable);
             out.virtual_slot = true;
             return true;
@@ -413,7 +404,7 @@ bool context::delete_own_property(value target, const std::string & name) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         if (name == "length") { return false; } // non-configurable, 10.4.2
         std::uint32_t at = 0;
-        if (!index_key(name, at)) {
+        if (!object_object::array_index_key(name, at)) {
             return arr->named ? delete_own_property(value::object(arr->named.get()), name) : true;
         }
         if (arr->is_view()) { return at >= arr->length(); }
@@ -542,7 +533,7 @@ bool context::define_own_property(value target, const std::string & name,
             auto * arr = static_cast<array_object *>(target.as_heap());
             std::uint32_t at = 0;
             if (name == "length") { return false; }
-            if (!index_key(name, at)) {
+            if (!object_object::array_index_key(name, at)) {
                 arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
                 return true;
             }
@@ -601,7 +592,7 @@ bool context::define_own_property(value target, const std::string & name,
             return true;
         }
         std::uint32_t at = 0;
-        if (index_key(name, at)) {
+        if (object_object::array_index_key(name, at)) {
             if (arr->is_view()) {
                 if (at < arr->length() && wanted.has_value) { view_set(*arr, at, to_number(held)); }
                 return true;

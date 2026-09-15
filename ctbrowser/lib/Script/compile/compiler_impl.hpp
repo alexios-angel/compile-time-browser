@@ -10,9 +10,9 @@
 // anything - vm.hpp really has a call frame. They stay NESTED.
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
-#include <ctbrowser/script/number_format.hpp>
 
 #include <boost/container/small_vector.hpp>
 

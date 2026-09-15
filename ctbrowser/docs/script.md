@@ -689,7 +689,7 @@ cosmetic:
 | `Number("+5")` | `5` (via `strtod`) | `5` |
 | `Number("inf")` | `Infinity` | `NaN` |
 
-`script/number_format.hpp` is the whole of it - five functions, each named for
+`core/number_format.hpp` is the whole of it - five functions, each named for
 its clause - and `ctbrowser/unittests/js/number_format.cpp` pins every case against **V8**, plus
 the round-trip property `Number(String(x)) === x` over twenty literals. The
 expectations were taken from node before the code was written, which is the only
