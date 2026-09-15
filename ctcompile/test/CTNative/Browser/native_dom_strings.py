@@ -39,6 +39,7 @@ CAPTURE_RETURNS = {
     "capture_callable": "function invalid(element) { function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke(); }\n",
     "capture_holder": "function invalid(element) { const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke(); }\n",
     "capture_forwarded": "function invalid(element) { function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke(); }\n",
+    "helper_regex": "function invalid(element) { const F = t => t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); return element.getAttribute('data-bs-' + F('config')); }\n",
 }
 CAPTURE_SOURCE = "".join(
     f"const {name} = (() => {{\n{source}return invalid;\n}})();\n"
@@ -369,6 +370,44 @@ HELPER_CASES = {
         "1000",
     ),
 }
+# Preserve Bootstrap's complete helper, including the never-invoked callback.
+BOOTSTRAP_F = """    function F(t) {
+        return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
+    }
+"""
+REGEXP_CASES = {
+    "helper_regex_direct": (
+        """const key = 'data-bs-' + 'config'.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`);
+  element.setAttribute(key, 'value');
+  return element.getAttribute(key) === 'value';""",
+        "1111",
+    ),
+    "helper_regex_original": (
+        BOOTSTRAP_F + """
+  element.setAttribute('data-bs-' + F('config'), 'value');
+  return element.getAttribute('data-bs-' + F('config')) === 'value';""",
+        "1111",
+    ),
+    "helper_regex_range": (
+        """const key = 'data-bs-' + 'config'.replace(/[0-9]/g, t => t);
+  element.setAttribute(key, 'value');
+  return element.getAttribute(key) === 'value';""",
+        "1111",
+    ),
+    "helper_regex_no_flags": (
+        """const key = 'data-bs-' + 'config'.replace(/[A-Z]/, t => t);
+  element.setAttribute(key, 'value');
+  return element.getAttribute(key) === 'value';""",
+        "1111",
+    ),
+    "helper_regex_bytes": (
+        BOOTSTRAP_F + r"""
+  element.setAttribute('data-bs-config', F('a\0\u00e9'));
+  return element.getAttribute('data-bs-config') === F('a\0\u00e9');""",
+        "1111",
+    ),
+}
+HELPER_CASES.update(REGEXP_CASES)
 BOOLEAN_CASES.update(HELPER_CASES)
 BOOLEAN_SOURCES = tuple(
     (name, f"function {name}(element) {{ {body} }}\n", 1)
@@ -635,6 +674,11 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "helper_regex_direct": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
+    "helper_regex_original": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
+    "helper_regex_range": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
+    "helper_regex_no_flags": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
+    "helper_regex_bytes": r'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == std::string_view("a\0\xc3\xa9", 4));',
     "host_capture_name": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "host_capture_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "host_factory_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
@@ -663,8 +707,8 @@ const names = [];
 assert.equal(readNames({getAttribute(name) { names.push(name); return name; }}), 'a\0b');
 assert.deepEqual(names, ['bad name', '', 'a\0b']);
 assert.equal(readWideName({getAttribute(name) { return name; }}), '\ud800');
-for (const entry of [readAttribute, savedAttribute, capture_callable, capture_holder, capture_forwarded]) {
-  const key = entry === readAttribute || entry === savedAttribute ? 'DATA-State' : 'x';
+for (const entry of [readAttribute, savedAttribute, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
+  const key = entry === readAttribute || entry === savedAttribute ? 'DATA-State' : entry === helper_regex ? 'data-bs-config' : 'x';
   for (const expected of [null, '', 'a\0b', '\u00e9']) {
     let value = expected;
     const calls = [];
@@ -968,7 +1012,6 @@ HELPER_REFUSALS = {
     "helper_branch": "function read(target) { if (target.hasAttribute('x')) return true; return false; } return read(element);",
     "helper_mutation": "function read(target) { return target.getAttribute('x'); } read.name = 'other'; return read(element);",
     "helper_optional_name": "function read(target, key) { return target.getAttribute(key); } return read(element, element.getAttribute('x'));",
-    "helper_regex": "const F = t => t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); return element.getAttribute('data-bs-' + F('config'));",
     "helper_object_overwrite": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.read = function(target) { return target.getAttribute('y'); }; return helpers.read(element);",
     "helper_object_duplicate": "const helpers = {read(target) { return target.getAttribute('x'); }, read(target) { return target.getAttribute('y'); }}; return helpers.read(element);",
     "helper_object_read_before_write": "const helpers = {}; const read = helpers.read; helpers.read = function(target) { return target.getAttribute('x'); }; return read(element);",
@@ -992,6 +1035,43 @@ HELPER_REFUSALS = {
     "helper_object_unknown_effect": "const helpers = {read(target) { return target.getAttribute('x'); }}; sideEffect(); return helpers.read(element);",
     "helper_object_nested_receiver": "const helpers = {read(target) { const observe = () => this; observe(); return target.getAttribute('x'); }}; return helpers.read(element);",
 }
+REGEXP_REFUSALS = {
+    "regex_factory_override": "__ctbrowser_regexp = function() { return null; }; "
+    + BOOTSTRAP_F
+    + " return element.getAttribute('data-bs-' + F('config'));",
+    "regex_matching": BOOTSTRAP_F + " return element.getAttribute('data-bs-' + F('Config'));",
+    "regex_dynamic": BOOTSTRAP_F
+    + " return element.getAttribute('data-bs-' + F(element.getAttribute('x')));",
+    "regex_mixed_constants": BOOTSTRAP_F
+    + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F('toggle'));",
+    "regex_live_callback": "const key = 'Config'.replace(/[A-Z]/g, t => { element.setAttribute('x', t); return 'c'; }); return element.getAttribute('data-bs-' + key);",
+    "regex_replace_override": "String.prototype.replace = function() { return 'other'; }; "
+    + BOOTSTRAP_F
+    + " return element.getAttribute('data-bs-' + F('config'));",
+    "regex_replace_late_override": BOOTSTRAP_F
+    + " const key = F('config'); String.prototype.replace = function() { return 'other'; }; return element.getAttribute('data-bs-' + key);",
+    "regex_exec_override": "RegExp.prototype.exec = function() { return null; }; "
+    + BOOTSTRAP_F
+    + " return element.getAttribute('data-bs-' + F('config'));",
+    "regex_symbol_override": "RegExp.prototype[Symbol.replace] = function() { return 'other'; }; "
+    + BOOTSTRAP_F
+    + " return element.getAttribute('data-bs-' + F('config'));",
+    "regex_global_getter": "Object.defineProperty(RegExp.prototype, 'global', {get() { element.setAttribute('x', 'observed'); return true; }}); "
+    + BOOTSTRAP_F
+    + " return element.getAttribute('data-bs-' + F('config'));",
+    "regex_custom_exec": "const pattern = /[A-Z]/g; pattern.exec = function() { return null; }; return element.getAttribute('config'.replace(pattern, t => t));",
+    "regex_custom_replace": "const pattern = /[A-Z]/g; pattern[Symbol.replace] = function() { return 'other'; }; return element.getAttribute('config'.replace(pattern, t => t));",
+    "regex_last_index_write": "const pattern = /[A-Z]/g; pattern.lastIndex = 1; return element.getAttribute('config'.replace(pattern, t => t));",
+    "regex_last_index_read": "const pattern = /[A-Z]/g; element.getAttribute('config'.replace(pattern, t => t)); return pattern.lastIndex;",
+    "regex_callback_escape": "const callback = t => `-${t.toLowerCase()}`; element.saved = callback; return element.getAttribute('config'.replace(/[A-Z]/g, callback));",
+    "regex_callback_identity": "const callback = t => `-${t.toLowerCase()}`; element.getAttribute('config'.replace(/[A-Z]/g, callback)); return callback;",
+    "regex_string_substitute": "const text = {replace() { return 'other'; }}; return element.getAttribute(text.replace(/[A-Z]/g, t => t));",
+    "regex_ignore_case": "return element.getAttribute('config'.replace(/[A-Z]/gi, t => t));",
+    "regex_unicode_flag": "return element.getAttribute('config'.replace(/[A-Z]/gu, t => t));",
+    "regex_escaped_range": r"return element.getAttribute('config'.replace(/[\x41-\x5a]/g, t => t));",
+    "regex_nested_pattern": "return element.getAttribute('config'.replace(/([A-Z])/g, t => t));",
+}
+HELPER_REFUSALS.update(REGEXP_REFUSALS)
 REFUSALS.update(HELPER_REFUSALS)
 HOST_REFUSALS = {
     "host_wrapper_receiver": "const key = this; function host_refusal(element) { return element.getAttribute(key); }",
@@ -1559,7 +1639,48 @@ def method_provenance_checks(args, ir, contract):
     return len(variants) * 4
 
 
+def regexp_provenance_checks(args, ir, contract):
+    original = ir.read_text()
+    variants = {
+        "factory": ('ctjs.load_global "__ctbrowser_regexp"', 'ctjs.load_global "RegExp"'),
+        "matching": ('#ctjs.string<"[A-Z]">', '#ctjs.string<"[a-z]">'),
+        "flags": ('#ctjs.string<"g">', '#ctjs.string<"gi">'),
+        "creator": ("ctjs.create_closure %arg2[3]", "ctjs.create_closure %arg0[3]"),
+        "callback-target": ("ctjs.create_closure %arg2[3]", "ctjs.create_closure %arg2[2]"),
+        "direct-target": ("ctjs.call_direct @F$2(", "ctjs.call_direct @fn$3("),
+        "mixed-arguments": ('#ctjs.string<"config">', '#ctjs.string<"Config">'),
+    }
+    for name, (before, after) in variants.items():
+        if before not in original:
+            raise RuntimeError(f"replacement provenance anchor changed: {name}")
+        mutated = args.work / f"replacement-provenance-{name}.mlir"
+        mutated.write_text(original.replace(before, after, 1))
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    f"replacement-provenance-{name}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if "error: native DOM source:" not in diagnostic:
+                    raise RuntimeError(f"replacement {name}: wrong refusal\n{diagnostic}")
+    for budget in (0, 32, 64):
+        diagnostic = dom.lower(
+            args, ir, contract, f"replacement-budget-{budget}", max_steps=budget, success=False
+        )
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(f"replacement budget {budget}: wrong refusal\n{diagnostic}")
+    return 4 * len(variants) + 3
+
+
 def main():
+    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    if BOOTSTRAP_F not in vendor.read_text():
+        raise RuntimeError("original Bootstrap F source changed")
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "clang", "node", "reference"):
         parser.add_argument("--" + name, required=True)
@@ -1605,7 +1726,7 @@ def main():
         + """
 function makeElement(value) {
   return {
-    getAttribute(name) { return name === 'DATA-State' || name === 'x' ? value : null; },
+    getAttribute(name) { return name === 'DATA-State' || name === 'x' || name === 'data-bs-config' ? value : null; },
     setAttribute(name, text) { value = text; },
     removeAttribute(name) { value = null; }
   };
@@ -1711,9 +1832,10 @@ function makeElement(value) {
                     client = FREE_RUN
                 if name in CAPTURE_RETURNS:
                     checks = "" if owned else "assert(!invoke(foreign, element));"
+                    key = "data-bs-config" if name == "helper_regex" else "x"
                     client = client.replace(
                         "check_values(invoke, doc, element, @SAVED@)",
-                        'check_values(invoke, doc, element, false, "x")',
+                        f'check_values(invoke, doc, element, false, "{key}")',
                     )
                 call = (
                     f"return {target}(first, second);"
@@ -1821,11 +1943,16 @@ function makeElement(value) {
         row for row in prepared if row[0] == "host_factory_table_key"
     )
     capture_checks += factory_provenance_checks(args, table_ir, table_contract, table=True)
+    _, regexp_ir, regexp_contract = next(
+        row for row in prepared if row[0] == "helper_regex_original"
+    )
+    replacement_checks = regexp_provenance_checks(args, regexp_ir, regexp_contract)
     print(
         f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
-        f"{capture_checks} capture provenance/budget checks"
+        f"{capture_checks} capture provenance/budget checks; "
+        f"{replacement_checks} replacement provenance/budget checks"
     )
 
 

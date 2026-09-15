@@ -29,6 +29,9 @@ struct HostContract {
         // generated methods remain attached to their nonmovable owner.
         // This does not authorize DOM keys or externally retained callbacks.
         closedSourceSession,
+        // Isolated initial Object/String/RegExp prototype chains and reserved
+        // regexp literal factory. Complete source reproof excludes mutation
+        // and external script reentry.
         ctbrowserDOM,
         // The same synchronous source proof with a nonmovable native owner
         // of the atom table, document and (when needed) selector engine.

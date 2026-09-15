@@ -52,6 +52,155 @@ struct DOMSource {
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
     }
 
+    bool bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
+        if (!closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
+            creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1) {
+            return true;
+        }
+        auto & body = target.getBody().front();
+        llvm::SmallVector<mlir::Attribute> constants(body.getNumArguments());
+        bool first = true;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            mlir::ValueRange arguments;
+            if (call && use.getOperandNumber() == 0 && undefined(call.getReceiver())) {
+                arguments = call.getArgs();
+            } else if (direct && use.getOperandNumber() == 2 &&
+                       direct.getCallee() == target.getSymName() &&
+                       undefined(direct.getReceiver()) && undefined(direct.getNewTarget())) {
+                arguments = direct.getArgs();
+            } else {
+                return true;
+            }
+            if (use.getOwner()->getBlock() != closure->getBlock() ||
+                !closure->isBeforeInBlock(use.getOwner()) ||
+                arguments.size() + ctjs::implicit_arguments != body.getNumArguments()) {
+                return true;
+            }
+            for (auto [index, argument] : llvm::enumerate(arguments)) {
+                if (!step()) { return false; }
+                auto constant = argument.getDefiningOp<ctjs::ConstantOp>();
+                mlir::Attribute value = constant ? constant.getValue() : mlir::Attribute{};
+                if (!llvm::isa_and_nonnull<ctjs::StringAttr>(value)) { value = {}; }
+                auto & known = constants[index + ctjs::implicit_arguments];
+                if (first) {
+                    known = value;
+                } else if (known != value) {
+                    known = {};
+                }
+            }
+            first = false;
+        }
+        // ponytail: one constant String per formal across all exact local calls;
+        // differing arguments need invocation-specific specialization.
+        mlir::OpBuilder at(&body, body.begin());
+        for (auto [argument, constant] : llvm::zip(body.getArguments(), constants)) {
+            if (!step()) { return false; }
+            if (!constant) { continue; }
+            auto value = ctjs::ConstantOp::create(at, target.getLoc(), constant);
+            argument.replaceAllUsesWith(value.getResult());
+            ++operationCount;
+        }
+        return true;
+    }
+
+    bool foldNoMatchReplacements(ctjs::FuncOp function) {
+        auto & block = function.getBody().front();
+        llvm::SmallVector<ctjs::CallOp> calls(block.getOps<ctjs::CallOp>());
+        for (ctjs::CallOp call : calls) {
+            if (!step()) { return false; }
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            auto text = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
+            auto string =
+                text ? llvm::dyn_cast<ctjs::StringAttr>(text.getValue()) : ctjs::StringAttr{};
+            if (!read || read.getObject() != call.getReceiver() || !string ||
+                ctjs::constantKey(read.getKey()) != "replace" || call.getArgs().size() != 2) {
+                continue;
+            }
+            auto regexp = call.getArgs()[0].getDefiningOp<ctjs::CallOp>();
+            auto callback = call.getArgs()[1].getDefiningOp<ctjs::CreateClosureOp>();
+            if (!regexp || !callback || !callback.getUpvalues().empty() ||
+                regexp.getArgs().size() != 2 || !undefined(regexp.getReceiver())) {
+                continue;
+            }
+            auto factory = regexp.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+            const auto stringArgument = [](mlir::Value value) {
+                auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+                return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                                : ctjs::StringAttr{};
+            };
+            auto expression = stringArgument(regexp.getArgs()[0]);
+            auto flags = stringArgument(regexp.getArgs()[1]);
+            if (!factory || factory.getName() != "__ctbrowser_regexp" || !expression || !flags) {
+                continue;
+            }
+            auto pattern = expression.getValue();
+            const auto alphanumeric = [](char c) {
+                return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+            };
+            // ponytail: a literal ASCII range, no case folding or Unicode flags.
+            // Broader patterns need a separately bounded RegExp evaluator.
+            if (pattern.size() != 5 || pattern[0] != '[' || pattern[2] != '-' ||
+                pattern[4] != ']' || !alphanumeric(pattern[1]) || !alphanumeric(pattern[3]) ||
+                pattern[1] > pattern[3] || (!flags.getValue().empty() && flags.getValue() != "g")) {
+                continue;
+            }
+            bool matches = false;
+            for (unsigned char c : string.getValue().bytes()) {
+                if (!step()) { return false; }
+                matches |= c >= static_cast<unsigned char>(pattern[1]) &&
+                           c <= static_cast<unsigned char>(pattern[3]);
+            }
+            if (matches) { continue; }
+            auto target = functions.lookup(static_cast<unsigned>(callback.getFunction()));
+            if (!target || target == function || target.getUpvalueCount() != 0 ||
+                creations.lookup(static_cast<unsigned>(callback.getFunction())) != 1) {
+                continue;
+            }
+            llvm::SmallVector<ctjs::RootOp> roots;
+            const auto exclusive = [&](mlir::Value value, mlir::Operation * consumer,
+                                       unsigned operand) {
+                for (mlir::OpOperand & use : value.getUses()) {
+                    if (!step()) { return false; }
+                    if (auto root = llvm::dyn_cast<ctjs::RootOp>(use.getOwner())) {
+                        roots.push_back(root);
+                    } else if (use.getOwner() != consumer || use.getOperandNumber() != operand) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (!exclusive(read.getResult(), call, 0) || !exclusive(regexp.getResult(), call, 2) ||
+                !exclusive(callback.getResult(), call, 3) ||
+                !exclusive(factory.getResult(), regexp, 0)) {
+                continue;
+            }
+            if (!checkBody(target, false)) { return false; }
+            if (!target.getBody().front().getOps<ctjs::CreateClosureOp>().empty()) {
+                return refuse("DOM replacement callback contains an unproved callable");
+            }
+            // The isolated provider fixes the complete initial String/RegExp
+            // prototype chains (including @@replace, exec and flag accessors)
+            // and the reserved literal factory binding.
+            // The residual source must still pass complete DOM reproof, which
+            // forbids mutation and script reentry. Fresh literal state cannot
+            // escape, and this no-match execution never invokes the callback.
+            call.getResult().replaceAllUsesWith(call.getReceiver());
+            call.erase();
+            for (ctjs::RootOp root : roots) { root.erase(); }
+            read.erase();
+            regexp.erase();
+            factory.erase();
+            callback.erase();
+            functions.erase(*functionIndex(target));
+            target.erase();
+        }
+        return true;
+    }
+
     bool captureTarget(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
         if (!chargeCaptureQuery()) { return false; }
         if (!target || !expanded.contains(target) ||
@@ -478,6 +627,18 @@ struct DOMSource {
             return refuse("DOM helper call tree is recursive or too deep");
         }
         if (!checkBody(function, entry)) { return false; }
+        // Parameters with nested source functions may have an otherwise local
+        // cell. Resolve those reads before specializing their intrinsic calls;
+        // captured cells still wait for the unchanged child/capture proof.
+        for (ctjs::CreateCellOp cell : function.getBody().front().getOps<ctjs::CreateCellOp>()) {
+            bool captured = false;
+            for (mlir::Operation * use : cell.getResult().getUsers()) {
+                if (!step()) { return false; }
+                captured |= llvm::isa<ctjs::CreateClosureOp>(use);
+            }
+            if (!captured && !resolveCell(cell)) { return false; }
+        }
+        if (!foldNoMatchReplacements(function)) { return false; }
         auto & block = function.getBody().front();
         llvm::SmallVector<ctjs::CreateClosureOp> closures;
         llvm::SmallVector<ctjs::CreateObjectOp> objects;
@@ -499,10 +660,11 @@ struct DOMSource {
         for (ctjs::CreateClosureOp closure : closures) {
             auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
             if (!target) { return refuse("DOM helper closure target is missing"); }
+            if (!bindConstantArguments(closure, target)) { return false; }
             if (!expand(target, depth + 1)) { return false; }
         }
         for (ctjs::CreateCellOp cell : localCells) {
-            if (!resolveCell(cell)) { return false; }
+            if (!cells.contains(cell.getResult()) && !resolveCell(cell)) { return false; }
         }
         llvm::DenseSet<mlir::Operation *> methods, resolvedObjects;
         // ponytail: bounded rescans of local capture dependencies; index the

@@ -137,14 +137,26 @@ are not implicitly coerced into names or values. Loose equality, global `Boolean
 calls, numeric conversion, branches and property storage still refuse. No generic
 nullable carrier is emitted.
 
-The provider starts with the standard `undefined` binding and initially unmodified
-`Object.prototype`, independently of external script state, as in the isolated
+The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
+bindings and initially unmodified
+`Object.prototype`, `String.prototype` and `RegExp.prototype` chains, independently
+of external script state, as in the isolated
 closed-source provider. Complete source discovery rejects replacement (including
 a declaration named `undefined`), prototype mutation and script reentry. This
 object premise proves that unique local callable writes create own data slots;
 `__proto__` remains excluded because its standard inherited setter is observable. Preparation replaces only
 those proved global reads with constants in a private clone and reproves it
 before publication. This does not claim that the VM makes its globals immutable.
+
+Constant String replacement by a fresh literal ASCII character range (`/[A-Z]/g`,
+for example) can disappear when the range has no match. This requires the original
+String `replace`, RegExp `@@replace`, `exec` and all flag accessors from those initial
+prototype chains. The literal, method and uncaptured callback must have only that
+one use; callback identity and the complete source body are checked before proving
+it is never invoked. No RegExp or callback runtime reaches generated C++.
+One unique local helper may supply the String when all its exact ordinary calls
+pass the same constant argument. Matching strings, live inputs, differing helper
+arguments, other patterns/flags and prototype mutations still refuse.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private
