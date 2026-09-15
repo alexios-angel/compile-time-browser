@@ -47,9 +47,7 @@
 # RUN: python3 -m json.tool %t/app.json | FileCheck %s --check-prefix=MANIFEST
 # MANIFEST-DAG: "entry": "index.html"
 # MANIFEST-DAG: "font_directory": "fonts"
-# MANIFEST-DAG: "program_id": "[[ID:[^"]+]]"
-# MANIFEST-NOT: "program_id": "[[ID]]"
-# RUN: python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); sys.exit(len(m["scripts"]) != 2)' %t/app.json
+# RUN: python3 -c 'import json, sys; s = json.load(open(sys.argv[1]))["scripts"]; sys.exit(len(s) != 2 or s[0]["program_id"] == s[1]["program_id"])' %t/app.json
 # RUN: test $(stat -c %s %t/app) -gt $(stat -c %s ctrun)
 #
 # ---- run it, from somewhere that is not the application directory ----------
