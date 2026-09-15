@@ -19,19 +19,6 @@ namespace ctbrowser::script {
 
 namespace {
 
-// SameValue (7.2.11) - `===` except that it separates the two zeros and calls
-// NaN equal to itself, which is what ValidateAndApplyPropertyDescriptor
-// compares descriptor fields with.
-[[nodiscard]] bool descriptor_same_value(value a, value b) {
-    if (a.is_number() && b.is_number()) {
-        const double x = a.as_number();
-        const double y = b.as_number();
-        if (std::isnan(x) && std::isnan(y)) { return true; }
-        return x == y && std::signbit(x) == std::signbit(y);
-    }
-    return a.strict_equals(b);
-}
-
 // Is this key an index into `items`, and which one?
 [[nodiscard]] bool index_key(const std::string & name, std::uint32_t & out) {
     return object_object::array_index_key(name, out);
@@ -487,17 +474,11 @@ bool context::define_own_property(value target, const std::string & name,
         if (wanted.is_accessor() && !current.is_accessor()) { return false; }
         if (wanted.is_data() && current.is_accessor()) { return false; }
         if (current.is_accessor()) {
-            if (wanted.has_get && !descriptor_same_value(wanted.getter, current.getter)) {
-                return false;
-            }
-            if (wanted.has_set && !descriptor_same_value(wanted.setter, current.setter)) {
-                return false;
-            }
+            if (wanted.has_get && !wanted.getter.same_value(current.getter)) { return false; }
+            if (wanted.has_set && !wanted.setter.same_value(current.setter)) { return false; }
         } else if (!current.writable) {
             if (wanted.has_writable && wanted.writable) { return false; }
-            if (wanted.has_value && !descriptor_same_value(wanted.held, current.held)) {
-                return false;
-            }
+            if (wanted.has_value && !wanted.held.same_value(current.held)) { return false; }
         }
     }
 

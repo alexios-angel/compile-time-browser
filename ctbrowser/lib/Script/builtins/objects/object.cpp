@@ -820,18 +820,7 @@ void install_object(context & cx) {
     // `===` cannot answer, which is why every test in this directory that cares
     // about -0 had to spell it `1/x === -Infinity` instead.
     method(cx, object_ctor, "is", 2, [](context &, std::span<value> a) {
-        const value x = arg_at(a, 0);
-        const value y = arg_at(a, 1);
-        if (x.is_number() && y.is_number()) {
-            const double p = x.as_number();
-            const double q = y.as_number();
-            if (std::isnan(p) && std::isnan(q)) { return value::boolean(true); }
-            // Same magnitude AND same sign: std::signbit is what tells +0 from
-            // -0, since they compare equal under every operator.
-            if (p == q) { return value::boolean(std::signbit(p) == std::signbit(q)); }
-            return value::boolean(false);
-        }
-        return value::boolean(x.strict_equals(y));
+        return value::boolean(arg_at(a, 0).same_value(arg_at(a, 1)));
     });
     // 20.1.2.17/20.1.2.23/20.1.2.6, all three EnumerableOwnProperties over
     // ToObject(O). They opened with `is_object()` and answered `[]` for
