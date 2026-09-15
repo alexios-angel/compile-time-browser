@@ -34,6 +34,7 @@ import argparse
 import importlib.util
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -709,6 +710,14 @@ def main() -> int:
         return 0
 
     cmp = load_compare()
+    # UNDER THE VENV, like compare.py itself: cells_that_differ() reads the
+    # screenshots through Pillow, which `compare.py setup` installs beside
+    # Playwright. Re-exec once; a venv that predates Pillow needs setup again.
+    if importlib.util.find_spec("PIL") is None:
+        python = cmp.VENV / "bin" / "python3"
+        if not python.exists() or Path(sys.executable).resolve() == python.resolve():
+            sys.exit("css-parity: pillow is missing; run `tools/check/compare.py setup`")
+        os.execv(str(python), [str(python), *sys.argv])
     names = args.pages or [f"ctbrowser/examples/pages/bootstrap-{f}.html" for f in FIXTURES]
     record = read_record()
     if record.get("props-version") and int(record["props-version"]) != PROPS_VERSION:

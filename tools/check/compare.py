@@ -26,8 +26,8 @@ ctbrowse,chrome. Each stands alone: --engine=chrome asks a real browser what it
 does before deciding what ctbrowser should do, and --engine=ctbrowse drives the
 engine by hand with no venv and nothing downloaded.
 
-Stdlib only, except Playwright - and that is imported only when a real browser
-is actually selected. Unlike the other tools here this one takes arguments, so
+Stdlib only, except Playwright and Pillow - and those are imported only when a
+real browser is actually selected. Unlike the other tools here this one takes arguments, so
 it uses argparse; gen-assets.py takes none because it is a generator with
 nothing to vary.
 """
@@ -40,12 +40,10 @@ import os
 import socket
 import select
 import signal
-import struct
 import shlex
 import subprocess
 import sys
 import time
-import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -146,76 +144,18 @@ def time_limit(seconds: float):
 
 
 def read_png(path: Path) -> tuple[int, int, bytes]:
-    """An 8-bit RGB or RGBA PNG as (width, height, RGB bytes).
+    """A screenshot PNG as (width, height, RGB bytes), through Pillow.
 
-    It exists because the parity harness has to compare what the two engines
-    DREW, not only what they said - Playwright's screenshots and ctdrive's are
-    both PNG, and the alpha ctdrive's carries is always 255. Twenty lines of
-    zlib rather than a dependency.
-
-    Only the two colour types a screenshot can be, and no interlacing: a file
-    outside that is a bug in whoever wrote it, not an input to support.
+    Pillow lives in the same venv as Playwright (compare-requirements.txt), and
+    the one caller - css-parity.py's cell comparison - only ever runs with a
+    real browser on the other side, so it is imported here rather than at the
+    top: `--engine=ctbrowse` still needs nothing installed.
     """
-    data = path.read_bytes()
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError(f"{path}: not a PNG")
-    at = 8
-    width = height = 0
-    depth = colour = 0
-    pixels = bytearray()
-    while at + 8 <= len(data):
-        length = struct.unpack(">I", data[at : at + 4])[0]
-        kind = data[at + 4 : at + 8]
-        body = data[at + 8 : at + 8 + length]
-        at += 12 + length  # length + kind + body + crc
-        if kind == b"IHDR":
-            width, height, depth, colour = struct.unpack(">IIBB", body[:10])
-            if depth != 8 or colour not in (2, 6) or body[12] != 0:
-                raise ValueError(f"{path}: only 8-bit RGB/RGBA, non-interlaced")
-        elif kind == b"IDAT":
-            pixels += body
-        elif kind == b"IEND":
-            break
-    raw = zlib.decompress(bytes(pixels))
-    channels = 3 if colour == 2 else 4
-    stride = width * channels
-    out = bytearray(width * height * 3)
-    previous = bytearray(stride)
-    at = 0
-    for y in range(height):
-        filter_kind = raw[at]
-        at += 1
-        line = bytearray(raw[at : at + stride])
-        at += stride
-        # The five PNG filters, all of which a real encoder uses. Each byte is
-        # reconstructed from the one `channels` to its left and the one above.
-        if filter_kind == 1:
-            for i in range(channels, stride):
-                line[i] = (line[i] + line[i - channels]) & 0xFF
-        elif filter_kind == 2:
-            for i in range(stride):
-                line[i] = (line[i] + previous[i]) & 0xFF
-        elif filter_kind == 3:
-            for i in range(stride):
-                left = line[i - channels] if i >= channels else 0
-                line[i] = (line[i] + ((left + previous[i]) >> 1)) & 0xFF
-        elif filter_kind == 4:
-            for i in range(stride):
-                a = line[i - channels] if i >= channels else 0
-                b = previous[i]
-                c = previous[i - channels] if i >= channels else 0
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                best = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-                line[i] = (line[i] + best) & 0xFF
-        elif filter_kind != 0:
-            raise ValueError(f"{path}: unknown PNG filter {filter_kind}")
-        previous = line
-        for x in range(width):
-            src = x * channels
-            dst = (y * width + x) * 3
-            out[dst : dst + 3] = line[src : src + 3]
-    return width, height, bytes(out)
+    from PIL import Image
+
+    with Image.open(path) as image:
+        rgb = image.convert("RGB")
+        return rgb.width, rgb.height, rgb.tobytes()
 
 
 # --- fonts -----------------------------------------------------------------

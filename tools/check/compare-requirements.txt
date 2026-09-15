@@ -1,2 +1,4 @@
-# Optional reference browsers for compare.py and css-parity.py.
+# Optional reference browsers for compare.py and css-parity.py, and the PNG
+# reader css-parity.py compares their screenshots with.
 playwright>=1.40,<2
+pillow>=10,<13
