@@ -28,130 +28,214 @@
 
 namespace ctbrowser::shell {
 
-// THE GL CONSTANTS, recovered intact from the deleted header.
+// THE GL CONSTANTS, ONCE. Each row is what a page reads as `gl.NAME`, the C++
+// name the engine uses for the same number, the number, and whether it is on
+// every context (1) or only a WebGL 2 one (2). The rows are in the order the
+// context object gets them, which is the order `Object.keys(gl)` reports.
 //
-// This is a TABLE, not an implementation - the numbers WebGL gives a page, which
-// are fixed by the specification and identical in every engine. Nothing here can
-// drift out of step with a driver, which is why it survived the rewrite when the
-// code around it did not.
-// use, because `0x8892` in a switch is unreadable and a transposed digit is
-// invisible.
+// This is a TABLE, not an implementation - the numbers WebGL gives a page are
+// fixed by the specification and identical in every engine. The list is an
+// X-macro so the JavaScript constant and the `gl_enum::` name are the SAME
+// row: they used to be two tables, 95 names here and 152 `constant()` calls in
+// bindings/webgl/constants.cpp, some by name and some as raw hex free to drift.
+//
+// A WebGL 2 constant that arrives as `undefined` makes every comparison
+// against it silently false, and a WebGL 1 page that finds `gl.RGBA8`
+// concludes it has WebGL 2 - so the column is load-bearing both ways.
+// TEXTURE_BINDING_3D in particular is the property Babylon tests to pick its
+// GLSL dialect; missing, every shader was ES 3.00 source with no `#version`
+// and the post-process quad never drew, with no GL error anywhere (Babylon
+// ratchet rung 8).
+#define CTBROWSER_GL_CONSTANTS(X)                                                                  \
+    X(DEPTH_BUFFER_BIT, depth_buffer_bit, 0x0100, 1)                                               \
+    X(STENCIL_BUFFER_BIT, stencil_buffer_bit, 0x0400, 1)                                           \
+    X(COLOR_BUFFER_BIT, color_buffer_bit, 0x4000, 1)                                               \
+    X(POINTS, points, 0x0000, 1)                                                                   \
+    X(LINES, lines, 0x0001, 1)                                                                     \
+    X(LINE_LOOP, line_loop, 0x0002, 1)                                                             \
+    X(LINE_STRIP, line_strip, 0x0003, 1)                                                           \
+    X(TRIANGLES, triangles, 0x0004, 1)                                                             \
+    X(TRIANGLE_STRIP, triangle_strip, 0x0005, 1)                                                   \
+    X(TRIANGLE_FAN, triangle_fan, 0x0006, 1)                                                       \
+    X(DEPTH_TEST, depth_test, 0x0B71, 1)                                                           \
+    X(BLEND, blend, 0x0BE2, 1)                                                                     \
+    X(CULL_FACE, cull_face, 0x0B44, 1)                                                             \
+    X(SCISSOR_TEST, scissor_test, 0x0C11, 1)                                                       \
+    X(DITHER, dither, 0x0BD0, 1)                                                                   \
+    X(STENCIL_TEST, stencil_test, 0x0B90, 1)                                                       \
+    X(POLYGON_OFFSET_FILL, polygon_offset_fill, 0x8037, 1)                                         \
+    X(SAMPLE_ALPHA_TO_COVERAGE, sample_alpha_to_coverage, 0x809E, 1)                               \
+    X(SAMPLE_COVERAGE, sample_coverage, 0x80A0, 1)                                                 \
+    X(FRONT, front, 0x0404, 1)                                                                     \
+    X(BACK, back, 0x0405, 1)                                                                       \
+    X(FRONT_AND_BACK, front_and_back, 0x0408, 1)                                                   \
+    X(CW, cw, 0x0900, 1)                                                                           \
+    X(CCW, ccw, 0x0901, 1)                                                                         \
+    X(NEVER, never, 0x0200, 1)                                                                     \
+    X(LESS, less, 0x0201, 1)                                                                       \
+    X(EQUAL, equal, 0x0202, 1)                                                                     \
+    X(LEQUAL, lequal, 0x0203, 1)                                                                   \
+    X(GREATER, greater, 0x0204, 1)                                                                 \
+    X(NOTEQUAL, notequal, 0x0205, 1)                                                               \
+    X(GEQUAL, gequal, 0x0206, 1)                                                                   \
+    X(ALWAYS, always, 0x0207, 1)                                                                   \
+    X(KEEP, keep, 0x1E00, 1)                                                                       \
+    X(REPLACE, replace, 0x1E01, 1)                                                                 \
+    X(ZERO, zero, 0x0000, 1)                                                                       \
+    X(ONE, one, 0x0001, 1)                                                                         \
+    X(SRC_COLOR, src_color, 0x0300, 1)                                                             \
+    X(ONE_MINUS_SRC_COLOR, one_minus_src_color, 0x0301, 1)                                         \
+    X(SRC_ALPHA, src_alpha, 0x0302, 1)                                                             \
+    X(ONE_MINUS_SRC_ALPHA, one_minus_src_alpha, 0x0303, 1)                                         \
+    X(DST_ALPHA, dst_alpha, 0x0304, 1)                                                             \
+    X(ONE_MINUS_DST_ALPHA, one_minus_dst_alpha, 0x0305, 1)                                         \
+    X(DST_COLOR, dst_color, 0x0306, 1)                                                             \
+    X(ONE_MINUS_DST_COLOR, one_minus_dst_color, 0x0307, 1)                                         \
+    X(SRC_ALPHA_SATURATE, src_alpha_saturate, 0x0308, 1)                                           \
+    X(FUNC_ADD, func_add, 0x8006, 1)                                                               \
+    X(FUNC_SUBTRACT, func_subtract, 0x800A, 1)                                                     \
+    X(FUNC_REVERSE_SUBTRACT, func_reverse_subtract, 0x800B, 1)                                     \
+    X(BYTE, byte_, 0x1400, 1)                                                                      \
+    X(UNSIGNED_BYTE, unsigned_byte, 0x1401, 1)                                                     \
+    X(SHORT, short_, 0x1402, 1)                                                                    \
+    X(UNSIGNED_SHORT, unsigned_short, 0x1403, 1)                                                   \
+    X(INT, int_, 0x1404, 1)                                                                        \
+    X(UNSIGNED_INT, unsigned_int, 0x1405, 1)                                                       \
+    X(FLOAT, float_, 0x1406, 1)                                                                    \
+    X(ARRAY_BUFFER, array_buffer, 0x8892, 1)                                                       \
+    X(ELEMENT_ARRAY_BUFFER, element_array_buffer, 0x8893, 1)                                       \
+    X(STATIC_DRAW, static_draw, 0x88E4, 1)                                                         \
+    X(DYNAMIC_DRAW, dynamic_draw, 0x88E8, 1)                                                       \
+    X(STREAM_DRAW, stream_draw, 0x88E0, 1)                                                         \
+    X(TEXTURE_2D, texture_2d, 0x0DE1, 1)                                                           \
+    X(TEXTURE_CUBE_MAP, texture_cube_map, 0x8513, 1)                                               \
+    X(RGBA, rgba, 0x1908, 1)                                                                       \
+    X(RGB, rgb, 0x1907, 1)                                                                         \
+    X(LUMINANCE, luminance, 0x1909, 1)                                                             \
+    X(LUMINANCE_ALPHA, luminance_alpha, 0x190A, 1)                                                 \
+    X(ALPHA, alpha, 0x1906, 1)                                                                     \
+    X(NEAREST, nearest, 0x2600, 1)                                                                 \
+    X(LINEAR, linear, 0x2601, 1)                                                                   \
+    X(NEAREST_MIPMAP_NEAREST, nearest_mipmap_nearest, 0x2700, 1)                                   \
+    X(LINEAR_MIPMAP_NEAREST, linear_mipmap_nearest, 0x2701, 1)                                     \
+    X(NEAREST_MIPMAP_LINEAR, nearest_mipmap_linear, 0x2702, 1)                                     \
+    X(LINEAR_MIPMAP_LINEAR, linear_mipmap_linear, 0x2703, 1)                                       \
+    X(TEXTURE_MAG_FILTER, texture_mag_filter, 0x2800, 1)                                           \
+    X(TEXTURE_MIN_FILTER, texture_min_filter, 0x2801, 1)                                           \
+    X(TEXTURE_WRAP_S, texture_wrap_s, 0x2802, 1)                                                   \
+    X(TEXTURE_WRAP_T, texture_wrap_t, 0x2803, 1)                                                   \
+    X(CLAMP_TO_EDGE, clamp_to_edge, 0x812F, 1)                                                     \
+    X(REPEAT, repeat, 0x2901, 1)                                                                   \
+    X(MIRRORED_REPEAT, mirrored_repeat, 0x8370, 1)                                                 \
+    X(UNPACK_FLIP_Y_WEBGL, unpack_flip_y_webgl, 0x9240, 1)                                         \
+    X(UNPACK_PREMULTIPLY_ALPHA_WEBGL, unpack_premultiply_alpha_webgl, 0x9241, 1)                   \
+    X(UNPACK_ALIGNMENT, unpack_alignment, 0x0CF5, 1)                                               \
+    X(COMPILE_STATUS, compile_status, 0x8B81, 1)                                                   \
+    X(LINK_STATUS, link_status, 0x8B82, 1)                                                         \
+    X(VALIDATE_STATUS, validate_status, 0x8B83, 1)                                                 \
+    X(DELETE_STATUS, delete_status, 0x8B80, 1)                                                     \
+    X(VERTEX_SHADER, vertex_shader, 0x8B31, 1)                                                     \
+    X(FRAGMENT_SHADER, fragment_shader, 0x8B30, 1)                                                 \
+    X(ACTIVE_UNIFORMS, active_uniforms, 0x8B86, 1)                                                 \
+    X(ACTIVE_ATTRIBUTES, active_attributes, 0x8B89, 1)                                             \
+    X(FLOAT_VEC2, float_vec2, 0x8B50, 1)                                                           \
+    X(FLOAT_VEC3, float_vec3, 0x8B51, 1)                                                           \
+    X(FLOAT_VEC4, float_vec4, 0x8B52, 1)                                                           \
+    X(INT_VEC2, int_vec2, 0x8B53, 1)                                                               \
+    X(INT_VEC3, int_vec3, 0x8B54, 1)                                                               \
+    X(INT_VEC4, int_vec4, 0x8B55, 1)                                                               \
+    X(BOOL, bool_, 0x8B56, 1)                                                                      \
+    X(BOOL_VEC2, bool_vec2, 0x8B57, 1)                                                             \
+    X(BOOL_VEC3, bool_vec3, 0x8B58, 1)                                                             \
+    X(BOOL_VEC4, bool_vec4, 0x8B59, 1)                                                             \
+    X(FLOAT_MAT2, float_mat2, 0x8B5A, 1)                                                           \
+    X(FLOAT_MAT3, float_mat3, 0x8B5B, 1)                                                           \
+    X(FLOAT_MAT4, float_mat4, 0x8B5C, 1)                                                           \
+    X(SAMPLER_2D, sampler_2d, 0x8B5E, 1)                                                           \
+    X(SAMPLER_CUBE, sampler_cube, 0x8B60, 1)                                                       \
+    X(MAX_TEXTURE_SIZE, max_texture_size, 0x0D33, 1)                                               \
+    X(MAX_VERTEX_ATTRIBS, max_vertex_attribs, 0x8869, 1)                                           \
+    X(MAX_TEXTURE_IMAGE_UNITS, max_texture_image_units, 0x8872, 1)                                 \
+    X(MAX_VIEWPORT_DIMS, max_viewport_dims, 0x0D3A, 1)                                             \
+    X(RGBA8, rgba8, 0x8058, 2)                                                                     \
+    X(RGB8, rgb8, 0x8051, 2)                                                                       \
+    X(SRGB8_ALPHA8, srgb8_alpha8, 0x8C43, 2)                                                       \
+    X(R8, r8, 0x8229, 2)                                                                           \
+    X(RG8, rg8, 0x822B, 2)                                                                         \
+    X(RGBA16F, rgba16f, 0x881A, 2)                                                                 \
+    X(RGBA32F, rgba32f, 0x8814, 2)                                                                 \
+    X(DEPTH_COMPONENT24, depth_component24, 0x81A6, 2)                                             \
+    X(DEPTH24_STENCIL8, depth24_stencil8, 0x88F0, 2)                                               \
+    X(TEXTURE_3D, texture_3d, 0x806F, 2)                                                           \
+    X(TEXTURE_2D_ARRAY, texture_2d_array, 0x8C1A, 2)                                               \
+    X(TEXTURE_BINDING_3D, texture_binding_3d, 0x806A, 2)                                           \
+    X(UNIFORM_BUFFER, uniform_buffer, 0x8A11, 2)                                                   \
+    X(COPY_READ_BUFFER, copy_read_buffer, 0x8F36, 2)                                               \
+    X(PIXEL_PACK_BUFFER, pixel_pack_buffer, 0x88EB, 2)                                             \
+    X(VERTEX_ARRAY_BINDING, vertex_array_binding, 0x85B5, 2)                                       \
+    X(TRANSFORM_FEEDBACK, transform_feedback, 0x8E22, 2)                                           \
+    X(SYNC_GPU_COMMANDS_COMPLETE, sync_gpu_commands_complete, 0x9117, 2)                           \
+    X(MAX_DRAW_BUFFERS, max_draw_buffers, 0x8824, 2)                                               \
+    X(MAX_COLOR_ATTACHMENTS, max_color_attachments, 0x8CDF, 2)                                     \
+    X(DRAW_BUFFER0, draw_buffer0, 0x8825, 2)                                                       \
+    X(COLOR_ATTACHMENT1, color_attachment1, 0x8CE1, 2)                                             \
+    X(DRAW_BUFFER1, draw_buffer1, 0x8826, 2)                                                       \
+    X(COLOR_ATTACHMENT2, color_attachment2, 0x8CE2, 2)                                             \
+    X(DRAW_BUFFER2, draw_buffer2, 0x8827, 2)                                                       \
+    X(COLOR_ATTACHMENT3, color_attachment3, 0x8CE3, 2)                                             \
+    X(DRAW_BUFFER3, draw_buffer3, 0x8828, 2)                                                       \
+    X(COLOR_ATTACHMENT4, color_attachment4, 0x8CE4, 2)                                             \
+    X(DRAW_BUFFER4, draw_buffer4, 0x8829, 2)                                                       \
+    X(COLOR_ATTACHMENT5, color_attachment5, 0x8CE5, 2)                                             \
+    X(DRAW_BUFFER5, draw_buffer5, 0x882A, 2)                                                       \
+    X(COLOR_ATTACHMENT6, color_attachment6, 0x8CE6, 2)                                             \
+    X(DRAW_BUFFER6, draw_buffer6, 0x882B, 2)                                                       \
+    X(COLOR_ATTACHMENT7, color_attachment7, 0x8CE7, 2)                                             \
+    X(DRAW_BUFFER7, draw_buffer7, 0x882C, 2)                                                       \
+    X(VERTEX_ATTRIB_ARRAY_DIVISOR, vertex_attrib_array_divisor, 0x88FE, 2)                         \
+    X(VERTEX_ATTRIB_ARRAY_ENABLED, vertex_attrib_array_enabled, 0x8622, 1)                         \
+    X(VERTEX_ATTRIB_ARRAY_SIZE, vertex_attrib_array_size, 0x8623, 1)                               \
+    X(VERTEX_ATTRIB_ARRAY_STRIDE, vertex_attrib_array_stride, 0x8624, 1)                           \
+    X(VERTEX_ATTRIB_ARRAY_TYPE, vertex_attrib_array_type, 0x8625, 1)                               \
+    X(VERTEX_ATTRIB_ARRAY_NORMALIZED, vertex_attrib_array_normalized, 0x886A, 1)                   \
+    X(VERSION, version, 0x1F02, 1)                                                                 \
+    X(RENDERER, renderer, 0x1F01, 1)                                                               \
+    X(VENDOR, vendor, 0x1F00, 1)                                                                   \
+    X(SHADING_LANGUAGE_VERSION, shading_language_version, 0x8B8C, 1)                               \
+    X(NO_ERROR, no_error, 0x0000, 1)                                                               \
+    X(INVALID_ENUM, invalid_enum, 0x0500, 1)                                                       \
+    X(INVALID_VALUE, invalid_value, 0x0501, 1)                                                     \
+    X(INVALID_OPERATION, invalid_operation, 0x0502, 1)                                             \
+    X(OUT_OF_MEMORY, out_of_memory, 0x0505, 1)                                                     \
+    X(FRAMEBUFFER, framebuffer, 0x8D40, 1)                                                         \
+    X(RENDERBUFFER, renderbuffer, 0x8D41, 1)                                                       \
+    X(DEPTH_COMPONENT16, depth_component16, 0x81A5, 1)                                             \
+    X(DEPTH_ATTACHMENT, depth_attachment, 0x8D00, 1)                                               \
+    X(COLOR_ATTACHMENT0, color_attachment0, 0x8CE0, 1)                                             \
+    X(FRAMEBUFFER_COMPLETE, framebuffer_complete, 0x8CD5, 1)                                       \
+    X(TEXTURE0, texture0, 0x84C0, 1)                                                               \
+    X(TEXTURE1, texture1, 0x84C1, 1)                                                               \
+    X(TEXTURE2, texture2, 0x84C2, 1)                                                               \
+    X(TEXTURE3, texture3, 0x84C3, 1)                                                               \
+    X(TEXTURE4, texture4, 0x84C4, 1)                                                               \
+    X(TEXTURE5, texture5, 0x84C5, 1)                                                               \
+    X(TEXTURE6, texture6, 0x84C6, 1)                                                               \
+    X(TEXTURE7, texture7, 0x84C7, 1)                                                               \
+    X(TEXTURE8, texture8, 0x84C8, 1)                                                               \
+    X(TEXTURE9, texture9, 0x84C9, 1)                                                               \
+    X(TEXTURE10, texture10, 0x84CA, 1)                                                             \
+    X(TEXTURE11, texture11, 0x84CB, 1)                                                             \
+    X(TEXTURE12, texture12, 0x84CC, 1)                                                             \
+    X(TEXTURE13, texture13, 0x84CD, 1)                                                             \
+    X(TEXTURE14, texture14, 0x84CE, 1)                                                             \
+    X(TEXTURE15, texture15, 0x84CF, 1)
+
+// The C++ names, because `0x8892` in a switch is unreadable and a transposed
+// digit is invisible.
 namespace gl_enum {
-inline constexpr std::uint32_t depth_buffer_bit = 0x00000100;
-inline constexpr std::uint32_t stencil_buffer_bit = 0x00000400;
-inline constexpr std::uint32_t color_buffer_bit = 0x00004000;
-
-inline constexpr std::uint32_t points = 0x0000;
-inline constexpr std::uint32_t lines = 0x0001;
-inline constexpr std::uint32_t triangles = 0x0004;
-inline constexpr std::uint32_t triangle_strip = 0x0005;
-inline constexpr std::uint32_t triangle_fan = 0x0006;
-
-inline constexpr std::uint32_t depth_test = 0x0B71;
-inline constexpr std::uint32_t blend = 0x0BE2;
-inline constexpr std::uint32_t cull_face = 0x0B44;
-inline constexpr std::uint32_t scissor_test = 0x0C11;
-
-inline constexpr std::uint32_t front = 0x0404;
-inline constexpr std::uint32_t back = 0x0405;
-inline constexpr std::uint32_t cw = 0x0900;
-inline constexpr std::uint32_t ccw = 0x0901;
-
-inline constexpr std::uint32_t never = 0x0200;
-inline constexpr std::uint32_t less = 0x0201;
-inline constexpr std::uint32_t equal = 0x0202;
-inline constexpr std::uint32_t lequal = 0x0203;
-inline constexpr std::uint32_t greater = 0x0204;
-inline constexpr std::uint32_t notequal = 0x0205;
-inline constexpr std::uint32_t gequal = 0x0206;
-inline constexpr std::uint32_t always = 0x0207;
-
-inline constexpr std::uint32_t zero = 0;
-inline constexpr std::uint32_t one = 1;
-inline constexpr std::uint32_t src_color = 0x0300;
-inline constexpr std::uint32_t one_minus_src_color = 0x0301;
-inline constexpr std::uint32_t src_alpha = 0x0302;
-inline constexpr std::uint32_t one_minus_src_alpha = 0x0303;
-inline constexpr std::uint32_t dst_alpha = 0x0304;
-inline constexpr std::uint32_t one_minus_dst_alpha = 0x0305;
-inline constexpr std::uint32_t dst_color = 0x0306;
-inline constexpr std::uint32_t one_minus_dst_color = 0x0307;
-
-inline constexpr std::uint32_t byte_ = 0x1400;
-inline constexpr std::uint32_t unsigned_byte = 0x1401;
-inline constexpr std::uint32_t short_ = 0x1402;
-inline constexpr std::uint32_t unsigned_short = 0x1403;
-inline constexpr std::uint32_t int_ = 0x1404;
-inline constexpr std::uint32_t unsigned_int = 0x1405;
-inline constexpr std::uint32_t float_ = 0x1406;
-
-inline constexpr std::uint32_t array_buffer = 0x8892;
-inline constexpr std::uint32_t element_array_buffer = 0x8893;
-// WebGL 2's buffer for uniform blocks. It needs its own binding: everything
-// that was not the element buffer used to go to `array_buffer_`, so a page
-// filling a uniform buffer overwrote whichever vertex buffer was bound.
-inline constexpr std::uint32_t uniform_buffer = 0x8A11;
-inline constexpr std::uint32_t color_attachment0 = 0x8CE0;
-inline constexpr std::uint32_t framebuffer_complete = 0x8CD5;
-inline constexpr std::uint32_t framebuffer_incomplete_attachment = 0x8CD6;
-// Capabilities this rasteriser does not have. They are named so that DISABLING
-// one can be a no-op rather than an error - see set_enabled.
-inline constexpr std::uint32_t polygon_offset_fill = 0x8037;
-inline constexpr std::uint32_t dither = 0x0BD0;
-inline constexpr std::uint32_t rasterizer_discard = 0x8C89;
-inline constexpr std::uint32_t static_draw = 0x88E4;
-inline constexpr std::uint32_t dynamic_draw = 0x88E8;
-
-inline constexpr std::uint32_t texture_2d = 0x0DE1;
-inline constexpr std::uint32_t texture0 = 0x84C0;
-inline constexpr std::uint32_t rgba = 0x1908;
-inline constexpr std::uint32_t rgb = 0x1907;
-inline constexpr std::uint32_t nearest = 0x2600;
-inline constexpr std::uint32_t linear = 0x2601;
-inline constexpr std::uint32_t texture_mag_filter = 0x2800;
-inline constexpr std::uint32_t texture_min_filter = 0x2801;
-inline constexpr std::uint32_t texture_wrap_s = 0x2802;
-inline constexpr std::uint32_t texture_wrap_t = 0x2803;
-inline constexpr std::uint32_t clamp_to_edge = 0x812F;
-inline constexpr std::uint32_t repeat = 0x2901;
-
-inline constexpr std::uint32_t compile_status = 0x8B81;
-inline constexpr std::uint32_t link_status = 0x8B82;
-inline constexpr std::uint32_t active_uniforms = 0x8B86;
-inline constexpr std::uint32_t active_attributes = 0x8B89;
-
-// The type codes getActiveUniform and getActiveAttrib report. A caller
-// SWITCHES on these to decide which uniform* entry point to call, so a wrong
-// one here sends a mat4 through uniform4fv.
-inline constexpr std::uint32_t float_vec2 = 0x8B50;
-inline constexpr std::uint32_t float_vec3 = 0x8B51;
-inline constexpr std::uint32_t float_vec4 = 0x8B52;
-inline constexpr std::uint32_t int_vec2 = 0x8B53;
-inline constexpr std::uint32_t int_vec3 = 0x8B54;
-inline constexpr std::uint32_t int_vec4 = 0x8B55;
-inline constexpr std::uint32_t bool_ = 0x8B56;
-inline constexpr std::uint32_t bool_vec2 = 0x8B57;
-inline constexpr std::uint32_t bool_vec3 = 0x8B58;
-inline constexpr std::uint32_t bool_vec4 = 0x8B59;
-inline constexpr std::uint32_t float_mat2 = 0x8B5A;
-inline constexpr std::uint32_t float_mat3 = 0x8B5B;
-inline constexpr std::uint32_t float_mat4 = 0x8B5C;
-inline constexpr std::uint32_t sampler_2d = 0x8B5E;
-inline constexpr std::uint32_t sampler_cube = 0x8B60;
-inline constexpr std::uint32_t vertex_shader = 0x8B31;
-inline constexpr std::uint32_t fragment_shader = 0x8B30;
-
-inline constexpr std::uint32_t max_texture_size = 0x0D33;
-inline constexpr std::uint32_t max_vertex_attribs = 0x8869;
-inline constexpr std::uint32_t version = 0x1F02;
-inline constexpr std::uint32_t renderer = 0x1F01;
-inline constexpr std::uint32_t vendor = 0x1F00;
-inline constexpr std::uint32_t shading_language_version = 0x8B8C;
-
-inline constexpr std::uint32_t no_error = 0;
-inline constexpr std::uint32_t invalid_enum = 0x0500;
-inline constexpr std::uint32_t invalid_value = 0x0501;
-inline constexpr std::uint32_t invalid_operation = 0x0502;
+#define X(NAME, ident, v, ver) inline constexpr std::uint32_t ident = v;
+CTBROWSER_GL_CONSTANTS(X)
+#undef X
 } // namespace gl_enum
 
 // A UNIFORM'S VALUE, as the bindings collect it from JavaScript.
