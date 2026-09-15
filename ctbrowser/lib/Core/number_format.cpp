@@ -1,4 +1,4 @@
-#include <ctbrowser/script/number_format.hpp>
+#include <ctbrowser/core/number_format.hpp>
 
 #include <algorithm>
 #include <array>
@@ -15,7 +15,7 @@
 // The header says which specification clause each function is and why C's
 // conversions are not it. This says how.
 
-namespace ctbrowser::script {
+namespace ctbrowser {
 
 namespace {
 
@@ -570,4 +570,4 @@ double string_to_number_prefix(std::string_view text) {
     return sign * parsed;
 }
 
-} // namespace ctbrowser::script
+} // namespace ctbrowser
