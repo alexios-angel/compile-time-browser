@@ -49,10 +49,18 @@ so there is no measured general transcompilation speedup. The CLI clears supplie
 reports before fingerprinting; its decorated-input timing does not measure the
 clone fallback. See [the quality review](native-quality-review-2026-09-15.md).
 
-**Full validation is running** on the committed source under the devbox lock.
-Frozen input has **1,462 non-Markdown source files**; the durable remote log and
-exit marker are `/tmp/ctcompile-nullable-uri/full.log` and `full.exit`.
-No new complete-suite result or Bootstrap admission gain is claimed yet.
+Complete **310-step build / 606/606 CTests in 1454.14s / 177/177 lit in
+962.95s PASS**, with the full wrapper's exit status **0** retained.
+All **1,462 source / 113 submodule hashes** match devbox, local and committed
+source. Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skips/prunes; DOM Data **7/7**, Button **4/86**, 22 Node observations and the
+existing VM inheritance failure. Button/Data reports and all **1,123 escape rows**
+are unchanged. Original M and the isolated nullable URI helper each refuse all
+four provider/policy combinations at the helper source-shape check; M retains
+**24 nine-slot blocks** and handler **^bb12**. No full-bundle gain is claimed.
+Full WPT/test262 were not remeasured; browser/runtime and expectations are unchanged.
+Evidence and replay scripts: `/tmp/ctcompile-nullable-uri/`, including durable
+`full.log`, `full.exit`, `measured.json` and the isolated `next-probe.py`.
 
 **Exact next boundary:** compose the existing helper expansion and URI recovery
 inside the fingerprinted DOMSource transaction. The current driver chooses one

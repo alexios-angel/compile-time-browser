@@ -28,9 +28,12 @@ original input. **c9c2e37b** already provides the shared public Core JSON parser
 and owning tree; use it rather than implementing another parser or calling Script.
 Its existing numeric/Unicode/depth limits remain those of the VM oracle.
 
-The last complete Bootstrap measurement remains **19/574 native / 0 of 43 globals**,
-DOM Data **7/7**, Button **4/86**, with 22 Node observations and its separately
-recorded VM inheritance failure. Fresh full validation is running; no full-bundle
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, DOM Data **7/7**,
+Button **4/86**, with 22 Node observations and its separately recorded VM
+inheritance failure. Complete **606/606 CTests (1454.14s) / 177/177 lit
+(962.95s) PASS**. Original M and the isolated nullable URI helper both
+refuse all four provider/policy combinations at the complete helper source-shape
+check. M retains 24 nine-slot blocks and its handler at ^bb12. No full-bundle
 admission gain is claimed. Full H/dataset, initialization/inheritance, retained
 config/callbacks and the application driver remain unfinished.
 
