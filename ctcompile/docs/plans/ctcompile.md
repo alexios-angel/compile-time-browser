@@ -9,7 +9,8 @@ history plus the reasoning behind every decision, not the status board -
 `docs/HANDOFF.md`**, whose top entry is the latest. Since these rungs were
 written the native EmitC backend has run whole applications with no
 interpreter (`docs/plans/launcher.md`), and the pin is LLVM 23.1.0
-(`cmake/LLVMVersion.cmake`); dated figures below are as measured on the day.
+(`ctcompile/CMakeLists.txt`, inlined 2026-09-15 from the `cmake/LLVMVersion.cmake`
+the sections below name); dated figures below are as measured on the day.
 
 The master plan is `../ctcompile-plan/` (outside the repository), and
 `01-objective-and-ground-truth.md` overrides the rest of it.

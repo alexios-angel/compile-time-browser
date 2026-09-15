@@ -1,5 +1,5 @@
 # Which p5.js probes pass, one per line. ctbrowser/test/corpus/p5/p5_api.cpp measures them and
-# tools/corpus/p5-api.py --advance is the only thing that writes this file - a test
+# tools/corpus/ratchet.py p5 api --advance is the only thing that writes this file - a test
 # that edits its own expectations cannot fail.
 #
 # A name here that stops passing FAILS the test. A name that starts passing is

@@ -83,7 +83,7 @@ find_package(Threads REQUIRED)
 # silently run on the system allocator. unittests/unit/core_basics asks
 # ctbrowser::allocator_name() so that mistake is a test failure.
 #
-# The Windows sysroot gets it from tools/mingw/build-mimalloc-mingw.sh.
+# The Windows sysroot gets it from tools/mingw/build-libs-mingw.sh.
 # BY PATH, NOT BY find_package. mimalloc's exported config advertises a
 # `mimalloc-static` target on distributions that ship only the shared library,
 # so taking the config's word for it fails at link time with a target that
@@ -103,7 +103,7 @@ find_path(CTBROWSER_MIMALLOC_INCLUDE mimalloc.h
 if(CTBROWSER_USE_MIMALLOC AND (NOT CTBROWSER_MIMALLOC OR NOT CTBROWSER_MIMALLOC_INCLUDE))
   message(FATAL_ERROR
     "mimalloc not found. Linux: brew install mimalloc. "
-    "Windows cross: run tools/mingw/build-mimalloc-mingw.sh. "
+    "Windows cross: run tools/mingw/build-libs-mingw.sh. "
     "Or configure with -DCTBROWSER_USE_MIMALLOC=OFF to use the system allocator.")
 endif()
 
@@ -116,7 +116,7 @@ find_path(CTBROWSER_SIMDUTF_INCLUDE simdutf.h HINTS ${CTBROWSER_BREW_HINTS} PATH
 if(NOT CTBROWSER_SIMDUTF OR NOT CTBROWSER_SIMDUTF_INCLUDE)
   message(FATAL_ERROR
     "simdutf not found. Linux: brew install simdutf. "
-    "Windows cross: run tools/mingw/build-simdutf-mingw.sh")
+    "Windows cross: run tools/mingw/build-libs-mingw.sh")
 endif()
 
 # --- THE HTTP TRANSPORT ---------------------------------------------------

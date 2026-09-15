@@ -65,8 +65,8 @@ parser; a browser does not want one.
 * **It is what Node.js uses**, so it is exercised far beyond this tree.
 * Same authors as simdutf, already adopted here, and the same shape of
   dependency - a compiled library that needs the mingw sysroot treatment
-  `tools/mingw/build-mimalloc-mingw.sh` and `tools/mingw/build-simdutf-mingw.sh` already
-  establish. That path is now well worn.
+  `tools/mingw/build-libs-mingw.sh` already establishes: one more row in its
+  table. That path is now well worn.
 * Speed is real but is NOT the argument: URL parsing does not appear in any
   profile in `docs/performance.md`. **Adopt it for the eight rows above.**
 

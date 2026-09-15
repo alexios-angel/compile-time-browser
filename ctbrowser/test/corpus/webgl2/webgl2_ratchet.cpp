@@ -507,6 +507,6 @@ int main() {
     std::printf("     babylon: %s\n", babylon_verdict().c_str());
 
     ctbrowser_test::ratchet_pawl("webgl2", "test/corpus/webgl2/webgl2-ratchet.txt",
-                                 "tools/corpus/webgl2-ratchet.py", m, rung_name);
+                                 "tools/corpus/ratchet.py webgl2 ratchet", m, rung_name);
     REPORT("webgl2_ratchet");
 }

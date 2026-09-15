@@ -24,7 +24,6 @@ with it.
 
 - `tools/gen/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
   deterministically, so no foreign binary is committed.
-- `tools/gen/gen-shaders.py` — GLSL -> the SPIR-V in `include/ctbrowser/gpu/shaders/tile_spv.hpp`.
 - `tools/check/compare.py` — drives ctbrowser AND Chrome/Firefox through the same
   clicks and keystrokes, live, so parity can be seen rather than guessed.
   `--headed --delay` makes it watchable; `ctbrowser/tools/ctdrive/ctdrive.cpp` is the
@@ -62,51 +61,31 @@ with it.
   proves the tool measures anything - a checker that has never caught something
   is not known to work. `ctcompile-test-type-oracle` produces the recordings and
   is a SECOND implementation of the same check, compared against this one by
-  `ctcompile/test/check-type-oracle.cmake`.
+  `ctcompile/test/Analysis/Types/check-oracle.cmake`.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
 - `tools/corpus/ratchet.py` — ONE driver for every corpus ratchet and API surface,
-  `ratchet.py <corpus> ratchet|api [--advance]`; the `<corpus>-ratchet.py` and
-  `<corpus>-api.py` names below are shims onto it.
-- `tools/corpus/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
-  runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
-  it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
-  clears every language rung, so there is nothing to carve.
-- `tools/corpus/phaser-api.py` — how WIDE the Phaser surface is, to `p5-api.py`'s
-  shape. `--coverage` lists the namespaces no probe mentions, which is the work
-  queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
-  because nothing on the ladder asked a number for a property.
-- `tools/corpus/babylon-ratchet.py` — the ladder for BABYLON.JS, the third corpus, and
-  the second ladder over the same bundle: `webgl2-ratchet.py` asks whether
-  Babylon draws AT ALL (10/10) and this asks what a scene can CONTAIN. Reads
-  **10/12** — a PBR material renders; glTF import and the GUI are next. `tools/corpus/babylon-api.py`
-  is its width counterpart, 39/43 probes. See `docs/plans/babylon.md`.
-- `tools/corpus/module-ratchet.py` — the same loop for ES MODULES. Reads **8/9**: a
-  graph links, bindings are LIVE, cycles resolve, module scripts defer like page
-  scripts and relative specifiers resolve against the importer, and dynamic
-  `import()` resolves to a live namespace object. Rung 9 is Babylon's ES build,
-  which is not vendored. `--advance` records. See
+  `ratchet.py <corpus> ratchet|api [--advance]` for p5, phaser, babylon, webgl2
+  and module: build, measure, `--advance` to record. The per-corpus
+  `<corpus>-ratchet.py`/`<corpus>-api.py` shims onto it went on 2026-09-15.
+  `--bisect` and `--survey` are p5-only (the one bundle that failed at the
+  language rungs); `api --coverage` lists what no probe mentions, which is the
+  work queue. Where each corpus stands is in its `ctbrowser/test/corpus/<dir>/*.txt`
+  record and its plan: `docs/script.md` (p5, Phaser), `docs/plans/babylon.md`,
   `docs/plans/modules.md`.
 - `tools/fetch-angle.sh` — downloads the PINNED ANGLE release into
   `third-party/angle/`. ANGLE is fetched rather than built: it needs GN,
   depot_tools and, on Windows, clang-cl and the Windows SDK. `-DCTBROWSER_WITH_ANGLE=ON`
   then gives `raster/gles.hpp` a real GLES 3.1 device. See `docs/plans/angle.md`.
-- `tools/mingw/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
-  ONLY and optional: a missing trace makes a failure harder to read, not wrong.
-  It is here because llvm-mingw has no `<stacktrace>` at all, so the platform
-  where most of this project's expensive bugs have lived had no trace when a
-  test died.
-- `tools/mingw/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
-  allocator is not optional in the default build, so the cross build needs this
-  run once; `tools/remote-build.sh windows` runs it.
-- `tools/mingw/build-gmp-mingw.sh` — deleted 2026-09-10 with the GMP BigInt backend;
-  `docs/script.md` keeps the measurement that retired it.
-- `tools/mingw/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
-  libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
-  presets need this run once too. Versions are pinned on purpose; see
-  `docs/build.md`.
+- `tools/mingw/build-libs-mingw.sh` — every CMake-built library in the Windows
+  sysroot, one table: zlib, libpng and libjpeg-turbo (PNG and JPEG decode in the
+  SDL-FREE engine), mimalloc (not optional in the default build), simdutf, and
+  cpptrace (tests only, optional: a missing trace makes a failure harder to
+  read, not wrong - llvm-mingw has no `<stacktrace>`). Versions are pinned on
+  purpose and three of them match `tools/Brewfile`'s; `tools/remote-build.sh
+  windows` runs it. Was four scripts until 2026-09-15.
 - `tools/fetch-test262.sh` — shallow-fetches the OFFICIAL ECMAScript conformance
   suite at a PINNED commit into `~/.cache/ctbrowser/test262` and verifies the
   hash. The corpus is 53,580 files and is NEVER vendored; this is the one place

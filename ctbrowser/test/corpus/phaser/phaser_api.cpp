@@ -11,7 +11,7 @@
 // test/corpus/phaser/phaser-api-probe.js, the runner reports JSON, this parses it by hand,
 // and test/corpus/phaser/phaser-api.txt records which probes pass. A probe that used to pass
 // and now does not fails the test; a newly passing one is reported and recorded
-// only by tools/corpus/phaser-api.py --advance.
+// only by tools/corpus/ratchet.py phaser api --advance.
 //
 // THE JSON IS PARSED BY HAND rather than through the JSON builtin, for the
 // reason the p5 harness states: this is the test harness, and a harness that
@@ -104,6 +104,6 @@ int main() {
     }
 
     ctbrowser_test::api_pawl("Phaser API", reported, "test/corpus/phaser/phaser-api.txt",
-                             "tools/corpus/phaser-api.py");
+                             "tools/corpus/ratchet.py phaser api");
     REPORT("phaser_api");
 }

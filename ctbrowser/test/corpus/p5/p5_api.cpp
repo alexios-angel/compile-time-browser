@@ -16,11 +16,11 @@
 //   a new pass                       print ADVANCE; recording is deliberate.
 //   a failure that was already known listed, not fatal - it is the work queue.
 //
-// A test that edits its own expectations cannot fail, so `tools/corpus/p5-api.py
+// A test that edits its own expectations cannot fail, so `tools/corpus/ratchet.py p5 api
 // --advance` is the only thing that writes test/corpus/p5/p5-api.txt.
 //
 // The probes live in test/corpus/p5/p5-api-probe.js rather than in a string here, so
-// adding one needs no rebuild and `tools/corpus/p5-api.py --coverage` can list which
+// adding one needs no rebuild and `tools/corpus/ratchet.py p5 api --coverage` can list which
 // of the bundle's `fn.*` no probe mentions - that list is what to write next.
 
 #include <ctbrowser.hpp>
@@ -133,6 +133,6 @@ int main() {
     }
 
     ctbrowser_test::api_pawl("p5 API", reported, "test/corpus/p5/p5-api.txt",
-                             "tools/corpus/p5-api.py");
+                             "tools/corpus/ratchet.py p5 api");
     REPORT("p5_api");
 }

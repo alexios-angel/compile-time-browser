@@ -280,7 +280,7 @@ int main() {
     const std::string source = read_file("vendor/phaser/phaser.js");
     const measurement m = measure(source);
 
-    // MACHINE-READABLE FIRST, for tools/corpus/phaser-ratchet.py, then the sentence a
+    // MACHINE-READABLE FIRST, for tools/corpus/ratchet.py phaser ratchet, then the sentence a
     // person reads. Same two lines p5_ratchet emits, so one tool shape drives
     // both.
     std::printf("LEVEL %d/%d\n", m.level, rung_paints);
@@ -297,6 +297,6 @@ int main() {
     }
 
     ctbrowser_test::ratchet_pawl("phaser", "test/corpus/phaser/phaser-ratchet.txt",
-                                 "tools/corpus/phaser-ratchet.py", m, rung_name);
+                                 "tools/corpus/ratchet.py phaser ratchet", m, rung_name);
     REPORT("phaser_ratchet");
 }

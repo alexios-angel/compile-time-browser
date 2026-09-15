@@ -75,4 +75,4 @@ boundary is real rather than a directory name.
 
 MLIR is behind `CTCOMPILE_ENABLE_MLIR`; the full devbox gate enables it.
 Engine-only builds do not require LLVM. The version is pinned in
-`cmake/LLVMVersion.cmake`; see `docs/LLVMUpgrade.md`.
+`ctcompile/CMakeLists.txt`; see `docs/LLVMUpgrade.md`.

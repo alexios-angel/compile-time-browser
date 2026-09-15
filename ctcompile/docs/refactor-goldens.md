@@ -43,19 +43,21 @@ without meaning to has altered the compiler.
 ## The procedure
 
 ```bash
-# before the change, against a built tree
-bash ctcompile/test/CTNative/Checks/snapshot.sh save /tmp/before build
+# before the change, against a built tree - the census JSONs are written by
+# ctest, not the build, so refresh them first rather than compare a stale one
+snap() { mkdir -p "$1" && cp build/ctcompile/test/*.mlir build/ctcompile/test/native-claims-*.json "$1"; }
+(cd build && ctest -R '^ctcompile_native_claims_') && snap /tmp/before
 
 #   ...make the change, then rebuild (on the devbox, as always)...
 
-bash ctcompile/test/CTNative/Checks/snapshot.sh compare /tmp/before build
+(cd build && ctest -R '^ctcompile_native_claims_') && snap /tmp/after
+diff -r /tmp/before /tmp/after     # silent, or the refactor was not pure
 ```
 
-`build` is optional; it defaults to `$CTCOMPILE_BUILD_DIR`, then to
-`<repo>/build`. Both subcommands re-run the four census checks themselves
-(about twenty seconds — `p5` and `phaser` are large bundles), because those
-JSONs are written by `ctest` rather than by the build, and comparing a stale
-one against itself is exactly the quiet nothing this page exists to rule out.
+The census re-run is about twenty seconds (`p5` and `phaser` are large
+bundles). Until 2026-09-15 a 271-line `snapshot.sh` wrapped that `cp` and
+`cmp`, with a selftest proving the pipeline byte-deterministic; a noisy diff
+over an unchanged tree reports the same thing.
 
 ### The rule
 
@@ -102,20 +104,7 @@ Three reasons, in order of how hard they are to work around.
    which is precisely what a golden checked in months ago is not.
 
 The cost is honest and stated: this is opt-in. Nothing runs it for you, and a
-refactor landed without it has no evidence behind "nothing changed". The one
-part that *is* in `ctest` is the instrument's own gate.
-
-## The instrument's own gate
-
-`ctcompile_native_snapshot_selftest` runs `ctcompile/test/CTNative/Checks/snapshot.sh selftest` and
-proves both teeth, because a comparison nobody has watched fail is not a
-comparison:
-
-1. **the pipeline is byte-deterministic** — re-running it over an unchanged
-   tree reproduces `numeric.pipeline.emitc.mlir` exactly. Without this,
-   `compare` would report differences that mean nothing, and the first person
-   to meet one would learn to ignore it;
-2. **the comparison bites** — one byte appended to a saved copy is caught.
+refactor landed without it has no evidence behind "nothing changed".
 
 ## Related
 

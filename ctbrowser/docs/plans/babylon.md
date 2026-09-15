@@ -93,7 +93,7 @@ ladder rather than the middle.
 ## The ladder
 
 `ctbrowser/test/corpus/babylon/babylon_ratchet.cpp` measures, `ctbrowser/test/corpus/babylon/babylon-ratchet.txt` records,
-`tools/corpus/babylon-ratchet.py` drives — the shape used four times now (p5, Phaser,
+`tools/corpus/ratchet.py babylon ratchet` drives — the shape used four times now (p5, Phaser,
 WebGL 2, modules).
 
 **It starts where the WebGL 2 ratchet stops.** That one asks "does Babylon draw
@@ -129,7 +129,7 @@ to `p5_api.cpp`'s shape: **how WIDE the working surface is, as opposed to how
 far one scene gets.** The ratchet stops at its first failure and tells you one
 thing; the probe runs everything and tells you the shape of the gap.
 
-Both are needed here for the reason `phaser-api.py` was written: the Phaser
+Both are needed here for the reason `ratchet.py phaser api` was written: the Phaser
 ratchet read 10/10 while `(5).hasOwnProperty` was undefined, because nothing on
 the ladder happened to ask a number for a property.
 

@@ -12,7 +12,7 @@ add_custom_target(ctbrowser-tests ALL)
 # CPPTRACE, for the tests only. Almost every expensive bug in this project has
 # been the Windows-only kind, and the llvm-mingw build has no <stacktrace> at
 # all - so half the platforms had no trace when a test died. cpptrace supports
-# mingw explicitly and gives both the same output. tools/mingw/build-cpptrace-mingw.sh
+# mingw explicitly and gives both the same output. tools/mingw/build-libs-mingw.sh
 # puts it in the cross sysroot.
 #
 # OPTIONAL, unlike mimalloc and simdutf: a missing trace makes a failure harder
@@ -26,7 +26,7 @@ find_library(CTBROWSER_CPPTRACE_DWARF NAMES dwarf HINTS ${CTBROWSER_BREW_HINTS}
 find_library(CTBROWSER_CPPTRACE_ZSTD NAMES zstd HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
 if(NOT CTBROWSER_CPPTRACE OR NOT CTBROWSER_CPPTRACE_INCLUDE)
   message(STATUS "cpptrace not found - tests will print no stack traces. "
-                 "brew install cpptrace, or tools/mingw/build-cpptrace-mingw.sh for the cross build.")
+                 "brew install cpptrace, or tools/mingw/build-libs-mingw.sh for the cross build.")
 endif()
 
 # `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
@@ -97,12 +97,6 @@ function(ctbrowser_test path)
   set_tests_properties(${name} PROPERTIES ENVIRONMENT "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts")
 endfunction()
 
-# The GPU benchmark is the one target that MUST be run as a Windows .exe to
-# mean anything on a WSL2 machine: Linux binaries there see no Vulkan adapter
-# but lavapipe, so a "GPU" number measured under WSL is two CPU implementations
-# racing. Build it with `cmake --preset windows` (or ./tools/remote-build.sh
-# windows) and run the .exe from Windows, where the driver reaches the GPU.
-#
 # Benchmarks are NOT ctest gates - the numbers move with the machine, and a
 # perf regression should be read, not silently failed. Build and run by hand.
 function(ctbrowser_bench path)

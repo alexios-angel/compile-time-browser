@@ -67,7 +67,7 @@ TLS - worse than one that refuses to configure. `find_package(CURL REQUIRED)`.
 
 That removed it from two more places, which is where a dependency actually
 lives: `ctbrowser/unittests/unit/net_basics.cpp` stood up its loopback server with Asio, and
-`examples/cli/ctdrive.cpp` ran its command socket on it. Both are plain BSD
+`tools/ctdrive/ctdrive.cpp` ran its command socket on it. Both are plain BSD
 sockets now - roughly fifty lines each, `#if defined(_WIN32)` for the Winsock
 spelling - because a harness that reintroduces the dependency the engine just
 dropped has not dropped it.
@@ -157,8 +157,9 @@ long as there was only one.
 
 ## THE IMAGE CODECS REACH IT THE SAME WAY (2026-08-01)
 
-`tools/mingw/build-image-libs-mingw.sh` is that script's sibling and builds **zlib,
-libpng and libjpeg-turbo** into the same sysroot. PNG and JPEG moved out of the
+`tools/mingw/build-libs-mingw.sh` is that script's sibling and builds **zlib,
+libpng and libjpeg-turbo** (and, since 2026-09-15, mimalloc, simdutf and
+cpptrace from the same table) into the same sysroot. PNG and JPEG moved out of the
 optional SDL3_image hook and into the SDL-free engine, so the cross build needs
 them; `docs/shell.md` has why, and the short version is that `tests/` is
 SDL-free by an invariant, so the whole suite saw a PNG as a zero-sized image and

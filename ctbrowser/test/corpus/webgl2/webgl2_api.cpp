@@ -69,6 +69,6 @@ int main() {
     }
 
     ctbrowser_test::api_pawl("WebGL 2 API", reported, "test/corpus/webgl2/webgl2-api.txt",
-                             "tools/corpus/webgl2-api.py");
+                             "tools/corpus/ratchet.py webgl2 api");
     REPORT("webgl2_api");
 }

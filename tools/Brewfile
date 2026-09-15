@@ -7,10 +7,6 @@
 # Brew ships current versions AND the same ones the development machine has,
 # which keeps the two in step; apt stays right for the box's own furniture
 # (build-essential, git, rsync, the toolchain).
-brew "glm"   # >=1.0: constexpr vector math. Predates the compile-time engine's
-             # retirement and nothing in the tree includes it today; kept
-             # because the devbox provisions from this file for several repos.
-
 # SVG. PIN THE VERSIONS TO THE WINDOWS SYSROOT'S - ctbrowser/test/golden/svg.ppm is one
 # image byte-compared on both platforms, and ../llvm-mingw/build-sdl3.sh put
 # plutosvg 0.0.8 / plutovg 1.3.3 in the mingw sysroot for SDL3_ttf's colour
@@ -38,7 +34,7 @@ brew "jpeg-turbo"     # JPEG, likewise. apt's 2.1.5 predates the tj3_* API;
 # lost: a tie on wall clock, and no usable Windows cross-build.
 #
 # PIN IT TO THE WINDOWS SYSROOT'S, exactly as plutosvg is pinned:
-# tools/mingw/build-mimalloc-mingw.sh builds v3.4.3 into the mingw sysroot, and two
+# tools/mingw/build-libs-mingw.sh builds v3.4.3 into the mingw sysroot, and two
 # platforms on two allocator versions is the kind of difference that makes a
 # byte-compared golden disagree for a reason nobody can see.
 brew "mimalloc"       # 3.4.3
@@ -47,7 +43,7 @@ brew "mimalloc"       # 3.4.3
 # 42x the hand-written loop; that loop stays as the fallback for input simdutf's
 # strict mode refuses, so the leniency contract is unchanged.
 # PIN IT TO THE WINDOWS SYSROOT'S, as with mimalloc and plutosvg:
-# tools/mingw/build-simdutf-mingw.sh builds the same version there.
+# tools/mingw/build-libs-mingw.sh builds the same version there.
 brew "simdutf"        # 9.0.0
 
 # REAL FONT METRICS, which is a PARITY dependency rather than a rendering one.
@@ -75,11 +71,11 @@ brew "sdl3_ttf"   # and sdl3 beneath it, as a dependency
 # LLVM does not silently start requiring 2 GB of it. This line makes the
 # dependency AVAILABLE on a provisioned box; it does not make it required.
 #
-# PINNED AT 22 by cmake/LLVMVersion.cmake and checked at configure time. ODS,
+# PINNED AT 23 by ctcompile/CMakeLists.txt and checked at configure time. ODS,
 # PDLL and pass-generation syntax move between releases, so an upgrade is its
 # own change rather than a surprise inside mlir-tblgen; see
 # ctcompile/docs/LLVMUpgrade.md.
-# 23.1.0 (cmake/LLVMVersion.cmake). PINNED ON THE BOX with `brew pin llvm`: on
+# 23.1.0 (ctcompile/CMakeLists.txt). PINNED ON THE BOX with `brew pin llvm`: on
 # 2026-09-02 a `brew bundle install` that ran for an unrelated formula floated
 # this from 22.1.8 to 23.1.0 under a build, and the pin is what stops the next
 # one. Bumping the major is its own change - ctcompile/docs/LLVMUpgrade.md.

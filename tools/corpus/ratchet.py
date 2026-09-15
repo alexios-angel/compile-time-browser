@@ -16,9 +16,6 @@ expectations cannot fail.
     tools/corpus/ratchet.py p5 api --coverage          what no probe mentions - the work queue
     tools/corpus/ratchet.py p5 api --only shape        run and report one module
 
-tools/corpus/<corpus>-ratchet.py and <corpus>-api.py are shims onto this, so
-the names the tests print in their ADVANCE lines keep working.
-
 --bisect and --survey are p5-only: that bundle failed at the LANGUAGE rungs and
 a 4.5 MB IIFE makes a parse error a needle in a haystack, so a rollup module
 (`function NAME(p5, fn) { ... }` at a known indent) is carved out and padded
@@ -511,7 +508,7 @@ def main(argv=None):
         if code != 0:
             print(
                 "The ratchet is not satisfied. If this is progress, "
-                f"run tools/corpus/{c.tag}.py --advance"
+                f"run tools/corpus/ratchet.py {args.corpus} ratchet --advance"
             )
         return code
 
@@ -532,7 +529,7 @@ def main(argv=None):
     if code != 0:
         print(
             "The recorded surface is not satisfied. If this is progress, "
-            f"run tools/corpus/{c.tag}.py --advance"
+            f"run tools/corpus/ratchet.py {args.corpus} api --advance"
         )
     return code
 

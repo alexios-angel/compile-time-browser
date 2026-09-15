@@ -74,6 +74,6 @@ int main() {
     }
 
     ctbrowser_test::api_pawl("Babylon API", reported, "test/corpus/babylon/babylon-api.txt",
-                             "tools/corpus/babylon-api.py");
+                             "tools/corpus/ratchet.py babylon api");
     REPORT("babylon_api");
 }
