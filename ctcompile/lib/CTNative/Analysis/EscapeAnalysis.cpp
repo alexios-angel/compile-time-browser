@@ -1668,13 +1668,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     result.integerNumber = boundedNumberSum(left, right);
                 }
-                if (binary.getKind() == ctjs::BinaryKind::UShr) {
+                if (binary.getKind() == ctjs::BinaryKind::UShr ||
+                    binary.getKind() == ctjs::BinaryKind::Shr) {
                     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
                     // Bounded Number operands already have exact ToUint32 values;
-                    // mask the count before shifting. The original result remains
-                    // the origin, including UShr's conversion of -0 to +0.
-                    if (a && b) {
+                    // Shr additionally needs a nonnegative ToInt32 input. Mask
+                    // the count; keep the original result as its own origin,
+                    // including either shift's conversion of -0 to +0.
+                    if (a && b &&
+                        (binary.getKind() == ctjs::BinaryKind::UShr || *a < 2147483648ULL)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = static_cast<std::uint32_t>(*a) >> (*b & 31U);
                     }

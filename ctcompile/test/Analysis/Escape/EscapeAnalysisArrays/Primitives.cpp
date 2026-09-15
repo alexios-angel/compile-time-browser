@@ -110,10 +110,12 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .body = values + produce + branch + done +
                                   "^no:\n  ctjs.store_global \"held\", %x\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
-            {.contents = {.what = "bounded static Add and UShr supply exact array indices",
+            {.contents = {.what = "bounded static Add and right shifts supply exact array indices",
                           .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" +
                                   done,
-                          .failure = kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::UShr
+                          .failure = kind == ctjs::BinaryKind::Add ||
+                                             kind == ctjs::BinaryKind::UShr ||
+                                             kind == ctjs::BinaryKind::Shr
                                          ? ArrayContentsFailure::None
                                          : ArrayContentsFailure::UnknownIndex,
                           .arrays = "a:[x]",
