@@ -56,9 +56,23 @@ if(CTCOMPILE_ENABLE_MLIR)
       "${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py"
       MAIN_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py")
 
+    # EVERYTHING A RUN LINE NAMES, so `ninja check-ctcompile` builds what lit
+    # runs: the tools, the test executables the former `cmake -P` checks drove
+    # (lit.cfg.py lists them as tool substitutions), ctbrowser's launcher and
+    # browser for the packaging round trip, and every native pipeline module
+    # (Native.cmake's ctcompile_add_native_pipeline records its target).
+    get_property(_native_pipelines GLOBAL PROPERTY CTCOMPILE_NATIVE_PIPELINES)
     add_lit_testsuite(check-ctcompile "Running the ctcompile regression tests"
       "${CMAKE_CURRENT_BINARY_DIR}"
       DEPENDS ctjs-opt ctjs-translate ctcompile-tool ctcompile-test-native-reference
+              ctcompile-test-type-oracle ctcompile-test-type-claims
+              ctcompile-test-escape-claims ctcompile-test-escape-oracle-aot
+              ctcompile-test-escape-oracle-aot-return
+              ctcompile-test-launcher-vm ctcompile-test-launcher-aot
+              ctcompile-test-launcher-page-vm ctcompile-test-launcher-page-aot
+              ctcompile-test-native-vm-linked ctcompile-test-native-values-vm-linked
+              ctcompile-test-app_bundle ctbrowser-tool-ctrun ctbrowser-tool-ctbrowse
+              ${_native_pipelines}
               FileCheck count not)
 
     # AND RUN BY ctest TOO, so that a green `ctest` means the IR tests ran.
@@ -74,7 +88,9 @@ if(CTCOMPILE_ENABLE_MLIR)
     if(ctcompile_lit_processors LESS 1)
       set(ctcompile_lit_processors 1)
     endif()
-    # Native ownership cases build both C++ layouts under GCC, Clang and sanitizers.
+    # Native ownership cases build both C++ layouts under GCC, Clang and
+    # sanitizers, and since 2026-09-15 every native fixture's compilation-unit,
+    # clean-compile and printing gates run here too (CTNative/Fixtures/*/*.test).
     set_tests_properties(ctcompile_lit PROPERTIES
       TIMEOUT 2400 PROCESSORS ${ctcompile_lit_processors})
   endif()

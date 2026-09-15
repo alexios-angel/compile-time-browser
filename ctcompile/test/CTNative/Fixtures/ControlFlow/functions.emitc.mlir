@@ -75,6 +75,24 @@
 // CHECK: std::printf("%s=%.17g\n", "clamped", {{v[0-9]+}});
 // CHECK: std::printf("%s=%.17g\n", "third", {{v[0-9]+}});
 // CHECK: return {{v[0-9]+}};
+//
+// AND THE GATE ITSELF (Phase 62½-D, CTNative/Checks/compilation-unit.py): this
+// module compiled standalone, shown by nm to reach no interpreter, run, and
+// compared global by global with the interpreter; then its two negative
+// proofs - one global off by one must FAIL naming the global, and the same
+// C++ plus one object that reaches the interpreter (Runtime/Reference/
+// VmLinked.cpp, linked against the engine) must FAIL the symbol check. And
+// Phase 63 Step 7: the emitted file compiles clean on both toolchains, and
+// with one unused variable inserted both refuse it (compile-clean.py).
+//
+// RUN: %compilation_unit --module %s --js %S/functions.js --work %t --name fixture
+// RUN: not %compilation_unit --module %s --js %S/functions.js --work %t --name fixture_off_by_one --mutate fib20 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+// OFF-BY-ONE: global 'fib20' differs
+// RUN: not %compilation_unit --module %s --js %S/functions.js --work %t --name fixture_vm_linked --prebuilt ctcompile-test-native-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
+// VM-LINKED: reaches the interpreter
+// RUN: %compile_clean --module %s --work %t --name fixture
+// RUN: %compile_clean --module %s --work %t --name fixture_unused_variable --mutate | FileCheck %s --check-prefix=MUTANT
+// MUTANT: refused the generated file
 
 module {
   emitc.include <"cstdint">

@@ -1,0 +1,19 @@
+# THE NATIVE GATE OVER partial-evaluation.js. The modules are the build's: Native.cmake's
+# ctcompile_add_native_pipeline lowers this program through the closed world,
+# the lift and the lowering (refusing to write a module while any function
+# carries `ctnative.not_native`), then applies the printing policy and its
+# mutation. Each is gated here: compiled standalone with no ctbrowser library,
+# shown by nm to reach no interpreter, run, and compared global by global with
+# the interpreter's own answer (compilation-unit.py); compiled clean on both
+# toolchains with a provenance comment over every definition (compile-clean.py);
+# and the printed pins paired, spelling-only, and shown to bite (print-deduced.py).
+# A trailing global on a RUN line under `not` is the off-by-one negative proof:
+# the mutation must fail naming that global, so the gate's teeth stay in the suite.
+
+# RUN: %compilation_unit --module %{obj}/partial_evaluation.pipeline.emitc.mlir --js %S/partial-evaluation.js --work %t --name partial_evaluation
+# RUN: not %compilation_unit --module %{obj}/partial_evaluation.pipeline.emitc.mlir --js %S/partial-evaluation.js --work %t --name partial_evaluation_off_by_one --mutate lifetime42 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'lifetime42' differs
+# RUN: %compilation_unit --module %{obj}/partial_evaluation.pipeline.deduced.emitc.mlir --js %S/partial-evaluation.js --work %t --name partial_evaluation_deduced
+# RUN: %compile_clean --module %{obj}/partial_evaluation.pipeline.emitc.mlir --work %t --name partial_evaluation
+# RUN: %compile_clean --module %{obj}/partial_evaluation.pipeline.deduced.emitc.mlir --work %t --name partial_evaluation_deduced
+# RUN: %print_deduced --plain %{obj}/partial_evaluation.pipeline.emitc.mlir --deduced %{obj}/partial_evaluation.pipeline.deduced.emitc.mlir --mutated %{obj}/partial_evaluation.pipeline.mutated.emitc.mlir --work %t --name partial_evaluation

@@ -1,0 +1,54 @@
+# RUN A REAL PAGE TWICE - ONCE COMPILED, ONCE INTERPRETED - AND COMPARE WHAT
+# IT DREW. application.test does the same for a bare script::context; this
+# drives the whole engine: examples/pages/invaders.html, its canvas, its sprite
+# sheet and its requestAnimationFrame loop, with the compiled bodies installed
+# through browser::set_script_prepared_hook (Runtime.cmake builds both arms).
+#
+# THE PIXELS ARE THE CONTROL AND THE COUNTERS ARE THE ASSERTION: both arms run
+# the same game, so a page that installed nothing draws exactly the same
+# picture. NO REAL FONTS: fillText goes through the text stack and two FreeType
+# versions do not rasterise identically, so the bitmap font makes the picture
+# the same on any machine and needs no font files.
+#
+# RUN: env CTBROWSER_FONTS=font8x8 CTBROWSER_NETWORK=0 ctcompile-test-launcher-page-vm %t.vm.ppm 2> %t.vm.err
+# RUN: env CTBROWSER_FONTS=font8x8 CTBROWSER_NETWORK=0 ctcompile-test-launcher-page-aot %t.aot.ppm 2> %t.aot.err
+# RUN: cmp %t.vm.ppm %t.aot.ppm
+#
+# A BLANK CANVAS WOULD ALSO MATCH: the page fills its background every frame,
+# so two runs that drew nothing are two uniform colours that compare equal.
+# The size says this is a 320x240 PPM rather than a truncated write; the
+# colour count says something was drawn on it - three is the background, the
+# sprites and the score text.
+# RUN: test $(stat -c %s %t.aot.ppm) -ge 230400
+# RUN: FileCheck %s --check-prefix=AOT < %t.aot.err
+# RUN: FileCheck %s --check-prefix=VM < %t.vm.err
+# AOT-DAG: colours = {{([3-9]|[1-9][0-9]+)$}}
+#
+# THE PAGE HAS FOUR FUNCTIONS AND ALL FOUR COMPILE: the top level, `frame`, and
+# the two anonymous keydown/keyup listeners. install_strict refuses a partial
+# install, so any other number is a page whose function count moved.
+# AOT-DAG: installed 4 across {{[0-9]+}} script
+#
+# THE INTERPRETER MUST NEVER HAVE RUN. Unlike the bare-context arm this page is
+# driven ENTIRELY from C++ - the top level once from load_html, then `frame`
+# once per requestAnimationFrame - so C++ -> AOT is many (20 ticks plus the top
+# level is 21 at least; not a pin, because a rAF callback the engine also
+# invoked for another reason would be an engine change, not a fall back) and
+# AOT -> AOT is zero: invaders' four functions never call one another, only
+# natives - and a compiled body reaching ctx.drawImage, ctx.fillRect,
+# Math.floor or requestAnimationFrame is an AOT -> C++ crossing, the mixed
+# stack the plan's Definition of Done asks for by name. What must be zero is
+# every path through the interpreter.
+# AOT-DAG: transition "C++ -> VM" = 0{{$}}
+# AOT-DAG: transition "VM -> AOT" = 0{{$}}
+# AOT-DAG: transition "AOT -> VM" = 0{{$}}
+# AOT-DAG: transition "C++ -> AOT" = {{(2[1-9]|[3-9][0-9]|[1-9][0-9][0-9]+)$}}
+# AOT-DAG: transition "AOT -> C++" = {{[1-9][0-9]*}}
+#
+# THE BLINDED ARM, which must have run the frames too, or the comparison above
+# is between two pages that did nothing.
+# VM-DAG: transition "C++ -> AOT" = 0{{$}}
+# VM-DAG: transition "VM -> AOT" = 0{{$}}
+# VM-DAG: transition "AOT -> AOT" = 0{{$}}
+# VM-DAG: transition "AOT -> VM" = 0{{$}}
+# VM-DAG: transition "C++ -> VM" = {{(2[1-9]|[3-9][0-9]|[1-9][0-9][0-9]+)$}}

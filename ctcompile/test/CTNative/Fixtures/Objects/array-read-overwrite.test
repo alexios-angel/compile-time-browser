@@ -1,0 +1,28 @@
+# THE NATIVE GATE OVER array-read-overwrite.js. The modules are the build's: Native.cmake's
+# ctcompile_add_native_pipeline lowers this program through the closed world,
+# the lift and the lowering (refusing to write a module while any function
+# carries `ctnative.not_native`), then applies the printing policy and its
+# mutation. Each is gated here: compiled standalone with no ctbrowser library,
+# shown by nm to reach no interpreter, run, and compared global by global with
+# the interpreter's own answer (compilation-unit.py); compiled clean on both
+# toolchains with a provenance comment over every definition (compile-clean.py);
+# and the printed pins paired, spelling-only, and shown to bite (print-deduced.py).
+# A trailing global on a RUN line under `not` is the off-by-one negative proof:
+# the mutation must fail naming that global, so the gate's teeth stay in the suite.
+
+# array_read_overwrite
+# RUN: %compilation_unit --module %{obj}/array_read_overwrite.pipeline.emitc.mlir --js %S/array-read-overwrite.js --work %t --name array_read_overwrite
+# RUN: not %compilation_unit --module %{obj}/array_read_overwrite.pipeline.emitc.mlir --js %S/array-read-overwrite.js --work %t --name array_read_overwrite_off_by_one --mutate value 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'value' differs
+# RUN: %compilation_unit --module %{obj}/array_read_overwrite.pipeline.deduced.emitc.mlir --js %S/array-read-overwrite.js --work %t --name array_read_overwrite_deduced
+# RUN: %compile_clean --module %{obj}/array_read_overwrite.pipeline.emitc.mlir --work %t --name array_read_overwrite
+# RUN: %compile_clean --module %{obj}/array_read_overwrite.pipeline.deduced.emitc.mlir --work %t --name array_read_overwrite_deduced
+# RUN: %print_deduced --plain %{obj}/array_read_overwrite.pipeline.emitc.mlir --deduced %{obj}/array_read_overwrite.pipeline.deduced.emitc.mlir --mutated %{obj}/array_read_overwrite.pipeline.mutated.emitc.mlir --work %t --name array_read_overwrite
+
+# array_read_overwrite_unoptimized
+# RUN: %compilation_unit --module %{obj}/array_read_overwrite_unoptimized.pipeline.emitc.mlir --js %S/array-read-overwrite.js --work %t --name array_read_overwrite_unoptimized
+# RUN: not %compilation_unit --module %{obj}/array_read_overwrite_unoptimized.pipeline.emitc.mlir --js %S/array-read-overwrite.js --work %t --name array_read_overwrite_unoptimized_off_by_one --mutate value 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: %compilation_unit --module %{obj}/array_read_overwrite_unoptimized.pipeline.deduced.emitc.mlir --js %S/array-read-overwrite.js --work %t --name array_read_overwrite_unoptimized_deduced
+# RUN: %compile_clean --module %{obj}/array_read_overwrite_unoptimized.pipeline.emitc.mlir --work %t --name array_read_overwrite_unoptimized
+# RUN: %compile_clean --module %{obj}/array_read_overwrite_unoptimized.pipeline.deduced.emitc.mlir --work %t --name array_read_overwrite_unoptimized_deduced
+# RUN: %print_deduced --plain %{obj}/array_read_overwrite_unoptimized.pipeline.emitc.mlir --deduced %{obj}/array_read_overwrite_unoptimized.pipeline.deduced.emitc.mlir --mutated %{obj}/array_read_overwrite_unoptimized.pipeline.mutated.emitc.mlir --work %t --name array_read_overwrite_unoptimized

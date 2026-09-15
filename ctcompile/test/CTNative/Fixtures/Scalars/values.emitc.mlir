@@ -84,6 +84,37 @@
 // CHECK: std::printf("%s=%.17g\n", "third", {{v[0-9]+}});
 // CHECK: ctnative::print_boolean("yes", {{v[0-9]+}});
 // CHECK: return {{v[0-9]+}};
+//
+// THE DIFFERENTIAL GATE COMPARES VALUES THAT ARE NOT NUMBERS: the gate over
+// all five kinds at once, then ONE NEGATIVE PROOF PER KIND, because a mutation
+// that suits a Number suits nothing else - `<g> = <g> + 1` does not compile on
+// a bool, has no meaning on a std::string, and has nothing to act on for a
+// global whose proven type is `undefined` or `null`. Each must FAIL NAMING ITS
+// GLOBAL (compilation-unit.py's --mutate-as). `third` AND NOT `answer` FOR THE
+// NUMBER: the number mutation is an insertion in front of the first print, so
+// it is invisible to a global the printing has already read - which the FIRST
+// global in sorted order always has been; the driver refuses that case by
+// name and the VACUOUS proof is what shows it does, so the next author does
+// not spend the afternoon the last one did. Then the symbol check on a binary
+// built from THIS module plus one object that reaches the interpreter, and the
+// two-toolchain clean compile of the value-printing helpers.
+//
+// RUN: %compilation_unit --module %s --js %S/values.js --work %t --name values
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_number --mutate third --mutate-as number 2>&1 | FileCheck %s --check-prefix=NUMBER
+// NUMBER: global 'third' differs
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_boolean --mutate no --mutate-as boolean 2>&1 | FileCheck %s --check-prefix=BOOLEAN
+// BOOLEAN: global 'no' differs
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_string --mutate greeting --mutate-as string 2>&1 | FileCheck %s --check-prefix=STRING
+// STRING: global 'greeting' differs
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_undefined --mutate missing --mutate-as undefined 2>&1 | FileCheck %s --check-prefix=UNDEFINED
+// UNDEFINED: global 'missing' differs
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_null --mutate nothing --mutate-as null 2>&1 | FileCheck %s --check-prefix=NULL
+// NULL: global 'nothing' differs
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_vacuous_mutation --mutate answer --mutate-as number 2>&1 | FileCheck %s --check-prefix=VACUOUS
+// VACUOUS: VACUOUS
+// RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_vm_linked --prebuilt ctcompile-test-native-values-vm-linked 2>&1 | FileCheck %s --check-prefix=VM-LINKED
+// VM-LINKED: reaches the interpreter
+// RUN: %compile_clean --module %s --work %t --name values
 
 module {
   emitc.include <"cstdint">

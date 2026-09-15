@@ -17,9 +17,9 @@
 #
 # THE COUNTERS ARE THE ASSERTION, not the transcripts. Both arms run the same
 # program, so an application that silently interpreted everything prints
-# identical bytes and exits 0. check-application.cmake asserts instead that the
+# identical bytes and exits 0. application.test asserts instead that the
 # compiled arm never crossed C++ -> VM, VM -> AOT or AOT -> VM: the interpreter
-# did not run at all.
+# did not run at all (Runtime/Launcher/application.test).
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_app_js "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/application.js")
 
@@ -100,12 +100,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   target_link_libraries(ctcompile-test-launcher-aot PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-launcher-aot)
 
-  add_test(NAME ctcompile_launcher
-           COMMAND ${CMAKE_COMMAND}
-                   -DVM=$<TARGET_FILE:ctcompile-test-launcher-vm>
-                   -DAOT=$<TARGET_FILE:ctcompile-test-launcher-aot>
-                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/check-application.cmake)
+  # Both arms run and compared, counters asserted: Runtime/Launcher/application.test.
 endif()
 
 # --- PHASE 18, WIDENED: a real page from ctbrowser/examples ------------------
@@ -185,12 +180,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   target_link_libraries(ctcompile-test-launcher-page-aot PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-launcher-page-aot)
 
-  add_test(NAME ctcompile_launcher_page
-           COMMAND ${CMAKE_COMMAND}
-                   -DVM=$<TARGET_FILE:ctcompile-test-launcher-page-vm>
-                   -DAOT=$<TARGET_FILE:ctcompile-test-launcher-page-aot>
-                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/check-page.cmake)
+  # Both arms run, the canvases compared, counters asserted: Runtime/Launcher/page.test.
 endif()
 
 # ---------------------------------------------------------------------------
