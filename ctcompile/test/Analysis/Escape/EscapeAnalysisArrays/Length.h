@@ -635,6 +635,59 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,length]",
         .exit = "result -> {a,result}"};
     run(heldOffsetShrink);
+    const contents_row unaryShrink{
+        .what = "unary Plus preserves an original bounded Number shrink target",
+        .body = values + read +
+                "  %wanted = ctjs.unary plus %zero\n"
+                "  ctjs.set_property %a[%key], %wanted\n"
+                "  %result = ctjs.create_array [%a, %length] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,length]",
+        .exit = "result -> {a,result}"};
+    run(unaryShrink);
+    run({.what = "unary Plus keeps a loaded computed Number after replacement and transport",
+         .body = values + one + read + subtract +
+                 "  %targets = ctjs.create_array [%index] {storage_test_id = \"targets\"}\n"
+                 "  %saved = ctjs.get_property %targets[%zero]\n"
+                 "  ctjs.set_property %targets[%zero], %x\n"
+                 "  cf.br ^next(%saved : !ctjs.value)\n^next(%before: !ctjs.value):\n"
+                 "  %wanted = ctjs.unary plus %before\n"
+                 "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+         .arrays = "a:[]; targets:[x]",
+         .reads = "targets[0]=index",
+         .exit = "a -> {a}"});
+    run({.what = "unary Plus keeps the saved length before an append for an exact element read",
+         .body = values + read +
+                 "  %index = ctjs.unary plus %length\n"
+                 "  ctjs.append %zero to %a\n"
+                 "  %saved = ctjs.get_property %a[%index]\n  ctjs.return %saved\n",
+         .arrays = "a:[x,zero]",
+         .reads = "a[1]=zero",
+         .exit = "zero -> {}"});
+    run({.what = "unary Plus preserves each structural alternative's exact target",
+         .body = values + one + read + subtract +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%index : !ctjs.value), ^join(%length : !ctjs.value)\n"
+                 "^join(%before: !ctjs.value):\n"
+                 "  %wanted = ctjs.unary plus %before\n"
+                 "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+         .arrays = "a:[] | a:[x]",
+         .exit = "a -> {a}; a -> {a,x}"},
+        "");
+    run({.what = "unary Plus cannot borrow a bounded Number from another structural arm",
+         .body = values + read +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(%p : !ctjs.value)\n"
+                 "^join(%before: !ctjs.value):\n"
+                 "  %wanted = ctjs.unary plus %before\n"
+                 "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+         .failure = ArrayContentsFailure::UnsupportedOperation});
+    run({.what = "unary Plus preserves negative zero as an empty dense length",
+         .body = values + "  %negative = ctjs.constant #ctjs.number<9223372036854775808>\n"
+                          "  %wanted = ctjs.unary plus %negative\n"
+                          "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+         .arrays = "a:[]",
+         .exit = "a -> {a}"});
     run({.what = "a canonical String offset produces an exact Number shrink target",
          .body = values + "  %one = ctjs.constant #ctjs.string<\"1\">\n" + read + subtract +
                  "  ctjs.set_property %a[%key], %index\n  ctjs.return %a\n",
@@ -718,11 +771,15 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.number<9221120237041090560>",  // NaN
                                       "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
                                       "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
-        run({.what = "a computed shrink needs exact Number operands without coercion",
-             .body = values + "  %input = ctjs.constant " + literal +
-                     "\n  %wanted = ctjs.binary add %input, %zero\n"
-                     "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
-             .failure = ArrayContentsFailure::UnknownIndex});
+        for (const std::string producer :
+             {"ctjs.binary add %input, %zero", "ctjs.unary plus %input"}) {
+            run({.what = "a computed shrink needs exact Number operands without coercion",
+                 .body = values + "  %input = ctjs.constant " + literal +
+                         "\n  %wanted = " + producer +
+                         "\n"
+                         "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+                 .failure = ArrayContentsFailure::UnknownIndex});
+        }
     }
     run({.what = "a same-length write preserves every original child",
          .body = values + one + read + "  ctjs.set_property %a[%key], %one\n  ctjs.return %a\n",
@@ -1047,7 +1104,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
              "the live subtracted-index fixture did not parse");
     }
-    for (const contents_row & source : {originalShrink, computedShrink, heldOffsetShrink}) {
+    for (const contents_row & source :
+         {originalShrink, computedShrink, heldOffsetShrink, unaryShrink}) {
         auto module = parse(source);
         if (!module) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
@@ -1061,7 +1119,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         const mlir::Value key = store.getKey();
         const mlir::Value value = store.getValue();
         auto binary = value.getDefiningOp<ctjs::BinaryOp>();
-        auto literal = (binary ? binary.getRhs() : value).getDefiningOp<ctjs::ConstantOp>();
+        auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        auto literal = (binary  ? binary.getRhs()
+                        : unary ? unary.getOperand()
+                                : value)
+                           .getDefiningOp<ctjs::ConstantOp>();
         if (binary) {
             if (auto offset = binary.getRhs().getDefiningOp<ctjs::BinaryOp>()) {
                 literal = offset.getLhs().getDefiningOp<ctjs::ConstantOp>();
@@ -1073,6 +1135,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
         store->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0));
         if (binary) { binary->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0)); }
+        if (unary) { unary->setAttr("ctnative.array_length", builder.getI64IntegerAttr(0)); }
         mlir::DataFlowSolver stale;
         stale.load<mlir::dataflow::DeadCodeAnalysis>();
         stale.load<mlir::dataflow::SparseConstantPropagation>();
@@ -1118,6 +1181,16 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Mul));
             inspect(ArrayContentsFailure::UnknownIndex);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
+            inspect(ArrayContentsFailure::None);
+        }
+        if (unary) {
+            const mlir::Value operand = unary.getOperand();
+            unary->setOperand(0, parameter);
+            inspect(ArrayContentsFailure::UnsupportedOperation);
+            unary->setOperand(0, operand);
+            unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Not));
+            inspect(ArrayContentsFailure::UnknownIndex);
+            unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Plus));
             inspect(ArrayContentsFailure::None);
         }
         store->setOperand(0, parameter);

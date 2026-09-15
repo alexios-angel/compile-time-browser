@@ -1399,6 +1399,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // Keep an independent primitive origin without a value, key,
                 // operand alias or structural-edge liveness fact.
                 ContentsKind kind = ContentsKind::NonBigInt;
+                std::optional<std::size_t> integerNumber;
                 switch (unary.getKind()) {
                 case ctjs::UnaryKind::Not:
                 case ctjs::UnaryKind::Void: break;
@@ -1440,11 +1441,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // rejects publication, calls and handlers, so that early
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
+                    if (unary.getKind() == ctjs::UnaryKind::Plus) {
+                        // Plus preserves an exact Number, including either zero
+                        // sign. Primitive coercions supply no bounded fact.
+                        integerNumber = input.integerNumber ? input.integerNumber
+                                                            : boundedNumber(input.origin());
+                        if (integerNumber && !spend()) {
+                            return refuse(ArrayContentsFailure::WorkLimit, &op);
+                        }
+                    }
                     break;
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.values[unary.getResult()] = {unary.getResult(), kind};
+                state.values[unary.getResult()] = {unary.getResult(), kind, integerNumber};
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
