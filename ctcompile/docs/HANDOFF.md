@@ -6,6 +6,53 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Single-invocation DOM entry factories and bounded products, 2026-09-15 UTC
+
+Continued the completed **dd4479dc / 4ef7649c** initialization thread from this
+handoff and the **02:48 AGENT-SYNC** journal. Both histories and unmerged branches
+were checked; the shared tree was clean and the September 7 WIP was already landed.
+No interrupted source or gate remained. Three agents supplied source tests,
+an independent escape change and factory/intrinsic proof review.
+
+**d44c483e** records bounded exact Number products in the existing charged array
+contents proof. Loaded/forwarded values and signed zero keep their original values;
+overflow, coercion and stale evidence remain checked. Focused escape gates pass:
+**280 dense-length rows / 132 live states / 10,408 retention cutoffs**, **zero escape
+violations / precision 40/172**.
+
+**2da43c9a** prepares one exact uncaptured local factory called once during wrapper
+initialization and returning the exported DOM entry. The original body/creator census,
+callee, arguments, receiver, new-target, publication and all value uses are checked
+before cloning at the original call. Local cells move with the returned closure;
+the existing immutable-capture expansion and complete DOM proof gate emission.
+Nested/captured factories, returned method tables, observed identities and effects
+remain refused. No callable storage or Script dependency reaches generated C++.
+
+Final focused **4/4 CTests in 57.59s PASS**: **309 Node/VM observations / eight
+GCC-Clang binaries / 448 source refusals / 44 provenance-depth / 24 method /
+161 capture-initialization-budget controls**, plus four existing helper controls.
+The first run exposed imported CallDirectOp; the final gate checks its exact symbol
+against the source closure and rejects forged creator/callee/new-target evidence.
+Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned formatting
+matches the unchanged **nine-file / 26-diagnostic** baseline.
+
+The complete default build and **602-case CTest** gate are running against **1,443
+frozen inputs**. Do not treat them as complete yet. Recovery scripts, source hashes
+and focused logs are in `/tmp/ctcompile-dom-factory/`; `full.sh` and `full.log` identify
+the active full run. Compiler/test changes are committed and frozen.
+
+**Exact next boundary:** original Bootstrap's complete factory/global/H/F/M graph is
+still unproved. The new factory slice returns one entry, not Bootstrap's method table
+or complete UMD publication. Original `F("config")` at vendor line **243** needs checked
+standard String/RegExp replacement, execution and property lookup before helper
+expansion. The manifest parser currently permits only Map, Array and the class-defined
+intrinsic; DOM admission rejects all `initialIntrinsics`, and partial evaluation
+rejects String property reads outside its evaluated heap. `M` at line **230** needs
+live optional-value branches, Number/toString, URI decoding, JSON and exceptions.
+Dataset iteration, inherited receivers and retained config/callback ownership follow.
+Full native Bootstrap and the application driver remain unfinished. No browser/runtime
+files or WPT/test262 expectations changed; no bundle admission gain is claimed.
+
 ## Exported DOM capture initialization and original subtraction, 2026-09-15 UTC
 
 Resumed the **02:05 codex-dom-host-captures / codex-escape-sub-number** thread

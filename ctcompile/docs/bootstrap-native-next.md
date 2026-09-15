@@ -163,8 +163,13 @@ entry: **285 Node/VM observations / eight GCC-Clang binaries / 392 source refusa
 44 provenance-depth / 24 method / 113 capture-initialization-budget controls**.
 A private invocation follows all initialization, including writes after publication;
 existing expansion eliminates every setup cell/holder/callable before DOM reproof.
-Top-level global bindings and factory calls remain refused. Original Bootstrap still
-needs its factory/global initialization and the complete H/F/M source graph.
+**2da43c9a** additionally prepares one uniquely called uncaptured local factory returning
+the exported entry: **309 Node/VM observations / eight GCC-Clang binaries / 448 source
+refusals / 44 depth / 24 method / 161 capture-initialization controls**. Exact source
+creator/callee/argument/publication proof precedes cloning at the original call, then
+complete capture and DOM reproof gate emission. Top-level global bindings, nested or
+captured factories and returned method tables remain refused. Original Bootstrap still
+needs its complete factory/global initialization and H/F/M source graph.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities.

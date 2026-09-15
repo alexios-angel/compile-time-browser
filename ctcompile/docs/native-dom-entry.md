@@ -87,8 +87,13 @@ Its wrapper must publish exactly that source closure and otherwise contain only
 checked constants, cells and local callable/holder initialization. A private call
 runs after all initialization, including assignments after publication, and the
 existing expansion must eliminate all setup storage before complete DOM reproof.
-Original wrapper arguments cannot supply host element values. Top-level globals,
-factory calls and observable outer initialization remain refused.
+Original wrapper arguments cannot supply host element values. **2da43c9a** additionally
+accepts one uniquely called, uncaptured local factory returning exactly that exported
+entry. Arguments and private initialization stay in source order; the factory's
+implicit arguments, creator identity, complete uses and direct-call symbol/new-target
+are checked before cloning. The existing capture proof then eliminates every private
+cell/holder/callable. Factory globals, nested/captured factories, returned method tables,
+observed identities and observable initialization remain refused.
 
 Only a checked inert declaration or the proved initialization above may be omitted.
 Skipped source, additional initialization effects, calls to the entry from JavaScript,
