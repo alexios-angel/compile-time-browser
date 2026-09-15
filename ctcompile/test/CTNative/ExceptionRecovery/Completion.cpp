@@ -159,6 +159,64 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
     mlir::OwningOpRef<ctjs::FuncOp> detached(llvm::cast<ctjs::FuncOp>(function->clone()));
     const auto snapshot = printed(*detached);
     const auto checks = countChecks(function);
+    using ctcompile::ctnative::lowering_detail::inspectSingleInvocationRegion;
+    auto inspected = inspectSingleInvocationRegion(function);
+    check(inspected.proved() == (expectedCalls == 1) && inspected.steps != 0 &&
+              printed(function) == original,
+          "source inspection selects exactly one invocation without rewriting any source");
+    if (inspected.proved()) {
+        check(inspected.push && inspected.landing && inspected.frame && inspected.check &&
+                  inspected.call->getParentOfType<ctjs::FuncOp>() == function &&
+                  inspected.check == inspected.call->getBlock()->getTerminator() &&
+                  inspected.push.getHandler() == inspected.landing->getBlock() &&
+                  llvm::is_contained(inspected.prefix, &function.getBody().front()) &&
+                  llvm::is_contained(inspected.prefix, inspected.push->getBlock()) &&
+                  llvm::is_contained(inspected.normal, inspected.call->getBlock()) &&
+                  llvm::is_contained(inspected.caught, inspected.landing->getBlock()) &&
+                  llvm::equal(inspected.check.getHandlerOperands(),
+                              inspected.call->getBlock()->getArguments()) &&
+                  inspected.call->getResult(0).hasOneUse(),
+              "inspection publishes original handler and unpublished call snapshot handles");
+    } else {
+        check(!inspected.push && !inspected.landing && !inspected.frame && !inspected.check &&
+                  inspected.prefix.empty() && inspected.normal.empty() &&
+                  inspected.caught.empty() &&
+                  inspected.refusal.find("one checked call") != std::string::npos,
+              "multiple invocations publish no partial source evidence");
+    }
+    if (name == "ordinary assignment" && inspected.proved()) {
+        for (unsigned budget = 0; budget < inspected.steps; ++budget) {
+            const auto limited = inspectSingleInvocationRegion(function, budget);
+            if (!check(!limited.proved() && !limited.push && !limited.landing && !limited.frame &&
+                           !limited.check && limited.steps <= budget && limited.prefix.empty() &&
+                           limited.normal.empty() && limited.caught.empty() &&
+                           limited.refusal.find("budget exhausted") != std::string::npos &&
+                           printed(function) == original && countChecks(function) == checks,
+                       "every incomplete inspection budget preserves all source and evidence")) {
+                break;
+            }
+        }
+        const auto exact = inspectSingleInvocationRegion(function, inspected.steps);
+        check(exact.proved() && exact.call == inspected.call && exact.check == inspected.check &&
+                  exact.steps == inspected.steps && printed(function) == original,
+              "the exact inspection budget rederives the same original call");
+        const unsigned width = static_cast<unsigned>(inspected.check.getContOperands().size());
+        const auto saved = inspected.check.getHandlerOperands().front();
+        inspected.check->setOperand(width, inspected.call->getResult(0));
+        const auto changed = printed(function);
+        const auto invalid = inspectSingleInvocationRegion(function);
+        check(!invalid.proved() && !invalid.push && !invalid.landing && !invalid.frame &&
+                  !invalid.check && invalid.prefix.empty() && invalid.normal.empty() &&
+                  invalid.caught.empty() &&
+                  invalid.refusal.find("invocation") != std::string::npos &&
+                  printed(function) == changed,
+              "fresh inspection rejects a mutated failure snapshot without editing it");
+        inspected.check->setOperand(width, saved);
+        check(printed(function) == original,
+              "inspection mutation control restores original source");
+        llvm::outs() << "single invocation inspection: " << inspected.steps
+                     << " steps, every incomplete budget preserves " << checks << " checks\n";
+    }
     // Successful recovery keeps these original values alive in its rollback
     // snapshot. Calls also carry the importer's literal undefined receiver.
     llvm::SmallVector<llvm::SmallVector<mlir::Value>> callInputs;

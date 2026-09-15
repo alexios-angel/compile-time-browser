@@ -164,4 +164,32 @@ bool recovery::inspectInvocation(ctjs::CheckOp check) {
     return true;
 }
 
+ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function, unsigned maxSteps) {
+    recovery attempt{function, maxSteps, ExceptionRecoveryMode::CheckedInvocations};
+    recovery::tail normal, caught;
+    ExceptionInvocationSource result;
+    if (attempt.inspect() && attempt.collect(normal, attempt.push.getBody(), true, false) &&
+        attempt.collect(caught, attempt.push.getHandler(), false, true) &&
+        attempt.partition(normal, caught)) {
+        if (attempt.throws != 0 || attempt.invocations.size() != 1) {
+            attempt.reject(
+                "native invocation source needs one checked call and no explicit throws");
+        } else if (attempt.spend(uint64_t(attempt.prefix.size()) + normal.blocks.size() +
+                                 caught.blocks.size())) {
+            const auto [check, call] = *attempt.invocations.begin();
+            result.push = attempt.push;
+            result.landing = attempt.landing;
+            result.frame = attempt.frame;
+            result.call = call;
+            result.check = llvm::cast<ctjs::CheckOp>(check);
+            llvm::append_range(result.prefix, attempt.prefix);
+            result.normal = std::move(normal.blocks);
+            result.caught = std::move(caught.blocks);
+        }
+    }
+    result.steps = maxSteps - attempt.remaining;
+    result.refusal = std::move(attempt.refusal);
+    return result;
+}
+
 } // namespace ctcompile::ctnative::lowering_detail

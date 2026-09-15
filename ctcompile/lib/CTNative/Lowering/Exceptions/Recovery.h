@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <string>
 
@@ -13,6 +14,28 @@ struct ExceptionRecoveryResult {
     mlir::OwningOpRef<ctjs::FuncOp> original = {};
     unsigned steps = 0;
 };
+
+// Original source handles, published together only after the existing handler,
+// acyclic prefix/tail and exact call/check register proofs succeed. This is
+// structural evidence only: every discarded non-call status edge still needs
+// its own effect proof, as do callee identity and the catch payload's uses.
+// Any source mutation invalidates this result. Inspection never changes IR.
+struct ExceptionInvocationSource {
+    ctjs::PushHandlerOp push;
+    ctjs::CatchLandOp landing;
+    ctjs::FrameEnterOp frame;
+    mlir::Operation * call = nullptr;
+    ctjs::CheckOp check;
+    // Reachable source block censuses, not execution order. Normal and caught
+    // may share a continuation. Unreachable source still needs separate proof.
+    llvm::SmallVector<mlir::Block *> prefix, normal, caught;
+    unsigned steps = 0;
+    std::string refusal;
+    [[nodiscard]] bool proved() const { return call != nullptr; }
+};
+
+ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function,
+                                                        unsigned maxSteps = 100000);
 
 enum class ExceptionRecoveryMode {
     ExplicitThrows,
