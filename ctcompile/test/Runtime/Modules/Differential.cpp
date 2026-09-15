@@ -43,6 +43,8 @@
 #include <string>
 #include <string_view>
 
+#include "check.hpp"
+
 using ctbrowser::script::context;
 using ctbrowser::script::function_proto;
 using ctbrowser::script::program;
@@ -76,9 +78,8 @@ constexpr std::string_view dep_source =
     ;
 constexpr std::string_view user_source =
 #include "module-user.js.inc"
-    ;
 
-int failures = 0;
+    ;
 
 struct installed {
     const char * name;
@@ -275,7 +276,7 @@ void compare(const arm & each, std::span<const installed> patch, const char * la
     if (!interpreted_run.ok || !compiled_run.ok) {
         std::printf("%-16s FAILED - %s\n", each.name,
                     interpreted_run.ok ? compiled_run.why.c_str() : interpreted_run.why.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     const std::string interpreted = interpreted_run.drive(each.which);
@@ -284,14 +285,14 @@ void compare(const arm & each, std::span<const installed> patch, const char * la
     if (interpreted == "<the arm did not run>" || interpreted == "<the module did not run>") {
         std::printf("%-16s FAILED - DRIVE(%u) set nothing, so the arm threw or does not exist\n",
                     each.name, each.which);
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     if (interpreted != each.expected) {
         std::printf("%-16s FAILED - the INTERPRETER answered %s where %s is correct, so something "
                     "shared by both tiers is wrong\n",
                     each.name, interpreted.c_str(), each.expected);
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     if (interpreted == generated) {
@@ -300,7 +301,7 @@ void compare(const arm & each, std::span<const installed> patch, const char * la
         std::printf("%-16s FAILED (%s)\n    interpreted %s\n    compiled    %s\n    separates:  "
                     "%s\n",
                     each.name, label, interpreted.c_str(), generated.c_str(), each.separates);
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -311,7 +312,7 @@ void compare_pair(const char * name, const std::string & interpreted, const std:
         std::printf("%-16s FAILED - the INTERPRETER answered %s where %s is correct, so something "
                     "shared by both tiers is wrong\n",
                     name, interpreted.c_str(), expected);
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     if (interpreted == generated) {
@@ -320,7 +321,7 @@ void compare_pair(const char * name, const std::string & interpreted, const std:
     }
     std::printf("%-16s FAILED\n    interpreted %s\n    compiled    %s\n    separates:  %s\n", name,
                 interpreted.c_str(), generated.c_str(), separates);
-    ++failures;
+    ++ctbrowser_test_failures;
 }
 
 } // namespace
@@ -375,7 +376,7 @@ int main() {
             std::printf("adopted cell     FAILED - %s\n", interpreted_run.ok
                                                               ? compiled_run.why.c_str()
                                                               : interpreted_run.why.c_str());
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             compare_pair("adopted cell", interpreted_run.read_mine(), compiled_run.read_mine(),
                          "12",
@@ -402,7 +403,7 @@ int main() {
             std::printf("no module        FAILED - %s\n", interpreted_run.ok
                                                               ? compiled_run.why.c_str()
                                                               : interpreted_run.why.c_str());
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             compare_pair("no module", interpreted_run.drive(4u), compiled_run.drive(4u), "12",
                          "the conditional write - a compiled body that stored undefined destroys "
@@ -410,6 +411,8 @@ int main() {
         }
     }
 
-    if (failures == 0) { std::printf("\nevery module arm agrees with the interpreter\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) {
+        std::printf("\nevery module arm agrees with the interpreter\n");
+    }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

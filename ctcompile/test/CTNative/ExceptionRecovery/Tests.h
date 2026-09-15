@@ -35,8 +35,6 @@ namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::lowering_detail::ExceptionRecoveryMode;
 using ctcompile::ctnative::lowering_detail::recoverPrimitiveExceptionRegion;
 
-extern int failures;
-
 bool check(bool condition, llvm::StringRef label);
 std::string printed(mlir::Operation * operation);
 ctjs::FuncOp guarded(mlir::ModuleOp module);

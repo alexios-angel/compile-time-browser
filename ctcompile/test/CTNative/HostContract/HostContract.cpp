@@ -12,6 +12,8 @@
 #include "DOMURI.h"
 #include "Fingerprint.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::host_contract;
 
 namespace {
@@ -843,6 +845,6 @@ int main() {
     checkDOMJSON(context);
     checkDOMNullable(context);
     checkSessionProvider(context);
-    if (failures == 0) { std::puts("host contract live proof queries passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::puts("host contract live proof queries passed"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

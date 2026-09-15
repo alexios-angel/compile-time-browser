@@ -25,6 +25,8 @@
 #include <cstdio>
 #include <string_view>
 
+#include "check.hpp"
+
 namespace {
 
 struct row {
@@ -59,12 +61,10 @@ constexpr row table[] = {
 };
 #undef CT_OPCODE
 
-int failures = 0;
-
 void check(bool ok, const char * what, std::string_view who) {
     if (!ok) {
         std::printf("FAIL %.*s: %s\n", static_cast<int>(who.size()), who.data(), what);
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -103,6 +103,7 @@ struct coverage {
 #define CT_AOT_COVERS(helper_, opcode_) coverage{#helper_, ctbrowser::script::op::opcode_},
 constexpr coverage covers[] = {
 #include <ctbrowser/aot/aot_helpers.def>
+
 };
 
 // The ten opcodes no helper serves, each because it needs no runtime call. Kept
@@ -339,9 +340,9 @@ int main() {
         }
     }
 
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("ok inventories (%zu opcodes, %zu abi helpers over %zu opcodes)\n",
                     std::size(table), std::size(helpers), std::size(covers));
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -48,8 +48,6 @@ namespace ctcompile::test::type_inference {
 using ctcompile::ctnative::TypeInference;
 using ctcompile::ctnative::TypeLattice;
 
-extern int failures;
-
 // One row: a ctjs function, and what the operation marked `check` must infer.
 // `body` OWNS ITS TEXT rather than pointing at it. Several rows build their
 // body by concatenation, and a `const char *` taken from such a temporary

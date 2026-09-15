@@ -57,6 +57,8 @@
 #include <string>
 #include <string_view>
 
+#include "check.hpp"
+
 using ctbrowser::script::context;
 using ctbrowser::script::function_proto;
 using ctbrowser::script::program;
@@ -82,16 +84,15 @@ namespace {
 
 constexpr std::string_view fixture =
 #include "gc-roots.js.inc"
-    ;
 
-int failures = 0;
+    ;
 
 void report(const char * what, bool ok, const std::string & got, const std::string & want) {
     std::printf("%-34s %s\n", what, ok ? "ok" : "FAILED");
     if (!ok) {
         std::printf("    expected %zu chars: %s\n    got      %zu chars: %s\n", want.size(),
                     want.c_str(), got.size(), got.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -183,6 +184,6 @@ int main() {
            attempt(builder, "runBuilt", &ctc_built, true) == want_built,
            attempt(builder, "runBuilt", &ctc_built, true), want_built);
 
-    if (failures == 0) { std::printf("\nall %d checks passed\n", 5); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("\nall %d checks passed\n", 5); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

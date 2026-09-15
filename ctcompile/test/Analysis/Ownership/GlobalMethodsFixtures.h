@@ -168,15 +168,7 @@ module {
 }
 )MLIR";
 
-inline int failures = 0;
-
-inline void check(bool value, const char * message) {
-    if (value) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
-
-inline HostContract contractFor(mlir::ModuleOp module) {
+inline inline HostContract contractFor(mlir::ModuleOp module) {
     HostContract contract;
     contract.moduleSha256 = hostContractFingerprint(module);
     contract.entry = "script$0";
