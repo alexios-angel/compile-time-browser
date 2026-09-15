@@ -1550,7 +1550,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // to_primitive followed by static Number/String operations;
                 // Concat uses primitive to_string. Their result is independent,
                 // without a Number/String tag, value, index or key inference
-                // except for bounded Number addition, subtraction and multiplication.
+                // except for bounded exact Number arithmetic below.
                 // Add and numeric conversions have a depth guard that may
                 // throw an unrelated RangeError. This whole-frame query refuses
                 // calls, handlers and publication, so it cannot retain fresh
@@ -1589,6 +1589,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *a * *b;
+                    }
+                }
+                if (binary.getKind() == ctjs::BinaryKind::Div) {
+                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    // A nonzero bounded divisor and zero remainder give an exact
+                    // bounded Number quotient. Keep the original signed zero.
+                    if (a && b && *b != 0 && *a % *b == 0) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.integerNumber = *a / *b;
                     }
                 }
                 state.values[binary.getResult()] = result;
