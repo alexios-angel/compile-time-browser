@@ -157,6 +157,91 @@ ctjs.func @guarded(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %p
 }
 
+// Ordinary property/call effects do not permit simplification to erase the
+// importer's register-slot correspondence. The early return and prefix call
+// stay outside the non-entry handler, and both checked edges keep two slots.
+// This preserves representation only; no callee or effect is proved here.
+// CHECK-LABEL: ctjs.func @guarded_property_call
+// CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
+// CHECK: cf.cond_br %{{.*}}, ^[[EARLY:bb[0-9]+]]({{.*}}), ^[[INSTALL:bb[0-9]+]]({{.*}})
+// CHECK: ^[[EARLY]](%[[EARLY_VALUE:[^:]+]]: !ctjs.value, %{{[^:]+}}: !ctjs.value):
+// CHECK: ctjs.return %[[EARLY_VALUE]]
+// CHECK: ^[[INSTALL]](%[[PREFIX:[^:]+]]: !ctjs.value, %[[OLD:[^:]+]]: !ctjs.value):
+// CHECK-NEXT: %[[GLOBAL:[^ ]+]] = ctjs.load_global "Number"
+// CHECK-NEXT: %[[CALLED:[^ ]+]] = ctjs.call %[[GLOBAL]](%{{[^,]+}}, %[[PREFIX]])
+// CHECK-NEXT: ctjs.push_handler ^[[BODY:bb[0-9]+]](%[[CALLED]], %[[OLD]] : !ctjs.value, !ctjs.value) catch ^[[PAD:bb[0-9]+]](%[[CALLED]], %[[OLD]] : !ctjs.value, !ctjs.value)
+// CHECK: ^[[BODY]](%[[VALUE:[^:]+]]: !ctjs.value, %[[SCRATCH:[^:]+]]: !ctjs.value):
+// CHECK-NEXT: %[[PROPERTY:[^ ]+]] = ctjs.get_property %[[VALUE]][%{{[^]]+}}]
+// CHECK-NEXT: ctjs.check ^[[CALL:bb[0-9]+]](%[[VALUE]], %[[PROPERTY]] : !ctjs.value, !ctjs.value) caught ^[[PAD]](%[[VALUE]], %[[SCRATCH]] : !ctjs.value, !ctjs.value)
+// CHECK: ^[[CALL]](%[[RECEIVER:[^:]+]]: !ctjs.value, %[[METHOD:[^:]+]]: !ctjs.value):
+// CHECK-NEXT: %[[RESULT:[^ ]+]] = ctjs.call %[[METHOD]](%[[RECEIVER]])
+// CHECK-NEXT: ctjs.check ^[[DONE:bb[0-9]+]](%[[RECEIVER]], %[[RESULT]] : !ctjs.value, !ctjs.value) caught ^[[PAD]](%[[RECEIVER]], %[[METHOD]] : !ctjs.value, !ctjs.value)
+// CHECK: ^[[DONE]](%{{[^:]+}}: !ctjs.value, %[[RETURNED:[^:]+]]: !ctjs.value):
+// CHECK: ctjs.return %[[RETURNED]]
+// CHECK: ^[[PAD]](%[[SAVED:[^:]+]]: !ctjs.value, %{{[^:]+}}: !ctjs.value):
+// CHECK: ctjs.catch_land
+// CHECK: ctjs.return %[[SAVED]]
+ctjs.func @guarded_property_call(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                                %callee: !ctjs.value, %input: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %frame = ctjs.frame_enter 2
+  %undefined = ctjs.constant #ctjs.undefined
+  %key = ctjs.constant #ctjs.string<"toString">
+  %bit = ctjs.truthy %input
+  cf.cond_br %bit, ^early(%input, %undefined : !ctjs.value, !ctjs.value),
+                   ^install(%input, %undefined : !ctjs.value, !ctjs.value)
+^early(%early_value: !ctjs.value, %early_scratch: !ctjs.value):
+  ctjs.frame_exit %frame
+  ctjs.return %early_value
+^install(%prefix: !ctjs.value, %old: !ctjs.value):
+  %global = ctjs.load_global "Number"
+  %called = ctjs.call %global(%undefined, %prefix)
+  ctjs.push_handler ^body(%called, %old : !ctjs.value, !ctjs.value)
+    catch ^pad(%called, %old : !ctjs.value, !ctjs.value)
+^body(%value: !ctjs.value, %scratch: !ctjs.value):
+  %property = ctjs.get_property %value[%key]
+  ctjs.check ^call(%value, %property : !ctjs.value, !ctjs.value)
+    caught ^pad(%value, %scratch : !ctjs.value, !ctjs.value)
+^call(%object: !ctjs.value, %method: !ctjs.value):
+  %result = ctjs.call %method(%object)
+  ctjs.check ^done(%object, %result : !ctjs.value, !ctjs.value)
+    caught ^pad(%object, %method : !ctjs.value, !ctjs.value)
+^done(%unused: !ctjs.value, %returned: !ctjs.value):
+  ctjs.pop_handler
+  ctjs.frame_exit %frame
+  ctjs.return %returned
+^pad(%saved: !ctjs.value, %old_scratch: !ctjs.value):
+  %pad_id, %thrown = ctjs.catch_land
+  ctjs.frame_exit %frame
+  ctjs.return %saved
+}
+
+// Closure/object families still take the existing simplification path, which
+// exposes their value identity to the closure and callback analyses.
+// CHECK-LABEL: ctjs.func @guarded_allocation
+// CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
+// CHECK: %[[OBJECT:[^ ]+]] = ctjs.create_object
+// CHECK-NEXT: cf.br ^[[ALLOC_INSTALL:bb[0-9]+]]
+// CHECK-NEXT: ^[[ALLOC_INSTALL]]:
+// CHECK-NEXT: ctjs.push_handler ^[[NORMAL:bb[0-9]+]] catch ^[[CAUGHT:bb[0-9]+]]
+// CHECK: ^[[NORMAL]]:
+// CHECK: ctjs.return %[[OBJECT]]
+// CHECK: ^[[CAUGHT]]:
+// CHECK: ctjs.return %[[OBJECT]]
+ctjs.func @guarded_allocation(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                             %callee: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %object = ctjs.create_object
+  cf.br ^install(%object : !ctjs.value)
+^install(%prefix: !ctjs.value):
+  ctjs.push_handler ^body(%prefix : !ctjs.value) catch ^pad(%prefix : !ctjs.value)
+^body(%value: !ctjs.value):
+  ctjs.pop_handler
+  ctjs.return %value
+^pad(%saved: !ctjs.value):
+  ctjs.return %saved
+}
+
 // Recover only the importer's exact 1/0 Boolean mux. The upstream while
 // rewrite preserves the guarded effect in the body, after the condition.
 // CHECK-LABEL: ctjs.func @flag_guard

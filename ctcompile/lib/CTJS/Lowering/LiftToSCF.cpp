@@ -29,7 +29,6 @@
 // a public class implementing the seven CFGToSCFInterface methods against the
 // SCF dialect, and `mlir::transformCFGToSCF` is a public function. This pass is
 // the walk they are missing and nothing more.
-#include "Globals/RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
@@ -304,36 +303,25 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
             getOperation()->walk([&](mlir::FunctionOpInterface body) -> mlir::WalkResult {
                 if (body.getFunctionBody().empty()) { return mlir::WalkResult::advance(); }
 
-                // Primitive exception candidates need the complete importer
+                // Exception candidates need the complete importer
                 // register vectors: throw has no successor operands, so its
                 // block arguments identify the catch-visible state. This is
                 // only a preservation filter; recovery and native admission
                 // still prove the actual control flow, types and effects.
+                // Preserve ordinary calls/property reads too, including a
+                // prefix before a non-entry handler; neither those effects
+                // nor their callees acquire proof by keeping their CFG.
                 // Other handler functions keep legacy simplification, which
                 // exposes the value flow needed by closure/callback lifting.
                 mlir::Operation * handler = nullptr;
-                bool primitiveCandidate = true;
+                bool exceptionCandidate = true;
                 body.getFunctionBody().walk([&](mlir::Operation * operation) {
-                    // A protected callee load travels through status vectors.
-                    // Preserve the complete vectors when all terminal uses are
-                    // resolved callees. Native admission still proves the live
-                    // target and every transitive operation unable to throw.
-                    if (auto load = llvm::dyn_cast<LoadGlobalOp>(operation)) {
-                        auto uses = globals_detail::registerFlowUses(load.getResult());
-                        if (uses && !uses->empty() &&
-                            llvm::all_of(*uses, [](mlir::OpOperand * use) {
-                                return llvm::isa<CallDirectOp>(use->getOwner()) &&
-                                       use->getOperandNumber() == 2;
-                            })) {
-                            return mlir::WalkResult::advance();
-                        }
-                    }
                     if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp,
                                    CompareOp, TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp,
-                                   CheckOp, CatchLandOp, ThrowOp, ReturnOp, CallDirectOp,
-                                   mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(
-                            operation)) {
-                        primitiveCandidate = false;
+                                   CheckOp, CatchLandOp, ThrowOp, ReturnOp, LoadGlobalOp,
+                                   GetPropertyOp, CallOp, CallDirectOp, mlir::cf::BranchOp,
+                                   mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
+                        exceptionCandidate = false;
                         return mlir::WalkResult::interrupt();
                     }
                     if (!handler && llvm::isa<PushHandlerOp, CheckOp>(operation)) {
@@ -341,7 +329,7 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     }
                     return mlir::WalkResult::advance();
                 });
-                if (handler && primitiveCandidate) {
+                if (handler && exceptionCandidate) {
                     body->setAttr(
                         "ctjs.not_structured",
                         mlir::StringAttr::get(
