@@ -516,7 +516,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     }
     for (const std::string producer :
          {"ctjs.binary sub %zero, %one", "ctjs.binary add %length, %one",
-          "ctjs.binary mul %length, %zero", "ctjs.binary_static add %length, %zero"}) {
+          "ctjs.binary_static add %length, %zero"}) {
         run({.what = "other arithmetic does not borrow length-subtraction index authority",
              .body = values + one + read + "  %index = " + producer + "\n" + indexed,
              .failure = (producer == "ctjs.binary_static add %length, %zero" ||
@@ -524,6 +524,66 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                             ? ArrayContentsFailure::MissingElement
                             : ArrayContentsFailure::UnknownIndex});
     }
+    run({.what = "bounded Number multiplication selects its exact overwritten slot",
+         .body = values + one + read + "  %index = ctjs.binary mul %length, %zero\n" + indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    run({.what = "a stored product keeps its read-time Number after replacement and transport",
+         .body = values + one + read +
+                 "  %product = ctjs.binary mul %one, %length {storage_test_id = \"product\"}\n"
+                 "  %saved = ctjs.create_array [%product] {storage_test_id = \"saved\"}\n"
+                 "  %loaded = ctjs.get_property %saved[%zero]\n"
+                 "  ctjs.set_property %saved[%zero], %x\n"
+                 "  ctjs.append %zero to %a\n"
+                 "  cf.br ^next(%loaded, %zero : !ctjs.value, !ctjs.value)\n"
+                 "^next(%before: !ctjs.value, %after: !ctjs.value):\n"
+                 "  cf.br ^swapped(%after, %before : !ctjs.value, !ctjs.value)\n"
+                 "^swapped(%replacement: !ctjs.value, %original: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %original, %one\n"
+                 "  ctjs.set_property %a[%index], %replacement\n  ctjs.return %a\n",
+         .arrays = "a:[zero,zero]; saved:[x]",
+         .reads = "saved[0]=product",
+         .exit = "a -> {a}"});
+    run({.what = "a product index cannot release a returned saved child",
+         .body = values + read +
+                 "  %index = ctjs.binary mul %length, %zero\n"
+                 "  %saved = ctjs.get_property %a[%index]\n" +
+                 overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "the maximum bounded Number product remains exact before subtraction",
+         .body = values + one +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                 "  %product = ctjs.binary mul %bound, %one\n"
+                 "  %index = ctjs.binary sub %product, %bound\n" +
+                 indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    run({.what = "the maximum Number product is a length but never an own element index",
+         .body = values + one +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                 "  %index = ctjs.binary mul %bound, %one\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    for (const std::string multiplier : {"%two", "%bound"}) {
+        run({.what = "an out-of-range product cannot lend Number evidence to a later zero product",
+             .body = values +
+                     "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                     "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                     "  %product = ctjs.binary mul %bound, " +
+                     multiplier + "\n  %index = ctjs.binary mul %zero, %product\n" + indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "a structural multiplication arm cannot borrow another arm's Number",
+         .body = values + one + read +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(%p : !ctjs.value)\n"
+                 "^join(%input: !ctjs.value):\n"
+                 "  %index = ctjs.binary mul %input, %zero\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnsupportedOperation});
     run({.what = "an original bounded Number subtraction supplies its exact computed offset",
          .body = values + one + read +
                  "  %offset = ctjs.binary sub %one, %zero\n"
@@ -691,6 +751,17 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,length]",
         .exit = "result -> {a,result}"};
     run(literalShrink);
+    const contents_row productShrink{
+        .what = "a signed zero product supplies a non-growing length and keeps its origin",
+        .body = values + one + read +
+                "  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n"
+                "  %index = ctjs.binary mul %one, %negativeZero {storage_test_id = \"index\"}\n"
+                "  ctjs.set_property %a[%key], %index\n"
+                "  %result = ctjs.create_array [%a, %index] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,index]",
+        .exit = "result -> {a,result}"};
+    run(productShrink);
     const contents_row heldOffsetShrink{
         .what = "a held bounded Number offset supplies an exact non-growing shrink",
         .body = values + one + read +
@@ -910,7 +981,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
         for (const std::string producer :
              {"ctjs.binary add %input, %zero", "ctjs.binary sub %input, %zero",
-              "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
+              "ctjs.binary mul %input, %zero", "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
             run({.what = "a computed shrink needs exact Number operands without coercion",
                  .body = values + "  %input = ctjs.constant " + literal +
                          "\n  %wanted = " + producer +
@@ -1249,8 +1320,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
              "the live subtracted-index fixture did not parse");
     }
-    for (const contents_row & source : {originalShrink, computedShrink, literalShrink,
-                                        heldOffsetShrink, unaryShrink, negatedShrink}) {
+    for (const contents_row & source :
+         {originalShrink, computedShrink, literalShrink, productShrink, heldOffsetShrink,
+          unaryShrink, negatedShrink}) {
         auto module = parse(source);
         if (!module) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
@@ -1264,6 +1336,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         const mlir::Value key = store.getKey();
         const mlir::Value value = store.getValue();
         auto binary = value.getDefiningOp<ctjs::BinaryOp>();
+        const auto binaryKind = binary ? binary.getKindAttr() : ctjs::BinaryKindAttr{};
         auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         const auto unaryKind = unary ? unary.getKindAttr() : ctjs::UnaryKindAttr{};
         auto literal = (binary  ? binary.getRhs()
@@ -1290,14 +1363,18 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
                  "the length-write stale solver did not converge");
         }
-        const auto inspect = [&](ArrayContentsFailure failure) {
+        const auto inspect = [&](ArrayContentsFailure failure, bool retained = false) {
             contents_row current = source;
             current.failure = failure;
-            check(*module, current, "x");
+            if (retained) {
+                current.arrays = "a:[x]; result:[a,length]";
+                current.exit = "result -> {a,result,x}";
+            }
+            check(*module, current, retained ? "" : "x");
             const bool complete = failure == ArrayContentsFailure::None;
             const auto verdicts = computeVerdicts(stale, function);
             if (verdicts.arrayRetentionComplete != complete ||
-                verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+                verdicts.confinedStoredSites != (complete && !retained ? 1U : 0U)) {
                 fail(row{.what = current.what, .body = current.body, .expected = ""},
                      "stale solver or forged marker supplied length-write authority");
             }
@@ -1305,7 +1382,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         };
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4611686018427387904ULL));
-        inspect(binary || (unary && unary.getKind() == ctjs::UnaryKind::Neg)
+        inspect((binary && binary.getKind() == ctjs::BinaryKind::Sub) ||
+                        (unary && unary.getKind() == ctjs::UnaryKind::Neg)
                     ? ArrayContentsFailure::UnknownIndex
                     : ArrayContentsFailure::MissingElement);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
@@ -1327,8 +1405,10 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             inspect(ArrayContentsFailure::UnsupportedOperation);
             binary->setOperand(0, lhs);
             binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Mul));
+            inspect(ArrayContentsFailure::None, binaryKind.getValue() == ctjs::BinaryKind::Sub);
+            binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Div));
             inspect(ArrayContentsFailure::UnknownIndex);
-            binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Sub));
+            binary.setKindAttr(binaryKind);
             inspect(ArrayContentsFailure::None);
         }
         if (unary) {
