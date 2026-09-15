@@ -1670,16 +1670,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::BitAnd ||
                     binary.getKind() == ctjs::BinaryKind::BitOr ||
-                    binary.getKind() == ctjs::BinaryKind::BitXor) {
+                    binary.getKind() == ctjs::BinaryKind::BitXor ||
+                    binary.getKind() == ctjs::BinaryKind::Shl) {
                     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
                     // Bounded Numbers have the same low 32 bits after ToInt32.
+                    // Left shift masks its count and discards high bits unsigned.
                     // Only a clear result sign bit gives a nonnegative index;
                     // keep the original result, including -0 becoming +0.
                     if (a && b) {
                         const auto bits = binary.getKind() == ctjs::BinaryKind::BitAnd  ? *a & *b
                                           : binary.getKind() == ctjs::BinaryKind::BitOr ? *a | *b
-                                                                                        : *a ^ *b;
+                                          : binary.getKind() == ctjs::BinaryKind::BitXor
+                                              ? *a ^ *b
+                                              : static_cast<std::uint32_t>(*a << (*b & 31U));
                         if (bits < 2147483648ULL) {
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                             result.integerNumber = bits;
