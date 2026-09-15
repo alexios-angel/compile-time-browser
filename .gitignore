@@ -21,3 +21,4 @@ and the same three lines in a new ctcompile/.gitignore.
 /*.ppm
 /*.log
 /*.csv
+__pycache__/
