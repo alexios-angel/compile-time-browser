@@ -4,7 +4,9 @@
 // Split from async.cpp on 2026-09-12; the helpers were ~650 inline lines of
 // internal.hpp that every builtins file parsed and only this one used.
 
+#include "ctbrowser/core/json.hpp"
 #include "internal.hpp"
+#include <type_traits>
 
 namespace ctbrowser::script::detail {
 
@@ -318,262 +320,40 @@ void read_stringify_options(json_writer & state, value replacer, value space) {
     }
 }
 
-// --- JSON.parse -----------------------------------------------------------
-//
-// THE GRAMMAR IS JSON's, NOT JavaScript's, and it is far narrower than what
-// this reader used to accept. 25.5.1 parses the source against the JSON grammar
-// and throws a SyntaxError when it does not fit; the previous reader returned
-// `undefined` for a malformed document and accepted `+1`, `01`, `1.`, `.5`, a
-// raw control character inside a string, an unknown escape, and anything at all
-// AFTER the value. Answering `undefined` instead of throwing is the worse half
-// of that: `JSON.parse(x)` inside a try/catch - which is how a page validates
-// input - could not fail, so a truncated response became `undefined` and the
-// fault surfaced somewhere else entirely.
-struct json_reader {
-    context & cx;
-    std::string_view text;
-    std::size_t at = 0;
-    bool ok = true;
-
-    // 25.5.1: JSON whitespace is these four characters and nothing else. A form
-    // feed or a vertical tab is a SyntaxError, which is what
-    // parse/invalid-whitespace.js asserts.
-    void skip() {
-        while (at < text.size() &&
-               (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
-            ++at;
-        }
-    }
-    void fail() { ok = false; }
-    [[nodiscard]] bool eat(char c) {
-        if (at < text.size() && text[at] == c) {
-            ++at;
-            return true;
-        }
-        fail();
-        return false;
-    }
-
-    // The whole document: one value, whitespace either side, and NOTHING after
-    // it. The trailing check is the one this reader did not do at all, so
-    // `JSON.parse("[1,2]junk")` answered [1,2].
-    [[nodiscard]] value parse_text() {
-        const value out = parse();
-        skip();
-        if (at != text.size()) { fail(); }
-        return ok ? out : value::undefined();
-    }
-
-    [[nodiscard]] value parse() {
-        skip();
-        if (at >= text.size()) {
-            fail();
-            return value::undefined();
-        }
-        const char c = text[at];
-        if (c == '{') { return parse_object(); }
-        if (c == '[') { return parse_array(); }
-        if (c == '"') {
-            std::string s;
-            if (!parse_string(s)) { return value::undefined(); }
-            return cx.string(s);
-        }
-        if (text.compare(at, 4, "true") == 0) {
-            at += 4;
-            return value::boolean(true);
-        }
-        if (text.compare(at, 5, "false") == 0) {
-            at += 5;
-            return value::boolean(false);
-        }
-        if (text.compare(at, 4, "null") == 0) {
-            at += 4;
-            return value::null();
-        }
-        return parse_number();
-    }
-
-    // \uXXXX, exactly four hex digits. False rather than reading past the end
-    // or treating a non-hex byte as a digit, which the old arithmetic did:
-    // `(h | 0x20) - 'a' + 10` turns ANY byte into a number.
-    [[nodiscard]] bool read_hex4(std::uint32_t & out) {
-        if (at + 4 > text.size()) { return false; }
-        out = 0;
-        for (int i = 0; i < 4; ++i) {
-            const int digit = hex_value(text[at + static_cast<std::size_t>(i)]);
-            if (digit < 0) { return false; }
-            out = out * 16 + static_cast<std::uint32_t>(digit);
-        }
-        at += 4;
-        return true;
-    }
-
-    [[nodiscard]] bool parse_string(std::string & out) {
-        if (!eat('"')) { return false; }
-        while (at < text.size() && text[at] != '"') {
-            const auto byte = static_cast<unsigned char>(text[at]);
-            // A RAW CONTROL CHARACTER IS NOT A JSON STRING CHARACTER. A literal
-            // newline between quotes has to be spelled \n, and accepting it
-            // made this reader read documents no other one will.
-            if (byte < 0x20) {
-                fail();
-                return false;
-            }
-            if (text[at] != '\\') {
-                out += text[at++];
-                continue;
-            }
-            ++at;
-            if (at >= text.size()) {
-                fail();
-                return false;
-            }
-            const char escape = text[at++];
-            switch (escape) {
-            case '"': out += '"'; break;
-            case '\\': out += '\\'; break;
-            case '/': out += '/'; break;
-            case 'b': out += '\b'; break;
-            case 'f': out += '\f'; break;
-            case 'n': out += '\n'; break;
-            case 'r': out += '\r'; break;
-            case 't': out += '\t'; break;
-            case 'u': {
-                std::uint32_t code = 0;
-                if (!read_hex4(code)) {
-                    fail();
-                    return false;
+// The public Core parser owns the grammar and its data. Only this adapter
+// allocates VM values; native callers keep the ordinary owning JSON tree.
+value materialize_json(context & cx, const json_value & source) {
+    return std::visit(
+        [&](const auto & each) -> value {
+            using T = std::decay_t<decltype(each)>;
+            if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                return value::null();
+            } else if constexpr (std::is_same_v<T, bool>) {
+                return value::boolean(each);
+            } else if constexpr (std::is_same_v<T, double>) {
+                return value::number(each);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                return cx.string(each);
+            } else if constexpr (std::is_same_v<T, json_value::array>) {
+                const value held = cx.make_array();
+                const context::rooted keep{cx, held};
+                auto * arr = static_cast<array_object *>(held.as_heap());
+                for (const auto & child : each) {
+                    arr->items.push_back(materialize_json(cx, child));
                 }
-                // A SURROGATE PAIR IS ONE CODE POINT. Encoding each half
-                // separately produces CESU-8, which is not UTF-8 and which no
-                // consumer of this engine's strings can read - so an astral
-                // character came out of JSON.parse as two replacement
-                // characters and went into the page's own data that way.
-                if (code >= 0xD800 && code <= 0xDBFF && at + 1 < text.size() && text[at] == '\\' &&
-                    text[at + 1] == 'u') {
-                    const std::size_t saved = at;
-                    at += 2;
-                    std::uint32_t low = 0;
-                    if (read_hex4(low) && low >= 0xDC00 && low <= 0xDFFF) {
-                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                    } else {
-                        at = saved;
-                    }
+                return held;
+            } else {
+                auto * obj = new_table(cx);
+                const value held = value::object(obj);
+                const context::rooted keep{cx, held};
+                for (const auto & [key, child] : each) {
+                    obj->set(key, materialize_json(cx, child));
                 }
-                // A LONE SURROGATE cannot be spelled in UTF-8 and a string here
-                // is UTF-8 bytes, so it becomes U+FFFD rather than an
-                // ill-formed string. It is the same deviation that makes
-                // `isWellFormed` unimplementable here.
-                if (code >= 0xD800 && code <= 0xDFFF) { code = 0xFFFD; }
-                append_utf8(out, code);
-                break;
+                return held;
             }
-            default: fail(); return false;
-            }
-        }
-        if (!eat('"')) { return false; }
-        return true;
-    }
-
-    // JSONNumber: an optional minus, an integer part with no leading zero, an
-    // optional fraction that must have a digit after the point, and an optional
-    // exponent that must have one after the marker. `+1`, `01`, `1.`, `.5` and
-    // `1e` are each a SyntaxError and each used to parse.
-    [[nodiscard]] value parse_number() {
-        const std::size_t start = at;
-        if (at < text.size() && text[at] == '-') { ++at; }
-        if (at >= text.size() || text[at] < '0' || text[at] > '9') {
-            fail();
-            return value::undefined();
-        }
-        if (text[at] == '0') {
-            ++at;
-        } else {
-            while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
-        }
-        if (at < text.size() && text[at] == '.') {
-            ++at;
-            if (at >= text.size() || text[at] < '0' || text[at] > '9') {
-                fail();
-                return value::undefined();
-            }
-            while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
-        }
-        if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
-            ++at;
-            if (at < text.size() && (text[at] == '+' || text[at] == '-')) { ++at; }
-            if (at >= text.size() || text[at] < '0' || text[at] > '9') {
-                fail();
-                return value::undefined();
-            }
-            while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
-        }
-        // from_chars, NOT strtod: strtod respects LC_NUMERIC, so on a host whose
-        // locale writes decimals with a comma `JSON.parse("{\"n\":1.5}")` would
-        // stop at the dot and read 1. Goldens are byte-compared across
-        // platforms, so a locale-sensitive parser is a portability bug waiting
-        // for the first machine that has one.
-        const std::string_view digits = text.substr(start, at - start);
-        double parsed = 0.0;
-        std::from_chars(digits.data(), digits.data() + digits.size(), parsed);
-        return value::number(parsed);
-    }
-
-    [[nodiscard]] value parse_array() {
-        auto * arr = static_cast<array_object *>(cx.make_array().as_heap());
-        const value held = value::object(arr);
-        ++at; // '['
-        skip();
-        if (at < text.size() && text[at] == ']') {
-            ++at;
-            return held;
-        }
-        while (ok) {
-            arr->items.push_back(parse());
-            if (!ok) { break; }
-            skip();
-            if (at < text.size() && text[at] == ',') {
-                ++at;
-                continue;
-            }
-            // No comma, so the array must end here. A trailing comma lands back
-            // in parse() on the next round and fails there, which is what the
-            // grammar says.
-            (void)eat(']');
-            break;
-        }
-        return held;
-    }
-
-    [[nodiscard]] value parse_object() {
-        auto * obj = new_table(cx);
-        const value held = value::object(obj);
-        ++at; // '{'
-        skip();
-        if (at < text.size() && text[at] == '}') {
-            ++at;
-            return held;
-        }
-        while (ok) {
-            skip();
-            std::string key;
-            if (!parse_string(key)) { break; }
-            skip();
-            if (!eat(':')) { break; }
-            const value each = parse();
-            if (!ok) { break; }
-            obj->set(key, each);
-            skip();
-            if (at < text.size() && text[at] == ',') {
-                ++at;
-                continue;
-            }
-            (void)eat('}');
-            break;
-        }
-        return held;
-    }
-};
+        },
+        source.data);
+}
 
 // InternalizeJSONProperty, 25.5.1.1 - the reviver walk, through the ordinary
 // object operations so a reviver that grafts a Proxy in sees its traps run.
@@ -676,20 +456,17 @@ void install_json(context & cx) {
         return c.string(out);
     });
     method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
-        // The source is held in a NAMED local: json_reader keeps a string_view
-        // into it, and passing the temporary directly leaves the view dangling
-        // for the whole parse.
-        const std::string source = str_at(c, a, 0);
-        detail::json_reader reader{c, source};
-        const value out = reader.parse_text();
+        const auto parsed = parse_json(str_at(c, a, 0));
         // 25.5.1 step 3: a document that does not fit the JSON grammar is a
         // SyntaxError. It used to be `undefined`, which is a value a page can
         // and does mistake for a successfully parsed `null`-ish document.
-        if (!reader.ok) {
+        if (!parsed) {
             c.throw_error("SyntaxError",
-                          "Unexpected token in JSON at position " + std::to_string(reader.at));
+                          "Unexpected token in JSON at position " + std::to_string(parsed.error()));
             return value::undefined();
         }
+        const value out = detail::materialize_json(c, *parsed);
+        const context::rooted keep_out{c, out};
         const value reviver = arg_at(a, 1);
         if (!reviver.is_callable()) { return out; }
         // Step 7: the reviver walks a WRAPPER whose one property is "", for the
@@ -712,11 +489,7 @@ void install_json(context & cx) {
         };
         bool ok = !text.empty() && text[0] != '[' && text[0] != '{' && !edge(text.front()) &&
                   !edge(text.back());
-        if (ok) {
-            detail::json_reader reader{c, text};
-            (void)reader.parse_text();
-            ok = reader.ok;
-        }
+        if (ok) { ok = parse_json(text).has_value(); }
         if (!ok) {
             c.throw_error("SyntaxError", "Invalid JSON text for JSON.rawJSON");
             return value::undefined();
