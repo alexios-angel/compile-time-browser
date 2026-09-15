@@ -1,6 +1,5 @@
 """Captured outer Maps retain fresh and reused child Map owners."""
 
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -2102,8 +2101,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
         }:
             check_budgets(args, ir, config, name, functions=functions)
 
-    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-        list(executor.map(check_case, cases.items()))
+    for item in cases.items():
+        check_case(item)
     positives = sum(row["admitted"] for row in cases.values())
     print(
         f"nested Maps: {positives} native programs, {len(cases) - positives} refusals, "

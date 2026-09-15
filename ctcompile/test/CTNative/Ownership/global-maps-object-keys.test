@@ -1,0 +1,3 @@
+# Execute identity-only object-key Maps and their evidence controls without the VM.
+# One of the five groups of native_owned_global_maps (global-maps.test is the rest).
+# RUN: python3 %S/global-maps-object-keys.py --translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference
