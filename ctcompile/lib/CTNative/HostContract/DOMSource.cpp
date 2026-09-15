@@ -216,6 +216,72 @@ struct DOMSource {
         return true;
     }
 
+    bool initializeEntry(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
+        auto & block = wrapper.getBody().front();
+        const auto index = functionIndex(target);
+        if (!index || *index == 0 || creations.lookup(*index) != 1 ||
+            block.getNumArguments() != ctjs::implicit_arguments) {
+            return refuse("DOM entry initialization lacks a unique source declaration");
+        }
+        for (mlir::BlockArgument argument : block.getArguments()) {
+            for (mlir::OpOperand & use : argument.getUses()) {
+                if (!step()) { return false; }
+                if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use.getOwner())) {
+                    return refuse("DOM entry initialization observes an implicit argument");
+                }
+            }
+        }
+        ctjs::StoreGlobalOp publication;
+        ctjs::CreateClosureOp closure;
+        ctjs::ReturnOp result;
+        for (mlir::Operation & operation : block) {
+            if (!step()) { return false; }
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
+                auto made = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                if (publication || !made || made->getBlock() != &block ||
+                    !made->isBeforeInBlock(store) || made.getFunction() < 0 ||
+                    static_cast<unsigned>(made.getFunction()) != *index ||
+                    store.getName() == "undefined" ||
+                    store.getName() != target.getSymName().rsplit('$').first) {
+                    return refuse("DOM entry initialization has an unknown or repeated export");
+                }
+                publication = store;
+                closure = made;
+            } else if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                if (result || !undefined(returned.getValue())) {
+                    return refuse("DOM entry initialization has an observable return");
+                }
+                result = returned;
+            } else if (!llvm::isa<ctjs::ConstantOp, ctjs::CreateCellOp, ctjs::CellGetOp,
+                                  ctjs::CellSetOp, ctjs::CreateClosureOp, ctjs::CreateObjectOp,
+                                  ctjs::GetPropertyOp, ctjs::SetPropertyOp, ctjs::FrameEnterOp,
+                                  ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
+                return refuse("DOM entry initialization contains an observable source operation");
+            }
+        }
+        if (!publication || !result) {
+            return refuse("DOM entry initialization lacks a complete source export");
+        }
+        // Host calls follow the whole initialization, including assignments after
+        // publication. Replay is safe only if expansion eliminates every private
+        // cell/holder/callable and the complete DOM proof accepts the result.
+        for (mlir::BlockArgument argument :
+             target.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            if (!step()) { return false; }
+            block.addArgument(argument.getType(), argument.getLoc());
+        }
+        wrapper.setFunctionTypeAttr(target.getFunctionTypeAttr());
+        wrapper->removeAttr("arg_attrs");
+        mlir::OpBuilder at(result);
+        auto call = ctjs::CallOp::create(at, result.getLoc(), result.getValue().getType(),
+                                         closure.getResult(), result.getValue(),
+                                         block.getArguments().drop_front(ctjs::implicit_arguments));
+        ++operationCount;
+        result.getValueMutable().assign(call.getResult());
+        publication.erase();
+        return true;
+    }
+
     bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false) {
         if (!step()) { return false; }
         if (expanded.contains(function)) { return true; }
@@ -525,13 +591,13 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
         auto function = llvm::dyn_cast<ctjs::FuncOp>(operation);
         if (!source.step()) { break; }
         if (!function || !llvm::hasSingleElement(function.getBody()) ||
-            ((function == target || functionIndex(function) == 0) &&
-             function.getUpvalueCount() != 0) ||
+            (functionIndex(function) == 0 && function.getUpvalueCount() != 0) ||
             function->hasAttr("ctjs.skipped") ||
             function.getBody().front().getNumArguments() < ctjs::implicit_arguments ||
             !llvm::all_of(function.getBody().front().getArgumentTypes(),
                           [](mlir::Type type) { return llvm::isa<ctjs::ValueType>(type); })) {
-            source.refuse("DOM helper requires complete source functions and an uncaptured entry");
+            source.refuse(
+                "DOM helper requires complete source functions and an uncaptured wrapper");
             break;
         }
         const auto index = functionIndex(function);
@@ -542,11 +608,12 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
         if (*index == 0 && function != target) { wrapper = function; }
     }
     if (source.reason.empty() && !target) { source.refuse("DOM entry function is missing"); }
+    bool initialized = false;
     if (source.reason.empty() && wrapper &&
         !host_detail::isInertEntryDeclaration(wrapper, target, [&] { return source.step(); })) {
-        source.refuse("DOM entry wrapper contains observable source operations");
+        initialized = source.initializeEntry(wrapper, target);
     }
-    if (source.reason.empty() && source.expand(target, 0, true)) {
+    if (source.reason.empty() && source.expand(initialized ? wrapper : target, 0, true)) {
         for (auto [index, function] : source.functions) {
             (void)index;
             if (!source.step()) { break; }
@@ -558,6 +625,13 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
     }
     if (!source.reason.empty()) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), source.reason);
+    }
+    if (initialized) {
+        target.getBody().takeBody(wrapper.getBody());
+        target.setUpvalueCount(0);
+        wrapper.erase();
+        source.functions.erase(0);
+        wrapper = {};
     }
     for (auto [index, function] : source.functions) {
         (void)index;

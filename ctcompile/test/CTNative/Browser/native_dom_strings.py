@@ -374,6 +374,94 @@ BOOLEAN_SOURCES = tuple(
     (name, f"function {name}(element) {{ {body} }}\n", 1)
     for name, (body, _) in BOOLEAN_CASES.items()
 )
+HOST_CASES = {
+    "host_capture_late_initialization": (
+        """let hostLateKey;
+function host_capture_late_initialization(element) {
+  return element.getAttribute(hostLateKey) === null;
+}
+hostLateKey = 'x';
+""",
+        "1000",
+    ),
+    "host_capture_key": (
+        """const hostKey = 'x';
+function host_capture_key(element) { return element.getAttribute(hostKey) === null; }
+""",
+        "1000",
+    ),
+    "host_capture_name": (
+        """const hostPrefix = 'data-'; const hostName = 'config';
+function host_capture_name(element) {
+  element.setAttribute(hostPrefix + hostName, 'value');
+  return element.getAttribute(hostPrefix + hostName) === 'value';
+}
+""",
+        "1111",
+    ),
+    "host_capture_callable": (
+        """const hostRead = target => target.getAttribute('x');
+function host_capture_callable(element) { return hostRead(element) === null; }
+""",
+        "1000",
+    ),
+    "host_capture_holder": (
+        """const hostHolderKey = 'x';
+const hostHelpers = {read(target) { return target.getAttribute(hostHolderKey); }};
+function host_capture_holder(element) { return hostHelpers.read(element) === null; }
+""",
+        "1000",
+    ),
+    "host_capture_forwarded": (
+        """const hostForwardedKey = 'x';
+function host_capture_forwarded(element) {
+  function invoke() {
+    function read() { return element.getAttribute(hostForwardedKey); }
+    return read();
+  }
+  return invoke() === null;
+}
+""",
+        "1000",
+    ),
+    "host_capture_nested_callable": (
+        """const hostNestedKey = 'x';
+const hostNestedRead = target => {
+  function read() { return target.getAttribute(hostNestedKey); }
+  return read();
+};
+function host_capture_nested_callable(element) { return hostNestedRead(element) === null; }
+""",
+        "1000",
+    ),
+    "host_capture_callers": (
+        """const hostCallerPrefix = '';
+const hostCallerRead = (target, key) => {
+  function name() { return hostCallerPrefix + key; }
+  return target.getAttribute(name());
+};
+function host_capture_callers(element) {
+  return hostCallerRead(element, 'x') === hostCallerRead(element, 'missing');
+}
+""",
+        "1000",
+    ),
+    "host_capture_order": (
+        r"""const hostOrderKey = 'x';
+const hostChange = (target, saved) => {
+  target.setAttribute(hostOrderKey, 'a\0b');
+  return saved === target.getAttribute(hostOrderKey);
+};
+function host_capture_order(element) {
+  return hostChange(element, element.getAttribute(hostOrderKey));
+}
+""",
+        "0010",
+    ),
+}
+HOST_CASES = {name: ("{\n" + source + "}\n", bits) for name, (source, bits) in HOST_CASES.items()}
+BOOLEAN_CASES.update(HOST_CASES)
+BOOLEAN_SOURCES += tuple((name, source, 1) for name, (source, _) in HOST_CASES.items())
 BOOLEAN_DOUBLE = r"""
 function observationElement(value) {
   const attributes = {'a\0b': 'whole', a: 'truncated'};
@@ -403,6 +491,8 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "host_capture_name": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
+    "host_capture_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_capture_saved": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_capture_repeated": 'assert(doc.read().attribute_value(node, state) == "after");',
     "helper_capture_callable_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
@@ -757,6 +847,22 @@ HELPER_REFUSALS = {
     "helper_object_nested_receiver": "const helpers = {read(target) { const observe = () => this; observe(); return target.getAttribute('x'); }}; return helpers.read(element);",
 }
 REFUSALS.update(HELPER_REFUSALS)
+HOST_REFUSALS = {
+    "host_wrapper_receiver": "const key = this; function host_refusal(element) { return element.getAttribute(key); }",
+    "host_reassigned": "let key = 'x'; function host_refusal(element) { return element.getAttribute(key); } key = 'y'; key = 'z';",
+    "host_entry_write": "let key = 'x'; function host_refusal(element) { key = 'y'; return element.getAttribute(key); }",
+    "host_forwarded_write": "let key = 'x'; function host_refusal(element) { function read() { key = 'y'; return element.getAttribute(key); } return read(); }",
+    "host_callable_reassigned": "let read = target => target.getAttribute('x'); function host_refusal(element) { return read(element); } read = target => target.getAttribute('y');",
+    "host_holder_overwrite": "const helpers = {read(target) { return target.getAttribute('x'); }}; function host_refusal(element) { return helpers.read(element); } helpers.read = target => target.getAttribute('y');",
+    "host_holder_escape": "const helpers = {read(target) { return target.getAttribute('x'); }}; function host_refusal(element) { return helpers.read(element); } escaped = helpers;",
+    "host_callable_escape": "const read = target => target.getAttribute('x'); function host_refusal(element) { read(element); return read; }",
+    "host_early_read": "const saved = key; var key = 'x'; function host_refusal(element) { return element.getAttribute(saved); }",
+    "host_wrapper_effect": "const key = 'x'; sideEffect(); function host_refusal(element) { return element.getAttribute(key); }",
+    "host_wrapper_read": "const key = externalKey; function host_refusal(element) { return element.getAttribute(key); }",
+    "host_wrapper_call": "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } host_refusal({});",
+    "host_duplicate_export": "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } host_refusal = host_refusal;",
+    "host_other_export": "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } function other(element) { return element.getAttribute(key); }",
+}
 
 
 def emitted(args, module, name):
@@ -850,7 +956,7 @@ def helper_provenance_refusals(args, ir, contract):
                 helper,
                 once(helper, "attributes {", "attributes {ctjs.skipped = true, "),
             ),
-            "DOM helper requires complete source functions and an uncaptured entry",
+            "DOM helper requires complete source functions and an uncaptured wrapper",
         ),
     }
     if closure not in entry or direct not in entry:
@@ -933,6 +1039,54 @@ def helper_provenance_refusals(args, ir, contract):
         ):
             raise RuntimeError(f"{label}: wrong refusal\n{diagnostic}")
     return len(variants) * 4 + 4
+
+
+def host_provenance_checks(args, ir, contract):
+    original = ir.read_text()
+    closure = "ctjs.create_closure %arg2[1] this %3 captures %2"
+    export = 'ctjs.store_global "host_capture_key", %4'
+    cell = "ctjs.create_cell %1"
+    if any(original.count(anchor) != 1 for anchor in (closure, export, cell)):
+        raise RuntimeError("host initialization provenance anchors changed")
+    variants = {
+        "duplicate-creator": original.replace(closure, closure + "\n    %duplicate = " + closure),
+        "wrong-export": original.replace(export, export.replace('"host_capture_key"', '"other"')),
+        "foreign-creator": original.replace(closure, closure.replace("%arg2[", "%arg0[")),
+        "forged-creator": original.replace(
+            closure,
+            closure.replace("%arg2[", "%arg0[") + " {ctnative.host_proved = true}",
+        ),
+        "wrapper-receiver": original.replace(cell, "ctjs.create_cell %arg0"),
+        "entry-slot": original.replace("ctjs.load_upvalue %arg2[0]", "ctjs.load_upvalue %arg2[1]"),
+        "capture-count": original.replace("upvalue_count = 1", "upvalue_count = 2"),
+        "wrapper-return": original.replace("ctjs.return %5", "ctjs.return %1"),
+        "wrapper-arity": original.replace(
+            "@_script_$0(%arg0:", "@_script_$0(%extra: !ctjs.value, %arg0:"
+        ),
+    }
+    for name, text in variants.items():
+        mutated = args.work / f"host-provenance-{name}.mlir"
+        mutated.write_text(text)
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    f"host-provenance-{name}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if "error: native DOM source:" not in diagnostic:
+                    raise RuntimeError(f"host initialization {name}: wrong refusal\n{diagnostic}")
+    for budget in (0, 1, 128):
+        diagnostic = dom.lower(
+            args, ir, contract, f"host-budget-{budget}", max_steps=budget, success=False
+        )
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(f"host initialization: missing budget refusal\n{diagnostic}")
+    return len(variants) * 4 + 3
 
 
 def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
@@ -1234,7 +1388,9 @@ function makeElement(value) {
                 source,
                 count,
                 entry_name=(
-                    "invalid" if name in CAPTURE_RETURNS else name if name in HELPER_CASES else None
+                    "invalid"
+                    if name in CAPTURE_RETURNS
+                    else name if name in HELPER_CASES or name in HOST_CASES else None
                 ),
             ),
         )
@@ -1349,6 +1505,22 @@ function makeElement(value) {
                 )
                 if "DOM" not in diagnostic:
                     raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+    for name, source in HOST_REFUSALS.items():
+        ir, contract = dom.prepare(
+            args, name, "{\n" + source + "\n}\n", 1, entry_name="host_refusal"
+        )
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                diagnostic = dom.lower(
+                    args,
+                    ir,
+                    dict(contract, provider=provider),
+                    f"{name}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                if "DOM" not in diagnostic:
+                    raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
     _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_nested")
     for budget in (0, 1, 32):
         diagnostic = dom.lower(
@@ -1385,9 +1557,11 @@ function makeElement(value) {
         row for row in prepared if row[0] == "capture_forwarded"
     )
     capture_checks += forwarded_provenance_checks(args, forwarded_ir, forwarded_contract)
+    _, host_ir, host_contract = next(row for row in prepared if row[0] == "host_capture_key")
+    capture_checks += host_provenance_checks(args, host_ir, host_contract)
     print(
         f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
-        f"both providers/policies/layouts; {len(REFUSALS) * 4} source refusal checks, "
+        f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks"
     )
