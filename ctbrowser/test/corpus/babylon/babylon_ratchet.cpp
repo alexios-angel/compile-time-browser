@@ -7,7 +7,7 @@
 // SAME SHAPE AS THE OTHER FOUR LADDERS: a level and a blocker, measured here and
 // recorded in test/corpus/babylon/babylon-ratchet.txt. The level may not go DOWN, and at the
 // same level the blocker may not CHANGE, without this test failing. Only
-// tools/corpus/babylon-ratchet.py --advance writes the record, because a test that
+// tools/corpus/ratchet.py babylon ratchet --advance writes the record, because a test that
 // edits its own expectations cannot fail.
 //
 // EVERY RUNG ASKS THE CANVAS. Not `scene.isReady()`, not `material.isReady()`,
@@ -540,8 +540,8 @@ int main() {
         return 1;
     }
     if (now.level > was) {
-        std::printf("     AHEAD of the record (%d > %d) - run tools/corpus/babylon-ratchet.py "
-                    "--advance\n",
+        std::printf("     AHEAD of the record (%d > %d) - run tools/corpus/ratchet.py babylon "
+                    "ratchet --advance\n",
                     now.level, was);
         return 0;
     }

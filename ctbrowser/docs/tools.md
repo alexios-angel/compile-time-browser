@@ -67,26 +67,13 @@ with it.
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
 - `tools/corpus/ratchet.py` — ONE driver for every corpus ratchet and API surface,
-  `ratchet.py <corpus> ratchet|api [--advance]`; the `<corpus>-ratchet.py` and
-  `<corpus>-api.py` names below are shims onto it.
-- `tools/corpus/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
-  runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
-  it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
-  clears every language rung, so there is nothing to carve.
-- `tools/corpus/phaser-api.py` — how WIDE the Phaser surface is, to `p5-api.py`'s
-  shape. `--coverage` lists the namespaces no probe mentions, which is the work
-  queue. The ratchet read 10/10 while `(5).hasOwnProperty` was undefined,
-  because nothing on the ladder asked a number for a property.
-- `tools/corpus/babylon-ratchet.py` — the ladder for BABYLON.JS, the third corpus, and
-  the second ladder over the same bundle: `webgl2-ratchet.py` asks whether
-  Babylon draws AT ALL (10/10) and this asks what a scene can CONTAIN. Reads
-  **10/12** — a PBR material renders; glTF import and the GUI are next. `tools/corpus/babylon-api.py`
-  is its width counterpart, 39/43 probes. See `docs/plans/babylon.md`.
-- `tools/corpus/module-ratchet.py` — the same loop for ES MODULES. Reads **8/9**: a
-  graph links, bindings are LIVE, cycles resolve, module scripts defer like page
-  scripts and relative specifiers resolve against the importer, and dynamic
-  `import()` resolves to a live namespace object. Rung 9 is Babylon's ES build,
-  which is not vendored. `--advance` records. See
+  `ratchet.py <corpus> ratchet|api [--advance]` for p5, phaser, babylon, webgl2
+  and module: build, measure, `--advance` to record. The per-corpus
+  `<corpus>-ratchet.py`/`<corpus>-api.py` shims onto it went on 2026-09-15.
+  `--bisect` and `--survey` are p5-only (the one bundle that failed at the
+  language rungs); `api --coverage` lists what no probe mentions, which is the
+  work queue. Where each corpus stands is in its `ctbrowser/test/corpus/<dir>/*.txt`
+  record and its plan: `docs/script.md` (p5, Phaser), `docs/plans/babylon.md`,
   `docs/plans/modules.md`.
 - `tools/fetch-angle.sh` — downloads the PINNED ANGLE release into
   `third-party/angle/`. ANGLE is fetched rather than built: it needs GN,

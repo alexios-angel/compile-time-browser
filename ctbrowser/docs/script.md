@@ -86,7 +86,7 @@ minified build does, and `full-level` is the same ladder with the flag left
 undefined - the Friendly Error System and i18next's setup both in play. Both
 read 12, and neither reaches the network. "p5 runs" is a different claim when
 half of p5 is switched off, which is why the second one is measured rather than
-assumed. `tools/corpus/p5-ratchet.py --survey` measures each of
+assumed. `tools/corpus/ratchet.py p5 ratchet --survey` measures each of
 the bundle's 71 rollup modules independently, `--bisect NAME` carves one out as
 a reproducer, and `--source N` prints the text of compiled function N - a stack
 trace names functions as `fn#3778`, and most of a bundle's functions are

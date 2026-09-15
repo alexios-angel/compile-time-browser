@@ -23,8 +23,8 @@ are is the engine's primary evidence that it runs real JavaScript:
 
 - `../test/corpus/*/` — the ratchets (how FAR a bundle gets) and the API probes
   (how WIDE the working surface is). Four of them.
-- `tools/*-ratchet.py`, `tools/*-api.py` — the loops that drive those tests and
-  record the levels with `--advance`.
+- `tools/corpus/ratchet.py <corpus> ratchet|api` — the one loop that drives those
+  tests and records the levels with `--advance`.
 - `examples/pages/*.html` — the demo pages, which load them with
   `<script src="../../vendor/<lib>/<lib>.js">`.
 
@@ -58,8 +58,8 @@ Replace the `.js`, update `NOTICE` and the table above, and then **run the
 ratchets** — do not assume a newer bundle clears the same rungs:
 
 ```
-tools/corpus/p5-ratchet.py        # and phaser-, babylon-, webgl2-, module-
-tools/corpus/p5-api.py --coverage
+tools/corpus/ratchet.py p5 ratchet        # and phaser, babylon, webgl2, module
+tools/corpus/ratchet.py p5 api --coverage
 tools/check/css-parity.py --all   # bootstrap, and it needs Chrome
 ```
 

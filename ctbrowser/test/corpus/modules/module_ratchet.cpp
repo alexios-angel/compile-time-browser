@@ -432,6 +432,6 @@ int main() {
     std::printf("     babylon: %s\n", babylon_es_verdict().c_str());
 
     ctbrowser_test::ratchet_pawl("modules", "test/corpus/modules/module-ratchet.txt",
-                                 "tools/corpus/module-ratchet.py", m, rung_name);
+                                 "tools/corpus/ratchet.py module ratchet", m, rung_name);
     REPORT("module_ratchet");
 }
