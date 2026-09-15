@@ -56,10 +56,19 @@ Stable formatting passes **841 C++ / 103 Python / 33 web**; the required pinned
 formatter retains its byte-identical **nine-file / 26-diagnostic** baseline.
 All **1,458 frozen source hashes** match the devbox and committed local source.
 
-**Full gate running:** the complete default build and 606-CTest gate are under
-`/tmp/ctbrowser-devbox-build.lock`, logged in `/tmp/ctcompile-uri-native/full.log`.
-Do not claim a current full-suite pass or a Bootstrap admission gain until this
-finishes. Replay/evidence scripts and frozen inputs are in `/tmp/ctcompile-uri-native/`.
+**Recovered validation, 2026-09-15:** resumed the interrupted gate recorded by
+**6caa728b**. The 324-step default build and **605/605 non-lit CTests** passed;
+the retained final-test log records **177/177 lit cases in 989.08s**. The old
+CTest process lost its final summary after the session disconnected, so no
+complete-wrapper exit status or total wall time is claimed. All **1,458 source
+and 113 submodule hashes** match; source also matches the committed tree.
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+no skips/prunes; DOM Data **7/7**, Button **4/86**, 22 Node observations and the
+existing VM inheritance failure. Button/Data reports and all **1,123 escape
+baseline rows** remain byte-identical. Original M and the saved nullable URI
+fixture still refuse all four provider/policy combinations. No browser/runtime
+or expectation changes. Evidence: `/tmp/ctcompile-uri-native/recovered-full-test.log`
+and `/tmp/ctcompile-nullable-uri/`; the next source change gets a new full gate.
 
 **Exact next boundary:** the original M guard `if ('string' != typeof t) return t`
 on a saved optional `getAttribute` result, followed by the existing URI continuation.
