@@ -38,10 +38,18 @@ signed/unsigned comparison of the -1 local sentinel; the final run includes its 
 Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned formatting
 is byte-identical to the existing **nine-file / 26-diagnostic** baseline.
 
-**Complete gate running:** `CT_TEST_JOBS=4 tools/remote-build.sh`, with **1,443 frozen
-input hashes**. Focused source hashes match local and devbox. Recovery scripts/logs
-live in `/tmp/ctcompile-dom-forwarded/`; `full.sh` collects the final CTest log and
-verifies remote inputs. A completed full gate is not yet claimed.
+Complete **276-step default build / 602/602 CTests in 1433.03s /
+176/176 lit in 971.17s PASS**, with four CTest jobs. DOM entry passed in **206.55s**,
+session in **63.65s**, Strings in **56.01s**, and shared Map ownership in **316.35s**.
+All **1,443 frozen hashes** match devbox, local files and committed source.
+Recovery scripts, full logs, generated C++ and `measured.json` are retained in
+`/tmp/ctcompile-dom-forwarded/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7**; Button
+remains **4/86**, with **22 Node observations** and its existing interpreter
+inheritance failure. Button/Data reports and all **1,123 escape baseline rows**
+are byte-identical to the previous gate. Full WPT/test262 were not remeasured.
 
 **Exact next boundary:** the exported entry still must be uncaptured and its wrapper
 inert. Prove original Bootstrap's outer H/F/M initialization and callable identities;
@@ -49,6 +57,9 @@ then the trusted String/RegExp replacement/execution/property lookup for
 `F("config")` (vendor line 243). `M` (line 230) still consumes live optional attributes
 through branches, Number/toString, URI decoding, JSON and exceptions. Dataset
 iteration, inherited receivers and retained config/callback ownership follow.
+DOMEntryAnalysis still rejects `initialIntrinsics`, and helper expansion runs
+before DOM admission. Checked F specialization therefore needs its trusted source
+and host premises before expansion; a method name alone supplies no identity proof.
 Full native Bootstrap and the application driver remain unfinished. No browser/runtime
 files or WPT/test262 expectations changed; no full-bundle admission gain is claimed.
 
