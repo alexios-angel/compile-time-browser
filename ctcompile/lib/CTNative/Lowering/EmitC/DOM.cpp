@@ -26,6 +26,9 @@ std::string lowering::domDataDefinition() const {
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     needsDOM = true;
+    domOptionalStrings.insert(entry.optionalStringJoins().begin(),
+                              entry.optionalStringJoins().end());
+    needsDOMAttributeRead |= !domOptionalStrings.empty();
     for (mlir::BlockArgument parameter : entry.parameters()) { domParameters.insert(parameter); }
     entry.entry().walk([&](ctjs::ConstantOp constant) {
         if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
@@ -132,16 +135,21 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                compare.getRhs()));
         return true;
     }
-    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-        unary && unary.getKind() == ctjs::UnaryKind::Not &&
-        unary.getOperand().getType() == optionalString) {
+    auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+    auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
+    const mlir::Value tested = truth ? truth.getValue()
+                               : unary && unary.getKind() == ctjs::UnaryKind::Not
+                                   ? unary.getOperand()
+                                   : mlir::Value{};
+    if (tested && tested.getType() == optionalString) {
         // Presence alone is not JavaScript truthiness: an empty attribute is false.
-        auto present = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne,
-                                         unary.getOperand(), null());
-        auto nonempty = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne,
-                                          unary.getOperand(), stringConstant(at, where, ""));
+        auto present =
+            ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne, tested, null());
+        auto nonempty = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne, tested,
+                                          stringConstant(at, where, ""));
         auto truthy = ec::LogicalAndOp::create(at, where, at.getI1Type(), present, nonempty);
-        swap(ec::LogicalNotOp::create(at, where, at.getI1Type(), truthy));
+        swap(truth ? mlir::Value(truthy)
+                   : ec::LogicalNotOp::create(at, where, at.getI1Type(), truthy).getResult());
         return true;
     }
     const auto found = domCalls.find(operation);

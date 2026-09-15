@@ -129,6 +129,9 @@ public:
     // Validated parameters or nullable closest results, for equality only.
     [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
+    [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
+        return optionalStrings;
+    }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
 
@@ -138,6 +141,7 @@ private:
     ctjs::FuncOp checkedWrapper;
     std::vector<mlir::BlockArgument> elements;
     std::vector<ctjs::GetPropertyOp> tokenLists;
+    std::vector<mlir::Value> optionalStrings;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;
     unsigned workSteps = 0;

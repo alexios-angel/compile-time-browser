@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -322,8 +323,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<ctjs::GetPropertyOp> provedTokens;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
-    // ponytail: straight-line entry only; extend with a checked SSA join when
-    // an actual browser action needs branches, never with report attributes.
+    std::vector<mlir::Value> provedOptionalStrings;
+    mlir::DominanceInfo dominance(target);
     if (declaration && !host_detail::isInertEntryDeclaration(declaration, target, spend)) {
         if (refusal.empty()) {
             refusal = "DOM entry wrapper contains observable source operations";
@@ -346,242 +347,341 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             const auto found = values.find(value);
             return found != values.end() && found->second == kind;
         };
-        mlir::Value frame;
-        bool entered = false, returned = false;
-        for (mlir::Operation & operation : block) {
-            if (!spend()) { return; }
-            if (operation.getNumRegions() != 0 || operation.getNumSuccessors() != 0 || returned) {
-                refusal = "DOM entry does not admit nested control flow or a source continuation";
-                return;
+        // ponytail: bounded structured branches; loops and early-return CFG
+        // need a separate control-flow proof. Both arms are checked, always.
+        const auto visit = [&](auto && self, mlir::Block & body, unsigned depth,
+                               mlir::Value frame) -> bool {
+            if (depth == 64 || (!body.getArguments().empty() && depth != 0)) {
+                refusal = "DOM entry branch depth or block arguments are unsupported";
+                return false;
             }
-            for (mlir::Value operand : operation.getOperands()) {
-                if (!spend()) { return; }
-                if (!values.contains(operand) && operand != frame) {
-                    refusal = "DOM entry operand has no preceding local definition";
-                    return;
+            bool entered = false, returned = false;
+            for (mlir::Operation & operation : body) {
+                if (!spend()) { return false; }
+                if ((operation.getNumRegions() != 0 && !llvm::isa<mlir::scf::IfOp>(operation)) ||
+                    operation.getNumSuccessors() != 0 || returned) {
+                    refusal =
+                        "DOM entry does not admit nested control flow or a source continuation";
+                    return false;
                 }
-            }
-            if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
-                if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
-                    values[constant.getResult()] = Kind::string;
-                } else if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
-                    values[constant.getResult()] = Kind::boolean;
-                } else if (llvm::isa<ctjs::NullAttr>(constant.getValue())) {
-                    values[constant.getResult()] = Kind::null;
-                } else if (llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
-                    values[constant.getResult()] = Kind::undefined;
-                } else {
-                    refusal = "DOM entry constant has no supported scalar contract";
-                    return;
+                for (mlir::Value operand : operation.getOperands()) {
+                    if (!spend()) { return false; }
+                    if ((!values.contains(operand) && operand != frame) ||
+                        !dominance.dominates(operand, &operation)) {
+                        refusal = "DOM entry operand has no preceding local definition";
+                        return false;
+                    }
                 }
-                continue;
-            }
-            if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
-                if (entered) {
-                    refusal = "DOM entry has more than one shadow frame";
-                    return;
-                }
-                entered = true;
-                frame = enter.getContext();
-                continue;
-            }
-            if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
-                if (!frame || root.getContext() != frame) {
-                    refusal = "DOM entry root is outside its local shadow frame";
-                    return;
-                }
-                continue;
-            }
-            if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
-                if (!frame || exit.getContext() != frame) {
-                    refusal = "DOM entry exits an unknown shadow frame";
-                    return;
-                }
-                frame = {};
-                continue;
-            }
-            if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                if (frame || (!hasKind(result.getValue(), Kind::undefined) &&
-                              !hasKind(result.getValue(), Kind::boolean) &&
-                              !hasKind(result.getValue(), Kind::string) &&
-                              !hasKind(result.getValue(), Kind::optionalString))) {
-                    refusal = "DOM entry return must be a scalar with no borrowed browser handle";
-                    return;
-                }
-                returned = true;
-                continue;
-            }
-            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
-                load && load.getName() == "undefined") {
-                // The DOM provider fixes this initial binding. The complete
-                // source census admits no replacement or script reentry.
-                values[load.getResult()] = Kind::undefined;
-                continue;
-            }
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                const auto key = ctjs::constantKey(read.getKey());
-                if (hasKind(read.getObject(), Kind::element) && key == "classList") {
-                    values[read.getResult()] = Kind::tokenList;
-                    provedTokens.push_back(read);
-                    continue;
-                }
-                if (hasKind(read.getObject(), Kind::element) && key == "getAttribute") {
-                    values[read.getResult()] = Kind::getAttribute;
-                    provedMethods.emplace_back(read, HostDOMMethod::getAttribute);
-                    continue;
-                }
-                if (hasKind(read.getObject(), Kind::element) && key == "setAttribute") {
-                    values[read.getResult()] = Kind::attribute;
-                    provedMethods.emplace_back(read, HostDOMMethod::setAttribute);
-                    continue;
-                }
-                if (hasKind(read.getObject(), Kind::element) &&
-                    (key == "contains" || key == "matches" || key == "closest")) {
-                    values[read.getResult()] = key == "contains"  ? Kind::contains
-                                               : key == "matches" ? Kind::matches
-                                                                  : Kind::closest;
-                    provedMethods.emplace_back(read, key == "contains"  ? HostDOMMethod::contains
-                                                     : key == "matches" ? HostDOMMethod::matches
-                                                                        : HostDOMMethod::closest);
-                    continue;
-                }
-                if (hasKind(read.getObject(), Kind::element) &&
-                    (key == "toggleAttribute" || key == "hasAttribute" ||
-                     key == "removeAttribute")) {
-                    values[read.getResult()] = key == "toggleAttribute" ? Kind::toggleAttribute
-                                               : key == "hasAttribute"  ? Kind::hasAttribute
-                                                                        : Kind::removeAttribute;
-                    provedMethods.emplace_back(
-                        read, key == "toggleAttribute" ? HostDOMMethod::toggleAttribute
-                              : key == "hasAttribute"  ? HostDOMMethod::hasAttribute
-                                                       : HostDOMMethod::removeAttribute);
-                    continue;
-                }
-                if (hasKind(read.getObject(), Kind::tokenList) && key == "toggle") {
-                    values[read.getResult()] = Kind::toggle;
-                    provedMethods.emplace_back(read, HostDOMMethod::toggleClass);
-                    continue;
-                }
-                refusal = "DOM property read lacks a proved receiver and supported member";
-                return;
-            }
-            if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
-                auto method = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (!method || method.getObject() != invoke.getReceiver()) {
-                    refusal = "DOM call does not preserve its proved method receiver";
-                    return;
-                }
-                auto arguments = invoke.getArgs();
-                const bool contains = hasKind(invoke.getCallee(), Kind::contains);
-                const bool matches = hasKind(invoke.getCallee(), Kind::matches);
-                const bool closest = hasKind(invoke.getCallee(), Kind::closest);
-                if (arguments.size() == 1 &&
-                    ((contains && hasKind(arguments[0], Kind::element)) ||
-                     ((matches || closest) && hasKind(arguments[0], Kind::string)))) {
-                    provedCalls.push_back({invoke,
-                                           contains  ? HostDOMMethod::contains
-                                           : matches ? HostDOMMethod::matches
-                                                     : HostDOMMethod::closest,
-                                           invoke.getReceiver()});
-                    values[invoke.getResult()] = closest ? Kind::nullableElement : Kind::boolean;
-                    continue;
-                }
-                if ((hasKind(invoke.getCallee(), Kind::toggle) ||
-                     hasKind(invoke.getCallee(), Kind::toggleAttribute)) &&
-                    (arguments.size() == 1 ||
-                     (arguments.size() == 2 && (hasKind(arguments[1], Kind::boolean) ||
-                                                hasKind(arguments[1], Kind::undefined)))) &&
-                    hasKind(arguments[0], Kind::string)) {
-                    const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
-                    auto element =
-                        classes
-                            ? invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>().getObject()
-                            : invoke.getReceiver();
-                    provedCalls.push_back(
-                        {invoke,
-                         classes ? HostDOMMethod::toggleClass : HostDOMMethod::toggleAttribute,
-                         element});
-                    values[invoke.getResult()] = Kind::boolean;
-                    continue;
-                }
-                if (hasKind(invoke.getCallee(), Kind::getAttribute) && arguments.size() == 1 &&
-                    hasKind(arguments[0], Kind::string)) {
-                    provedCalls.push_back(
-                        {invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
-                    // Own String or null, with no prototype fallback.
-                    values[invoke.getResult()] = Kind::optionalString;
-                    continue;
-                }
-                if (hasKind(invoke.getCallee(), Kind::hasAttribute) && arguments.size() == 1 &&
-                    hasKind(arguments[0], Kind::string)) {
-                    provedCalls.push_back(
-                        {invoke, HostDOMMethod::hasAttribute, invoke.getReceiver()});
-                    values[invoke.getResult()] = Kind::boolean;
-                    continue;
-                }
-                const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
-                if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
-                     (hasKind(arguments[1], Kind::string) ||
-                      hasKind(arguments[1], Kind::boolean))) ||
-                    (hasKind(invoke.getCallee(), Kind::removeAttribute) && arguments.size() == 1 &&
-                     hasKind(arguments[0], Kind::string))) {
-                    for (mlir::Operation * user : invoke.getResult().getUsers()) {
-                        if (!spend()) { return; }
-                        if (!llvm::isa<ctjs::RootOp>(user)) {
-                            refusal = "DOM attribute write result must be unused";
-                            return;
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    if (!hasKind(branch.getCondition(), Kind::boolean) ||
+                        !llvm::hasSingleElement(branch.getThenRegion()) ||
+                        (!branch.getElseRegion().empty() &&
+                         !llvm::hasSingleElement(branch.getElseRegion()))) {
+                        refusal = "DOM entry branch lacks a proved Boolean and complete arms";
+                        return false;
+                    }
+                    llvm::SmallVector<Kind> joined;
+                    for (mlir::Region & region : branch->getRegions()) {
+                        if (region.empty()) { continue; }
+                        if (!self(self, region.front(), depth + 1, frame)) { return false; }
+                        auto yielded =
+                            llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                        if (!yielded || yielded.getNumOperands() != branch.getNumResults()) {
+                            refusal = "DOM entry branch requires exact scalar yields";
+                            return false;
+                        }
+                        const bool first = &region == &branch.getThenRegion();
+                        for (auto [index, operand] : llvm::enumerate(yielded.getOperands())) {
+                            if (!spend()) { return false; }
+                            const auto found = values.find(operand);
+                            if (found == values.end()) {
+                                refusal = "DOM entry yield lacks a proved value";
+                                return false;
+                            }
+                            const Kind kind = found->second;
+                            if (kind != Kind::boolean && kind != Kind::string &&
+                                kind != Kind::null && kind != Kind::optionalString &&
+                                kind != Kind::undefined) {
+                                refusal =
+                                    "DOM entry branch cannot carry a borrowed or callable value";
+                                return false;
+                            }
+                            if (first) {
+                                joined.push_back(kind);
+                                continue;
+                            }
+                            if (joined[index] == kind) { continue; }
+                            const auto stringOrNull = [](Kind k) {
+                                return k == Kind::string || k == Kind::null ||
+                                       k == Kind::optionalString;
+                            };
+                            if (!stringOrNull(joined[index]) || !stringOrNull(kind)) {
+                                refusal = "DOM entry branch has incompatible scalar alternatives";
+                                return false;
+                            }
+                            joined[index] = Kind::optionalString;
                         }
                     }
-                    provedCalls.push_back(
-                        {invoke,
-                         sets ? HostDOMMethod::setAttribute : HostDOMMethod::removeAttribute,
-                         invoke.getReceiver()});
-                    values[invoke.getResult()] = Kind::undefined;
+                    if (joined.size() != branch.getNumResults() ||
+                        (branch.getNumResults() && branch.getElseRegion().empty())) {
+                        refusal = "DOM entry branch is missing a scalar arm";
+                        return false;
+                    }
+                    for (auto [value, kind] : llvm::zip(branch.getResults(), joined)) {
+                        values[value] = kind;
+                        if (kind == Kind::optionalString || kind == Kind::null) {
+                            provedOptionalStrings.push_back(value);
+                        }
+                    }
                     continue;
                 }
-                refusal = "DOM call arguments lack the supported primitive contract";
-                return;
-            }
-            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
-                binary &&
-                (binary.getKind() == ctjs::BinaryKind::Add ||
-                 binary.getKind() == ctjs::BinaryKind::Concat) &&
-                hasKind(binary.getLhs(), Kind::string) && hasKind(binary.getRhs(), Kind::string)) {
-                values[binary.getResult()] = Kind::string;
-                continue;
-            }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
-                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
-                const auto elementIdentity = [&](mlir::Value value) {
-                    return hasKind(value, Kind::element) || hasKind(value, Kind::nullableElement);
-                };
-                const auto stringOrNull = [&](mlir::Value value) {
-                    return hasKind(value, Kind::string) || hasKind(value, Kind::optionalString) ||
-                           hasKind(value, Kind::null);
-                };
-                if ((elementIdentity(compare.getLhs()) && elementIdentity(compare.getRhs())) ||
-                    (stringOrNull(compare.getLhs()) && stringOrNull(compare.getRhs()))) {
-                    values[compare.getResult()] = Kind::boolean;
+                if (llvm::isa<mlir::scf::YieldOp>(operation)) {
+                    if (!depth) {
+                        refusal = "DOM entry yield is outside a branch";
+                        return false;
+                    }
+                    returned = true;
                     continue;
                 }
+                if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
+                    if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
+                        values[constant.getResult()] = Kind::string;
+                    } else if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
+                        values[constant.getResult()] = Kind::boolean;
+                    } else if (llvm::isa<ctjs::NullAttr>(constant.getValue())) {
+                        values[constant.getResult()] = Kind::null;
+                    } else if (llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
+                        values[constant.getResult()] = Kind::undefined;
+                    } else {
+                        refusal = "DOM entry constant has no supported scalar contract";
+                        return false;
+                    }
+                    continue;
+                }
+                if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
+                    if (depth || entered) {
+                        refusal = "DOM entry has more than one shadow frame";
+                        return false;
+                    }
+                    entered = true;
+                    frame = enter.getContext();
+                    continue;
+                }
+                if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
+                    if (!frame || root.getContext() != frame) {
+                        refusal = "DOM entry root is outside its local shadow frame";
+                        return false;
+                    }
+                    continue;
+                }
+                if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
+                    if (depth || !frame || exit.getContext() != frame) {
+                        refusal = "DOM entry exits an unknown shadow frame";
+                        return false;
+                    }
+                    frame = {};
+                    continue;
+                }
+                if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                    if (depth || frame ||
+                        (!hasKind(result.getValue(), Kind::undefined) &&
+                         !hasKind(result.getValue(), Kind::boolean) &&
+                         !hasKind(result.getValue(), Kind::string) &&
+                         !hasKind(result.getValue(), Kind::optionalString))) {
+                        refusal =
+                            "DOM entry return must be a scalar with no borrowed browser handle";
+                        return false;
+                    }
+                    returned = true;
+                    continue;
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+                    load && load.getName() == "undefined") {
+                    // The DOM provider fixes this initial binding. The complete
+                    // source census admits no replacement or script reentry.
+                    values[load.getResult()] = Kind::undefined;
+                    continue;
+                }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    const auto key = ctjs::constantKey(read.getKey());
+                    if (hasKind(read.getObject(), Kind::element) && key == "classList") {
+                        values[read.getResult()] = Kind::tokenList;
+                        provedTokens.push_back(read);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::element) && key == "getAttribute") {
+                        values[read.getResult()] = Kind::getAttribute;
+                        provedMethods.emplace_back(read, HostDOMMethod::getAttribute);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::element) && key == "setAttribute") {
+                        values[read.getResult()] = Kind::attribute;
+                        provedMethods.emplace_back(read, HostDOMMethod::setAttribute);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::element) &&
+                        (key == "contains" || key == "matches" || key == "closest")) {
+                        values[read.getResult()] = key == "contains"  ? Kind::contains
+                                                   : key == "matches" ? Kind::matches
+                                                                      : Kind::closest;
+                        provedMethods.emplace_back(read, key == "contains" ? HostDOMMethod::contains
+                                                         : key == "matches"
+                                                             ? HostDOMMethod::matches
+                                                             : HostDOMMethod::closest);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::element) &&
+                        (key == "toggleAttribute" || key == "hasAttribute" ||
+                         key == "removeAttribute")) {
+                        values[read.getResult()] = key == "toggleAttribute" ? Kind::toggleAttribute
+                                                   : key == "hasAttribute"  ? Kind::hasAttribute
+                                                                            : Kind::removeAttribute;
+                        provedMethods.emplace_back(
+                            read, key == "toggleAttribute" ? HostDOMMethod::toggleAttribute
+                                  : key == "hasAttribute"  ? HostDOMMethod::hasAttribute
+                                                           : HostDOMMethod::removeAttribute);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::tokenList) && key == "toggle") {
+                        values[read.getResult()] = Kind::toggle;
+                        provedMethods.emplace_back(read, HostDOMMethod::toggleClass);
+                        continue;
+                    }
+                    refusal = "DOM property read lacks a proved receiver and supported member";
+                    return false;
+                }
+                if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                    auto method = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (!method || method.getObject() != invoke.getReceiver()) {
+                        refusal = "DOM call does not preserve its proved method receiver";
+                        return false;
+                    }
+                    auto arguments = invoke.getArgs();
+                    const bool contains = hasKind(invoke.getCallee(), Kind::contains);
+                    const bool matches = hasKind(invoke.getCallee(), Kind::matches);
+                    const bool closest = hasKind(invoke.getCallee(), Kind::closest);
+                    if (arguments.size() == 1 &&
+                        ((contains && hasKind(arguments[0], Kind::element)) ||
+                         ((matches || closest) && hasKind(arguments[0], Kind::string)))) {
+                        provedCalls.push_back({invoke,
+                                               contains  ? HostDOMMethod::contains
+                                               : matches ? HostDOMMethod::matches
+                                                         : HostDOMMethod::closest,
+                                               invoke.getReceiver()});
+                        values[invoke.getResult()] =
+                            closest ? Kind::nullableElement : Kind::boolean;
+                        continue;
+                    }
+                    if ((hasKind(invoke.getCallee(), Kind::toggle) ||
+                         hasKind(invoke.getCallee(), Kind::toggleAttribute)) &&
+                        (arguments.size() == 1 ||
+                         (arguments.size() == 2 && (hasKind(arguments[1], Kind::boolean) ||
+                                                    hasKind(arguments[1], Kind::undefined)))) &&
+                        hasKind(arguments[0], Kind::string)) {
+                        const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
+                        auto element = classes ? invoke.getReceiver()
+                                                     .getDefiningOp<ctjs::GetPropertyOp>()
+                                                     .getObject()
+                                               : invoke.getReceiver();
+                        provedCalls.push_back(
+                            {invoke,
+                             classes ? HostDOMMethod::toggleClass : HostDOMMethod::toggleAttribute,
+                             element});
+                        values[invoke.getResult()] = Kind::boolean;
+                        continue;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::getAttribute) && arguments.size() == 1 &&
+                        hasKind(arguments[0], Kind::string)) {
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
+                        // Own String or null, with no prototype fallback.
+                        values[invoke.getResult()] = Kind::optionalString;
+                        continue;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::hasAttribute) && arguments.size() == 1 &&
+                        hasKind(arguments[0], Kind::string)) {
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::hasAttribute, invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::boolean;
+                        continue;
+                    }
+                    const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
+                    if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
+                         (hasKind(arguments[1], Kind::string) ||
+                          hasKind(arguments[1], Kind::boolean))) ||
+                        (hasKind(invoke.getCallee(), Kind::removeAttribute) &&
+                         arguments.size() == 1 && hasKind(arguments[0], Kind::string))) {
+                        for (mlir::Operation * user : invoke.getResult().getUsers()) {
+                            if (!spend()) { return false; }
+                            if (!llvm::isa<ctjs::RootOp>(user)) {
+                                refusal = "DOM attribute write result must be unused";
+                                return false;
+                            }
+                        }
+                        provedCalls.push_back(
+                            {invoke,
+                             sets ? HostDOMMethod::setAttribute : HostDOMMethod::removeAttribute,
+                             invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::undefined;
+                        continue;
+                    }
+                    refusal = "DOM call arguments lack the supported primitive contract";
+                    return false;
+                }
+                if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
+                    binary &&
+                    (binary.getKind() == ctjs::BinaryKind::Add ||
+                     binary.getKind() == ctjs::BinaryKind::Concat) &&
+                    hasKind(binary.getLhs(), Kind::string) &&
+                    hasKind(binary.getRhs(), Kind::string)) {
+                    values[binary.getResult()] = Kind::string;
+                    continue;
+                }
+                if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                    compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                    const auto elementIdentity = [&](mlir::Value value) {
+                        return hasKind(value, Kind::element) ||
+                               hasKind(value, Kind::nullableElement);
+                    };
+                    const auto stringOrNull = [&](mlir::Value value) {
+                        return hasKind(value, Kind::string) ||
+                               hasKind(value, Kind::optionalString) || hasKind(value, Kind::null);
+                    };
+                    if ((elementIdentity(compare.getLhs()) && elementIdentity(compare.getRhs())) ||
+                        (stringOrNull(compare.getLhs()) && stringOrNull(compare.getRhs()))) {
+                        values[compare.getResult()] = Kind::boolean;
+                        continue;
+                    }
+                }
+                if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
+                    truth && (hasKind(truth.getValue(), Kind::boolean) ||
+                              hasKind(truth.getValue(), Kind::string) ||
+                              hasKind(truth.getValue(), Kind::optionalString) ||
+                              hasKind(truth.getValue(), Kind::null))) {
+                    values[truth.getResult()] = Kind::boolean;
+                    continue;
+                }
+                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+                    unary && unary.getKind() == ctjs::UnaryKind::Not &&
+                    (hasKind(unary.getOperand(), Kind::boolean) ||
+                     hasKind(unary.getOperand(), Kind::optionalString))) {
+                    values[unary.getResult()] = Kind::boolean;
+                    continue;
+                }
+                refusal = ("DOM entry operation lacks a typed browser contract: " +
+                           operation.getName().getStringRef())
+                              .str();
+                return false;
             }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-                unary && unary.getKind() == ctjs::UnaryKind::Not &&
-                (hasKind(unary.getOperand(), Kind::boolean) ||
-                 hasKind(unary.getOperand(), Kind::optionalString))) {
-                values[unary.getResult()] = Kind::boolean;
-                continue;
+            if (!returned) {
+                refusal = "DOM entry requires a complete return and exact source declaration";
+                return false;
             }
-            refusal = ("DOM entry operation lacks a typed browser contract: " +
-                       operation.getName().getStringRef())
-                          .str();
-            return;
-        }
-        if (!returned) {
-            refusal = "DOM entry requires a complete return and exact source declaration";
-            return;
-        }
+            return true;
+        };
+        if (!visit(visit, block, 0, {})) { return; }
     }
+    optionalStrings = std::move(provedOptionalStrings);
     checkedEntry = target;
     checkedWrapper = declaration;
     elements = std::move(provedElements);

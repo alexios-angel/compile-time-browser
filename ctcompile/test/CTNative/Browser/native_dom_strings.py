@@ -36,6 +36,7 @@ WIDE = r"""function readWideName(element) {
 """
 # Keep the original refusal sources byte-for-byte when admitting their graphs.
 CAPTURE_RETURNS = {
+    "branch_optional_return": "function invalid(element) { const saved = element.getAttribute('x'); let value; if (saved === null) { value = null; } else { value = saved; } return value; }\n",
     "capture_callable": "function invalid(element) { function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke(); }\n",
     "capture_holder": "function invalid(element) { const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke(); }\n",
     "capture_forwarded": "function invalid(element) { function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke(); }\n",
@@ -97,6 +98,65 @@ BOOLEAN_CASES = {
         "1111",
     ),
 }
+BOOLEAN_CASES.update(
+    {
+        "branch_effects": (
+            """if (element.getAttribute('x')) {
+      element.setAttribute('marker', 'yes');
+    } else { element.removeAttribute('marker'); }
+    return element.hasAttribute('marker');""",
+            "0011",
+        ),
+        "branch_boolean": (
+            """let answer; if (element.getAttribute('x') !== null) {
+      answer = true;
+    } else { answer = false; } return answer;""",
+            "0111",
+        ),
+        "branch_string": (
+            """let answer; if (element.hasAttribute('x')) {
+      answer = 'yes';
+    } else { answer = 'no'; }
+    element.setAttribute('marker', answer);
+    return element.getAttribute('marker') === 'yes';""",
+            "0111",
+        ),
+        "branch_optional_string": (
+            """let answer; if (element.hasAttribute('x')) {
+      answer = element.getAttribute('x');
+    } else { answer = 'fallback'; } return answer === 'fallback';""",
+            "1000",
+        ),
+        "branch_string_optional": (
+            """let answer; if (element.hasAttribute('x')) {
+      answer = 'present';
+    } else { answer = element.getAttribute('x'); } return answer === null;""",
+            "1000",
+        ),
+        "branch_saved": (
+            """let answer; if (element.hasAttribute('x')) {
+      answer = element.getAttribute('x');
+    } else { answer = null; }
+    element.setAttribute('x', 'after'); return !answer;""",
+            "1100",
+        ),
+        "branch_null_string": (
+            """let answer; if (element.hasAttribute('x')) {
+      answer = 'present';
+    } else { answer = null; } return !!answer;""",
+            "0111",
+        ),
+        "branch_nested": (
+            """let answer; if (element.hasAttribute('x')) {
+      if (element.getAttribute('x')) { answer = 'nonempty'; }
+      else { answer = 'empty'; }
+    } else { answer = 'absent'; }
+    element.setAttribute('marker', answer);
+    return element.getAttribute('marker') === 'empty';""",
+            "0100",
+        ),
+    }
+)
 HELPER_CASES = {
     "helper_capture": (
         "function read() { return element.getAttribute('x'); } return read() === null;",
@@ -815,7 +875,7 @@ const names = [];
 assert.equal(readNames({getAttribute(name) { names.push(name); return name; }}), 'a\0b');
 assert.deepEqual(names, ['bad name', '', 'a\0b']);
 assert.equal(readWideName({getAttribute(name) { return name; }}), '\ud800');
-for (const entry of [readAttribute, savedAttribute, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
+for (const entry of [readAttribute, savedAttribute, branch_optional_return, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
   const key = entry === readAttribute || entry === savedAttribute ? 'DATA-State' : entry === helper_regex ? 'data-bs-config' : 'x';
   for (const expected of [null, '', 'a\0b', '\u00e9']) {
     let value = expected;
@@ -1057,6 +1117,12 @@ BOOLEAN_RUN = r"""
 """
 
 REFUSALS = {
+    "branch_unsafe_then": "if (element.hasAttribute('x')) { element.unknown(); } return true;",
+    "branch_unsafe_else": "if (element.hasAttribute('x')) { element.setAttribute('a', 'b'); } else { element.unknown(); } return true;",
+    "branch_mixed_join": "let value; if (element.hasAttribute('x')) { value=true; } else { value='text'; } return value;",
+    "branch_optional_undefined": "let value; if (element.hasAttribute('x')) { value=element.getAttribute('x'); } else { value=undefined; } return value;",
+    "branch_borrowed_join": "let value; if (element.hasAttribute('x')) { value=element; } else { value=element.closest('x'); } return value === element;",
+    "branch_loop": "while (element.hasAttribute('x')) { element.removeAttribute('x'); } return true;",
     "boolean-call": "return Boolean(element.getAttribute('x'));",
     "stringify": "return '' + element.getAttribute('x');",
     "loose-equality": "return element.getAttribute('x') == null;",
@@ -2060,6 +2126,41 @@ function makeElement(value) {
                 )
                 if "DOM" not in diagnostic:
                     raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+    _, branch_ir, branch_contract = next(row for row in prepared if row[0] == "branch_nested")
+    for budget in (0, 1, 32):
+        diagnostic = dom.lower(
+            args,
+            branch_ir,
+            branch_contract,
+            f"branch-budget-{budget}",
+            max_steps=budget,
+            success=False,
+        )
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(f"branch budget {budget}: wrong refusal\n{diagnostic}")
+    for depth in (63, 64):
+        source = (
+            "function branchDepth(element) {"
+            + "if (element.hasAttribute('x')) {" * depth
+            + "element.setAttribute('marker', 'yes');"
+            + "}" * depth
+            + "return true;}"
+        )
+        ir, contract = dom.prepare(
+            args, f"branch-depth-{depth}", source, 1, entry_name="branchDepth"
+        )
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                result = dom.lower(
+                    args,
+                    ir,
+                    dict(contract, provider=provider),
+                    f"branch-depth-{depth}-{provider}-{optimize}",
+                    optimize=optimize,
+                    success=depth == 63,
+                )
+                if depth == 64 and "DOM entry branch depth" not in result:
+                    raise RuntimeError(f"branch depth: wrong refusal\n{result}")
     _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_nested")
     for budget in (0, 1, 32):
         diagnostic = dom.lower(
@@ -2131,7 +2232,7 @@ function makeElement(value) {
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks; "
-        f"{replacement_checks} replacement provenance/budget checks"
+        f"{replacement_checks} replacement provenance/budget checks; 11 branch depth/budget checks"
     )
 
 

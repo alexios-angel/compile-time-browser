@@ -29,7 +29,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
-        if (domNulls.contains(v.getDefiningOp())) {
+        if (domNulls.contains(v.getDefiningOp()) || domOptionalStrings.contains(v)) {
             v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
             return;
         }

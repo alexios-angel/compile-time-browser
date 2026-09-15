@@ -1,6 +1,7 @@
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -592,7 +593,8 @@ struct DOMSource {
         bool entered = false, returned = false;
         for (mlir::Operation & operation : block) {
             if (!step()) { return false; }
-            if (operation.getNumRegions() || operation.getNumSuccessors() || returned) {
+            if ((operation.getNumRegions() && !(entry && llvm::isa<mlir::scf::IfOp>(operation))) ||
+                operation.getNumSuccessors() || returned) {
                 return refuse("DOM helper requires a complete straight-line body");
             }
             for (mlir::Value operand : operation.getOperands()) {

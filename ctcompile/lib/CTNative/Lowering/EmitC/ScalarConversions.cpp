@@ -22,7 +22,10 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     if (value.getType() == target) { return value; }
     llvm::StringRef helper;
-    if (isBooleanStringCarrier(target)) {
+    if (target == ec::OpaqueType::get(context, kDOMOptionalStringType) &&
+        value.getType() == carrierType(context, carrier::string)) {
+        helper = kDOMOptionalStringType;
+    } else if (isBooleanStringCarrier(target)) {
         needsBooleanString = true;
         helper = kBooleanStringType;
     } else if (isNullableStringCarrier(target)) {
@@ -93,13 +96,14 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
             auto [position, inserted] = globalTypes.try_emplace(store.getName(), type);
             if (!inserted) { position->second = meet(position->second, type); }
         });
-        // The live DOM proof admits only one straight-line return. Preserve
-        // its String-or-null result as an owning optional, before the generic
+        // Preserve the proved DOM String-or-null return, including a checked
+        // branch join, as an owning optional before the generic
         // scalar census can request a tagged nullable String value model.
         mlir::Type domResult;
         fn.getBody().walk([&](ctjs::ReturnOp ret) {
             const auto call = domCalls.find(ret.getValue().getDefiningOp());
-            if (call != domCalls.end() && call->second.returnsOptionalString()) {
+            if (domOptionalStrings.contains(ret.getValue()) ||
+                (call != domCalls.end() && call->second.returnsOptionalString())) {
                 domResult = ec::OpaqueType::get(context, kDOMOptionalStringType);
             }
         });
