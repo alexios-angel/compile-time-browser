@@ -134,8 +134,36 @@ and truthiness: both a missing attribute and an empty attribute are false. These
 Boolean observations can drive existing DOM force arguments. Concatenation accepts
 two definite Strings and uses ordinary `std::string` addition; optional Strings
 are not implicitly coerced into names or values. Loose equality, global `Boolean`
-calls, numeric conversion and property storage still refuse. No generic
+calls, implicit numeric conversion and property storage still refuse. No generic
 nullable carrier is emitted.
+
+DOM manifests may additionally supply `"initial_intrinsics": ["Number"]`.
+This explicitly promises the standard initial Number binding and its unmodified
+`Number.prototype.toString` lookup chain. It authorizes the complete source proof
+for the numeric prefix used by Bootstrap's M helper:
+
+```javascript
+function canonicalAttribute(element) {
+  const saved = element.getAttribute('data-bs-config');
+  return saved === Number(saved).toString();
+}
+```
+
+Number accepts one proved String, null or optional String with an undefined call
+receiver; standard Number `toString` accepts its exact Number receiver and no
+arguments. Number results may be returned or joined with other Numbers. The
+compiler checks the whole entry and both branch arms before erasing builtin reads.
+Replacement, prototype writes, callable escapes, unknown coercions, script reentry,
+radix arguments and stale source fingerprints refuse. Other initial intrinsic
+names remain unsupported by these two DOM providers.
+
+Emission calls public Core `string_to_number` and `number_to_string` with ordinary
+`double` and owning `std::string` values. Missing attributes convert to positive
+zero; saved attribute strings remain independent of later DOM changes. The shared
+Core implementation preserves the VM's current numeric behavior, including its
+known numeric-text limitations; this is not a claim of arbitrary-string ECMAScript
+equivalence. Original M's guarded URI/JSON calls, error continuations and mixed
+return values still need separate proofs.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness

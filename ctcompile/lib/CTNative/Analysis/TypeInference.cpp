@@ -662,6 +662,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             const mlir::Type type =
                 edge->returnsOptionalString()
                     ? mlir::Type(OptType::get(c, StrType::get(c, StrEncoding::UTF8)))
+                : edge->returnsNumber()  ? doubleType(c)
+                : edge->returnsString()  ? mlir::Type(StrType::get(c, StrEncoding::UTF8))
                 : edge->returnsElement() ? mlir::Type(DOMElementType::get(c))
                 : edge->returnsBoolean() ? boolType(c)
                                          : absentType(c);

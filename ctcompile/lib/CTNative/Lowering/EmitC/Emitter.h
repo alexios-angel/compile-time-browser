@@ -68,6 +68,7 @@ struct lowering {
     bool needsDOMToggle = false;
     bool needsDOMAttributes = false;
     bool needsDOMAttributeRead = false;
+    bool needsDOMNumber = false;
     bool needsDOMAttributeToggle = false;
     bool needsDOMAttributePresence = false;
     bool needsDOMAttributeRemoval = false;

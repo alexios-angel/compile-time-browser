@@ -81,8 +81,8 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                      "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1 or "
                      "ctbrowser-dom-data-session-v1");
     }
-    if (dom ? !keys(*object,
-                    {"version", "provider", "module_sha256", "entry", "element_parameters"})
+    if (dom ? !keys(*object, {"version", "provider", "module_sha256", "entry", "element_parameters",
+                              "initial_intrinsics"})
             : !keys(*object,
                     {"version", "provider", "module_sha256", "entry", "roots", "observations",
                      "absent_bindings", "undefined_bindings", "initial_intrinsics",
@@ -120,7 +120,19 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             }
             result.elementParameters.push_back(static_cast<unsigned>(*index));
         }
-        if (dom) { return result; }
+        if (dom) {
+            if (object->get("initial_intrinsics")) {
+                if (auto failure =
+                        names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
+                    return std::move(failure);
+                }
+                if (llvm::any_of(result.initialIntrinsics,
+                                 [](const auto & name) { return name != "Number"; })) {
+                    return error("unsupported DOM initial intrinsic identity");
+                }
+            }
+            return result;
+        }
     }
     if (auto failure = names(*object, "observations", result.observations, false)) {
         return std::move(failure);
@@ -240,7 +252,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || !contract.initialIntrinsics.empty() ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 1 ||
+        (!contract.initialIntrinsics.empty() && contract.initialIntrinsics.front() != "Number") ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
         refusal = "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
@@ -315,12 +328,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         contains,
         matches,
         closest,
+        numberIntrinsic,
+        numberToString,
+        number,
         string,
         boolean,
         null,
         undefined
     };
     std::vector<ctjs::GetPropertyOp> provedTokens;
+    std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
     std::vector<mlir::Value> provedOptionalStrings;
@@ -330,6 +347,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             refusal = "DOM entry wrapper contains observable source operations";
         }
         return;
+    }
+    const bool suppliedNumber = !contract.initialIntrinsics.empty();
+    if (declaration && suppliedNumber) {
+        for (ctjs::StoreGlobalOp store :
+             declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
+            if (!spend()) { return; }
+            if (store.getName() == "Number") {
+                refusal = "DOM entry source declaration replaces the initial Number intrinsic";
+                return;
+            }
+        }
     }
     {
         auto & block = target.getBody().front();
@@ -399,9 +427,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 return false;
                             }
                             const Kind kind = found->second;
-                            if (kind != Kind::boolean && kind != Kind::string &&
-                                kind != Kind::null && kind != Kind::optionalString &&
-                                kind != Kind::undefined) {
+                            if (kind != Kind::boolean && kind != Kind::number &&
+                                kind != Kind::string && kind != Kind::null &&
+                                kind != Kind::optionalString && kind != Kind::undefined) {
                                 refusal =
                                     "DOM entry branch cannot carry a borrowed or callable value";
                                 return false;
@@ -448,6 +476,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         values[constant.getResult()] = Kind::string;
                     } else if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
                         values[constant.getResult()] = Kind::boolean;
+                    } else if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) {
+                        values[constant.getResult()] = Kind::number;
                     } else if (llvm::isa<ctjs::NullAttr>(constant.getValue())) {
                         values[constant.getResult()] = Kind::null;
                     } else if (llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
@@ -486,6 +516,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     if (depth || frame ||
                         (!hasKind(result.getValue(), Kind::undefined) &&
                          !hasKind(result.getValue(), Kind::boolean) &&
+                         !hasKind(result.getValue(), Kind::number) &&
                          !hasKind(result.getValue(), Kind::string) &&
                          !hasKind(result.getValue(), Kind::optionalString))) {
                         refusal =
@@ -495,15 +526,27 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     returned = true;
                     continue;
                 }
-                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
-                    load && load.getName() == "undefined") {
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
                     // The DOM provider fixes this initial binding. The complete
                     // source census admits no replacement or script reentry.
-                    values[load.getResult()] = Kind::undefined;
-                    continue;
+                    if (load.getName() == "undefined") {
+                        values[load.getResult()] = Kind::undefined;
+                        continue;
+                    }
+                    if (suppliedNumber && load.getName() == "Number") {
+                        values[load.getResult()] = Kind::numberIntrinsic;
+                        provedNumberIntrinsics.push_back(load);
+                        continue;
+                    }
                 }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     const auto key = ctjs::constantKey(read.getKey());
+                    if (suppliedNumber && hasKind(read.getObject(), Kind::number) &&
+                        key == "toString") {
+                        values[read.getResult()] = Kind::numberToString;
+                        provedMethods.emplace_back(read, HostDOMMethod::numberToString);
+                        continue;
+                    }
                     if (hasKind(read.getObject(), Kind::element) && key == "classList") {
                         values[read.getResult()] = Kind::tokenList;
                         provedTokens.push_back(read);
@@ -551,12 +594,32 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     return false;
                 }
                 if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                    auto arguments = invoke.getArgs();
+                    if (hasKind(invoke.getCallee(), Kind::numberIntrinsic)) {
+                        if (!hasKind(invoke.getReceiver(), Kind::undefined) ||
+                            arguments.size() != 1 ||
+                            (!hasKind(arguments[0], Kind::string) &&
+                             !hasKind(arguments[0], Kind::null) &&
+                             !hasKind(arguments[0], Kind::optionalString))) {
+                            refusal = "Number call requires its initial builtin, undefined "
+                                      "receiver and one String/null input";
+                            return false;
+                        }
+                        provedCalls.push_back({invoke, HostDOMMethod::number, arguments[0]});
+                        values[invoke.getResult()] = Kind::number;
+                        continue;
+                    }
                     auto method = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                     if (!method || method.getObject() != invoke.getReceiver()) {
                         refusal = "DOM call does not preserve its proved method receiver";
                         return false;
                     }
-                    auto arguments = invoke.getArgs();
+                    if (hasKind(invoke.getCallee(), Kind::numberToString) && arguments.empty()) {
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::numberToString, invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::string;
+                        continue;
+                    }
                     const bool contains = hasKind(invoke.getCallee(), Kind::contains);
                     const bool matches = hasKind(invoke.getCallee(), Kind::matches);
                     const bool closest = hasKind(invoke.getCallee(), Kind::closest);
@@ -686,6 +749,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     checkedWrapper = declaration;
     elements = std::move(provedElements);
     tokenLists = std::move(provedTokens);
+    numberIntrinsics = std::move(provedNumberIntrinsics);
     methods = std::move(provedMethods);
     calls = std::move(provedCalls);
 }
@@ -703,6 +767,10 @@ bool DOMEntryAnalysis::isElementIdentity(mlir::Value value) const {
 bool DOMEntryAnalysis::isTokenList(mlir::Value value) const {
     return llvm::any_of(tokenLists,
                         [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
+}
+
+bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
+    return llvm::is_contained(numberIntrinsics, load);
 }
 
 std::optional<HostDOMMethod> DOMEntryAnalysis::method(ctjs::GetPropertyOp read) const {

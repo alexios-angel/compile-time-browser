@@ -185,6 +185,13 @@ void lowering::declareGlobals() {
         if (needsDOMAttributes) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeHelpers));
         }
+        if (needsDOMNumber) {
+            ec::IncludeOp::create(b, module.getLoc(),
+                                  b.getStringAttr("ctbrowser/core/number_format.hpp"),
+                                  b.getUnitAttr());
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("optional"), b.getUnitAttr());
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMNumberHelpers));
+        }
         if (needsDOMAttributeToggle) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeToggleHelpers));
         }

@@ -36,18 +36,36 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     entry.entry().walk([&](ctjs::GetPropertyOp read) {
         if (entry.method(read) || entry.isTokenList(read.getResult())) { domReads.insert(read); }
     });
+    entry.entry().walk([&](ctjs::LoadGlobalOp load) {
+        if (entry.isNumberIntrinsic(load)) { domReads.insert(load); }
+    });
     entry.entry().walk([&](ctjs::CallOp call) {
         if (const auto * edge = entry.call(call)) {
             domCalls[call] = *edge;
             needsDOMToggle |= edge->kind == HostDOMMethod::toggleClass;
             needsDOMAttributes |= edge->kind == HostDOMMethod::setAttribute;
             needsDOMAttributeRead |= edge->returnsOptionalString();
+            needsDOMNumber |= edge->returnsNumber() || edge->returnsString();
             needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
             needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
             needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
             needsDOMContains |= edge->kind == HostDOMMethod::contains;
             needsDOMMatches |= edge->kind == HostDOMMethod::matches;
             needsDOMClosest |= edge->kind == HostDOMMethod::closest;
+            if (edge->returnsNumber()) {
+                auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
+                if (receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                    llvm::all_of(receiver.getResult().getUses(), [&](mlir::OpOperand & use) {
+                        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
+                        auto user = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                        const auto * number = user ? entry.call(user) : nullptr;
+                        return number && number->returnsNumber() && use.getOperandNumber() == 1;
+                    })) {
+                    // The proved builtin does not observe its undefined receiver.
+                    // Keep its source identity until calls and roots are erased.
+                    domReads.insert(receiver);
+                }
+            }
         }
     });
     for (mlir::BlockArgument parameter : entry.parameters()) {
@@ -156,9 +174,18 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (found == domCalls.end()) { return false; }
     auto call = llvm::cast<ctjs::CallOp>(operation);
     const auto & edge = found->second;
-    llvm::SmallVector<mlir::Value> arguments{edge.element};
-    if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.element)); }
-    llvm::append_range(arguments, call.getArgs());
+    llvm::SmallVector<mlir::Value> arguments;
+    if (edge.kind == HostDOMMethod::number) {
+        // Earlier replacements update the live call operands. The source
+        // proof's original input may already have been erased.
+        llvm::append_range(arguments, call.getArgs());
+    } else if (edge.kind == HostDOMMethod::numberToString) {
+        arguments.push_back(call.getReceiver());
+    } else {
+        arguments.push_back(edge.element);
+        if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.element)); }
+        llvm::append_range(arguments, call.getArgs());
+    }
     llvm::StringRef callee;
     switch (edge.kind) {
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
@@ -170,11 +197,19 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::contains: callee = "ctnative::contains"; break;
     case HostDOMMethod::matches: callee = "ctnative::matches"; break;
     case HostDOMMethod::closest: callee = "ctnative::closest"; break;
+    case HostDOMMethod::number:
+        callee = arguments.front().getType() == optionalString ? "ctnative::dom_number"
+                                                               : "ctbrowser::string_to_number";
+        break;
+    case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
     }
-    if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString()) {
+    if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString() ||
+        edge.returnsNumber() || edge.returnsString()) {
         const mlir::Type type = edge.returnsOptionalString()
                                     ? ec::OpaqueType::get(context, kDOMOptionalStringType)
                                 : edge.returnsElement() ? carrierType(context, carrier::domElement)
+                                : edge.returnsNumber()  ? at.getF64Type()
+                                : edge.returnsString()  ? carrierType(context, carrier::string)
                                                         : at.getI1Type();
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);

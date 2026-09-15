@@ -24,6 +24,10 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
+            load && domEntry->isNumberIntrinsic(load)) {
+            return true;
+        }
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
             read && (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {
             return true;

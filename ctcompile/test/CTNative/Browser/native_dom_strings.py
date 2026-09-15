@@ -8,6 +8,7 @@ import shutil
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser import native_dom as dom
+from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
 
@@ -2123,6 +2124,7 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     if not args.nm:
         raise RuntimeError("native DOM String gate requires nm")
+    numbers.check_oracles(args)
     boolean_values = [
         "true" if bit == "1" else "false" for _, bits in BOOLEAN_CASES.values() for bit in bits
     ]
@@ -2204,6 +2206,7 @@ function makeElement(value) {
         )
         for name, source, count in SOURCES + BOOLEAN_SOURCES
     ]
+    prepared.extend(numbers.prepare(args))
     for optimize in (False, True):
         modules = {}
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -2229,6 +2232,9 @@ function makeElement(value) {
                 body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 entry = namespace + "::" + symbol
+                if name in numbers.CASES:
+                    runs.append(numbers.client(name, entry, owned))
+                    continue
                 if name in ("names", "wide") or name in BOOLEAN_CASES:
                     setup = (
                         f"{entry}_session session; auto & doc = session.document();"
@@ -2286,6 +2292,7 @@ function makeElement(value) {
                 "\n".join(sorted(headers))
                 + "\n"
                 + "\n".join(bodies)
+                + numbers.CLIENT
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
             for index, compiler in enumerate(compilers):
@@ -2293,7 +2300,7 @@ function makeElement(value) {
                 run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
                 if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
                     raise RuntimeError("native DOM optional Strings link Script/AOT")
-                if run([str(binary)]).stdout != expected * 2:
+                if run([str(binary)]).stdout != (expected + numbers.EXPECTED) * 2:
                     raise RuntimeError("native optional String observations disagree with source")
     for name, body in REFUSALS.items():
         ir, contract = dom.prepare(
@@ -2464,9 +2471,10 @@ function makeElement(value) {
                 emitted(args, native, label)
         replacement_checks += 4
         replacement_checks += regexp_provenance_checks(args, ir, contract, prefix=prefix)
+    numeric_refusals = numbers.refusal_checks(args, prepared)
     print(
-        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
-        f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
+        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values) + len(numbers.RESULTS)} Node/VM observations, 8 GCC/Clang binaries, "
+        f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4 + numeric_refusals} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks; "
         f"{replacement_checks} replacement provenance/budget checks; 22 branch depth/budget checks; "

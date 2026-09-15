@@ -124,6 +124,10 @@ bool admission::function(ctjs::FuncOp fn) {
         // neither has a carrier and neither needs one.
         if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
         if (isNativeMapBookkeeping(o)) { return; }
+        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
+            load && domEntry && domEntry->isNumberIntrinsic(load)) {
+            return;
+        }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
             read && domEntry &&
             (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {

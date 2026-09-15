@@ -698,6 +698,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 }
                 llvm::StringRef name;
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
+                    if (admittedDOM && admittedDOM->isNumberIntrinsic(load)) { return; }
                     if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
                     name = load.getName();
                 }

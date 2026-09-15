@@ -60,7 +60,10 @@ struct HostContract {
     std::vector<std::string> absentBindings;
     std::vector<std::string> undefinedBindings;
     // Explicit identities supplied by the embedding, not effect summaries.
-    // Only standard Map/Array are supported. Source replacement/escape refuses.
+    // Closed-source providers accept Map/Array and the class helper. DOM entry
+    // providers accept only Number: its standard own global data binding and
+    // unmodified Number.prototype.toString chain. Source replacement/escape
+    // and external script reentry still refuse the complete live proof.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
     // The embedding invokes this entry as a classic script, with its stable
@@ -92,18 +95,24 @@ enum class HostDOMMethod {
     removeAttribute,
     contains,
     matches,
-    closest
+    closest,
+    number,
+    numberToString
 };
 
 struct HostDOMCall {
     ctjs::CallOp operation;
     HostDOMMethod kind;
+    // Browser receiver, or the original scalar input for number/numberToString.
     mlir::Value element;
     [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
     [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
+    [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
+    [[nodiscard]] bool returnsString() const { return kind == HostDOMMethod::numberToString; }
     [[nodiscard]] bool returnsBoolean() const {
-        return !returnsOptionalString() && !returnsElement() &&
-               kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
+        return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
+               !returnsString() && kind != HostDOMMethod::setAttribute &&
+               kind != HostDOMMethod::removeAttribute;
     }
     [[nodiscard]] bool usesStyle() const {
         return kind == HostDOMMethod::matches || kind == HostDOMMethod::closest;
@@ -129,6 +138,7 @@ public:
     // Validated parameters or nullable closest results, for equality only.
     [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
+    [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
         return optionalStrings;
     }
@@ -141,6 +151,7 @@ private:
     ctjs::FuncOp checkedWrapper;
     std::vector<mlir::BlockArgument> elements;
     std::vector<ctjs::GetPropertyOp> tokenLists;
+    std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
     std::vector<mlir::Value> optionalStrings;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;

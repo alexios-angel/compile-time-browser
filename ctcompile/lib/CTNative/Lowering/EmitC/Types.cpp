@@ -29,6 +29,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (domReads.contains(v.getDefiningOp())) {
+            // Checked builtin/receiver bookkeeping never needs a value carrier.
+            v.setType(mlir::Float64Type::get(context));
+            return;
+        }
         if (domNulls.contains(v.getDefiningOp()) || domOptionalStrings.contains(v)) {
             v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
             return;
@@ -38,9 +43,10 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
             return;
         }
-        if (auto call = domCalls.find(v.getDefiningOp()); call != domCalls.end() &&
-                                                          !call->second.returnsBoolean() &&
-                                                          !call->second.returnsElement()) {
+        if (auto call = domCalls.find(v.getDefiningOp());
+            call != domCalls.end() && !call->second.returnsBoolean() &&
+            !call->second.returnsElement() && !call->second.returnsNumber() &&
+            !call->second.returnsString()) {
             // The proof requires this result to be unused, and the effect is
             // emitted as a void call. This placeholder never reaches C++.
             v.setType(mlir::Float64Type::get(context));
@@ -51,11 +57,6 @@ void lowering::retype(ctjs::FuncOp fn) {
         needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
         needsBooleanString |= carrierOf(typeOf(v)) == carrier::booleanString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
-        if (domReads.contains(v.getDefiningOp())) {
-            // Only a checked receiver/callee path uses this erased property.
-            v.setType(mlir::Float64Type::get(context));
-            return;
-        }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
             v.setType(found->second);
             return;

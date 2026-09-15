@@ -6,7 +6,7 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
-#include "HostContractFixtures.h"
+#include "DOMNumbers.h"
 
 using namespace ctcompile::test::host_contract;
 
@@ -833,6 +833,7 @@ int main() {
     checkCallables(context);
     checkCapturedCallables(context);
     checkDOMEntry(context);
+    checkDOMNumbers(context);
     checkSessionProvider(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
