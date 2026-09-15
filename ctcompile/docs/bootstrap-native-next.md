@@ -7,10 +7,11 @@ consumers and forwarded calls. Original H `setDataAttribute`/`removeDataAttribut
 now compile through the same proof, including a factory-exported entry table;
 template concatenation uses the existing String lowering only for two proved
 Strings. Final focused **4/4 CTests PASS**: **401 Node/VM observations / eight
-native binaries / 700 source refusals / 101 replacement controls**. The complete
-build and **602-test CTest gate are running**; see [HANDOFF](HANDOFF.md).
-The prior full-bundle measurement remains **19/574 native**, DOM Data **7/7**,
-Button **4/86**; no new bundle measurement or admission gain is claimed yet.
+native binaries / 700 source refusals / 101 replacement controls**. Complete
+**274-step build / 602/602 CTests / 176/176 lit PASS**; see
+[HANDOFF](HANDOFF.md) for timings and frozen-source verification.
+Fresh full-bundle coverage remains **19/574 native**, DOM Data **7/7**, Button
+**4/86**; this slice makes no full-bundle admission gain claim.
 
 Next is original H `getDataAttribute` calling live M: optional-value branches,
 Number/toString, URI decoding, JSON and exceptions. Full H also needs dataset

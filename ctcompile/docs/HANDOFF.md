@@ -42,16 +42,24 @@ Stable formatting passes **829 C++ / 100 Python / 33 web**. Required pinned
 formatting matches the unchanged **nine-file / 26-diagnostic** baseline; all
 changed C++ files pass both formatters.
 
-The complete default build and **602-test CTest gate are running** with four test
-jobs against **1,443 frozen input hashes**. No final full-suite result is claimed
-yet. Recovery scripts, focused logs and the live `full.log` are in
-`/tmp/ctcompile-captured-f/`. The previous full-bundle measurements were **19/574
-native**, DOM Data **7/7**, Button **4/86**; these are not a new measurement.
+Complete **274-step default build / 602/602 CTests in 1447.90s /
+176/176 lit in 976.46s PASS**. All **1,443 frozen hashes** match devbox, local
+files and committed source. Recovery scripts, focused/full logs, generated C++,
+`measured.json` and the continuation probe are in `/tmp/ctcompile-captured-f/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with
+no skipped or pruned functions. DOM Data remains **7/7**; Button **4/86**, with
+**22 Node observations** and its existing VM inheritance failure. Button/Data
+reports and all **1,123 escape baseline rows** are byte-identical to the preceding
+gate. No full-bundle admission gain is claimed.
 
 **Exact next boundary:** original H `getDataAttribute` feeds a live optional String
 to original M (vendor line **230**). M still needs source branches, Number/toString,
 URI decoding, JSON and exceptions; its current single-block DOM proof refuses
-before normalization. Full H includes dataset enumeration and callbacks. Complete
+before normalization. A fresh verbatim M/F/H.getDataAttribute probe refuses under
+both providers and policies with `DOM helper requires complete source functions
+and an uncaptured wrapper`; `next-measured.json` records all four diagnostics.
+Full H includes dataset enumeration and callbacks. Complete
 Bootstrap initialization, inherited receivers and retained config/callback ownership
 still require proof. F with its own captures remains separate. The original H
 String-only slice does not admit the full H object or full Bootstrap bundle.
