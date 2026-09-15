@@ -8,7 +8,7 @@
 //              lookup instead of resolving to a recycled object
 //   slab       chunked, slot-stable storage behind those handles
 //   atom       interned strings, so name comparison is an integer compare
-//   scheduler  work-stealing pool for style, layout and raster
+//   scheduler  thread pool for raster tiles
 //   geometry   points, rects, sides, colors
 //
 // This header includes all of them, so `#include <ctbrowser/core/core.hpp>` is

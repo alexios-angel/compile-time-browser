@@ -1,5 +1,4 @@
 #pragma once
-#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -10,21 +9,17 @@
 #include <utility>
 #include <vector>
 
-// A work-stealing pool.
+// A thread pool: one queue, one mutex, one condition variable.
 //
-// Stealing rather than a single shared queue because the consumers are
-// recursive: laying out an independent formatting context spawns layout of its
-// children, and a task that blocks waiting for its own subtasks on a
-// single-queue pool deadlocks the pool. Here a waiting worker keeps draining
-// work, including work it did not create.
-//
-// Each worker owns a deque: it pushes and pops its own BACK (LIFO, so a freshly
-// spawned subtask is the next thing run and is still cache-hot), while thieves
-// take from the FRONT (the oldest, largest, least contended item). That access
-// pattern is why a plain mutex per deque is enough - the owner and the thieves
-// touch opposite ends and rarely collide. A lock-free Chase-Lev deque is the
-// next step if profiling ever shows this mutex mattering; it is much harder to
-// get right and there is no evidence yet that it is needed.
+// It was a work-stealing pool - a deque per worker, LIFO for the owner and
+// FIFO for thieves, a round-robin submit - on the argument that the consumers
+// would be recursive layout tasks. They never were: the only caller is
+// parallel_for over raster tiles, whose tasks are independent and whose CALLER
+// drains the pool, so a nested parallel_for cannot deadlock on either design.
+// Everything the stealing bought was paid for on every submit and never
+// measured. A lock-free Chase-Lev deque is the next step if profiling ever
+// shows this one mutex mattering; it is much harder to get right and there is
+// no evidence yet that it is needed.
 //
 // parallel_for is the only member that stays in this header, because it is a
 // template. Everything else lives in scheduler.cpp.
@@ -44,7 +39,7 @@ public:
     scheduler(const scheduler &) = delete;
     scheduler & operator=(const scheduler &) = delete;
 
-    [[nodiscard]] std::size_t worker_count() const noexcept { return queues_.size(); }
+    [[nodiscard]] std::size_t worker_count() const noexcept { return workers_.size(); }
 
     void submit(task t);
 
@@ -53,7 +48,7 @@ public:
     // waiting on a pool that is busy running it.
     template <typename F> void parallel_for(std::size_t n, F && f) {
         if (n == 0) { return; }
-        if (n == 1 || queues_.empty()) {
+        if (n == 1 || workers_.empty()) {
             f(std::size_t{0});
             return;
         }
@@ -66,40 +61,20 @@ public:
         }
         // help out instead of blocking idle
         while (!done.try_wait()) {
-            if (!run_one(0)) { std::this_thread::yield(); }
+            if (!run_one()) { std::this_thread::yield(); }
         }
     }
 
 private:
-    struct queue {
-        std::mutex mutex;
-        std::deque<task> items;
-    };
+    [[nodiscard]] bool run_one();
 
-    // Owner pops the back (LIFO, cache-hot); thieves take the front.
-    [[nodiscard]] bool pop_local(std::size_t i, task & out);
-    [[nodiscard]] bool steal(std::size_t thief, task & out);
-    [[nodiscard]] bool run_one(std::size_t i);
+    // An idle worker SLEEPS on idle_ until there is work, rather than waking
+    // up to look: a pool polling every millisecond on every hardware thread
+    // was measured at about 65% of a machine doing nothing.
+    void run(const std::stop_token & stop);
 
-    // An idle worker SLEEPS until there is work, rather than waking up to look.
-    //
-    // This used to be `wait_for(1ms)` on the worker's own queue, because submit
-    // notifies only the queue it pushed to and a worker discovers STEALABLE
-    // work by looking. The cost of that is a pool which never sleeps: one
-    // wakeup per millisecond per worker, on every hardware thread, forever -
-    // which on an idle page is the entire CPU cost of the application and was
-    // measured at about 65% of a machine doing nothing.
-    //
-    // So the condition is now global - "are there tasks anywhere" - and one
-    // shared condvar covers every worker, whichever queue the work landed in.
-    void run(std::size_t i, const std::stop_token & stop);
-
-    std::vector<queue> queues_;
-    std::atomic<std::size_t> next_{0};
-    // Tasks queued and not yet taken, anywhere. The predicate every idle
-    // worker waits on, so work in ANY queue wakes whoever can steal it.
-    std::atomic<std::size_t> pending_{0};
-    std::mutex idle_mutex_;
+    std::mutex mutex_;
+    std::deque<task> tasks_;
     std::condition_variable_any idle_;
     // Destroyed first: workers join before the state they use, including
     // when starting a later worker throws during construction.
