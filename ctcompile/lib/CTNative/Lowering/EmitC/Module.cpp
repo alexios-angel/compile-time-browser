@@ -185,6 +185,11 @@ void lowering::declareGlobals() {
         if (needsDOMAttributes) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeHelpers));
         }
+        if (needsDOMURI) {
+            for (llvm::StringRef header : {"ctbrowser/core/uri.hpp", "optional", "utility"}) {
+                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+            }
+        }
         if (needsDOMNumber) {
             ec::IncludeOp::create(b, module.getLoc(),
                                   b.getStringAttr("ctbrowser/core/number_format.hpp"),

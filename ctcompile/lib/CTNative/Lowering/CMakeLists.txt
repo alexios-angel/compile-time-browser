@@ -108,6 +108,7 @@ add_library(ctcompile-ctnative-lowering
   ../PartialEvaluation/Residualize.cpp
   LowerToEmitC.cpp
   Exceptions/Admission.cpp
+  Exceptions/DOM.cpp
   Exceptions/Recovery/Inspect.cpp
   Exceptions/Recovery/Bindings.cpp
   Exceptions/Recovery/Effects.cpp

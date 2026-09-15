@@ -125,7 +125,7 @@ bool admission::function(ctjs::FuncOp fn) {
         if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
         if (isNativeMapBookkeeping(o)) { return; }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
-            load && domEntry && domEntry->isNumberIntrinsic(load)) {
+            load && domEntry && domEntry->isInitialIntrinsic(load)) {
             return;
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
@@ -155,6 +155,12 @@ bool admission::function(ctjs::FuncOp fn) {
         for (mlir::Region & region : o->getRegions()) {
             for (mlir::Block & block : region) {
                 for (mlir::BlockArgument a : block.getArguments()) {
+                    if (auto invoke = llvm::dyn_cast<ctjs::InvokeOp>(o);
+                        invoke && domEntry && domEntry->invocation(invoke) &&
+                        &region == &invoke.getUnwindBody() && a.getArgNumber() == 0 &&
+                        a.use_empty()) {
+                        continue; // No native value represents the unobserved semantic payload.
+                    }
                     if (llvm::isa<ctjs::ValueType>(a.getType()) &&
                         carrierOf(typeOf(a)) == carrier::none) {
                         ok = refuse("a loop-carried value of type " + printed(typeOf(a)));

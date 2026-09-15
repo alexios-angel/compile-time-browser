@@ -154,8 +154,9 @@ receiver; standard Number `toString` accepts its exact Number receiver and no
 arguments. Number results may be returned or joined with other Numbers. The
 compiler checks the whole entry and both branch arms before erasing builtin reads.
 Replacement, prototype writes, callable escapes, unknown coercions, script reentry,
-radix arguments and stale source fingerprints refuse. Other initial intrinsic
-names remain unsupported by these two DOM providers.
+radix arguments and stale source fingerprints refuse. Number and decodeURIComponent
+are the only optional initial intrinsic names supported by these DOM providers;
+each must be declared independently.
 
 Emission calls public Core `string_to_number` and `number_to_string` with ordinary
 `double` and owning `std::string` values. Missing attributes convert to positive
@@ -164,6 +165,44 @@ Core implementation preserves the VM's current numeric behavior, including its
 known numeric-text limitations; this is not a claim of arbitrary-string ECMAScript
 equivalence. Original M's guarded URI/JSON calls, error continuations and mixed
 return values still need separate proofs.
+
+DOM manifests may also supply `"initial_intrinsics": ["decodeURIComponent"]`.
+The supplied binding must be the standard own global data binding. Number authority
+is independent; declaring URI decoding never authorizes a Number call.
+
+```javascript
+function decodeAttributeText(element) {
+  const text = element.hasAttribute('good') ? 'A%20B' : '%';
+  let saved = 'before';
+  try { saved = decodeURIComponent(text); }
+  catch (ignored) { return saved; }
+  return saved;
+}
+```
+
+The complete original acyclic entry must contain one checked ordinary URI call,
+with an undefined receiver and one proved definite String input. Both success and
+failure continuations return owning Strings. The catch payload must be unused;
+reading, returning, storing or rethrowing it refuses. Local String assignments
+before the call are preserved, and a failed assignment retains the previous value.
+Protected preparation and both tails currently admit only inert bookkeeping,
+constants and the proved global loads. Other protected calls, DOM writes and
+sequential failures refuse. Prefix branches and early returns retain their source
+order. This recovery does not yet compose with local helper expansion.
+
+Normalization inspects the original handler and every pre-call register, proves
+every discarded status edge, and constructs continuations in a private module.
+The complete DOM identity/type proof runs again before publication. Every incomplete
+work budget or failed proof preserves the source. Emission calls the existing
+public `ctbrowser::decode_uri_component`, tests `std::optional<std::string>::has_value()`
+and moves its String only on success. Empty String is successful decoding;
+malformed URI selects the original catch continuation. C++ allocation exceptions
+propagate normally and cannot select the JavaScript catch. No error object, Script
+value, VM context or new decoder implementation appears in native output.
+
+Original M still needs nullable `typeof` refinement, its full prefix, JSON identity
+and evaluation order, two fallible calls and mixed-result ownership. The shared
+Core JSON parser alone grants no native admission.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
@@ -185,8 +224,8 @@ operation must be visited, and observing an inactive poison value refuses. Sourc
 effects and frame exits remain in their original paths; the unchanged proof checks
 the resulting branches. Three/four-return helpers and captured String snapshots
 compile; unknown selectors, unvisited arms, invalid frame exits, loops and
-exceptions remain refused. Original M still needs its exception CFG and builtin
-normalization proof.
+general exceptions remain refused. The bounded URI case above has its own
+complete source proof; original M needs the remaining builtin and ownership proofs.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified

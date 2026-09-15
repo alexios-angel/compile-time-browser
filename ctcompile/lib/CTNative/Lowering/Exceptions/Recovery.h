@@ -1,12 +1,24 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Error.h"
 
 #include <string>
 
+namespace ctcompile::ctnative {
+struct HostContract;
+}
+
 namespace ctcompile::ctnative::lowering_detail {
+
+// Only on the fingerprinted private DOM candidate. Preserve the original
+// function on refusal; success still requires complete fresh DOM identity,
+// String ownership and invocation proof before publication or native lowering.
+llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
+                            unsigned maxSteps = 100000);
 
 struct ExceptionRecoveryResult {
     bool recovered = false;

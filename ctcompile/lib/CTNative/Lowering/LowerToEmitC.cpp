@@ -208,8 +208,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 return signalPassFailure();
             }
             mlir::OwningOpRef<mlir::ModuleOp> composed(module.clone());
-            if (auto error = expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps)) {
-                module.emitError() << "native DOM source: " << llvm::toString(std::move(error));
+            bool hasHandler = false;
+            if (auto entry = composed->lookupSymbol<ctjs::FuncOp>(hostContract->entry)) {
+                entry.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
+            }
+            auto sourceError = hasHandler
+                                   ? normalizeDOMURI(*composed, *hostContract, hostMaxSteps)
+                                   : expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps);
+            if (sourceError) {
+                module.emitError()
+                    << "native DOM source: " << llvm::toString(std::move(sourceError));
                 return signalPassFailure();
             }
             HostContract composedContract = *hostContract;
@@ -698,7 +706,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 }
                 llvm::StringRef name;
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
-                    if (admittedDOM && admittedDOM->isNumberIntrinsic(load)) { return; }
+                    if (admittedDOM && admittedDOM->isInitialIntrinsic(load)) { return; }
                     if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
                     name = load.getName();
                 }

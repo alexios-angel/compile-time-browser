@@ -1,4 +1,5 @@
 #include "Tests.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::test::exception_recovery {
 
@@ -376,7 +377,123 @@ void checkCompletionTypes(mlir::ModuleOp module, ctjs::FuncOp function, llvm::St
     check(printed(module) == before, "completion inference does not change source operations");
 }
 
+void testDOMURITransaction(mlir::MLIRContext & context) {
+    using ctnative::lowering_detail::inspectSingleInvocationRegion;
+    using ctnative::lowering_detail::normalizeDOMURI;
+    auto module = import(context, R"js(
+function guarded(element) {
+    var text = element.hasAttribute("x") ? "%41" : "%";
+    var saved = "before";
+    try { saved = decodeURIComponent(text); }
+    catch (ignored) { return saved; }
+    return saved;
+}
+)js",
+                         false);
+    if (!module) { return; }
+    auto function = guarded(*module);
+    const auto original = printed(*module);
+    const unsigned checks = countChecks(function);
+    ctnative::HostContract contract;
+    contract.provider = ctnative::HostContract::Provider::ctbrowserDOM;
+    contract.entry = function.getSymName().str();
+    contract.elementParameters = {0};
+    contract.initialIntrinsics = {"decodeURIComponent"};
+    contract.moduleSha256 = ctnative::hostContractFingerprint(*module);
+    mlir::OwningOpRef<mlir::ModuleOp> normalized(module->clone());
+    if (auto error = normalizeDOMURI(*normalized, contract)) {
+        check(false, "original URI source normalizes with unused payload and saved String");
+        llvm::errs() << llvm::toString(std::move(error)) << '\n';
+        return;
+    }
+    check(mlir::succeeded(mlir::verify(*normalized)), "normalized original URI source verifies");
+    auto fresh = contract;
+    fresh.moduleSha256 = ctnative::hostContractFingerprint(*normalized);
+    const ctnative::DOMEntryAnalysis proof(*normalized, fresh);
+    if (!check(proof.proved(), "normalized original URI source passes fresh complete DOM proof")) {
+        llvm::errs() << proof.reason() << '\n';
+        return;
+    }
+    unsigned invocations = 0;
+    normalized->walk([&](ctjs::InvokeOp invocation) {
+        ++invocations;
+        auto & normal = invocation.getNormalBody().front();
+        auto & caught = invocation.getUnwindBody().front();
+        auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+        auto success = llvm::cast<ctjs::InvokeYieldOp>(normal.back());
+        auto failure = llvm::cast<ctjs::InvokeYieldOp>(caught.back());
+        auto saved = failure.getValues().front().getDefiningOp<ctjs::ConstantOp>();
+        auto string =
+            saved ? llvm::dyn_cast<ctjs::StringAttr>(saved.getValue()) : ctjs::StringAttr{};
+        check(proof.invocation(invocation) && exit.getState().empty() &&
+                  caught.getNumArguments() == 1 && caught.getArgument(0).use_empty() &&
+                  success.getValues().front() == normal.getArgument(0) && string &&
+                  string.getValue() == "before",
+              "URI normal result and original pre-call catch String remain separate");
+    });
+    check(invocations == 2 && countChecks(guarded(*normalized)) == 0,
+          "both dynamic prefix arms retain their URI completion and discharge proved checks");
+    const auto attempt = [&](unsigned budget) {
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+        const auto before = printed(*candidate);
+        auto error = normalizeDOMURI(*candidate, contract, budget);
+        if (!error) { return true; }
+        const auto reason = llvm::toString(std::move(error));
+        check(reason.find("budget exhausted") != std::string::npos &&
+                  printed(*candidate) == before && countChecks(guarded(*candidate)) == checks,
+              "incomplete URI normalization preserves the complete source and all checks");
+        return false;
+    };
+    unsigned lower = 0, upper = 100000;
+    while (lower < upper) {
+        const unsigned middle = lower + (upper - lower) / 2;
+        if (attempt(middle)) {
+            upper = middle;
+        } else {
+            lower = middle + 1;
+        }
+    }
+    check(attempt(lower), "the first complete URI normalization budget succeeds");
+    for (unsigned budget = 0; budget < lower; ++budget) {
+        if (!check(!attempt(budget), "every smaller URI normalization budget refuses")) { break; }
+    }
+    for (bool payload : {false, true}) {
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+        auto source = inspectSingleInvocationRegion(guarded(*candidate));
+        if (!check(source.proved(), "URI mutation starts from the exact original snapshot")) {
+            return;
+        }
+        if (payload) {
+            auto returned =
+                llvm::dyn_cast<ctjs::ReturnOp>(source.landing->getBlock()->getTerminator());
+            if (!check(static_cast<bool>(returned), "URI fixture catch returns its saved state")) {
+                return;
+            }
+            returned->setOperand(0, source.landing.getThrown());
+        } else {
+            source.check->setOperand(static_cast<unsigned>(source.check.getContOperands().size()),
+                                     source.call->getResult(0));
+        }
+        auto changedContract = contract;
+        changedContract.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+        const auto before = printed(*candidate);
+        auto error = normalizeDOMURI(*candidate, changedContract);
+        if (!check(static_cast<bool>(error), "mutated URI snapshot or observed payload refuses")) {
+            continue;
+        }
+        const auto reason = llvm::toString(std::move(error));
+        check(reason.find(payload ? "semantic error payload" : "invocation") != std::string::npos &&
+                  printed(*candidate) == before && countChecks(guarded(*candidate)) == checks,
+              "fresh URI refusal retains the exact mutated source and every status edge");
+    }
+    check(printed(*module) == original,
+          "URI transaction tests retain their untouched source oracle");
+    llvm::outs() << "DOM URI normalization: " << lower
+                 << " steps, every incomplete budget preserves " << checks << " checks\n";
+}
+
 void testOrdinaryCompletionTypes(mlir::MLIRContext & context) {
+    testDOMURITransaction(context);
     auto module = import(context, R"js(
 function guarded(text) {
     if (text === "skip") { return "prefix"; }

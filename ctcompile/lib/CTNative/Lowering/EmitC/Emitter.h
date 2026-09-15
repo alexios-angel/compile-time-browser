@@ -54,6 +54,8 @@ struct lowering {
     // Frozen emission plans copied only after complete live DOM admission.
     llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
     llvm::DenseSet<mlir::Operation *> domReads;
+    llvm::DenseSet<mlir::Operation *> domInvocations;
+    llvm::DenseSet<mlir::Value> domUnusedPayloads;
     llvm::DenseSet<mlir::Operation *> domNulls;
     llvm::DenseSet<mlir::Value> domOptionalStrings;
     llvm::DenseSet<mlir::Value> domParameters;
@@ -69,6 +71,7 @@ struct lowering {
     bool needsDOMAttributes = false;
     bool needsDOMAttributeRead = false;
     bool needsDOMNumber = false;
+    bool needsDOMURI = false;
     bool needsDOMAttributeToggle = false;
     bool needsDOMAttributePresence = false;
     bool needsDOMAttributeRemoval = false;

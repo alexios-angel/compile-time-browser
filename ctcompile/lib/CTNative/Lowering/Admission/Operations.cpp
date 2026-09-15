@@ -25,7 +25,7 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
-            load && domEntry->isNumberIntrinsic(load)) {
+            load && domEntry->isInitialIntrinsic(load)) {
             return true;
         }
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
@@ -33,6 +33,13 @@ bool admission::op(mlir::Operation * o) {
             return true;
         }
         if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
+        if (auto invoke = llvm::dyn_cast<InvokeOp>(o); invoke && domEntry->invocation(invoke)) {
+            return true;
+        }
+        if (llvm::isa<InvokeExitOp, InvokeYieldOp>(o)) {
+            auto invoke = llvm::dyn_cast<InvokeOp>(o->getParentOp());
+            if (invoke && domEntry->invocation(invoke)) { return true; }
+        }
         if (auto compare = llvm::dyn_cast<CompareOp>(o);
             compare && compare.getKind() == CompareKind::StrictEq &&
             domEntry->isElementIdentity(compare.getLhs()) &&

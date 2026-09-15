@@ -37,7 +37,12 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         if (entry.method(read) || entry.isTokenList(read.getResult())) { domReads.insert(read); }
     });
     entry.entry().walk([&](ctjs::LoadGlobalOp load) {
-        if (entry.isNumberIntrinsic(load)) { domReads.insert(load); }
+        if (entry.isInitialIntrinsic(load)) { domReads.insert(load); }
+    });
+    entry.entry().walk([&](ctjs::InvokeOp invocation) {
+        if (!entry.invocation(invocation)) { return; }
+        domInvocations.insert(invocation);
+        domUnusedPayloads.insert(invocation.getUnwindBody().front().getArgument(0));
     });
     entry.entry().walk([&](ctjs::CallOp call) {
         if (const auto * edge = entry.call(call)) {
@@ -45,21 +50,26 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             needsDOMToggle |= edge->kind == HostDOMMethod::toggleClass;
             needsDOMAttributes |= edge->kind == HostDOMMethod::setAttribute;
             needsDOMAttributeRead |= edge->returnsOptionalString();
-            needsDOMNumber |= edge->returnsNumber() || edge->returnsString();
+            needsDOMNumber |=
+                edge->kind == HostDOMMethod::number || edge->kind == HostDOMMethod::numberToString;
+            needsDOMURI |= edge->kind == HostDOMMethod::decodeURIComponent;
             needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
             needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
             needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
             needsDOMContains |= edge->kind == HostDOMMethod::contains;
             needsDOMMatches |= edge->kind == HostDOMMethod::matches;
             needsDOMClosest |= edge->kind == HostDOMMethod::closest;
-            if (edge->returnsNumber()) {
+            if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {
                 auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
                 if (receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
                     llvm::all_of(receiver.getResult().getUses(), [&](mlir::OpOperand & use) {
                         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
                         auto user = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                         const auto * number = user ? entry.call(user) : nullptr;
-                        return number && number->returnsNumber() && use.getOperandNumber() == 1;
+                        return number &&
+                               (number->returnsNumber() ||
+                                number->kind == HostDOMMethod::decodeURIComponent) &&
+                               use.getOperandNumber() == 1;
                     })) {
                     // The proved builtin does not observe its undefined receiver.
                     // Keep its source identity until calls and roots are erased.
@@ -133,6 +143,58 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     mlir::OpBuilder at(operation);
     const auto where = operation->getLoc();
     const auto optionalString = ec::OpaqueType::get(context, kDOMOptionalStringType);
+    if (domInvocations.contains(operation)) {
+        auto invocation = llvm::cast<ctjs::InvokeOp>(operation);
+        auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
+        auto decoded = callWithConstValueOperands(
+            at, where, mlir::TypeRange{optionalString},
+            at.getStringAttr("ctbrowser::decode_uri_component"), call.getArgs());
+        auto present = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{at.getI1Type()}, decoded.getResult(0),
+            at.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto branch =
+            mlir::scf::IfOp::create(at, where, invocation.getResultTypes(), present.getResult(0));
+        branch.getThenRegion().takeBody(invocation.getNormalBody());
+        branch.getElseRegion().takeBody(invocation.getUnwindBody());
+        auto & success = branch.getThenRegion().front();
+        mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&success);
+        // Move only on success. The original input and failure continuation
+        // remain untouched; foreign allocation failures never select this else.
+        const auto stringType = carrierType(context, carrier::string);
+        auto value = ec::ExpressionOp::create(inside, where, stringType,
+                                              mlir::ValueRange{decoded.getResult(0)}, false);
+        value.createBody();
+        inside.setInsertionPointToStart(&value.getRegion().front());
+        auto moved = ec::CallOpaqueOp::create(
+            inside, where,
+            mlir::TypeRange{ec::OpaqueType::get(context, "std::optional<std::string> &&")},
+            inside.getStringAttr("std::move"),
+            mlir::ValueRange{value.getRegion().front().getArgument(0)});
+        auto extracted = ec::MemberCallOpaqueOp::create(
+            inside, where, mlir::TypeRange{stringType}, moved.getResult(0),
+            inside.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        ec::YieldOp::create(inside, where, extracted.getResult(0));
+        success.getArgument(0).replaceAllUsesWith(value.getResult());
+        success.eraseArgument(0);
+        branch.getElseRegion().front().eraseArgument(0);
+        for (mlir::Region & region : branch->getRegions()) {
+            auto yielded = llvm::cast<ctjs::InvokeYieldOp>(region.front().getTerminator());
+            mlir::OpBuilder end(yielded);
+            mlir::scf::YieldOp::create(end, where, yielded.getValues());
+            yielded.erase();
+        }
+        invocation.getResult(0).replaceAllUsesWith(branch.getResult(0));
+        domCalls.erase(call);
+        domInvocations.erase(invocation);
+        invocation.erase();
+        return true;
+    }
+    if (llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(operation) &&
+        domInvocations.contains(operation->getParentOp())) {
+        return true; // The enclosing invocation consumes these after its children.
+    }
     const auto swap = [&](mlir::Value value) {
         operation->getResult(0).replaceAllUsesWith(value);
         eraseIfUnused(operation);
@@ -174,6 +236,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (found == domCalls.end()) { return false; }
     auto call = llvm::cast<ctjs::CallOp>(operation);
     const auto & edge = found->second;
+    if (edge.kind == HostDOMMethod::decodeURIComponent) { return true; }
     llvm::SmallVector<mlir::Value> arguments;
     if (edge.kind == HostDOMMethod::number) {
         // Earlier replacements update the live call operands. The source
@@ -202,6 +265,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                                : "ctbrowser::string_to_number";
         break;
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
+    case HostDOMMethod::decodeURIComponent: llvm_unreachable("URI call belongs to its invocation");
     }
     if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString() ||
         edge.returnsNumber() || edge.returnsString()) {
