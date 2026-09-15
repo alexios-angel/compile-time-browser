@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -79,6 +80,44 @@ void define_getter(context & cx, Obj & obj, const std::string & name, script::na
     obj.define_accessor(name, native(cx, "get " + name, std::move(get)),
                         set ? native(cx, "set " + name, std::move(set)) : value::undefined(),
                         attrs);
+}
+
+// WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an
+// effect's timing. One member, undefined when it is not there.
+//
+// A MISSING DICTIONARY, `undefined` AND `null` ARE THE SAME ANSWER. WebIDL
+// converts all three to the dictionary with every member defaulted, and
+// Event-subclasses-constructors.html tests each of the three separately for
+// every interface - `new MouseEvent("type", null)` beside `new
+// MouseEvent("type")` - which is 18 of its assertions. PRESENT is "not
+// undefined", not a real [[HasProperty]] - the same answer for every
+// dictionary a page or a test writes, and what the specification's "if
+// options["x"] exists" steps read.
+[[nodiscard]] inline value dict_member(context & cx, value init, const std::string & name) {
+    if (!init.is_object_like()) { return value::undefined(); }
+    return cx.lookup_property(init, name);
+}
+[[nodiscard]] inline bool dict_flag(context & cx, value init, const std::string & name) {
+    return context::truthy(dict_member(cx, init, name));
+}
+// A `long`/`double` member. NaN is 0 rather than NaN: WebIDL's integer
+// conversions send it there and the suite's default-value cases compare against
+// 0 with assert_equals, which NaN fails against itself.
+[[nodiscard]] inline double dict_number(context & cx, value init, const std::string & name) {
+    const value held = dict_member(cx, init, name);
+    if (held.is_undefined()) { return 0.0; }
+    const double number = context::to_number(held);
+    return std::isnan(number) ? 0.0 : number;
+}
+[[nodiscard]] inline std::string dict_string(context & cx, value init, const std::string & name) {
+    const value held = dict_member(cx, init, name);
+    return held.is_undefined() ? std::string{} : cx.to_string(held);
+}
+// A nullable interface member - `relatedTarget`, `view`. Absent is `null` and
+// not `undefined`, which the suite compares for with assert_equals.
+[[nodiscard]] inline value dict_object(context & cx, value init, const std::string & name) {
+    const value held = dict_member(cx, init, name);
+    return held.is_undefined() ? value::null() : held;
 }
 
 // The first fragment for `id` in tree order, with its bounds made ABSOLUTE:

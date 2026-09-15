@@ -393,13 +393,12 @@ bool dom_bindings::read_timing(context & cx, value options, effect_timing & into
         into.duration = d;
         return true;
     }
-    if (!options.is_object()) { return true; }
     const auto has = [&](const char * name) {
-        return !cx.lookup_property(options, name).is_undefined();
+        return !dict_member(cx, options, name).is_undefined();
     };
     const auto number = [&](const char * name, double & slot, bool nonnegative) {
         if (!has(name)) { return true; }
-        const double n = context::to_number(cx.lookup_property(options, name));
+        const double n = context::to_number(dict_member(cx, options, name));
         if (std::isnan(n) || (nonnegative && n < 0)) {
             return fail(std::string{name} + " must be a " + (nonnegative ? "non-negative " : "") +
                         "number");
@@ -416,7 +415,7 @@ bool dom_bindings::read_timing(context & cx, value options, effect_timing & into
         return fail("delay, endDelay and iterationStart must be finite");
     }
     if (has("duration")) {
-        const value d = cx.lookup_property(options, "duration");
+        const value d = dict_member(cx, options, "duration");
         if (d.is_string() && ascii_iequals(cx.to_string(d), "auto")) {
             into.duration = 0;
         } else {
@@ -428,21 +427,21 @@ bool dom_bindings::read_timing(context & cx, value options, effect_timing & into
         }
     }
     if (has("fill")) {
-        const std::string f = cx.to_string(cx.lookup_property(options, "fill"));
+        const std::string f = dict_string(cx, options, "fill");
         if (f != "none" && f != "forwards" && f != "backwards" && f != "both" && f != "auto") {
             return fail("fill must be none, forwards, backwards, both or auto");
         }
         into.fill = f;
     }
     if (has("direction")) {
-        const std::string d = cx.to_string(cx.lookup_property(options, "direction"));
+        const std::string d = dict_string(cx, options, "direction");
         if (d != "normal" && d != "reverse" && d != "alternate" && d != "alternate-reverse") {
             return fail("direction must be normal, reverse, alternate or alternate-reverse");
         }
         into.direction = d;
     }
     if (has("easing")) {
-        const std::string e = cx.to_string(cx.lookup_property(options, "easing"));
+        const std::string e = dict_string(cx, options, "easing");
         if (!style::parse_easing(e)) { return fail("'" + e + "' is not a valid easing"); }
         into.easing = e;
     }
@@ -631,16 +630,13 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
     keyframe_effect_record made;
     made.target = target;
     if (!read_timing(cx, options, made.timing)) { return value::undefined(); }
-    if (options.is_object()) {
-        const value composite = cx.lookup_property(options, "composite");
-        if (!composite.is_undefined()) {
-            const std::string c = cx.to_string(composite);
-            if (c != "replace" && c != "add" && c != "accumulate") {
-                cx.throw_error("TypeError", "composite must be replace, add or accumulate");
-                return value::undefined();
-            }
-            made.composite = c;
+    if (const value composite = dict_member(cx, options, "composite"); !composite.is_undefined()) {
+        const std::string c = cx.to_string(composite);
+        if (c != "replace" && c != "add" && c != "accumulate") {
+            cx.throw_error("TypeError", "composite must be replace, add or accumulate");
+            return value::undefined();
         }
+        made.composite = c;
     }
     if (!read_keyframes(cx, keyframes, made.keyframes)) { return value::undefined(); }
     auto * object = cx.allocate<script::object_object>();
@@ -1122,12 +1118,9 @@ void dom_bindings::install_animations(context & cx) {
                 if (!effect.is_object()) { return value::undefined(); }
                 const value animation = make_animation(c, effect_index(effect));
                 const value options = arg(args, 1);
-                if (options.is_object()) {
-                    const value name = c.lookup_property(options, "id");
-                    if (!name.is_undefined()) {
-                        static_cast<script::object_object *>(animation.as_heap())
-                            ->set("id", c.string(c.to_string(name)));
-                    }
+                if (const value name = dict_member(c, options, "id"); !name.is_undefined()) {
+                    static_cast<script::object_object *>(animation.as_heap())
+                        ->set("id", c.string(c.to_string(name)));
                 }
                 play(c, animation_index(animation));
                 return animation;
@@ -1142,8 +1135,7 @@ void dom_bindings::install_animations(context & cx) {
                     return value::undefined();
                 }
                 const value options = arg(args, 0);
-                const bool subtree =
-                    options.is_object() && context::truthy(c.lookup_property(options, "subtree"));
+                const bool subtree = dict_flag(c, options, "subtree");
                 return animations_array(c, animations_on(id, subtree));
             },
             script::attr_builtin);

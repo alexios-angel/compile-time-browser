@@ -75,17 +75,9 @@ constexpr std::string_view observer_records_key = "__ctbrowser_mutation_records"
 
 // Whether a dictionary member is PRESENT, which is not whether it is true:
 // `{ attributeOldValue: false }` turns attribute observation ON, because the
-// specification's step reads "if options["attributeOldValue"] EXISTS". Read as
-// "is not undefined" rather than as a real [[HasProperty]], which is the same
-// answer for every dictionary any page or any test writes.
+// specification's step reads "if options["attributeOldValue"] EXISTS".
 [[nodiscard]] bool member_present(context & cx, value init, const std::string & name) {
-    if (!init.is_object()) { return false; }
-    return !cx.lookup_property(init, name).is_undefined();
-}
-
-[[nodiscard]] bool member_flag(context & cx, value init, const std::string & name) {
-    if (!init.is_object()) { return false; }
-    return context::truthy(cx.lookup_property(init, name));
+    return !dict_member(cx, init, name).is_undefined();
 }
 
 // THE LONGEST COMMON SUBSEQUENCE of two child lists, as a keep-flag per entry
@@ -688,19 +680,19 @@ void dom_bindings::install_mutation_observer(context & cx) {
 
             const value init = arg(args, 1);
             mutation_options options;
-            options.child_list = member_flag(c, init, "childList");
-            options.attributes = member_flag(c, init, "attributes");
-            options.character_data = member_flag(c, init, "characterData");
-            options.subtree = member_flag(c, init, "subtree");
-            options.attribute_old_value = member_flag(c, init, "attributeOldValue");
-            options.character_data_old_value = member_flag(c, init, "characterDataOldValue");
+            options.child_list = dict_flag(c, init, "childList");
+            options.attributes = dict_flag(c, init, "attributes");
+            options.character_data = dict_flag(c, init, "characterData");
+            options.subtree = dict_flag(c, init, "subtree");
+            options.attribute_old_value = dict_flag(c, init, "attributeOldValue");
+            options.character_data_old_value = dict_flag(c, init, "characterDataOldValue");
             const bool has_attributes = member_present(c, init, "attributes");
             const bool has_character_data = member_present(c, init, "characterData");
             const bool has_old_value = member_present(c, init, "attributeOldValue");
             const bool has_data_old_value = member_present(c, init, "characterDataOldValue");
             options.has_attribute_filter = member_present(c, init, "attributeFilter");
             if (options.has_attribute_filter) {
-                const value filter = c.lookup_property(init, "attributeFilter");
+                const value filter = dict_member(c, init, "attributeFilter");
                 if (filter.is_array()) {
                     for (const value & entry :
                          static_cast<script::array_object *>(filter.as_heap())->items) {
