@@ -167,12 +167,15 @@ existing expansion eliminates every setup cell/holder/callable before DOM reproo
 the exported entry: **309 Node/VM observations / eight GCC-Clang binaries / 448 source
 refusals / 44 depth / 24 method / 161 capture-initialization controls**. Exact source
 creator/callee/argument/publication proof precedes cloning at the original call, then
-complete capture and DOM reproof gate emission. Returned fresh own-callable tables now
-also permit one constant String selection, with the same complete identity, source-order
-and capture proof. Every unselected callable still requires an actual invocation;
+complete capture and DOM reproof gate emission. **823b71b8** also proves one constant
+String selection from a returned fresh table of own callable slots, with the same
+complete identity, source-order and capture proof. Every unselected callable still requires an actual invocation;
 this does not admit the complete Bootstrap export table. Top-level global bindings
 and nested/captured factories remain refused. Original Bootstrap still needs its
-complete factory/global initialization and H/F/M source graph.
+complete factory/global initialization and H/F/M source graph. The expanded gate
+passes **341 Node/VM observations / eight native binaries / 508 source refusals /
+241 capture controls**; complete **602/602 CTests and 176/176 lit pass**. Full Bootstrap
+remains **19/574 native**, DOM Data **7/7**, and Button **4/86**.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities, and DOM

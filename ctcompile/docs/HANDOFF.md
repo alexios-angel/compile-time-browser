@@ -35,10 +35,17 @@ Stable formatting passes **829 C++ / 100 Python / 33 web**. The required pinned
 formatter matches the unchanged **nine-file / 26-diagnostic** baseline; all changed
 C++ files pass both formatters.
 
-The complete standard build and **602-test CTest gate are running**, with **1,443
-frozen source inputs**. No full result or fresh Bootstrap measurement is claimed yet.
-Recovery: `/tmp/ctcompile-table-finalize/full.sh`, `full.log`, `inputs.json` and
-`focus-last-test.log`. Source commits are frozen; finish this gate before new work.
+Complete **273-step default build / 602/602 CTests in 1436.94s /
+176/176 lit in 969.77s PASS**. All **1,443 frozen hashes** match devbox, local files
+and committed source. Recovery scripts, focused/full logs, generated C++ and
+`measured.json` are in `/tmp/ctcompile-table-finalize/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. Original DOM Data remains **7/7**; Button
+remains **4/86**, with **22 Node observations** and its existing VM inheritance
+failure. Button/Data reports and all **1,123 escape baseline rows** are byte-identical
+to the prior gate. Full WPT/test262 were not remeasured. No full-bundle admission
+gain is claimed.
 
 **Exact next boundary:** original Bootstrap's complete factory/global/H/F/M graph
 remains unproved. Original `F("config")` at vendor line **243** needs checked standard
