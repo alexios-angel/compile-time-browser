@@ -6,6 +6,75 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native URI String completions and nonnegative starts, 2026-09-15 UTC
+
+Continued the exact URI consumer recorded by **d24c3bb2** in this handoff and
+AGENT-SYNC. Both histories and unmerged branches were checked; the shared tree
+was clean, and September 7 WIP was already an ancestor. Agents split invocation
+inspection/normalization, escape induction, transaction tests and the C++ printer.
+Root recovered two service-limited drafts, supplied the URI differential tests,
+reviewed the combined source and ran the gates. No browser/runtime edits.
+
+**76e3849c** extends bounded array induction to proved nonnegative integral
+Number starts. Exact source/header correspondence and positive strides remain
+required; zero-trip loops retain their start and final overshoot stays within
+**0..2^32-1**. Measured induction: **93 rows / 12 live states / 7,692 cutoffs**;
+structured contents: **84 rows / 5,121 cutoffs**. Dense arrays remain
+**567 / 293 / 21,925**, with zero escape violations and precision **40/172**.
+**5a9fd534** exposes original invocation/handler/register evidence through a
+read-only bounded query; incomplete inspection publishes no partial evidence.
+Those two commits passed the focused **4/4 CTests / 2/2 lit** gate.
+
+**cd620ef3** adds native member-call printing, including argument/template
+ordering, pointer/value receivers and expression precedence. Its dual-compiler
+regression extracts a move-only value from an optional. **c4f60e23** independently
+proves explicit URI identity, exact String input and owning String continuations;
+a URI-only premise never grants Number authority. **d2bf778b** integrates that
+proof into the private DOM source transaction and native emission. Original
+handler vectors, prefix effects/early returns and pre-call assignments survive;
+only unused semantic payloads and independently proved status edges disappear.
+Output calls public `ctbrowser::decode_uri_component`, branches on optional
+presence and moves the successful String. Empty String succeeds. Foreign C++
+exceptions do not select the JavaScript catch. There is no Script/VM value or
+new URI implementation in the output.
+
+The first probe exposed a detached-region builder context crash; explicit context
+construction fixed it. Translation then exposed missing EmitC member-call support,
+now covered by the printer regression. One compile retry corrected the expression
+block argument accessor. The Node/VM test needed percent-escaped slash formatting;
+source semantics agreed. None of these fixes relaxed a source proof.
+
+Focused **3/3 CTests in 129.19s / member-call lit in 0.63s PASS**.
+DOM Strings now measures **665 Node/VM observations / eight GCC-Clang binaries /
+996 source refusals**, including **40 new URI observations / 88 new refusals**.
+Both providers, policies and output layouts pass, with no Script/AOT symbols,
+generic nullable carrier or generated catch. Normalization succeeds at exactly
+**2,485 steps**; every smaller budget preserves the original source and five
+checks. Host proof additionally checks every incomplete proof budget, stale/forged
+facts, separate builtin membership, malformed payloads and String ownership.
+Stable formatting passes **841 C++ / 103 Python / 33 web**; the required pinned
+formatter retains its byte-identical **nine-file / 26-diagnostic** baseline.
+All **1,458 frozen source hashes** match the devbox and committed local source.
+
+**Full gate running:** the complete default build and 606-CTest gate are under
+`/tmp/ctbrowser-devbox-build.lock`, logged in `/tmp/ctcompile-uri-native/full.log`.
+Do not claim a current full-suite pass or a Bootstrap admission gain until this
+finishes. Replay/evidence scripts and frozen inputs are in `/tmp/ctcompile-uri-native/`.
+
+**Exact next boundary:** the original M guard `if ('string' != typeof t) return t`
+on a saved optional `getAttribute` result, followed by the existing URI continuation.
+Prove String only in the selected branch, preserve null versus empty String and
+use the owning optional for the catch snapshot; do not globally narrow its producer.
+The real guard uses String loose equality, not the current StrictEq-only proof.
+Original `H.getDataAttribute -> M` separately needs bounded helper/exception
+composition: its handler is inside helper M, and current URI normalization handles
+the selected entry only. JSON then needs explicit identity and original lookup
+order, two sequential failure continuations, and mixed primitive/JSON ownership.
+The JSON receiver/parse lookup precedes URI decoding; either failure returns the
+original input. Full H, initialization/inheritance, retained config/callbacks and
+the native application driver remain open. Exact source fixture and seven Node-only
+next-step observations: `/tmp/ctcompile-uri-native/next-boundary-review.md`.
+
 ## Ordinary-call recovery and positive strides, 2026-09-15 UTC
 
 Resumed the interrupted **12:30 URI structural recovery / positive-stride** thread
