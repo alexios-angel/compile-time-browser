@@ -15,7 +15,6 @@
 #include <ctbrowser/script/number_format.hpp>
 
 #include <boost/container/small_vector.hpp>
-#include <boost/unordered/unordered_flat_map.hpp>
 
 #include <algorithm>
 #include <ranges>
@@ -66,14 +65,6 @@ public:
         // the link between the two.
         static constexpr std::uint32_t no_slot = 0xFFFFFFFFu;
         std::uint32_t debug_slot = no_slot;
-    };
-    // Heterogeneous lookup, so is_captured can ask with a string_view without
-    // building a std::string to throw away.
-    struct sv_hash {
-        using is_transparent = void;
-        [[nodiscard]] std::size_t operator()(std::string_view s) const noexcept {
-            return std::hash<std::string_view>{}(s);
-        }
     };
     // A HALF-OPEN RANGE OF EULER-TOUR TICKS. A function's descendants are
     // exactly the functions whose tick lies strictly inside its own range.
@@ -1029,8 +1020,7 @@ public:
     // The capture index: node -> its Euler-tour range, and name -> the ticks of
     // the innermost functions mentioning it. Read-only after build.
     std::vector<interval> fn_range_;
-    boost::unordered_flat_map<std::string, std::vector<std::int32_t>, sv_hash, std::equal_to<>>
-        mentions_;
+    string_flat_map<std::vector<std::int32_t>> mentions_;
     std::vector<loop_context> loops_;
     std::vector<std::string> pending_labels_;
     // The short-circuit jumps of the optional chain being compiled, and
