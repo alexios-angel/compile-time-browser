@@ -1550,25 +1550,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
                     auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
-                    auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
-                                          : ctjs::NumberAttr{};
+                    const auto number =
+                        right.integerNumber ? right.integerNumber : boundedNumber(rhs);
                     const auto stringOffset =
                         literal && llvm::isa<ctjs::StringAttr>(literal.getValue())
                             ? ownArrayIndex(rhs)
                             : std::nullopt;
-                    if (left.integerNumber && (number || stringOffset)) {
-                        const double offset =
-                            number ? number.getDouble() : static_cast<double>(*stringOffset);
-                        // Canonical decimal Strings convert exactly without object hooks.
-                        // Both operands and the result are exact integers in [0, 2^32-1].
-                        // Guard before conversion/subtraction: no NaN, rounding or wrap.
-                        if (std::isfinite(offset) && offset >= 0 &&
-                            offset <= static_cast<double>(*left.integerNumber) &&
-                            std::floor(offset) == offset) {
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            result.integerNumber =
-                                *left.integerNumber - static_cast<std::size_t>(offset);
-                        }
+                    const auto offset = number ? number : stringOffset;
+                    // Held Numbers keep their read-time value; canonical decimal
+                    // Strings convert exactly without object hooks. Both operands
+                    // are bounded integers; guard subtraction before unsigned wrap.
+                    if (left.integerNumber && offset && *offset <= *left.integerNumber) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.integerNumber = *left.integerNumber - *offset;
                     }
                 }
                 state.values[binary.getResult()] = result;

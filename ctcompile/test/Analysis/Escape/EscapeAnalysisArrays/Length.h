@@ -524,6 +524,63 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                  "  %index = ctjs.binary sub %length, %offset\n" +
                  indexed,
          .failure = ArrayContentsFailure::UnknownIndex});
+    for (const std::string operation : {"ctjs.binary", "ctjs.binary_static"}) {
+        run({.what = "a held bounded Number sum supplies its exact subtraction offset",
+             .body = values + one + read + "  %offset = " + operation +
+                     " add %one, %zero\n  %index = ctjs.binary sub %length, %offset\n" + indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "a saved own length offset survives append, slot replacement and transport",
+         .body = values + read +
+                 "  %offsets = ctjs.create_array [%zero] {storage_test_id = \"offsets\"}\n"
+                 "  %offset = ctjs.get_property %offsets[%key] {storage_test_id = \"offset\"}\n"
+                 "  %snapshots = ctjs.create_array [%offset] {storage_test_id = \"snapshots\"}\n"
+                 "  %saved = ctjs.get_property %snapshots[%zero]\n"
+                 "  ctjs.set_property %snapshots[%zero], %x\n"
+                 "  ctjs.append %zero to %offsets\n"
+                 "  cf.br ^next(%saved : !ctjs.value)\n^next(%before: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %length, %before\n" +
+                 indexed,
+         .arrays = "a:[zero]; offsets:[zero,zero]; snapshots:[x]",
+         .reads = "snapshots[0]=offset",
+         .exit = "a -> {a}"});
+    run({.what = "a held offset read retains the saved child after overwrite",
+         .body = values + read +
+                 "  %index = ctjs.binary sub %length, %length\n"
+                 "  %saved = ctjs.get_property %a[%index]\n" +
+                 overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    run({.what = "distinct held offsets retain every structural overwrite alternative",
+         .body = values + read +
+                 "  ctjs.append %zero to %a\n"
+                 "  %later = ctjs.get_property %a[%key]\n"
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(%later : !ctjs.value)\n"
+                 "^join(%offset: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %later, %offset\n" +
+                 indexed,
+         .arrays = "a:[x,zero] | a:[zero,zero]",
+         .exit = "a -> {a,x}; a -> {a}"},
+        "");
+    run({.what = "a later held offset cannot underflow a saved earlier length",
+         .body = values + read +
+                 "  ctjs.append %zero to %a\n"
+                 "  %later = ctjs.get_property %a[%key]\n"
+                 "  %index = ctjs.binary sub %length, %later\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    run({.what = "an opaque structural offset cannot borrow the other arm's held Number",
+         .body = values + read +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(%p : !ctjs.value)\n"
+                 "^join(%offset: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %length, %offset\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnsupportedOperation});
     run({.what = "an opaque subtraction operand cannot gain authority from a known length",
          .body = values + read + "  %index = ctjs.binary sub %length, %p\n" + indexed,
          .failure = ArrayContentsFailure::UnsupportedOperation});
@@ -567,6 +624,17 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,length]",
         .exit = "result -> {a,result}"};
     run(computedShrink);
+    const contents_row heldOffsetShrink{
+        .what = "a held bounded Number offset supplies an exact non-growing shrink",
+        .body = values + one + read +
+                "  %offset = ctjs.binary add %one, %zero\n"
+                "  %index = ctjs.binary sub %length, %offset\n"
+                "  ctjs.set_property %a[%key], %index\n"
+                "  %result = ctjs.create_array [%a, %length] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,length]",
+        .exit = "result -> {a,result}"};
+    run(heldOffsetShrink);
     run({.what = "a canonical String offset produces an exact Number shrink target",
          .body = values + "  %one = ctjs.constant #ctjs.string<\"1\">\n" + read + subtract +
                  "  ctjs.set_property %a[%key], %index\n  ctjs.return %a\n",
@@ -979,7 +1047,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
              "the live subtracted-index fixture did not parse");
     }
-    for (const contents_row & source : {originalShrink, computedShrink}) {
+    for (const contents_row & source : {originalShrink, computedShrink, heldOffsetShrink}) {
         auto module = parse(source);
         if (!module) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
@@ -994,6 +1062,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         const mlir::Value value = store.getValue();
         auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         auto literal = (binary ? binary.getRhs() : value).getDefiningOp<ctjs::ConstantOp>();
+        if (binary) {
+            if (auto offset = binary.getRhs().getDefiningOp<ctjs::BinaryOp>()) {
+                literal = offset.getLhs().getDefiningOp<ctjs::ConstantOp>();
+            }
+        }
         const mlir::Attribute original = literal.getValue();
         mlir::OpBuilder builder(function);
         function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
