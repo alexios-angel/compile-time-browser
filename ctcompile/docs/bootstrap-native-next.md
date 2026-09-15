@@ -2,23 +2,24 @@
 
 ## Current boundary, 2026-09-15
 
-Latest slices **b3a443da / 1cd9a49a** preserve ordinary-call exception register
-CFGs and recover a guarded tail at its original handler installation site. Pre-try
-checks, early returns and throws stay outside the catch. The complete source stays
-available for rollback; partial recovery keeps an unstructured-prefix diagnostic.
-Focused **5/5 CTests + four lit tests PASS**. Complete **272-step build /
-602/602 CTests / 176/176 lit PASS**; all **1,443 frozen hashes** match devbox,
-local files and committed source. Fresh Bootstrap remains **19/574**, DOM Data
-**7/7**, Button **4/86**. See [HANDOFF](HANDOFF.md) for measurements.
+Latest recovery **c44b267b / 7e81c072 / c2500d4e** proves held Number-zero
+induction starts and shares the existing Number text conversion and strict URI
+decoder through public Core. The VM uses aliases/adapters; standalone Core clients
+link without Script. Complete **604/604 CTests / 176/176 lit PASS**;
+**582 affected test262 files** have identical before/after outcomes. See
+[HANDOFF](HANDOFF.md) for measurements and inherited numeric oracle limitations.
 
-Fresh original M/F/H.getDataAttribute still refuses native DOM preparation in all
-four provider/policy combinations. M now preserves **24 nine-slot register blocks**
-and its handler at **^bb12**. Next prove builtin identities, complete prefix/try/catch
-effects and result ownership, then integrate recovery with DOMSource's private,
-fingerprinted source transaction. Number/toString, strict URI decoding, JSON parsing,
-catch-state and heterogeneous returns remain unproved. Full H dataset iteration,
-Bootstrap initialization/inheritance, retained config/callback ownership and the
-application driver remain unfinished. No full-bundle admission gain is claimed.
+Fresh Bootstrap remains **19/574 native**, DOM Data **7/7**, Button **4/86**.
+Original M/F/H.getDataAttribute still refuses under both providers/policies and
+retains all 24 nine-slot register blocks, with its handler at ^bb12. The next
+bounded native slice is `Number(element.getAttribute("data-bs-config")).toString()`:
+prove Number/Number.prototype identity, complete source provenance, nullable input
+conversion and owning String output through Core. Then prove original M's complete
+prefix/try/catch effects, URI/JSON failure continuations, unobserved catch payload
+and mixed-result ownership inside the fingerprinted DOMSource transaction. JSON
+needs a shared RAII core; full H/dataset, Bootstrap initialization/inheritance,
+retained config/callback ownership and the application driver remain unfinished.
+No full-bundle admission gain is claimed.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,

@@ -6,6 +6,83 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared Number/URI Core and proved-zero induction, 2026-09-15 UTC
+
+Resumed the interrupted **09:35 Number/URI Core / held-zero induction** thread
+from three dirty ctcompile files, the dirty isolated `codex-m-core-20260915`
+worktree, and AGENT-SYNC's **09:35/09:36** journals. The preceding loop explicitly
+abandoned it at **09:38:28**. Both histories and unmerged branches were checked;
+`codex-wip-20260907` is already an ancestor. Three agents reviewed/recovered the
+independent drafts; root integrated and gated them.
+
+**c44b267b** admits independently proved held Number-zero initializers for bounded
+read-only array induction. It checks both the original initializer and transported
+snapshot; literal +1 steps, strict own-length guards, complete source/path evidence
+and charged budgets remain required. Saved zero lengths survive later source-array
+mutation; stale solver facts and forged markers cannot supply the proof.
+
+**7e81c072** moves the existing numeric-text implementation into
+`ctbrowser/core/number_format.hpp` and Core. Script names are source-compatible
+aliases, and BigInt shares Core's whitespace function. **c2500d4e**
+lifts the existing strict decoder into `ctbrowser/core/uri.hpp`; the VM binding
+only converts values, calls Core and creates the same URIError on failure. Public
+callers use ordinary scalars, borrowed string views, owning strings and optional
+owning strings. These are shared implementations, with no Script/GC dependency.
+The Number implementation is token-equivalent apart from include/namespace; URI
+validation, raw-byte handling and reserved-escape case are preserved. The new Core
+client also pins **16 Node-checked original M numeric-text observations**.
+
+The Core commits landed atomically through **585cfbbd**.
+
+Complete **1,125-step default build / 604/604 CTests in
+1451.90s / 176/176 lit in 970.48s PASS**.
+Separate browser gate: **180/180 in 68.62s**; focused compiler gate:
+**4/4 in 100.53s**. Both Core client binaries contain **no Script symbols**.
+All **1,448 frozen source hashes** and **113 submodule hashes** match the
+devbox; committed source matches the frozen inputs. Stable formatting passes
+**834 C++ / 100 Python / 33 web**; pinned formatting retains its unchanged
+**nine-file / 26-diagnostic** baseline.
+
+All **582 affected test262 files** have byte-identical before/after outcomes
+and failure causes (Number, BigInt, parseFloat, decodeURI, decodeURIComponent).
+Full WPT/test262 were not remeasured; no expectation files changed. Induction:
+**42 rows / three live states / 2,770 retention cutoffs**; structured contents:
+**50 rows / 2,746 cutoffs**. Dense arrays remain **567 / 293 / 21,925**;
+escape has **zero violations / precision 40/172**. DOM Strings remains
+**493 Node/VM observations / eight binaries / 780 source refusals**.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or prunes; DOM Data **7/7**; Button **4/86**, with **22 Node
+observations** and its existing VM inheritance failure. Button/Data reports and
+all **1,123 escape baseline rows** are byte-identical. A fresh verbatim original
+M/F/H probe still refuses the complete-source helper census under both providers
+and policies; M keeps all **24 nine-slot register blocks**, handler at **^bb12**.
+No full-bundle native admission gain is claimed. Logs, measured JSON, exact source
+hashes, before/after test262 rows and replay scripts: `/tmp/ctcompile-core-resume/`.
+
+**Exact next boundary:** prove the original numeric prefix primitive
+`Number(element.getAttribute("data-bs-config")).toString()` and then its strict
+comparison with the saved attribute. The DOM provider does not yet promise
+Number/Number.prototype identity, and DOM manifests currently reject
+`initial_intrinsics`. Add that explicit premise plus complete source provenance,
+mutation/reentry refusals, nullable String-to-Number conversion and owning String
+emission through Core. Do not infer builtin identity from the global's spelling.
+Keep original M refused until its complete prefix/try/catch effects and mixed
+results are proved. The existing guarded-tail recovery must stay at the original
+handler site; URI/JSON failure continuations and unobserved error payloads need
+proof before integration with DOMSource's fingerprinted private transaction.
+JSON still needs a shared plain RAII implementation lifted from Script. Full
+H/dataset, Bootstrap initialization/inheritance, retained config/callback ownership
+and the application driver remain unfinished.
+
+The move does not establish complete ECMAScript numeric compliance. Review found
+pre-existing source-level risks around the integer fast-path cast, repeated signs,
+large radix literals, out-of-range literals with trailing garbage and huge decimal
+exponents. Those specific VM/Core discrepancies were not remeasured here and were
+not changed to make native agree. Preserve them as separate oracle work before
+claiming arbitrary-string equivalence. Exact continuation file/function references
+and refusal controls are in `/tmp/ctcompile-core-resume/next-boundary-review.md`.
+
 ## Guarded exception tails and Number left shifts, 2026-09-15 UTC
 
 Resumed the interrupted **08:37 guarded-tail / register-CFG / left-shift** thread
