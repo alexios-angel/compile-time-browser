@@ -679,13 +679,13 @@ struct DOMSource {
                 objects.push_back(object);
             }
         }
-        // Normalize children before asking the unchanged shared leaf query about
-        // their parents. Forwarded loads remain symbolic until each parent call.
+        // Capturing children must be leaves before the shared capture query.
+        // Uncaptured helpers wait until their holders retire and expose every
+        // invocation; only then can argument facts specialize their bodies.
         for (ctjs::CreateClosureOp closure : closures) {
             auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
             if (!target) { return refuse("DOM helper closure target is missing"); }
-            if (!bindConstantArguments(closure, target)) { return false; }
-            if (!expand(target, depth + 1)) { return false; }
+            if (!closure.getUpvalues().empty() && !expand(target, depth + 1)) { return false; }
         }
         for (ctjs::CreateCellOp cell : localCells) {
             if (!cells.contains(cell.getResult()) && !resolveCell(cell)) { return false; }
@@ -813,6 +813,7 @@ struct DOMSource {
                     }
                 }
                 if (calls.empty()) { return refuse("DOM helper has no source invocation"); }
+                if (!bindConstantArguments(closure, target)) { return false; }
                 if (!expand(target, depth + 1)) { return false; }
                 for (const Call & call : calls) {
                     mlir::IRMapping mapping;

@@ -375,11 +375,29 @@ BOOTSTRAP_F = """    function F(t) {
         return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
     }
 """
+# These original H methods form the String-only slice before live M normalization.
+BOOTSTRAP_H_WRITES = """        setDataAttribute(t, e, i) {
+            t.setAttribute(`data-bs-${F(e)}`, i)
+        },
+        removeDataAttribute(t, e) {
+            t.removeAttribute(`data-bs-${F(e)}`)
+        },
+"""
+BOOTSTRAP_H_ACTION = """  H.setDataAttribute(element, 'config', 'first');
+  H.setDataAttribute(element, 'toggle', 'second');
+  const saved = element.getAttribute('data-bs-config');
+  H.removeDataAttribute(element, 'config');
+  return saved !== element.getAttribute('data-bs-toggle');"""
 # Keep the newly admitted refusal source unchanged, both directly and in the oracle wrapper.
 REGEXP_MIXED_SOURCE = (
     "function invalid(element) { "
     + BOOTSTRAP_F
     + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F('toggle')); }\n"
+)
+REGEXP_CAPTURED_SOURCE = (
+    "function invalid(element) { "
+    + BOOTSTRAP_F
+    + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } return read(element, 'config'); }\n"
 )
 REGEXP_CASES = {
     "helper_regex_direct": (
@@ -415,6 +433,41 @@ REGEXP_CASES = {
   return read(element, 'config') !== read(element, 'toggle');""",
         "1111",
     ),
+    "regex_captured_callable": (
+        REGEXP_CAPTURED_SOURCE + "return invalid(element) === null;",
+        "1111",
+    ),
+    "helper_regex_captured_names": (
+        BOOTSTRAP_F + """
+  function read(target, name) { return target.getAttribute('data-bs-' + F(name)); }
+  element.setAttribute('data-bs-config', 'first');
+  element.setAttribute('data-bs-toggle', 'second');
+  return read(element, 'config') !== read(element, 'toggle');""",
+        "1111",
+    ),
+    "helper_regex_captured_consumers": (
+        BOOTSTRAP_F + """
+  function first(target) { return target.getAttribute('data-bs-' + F('config')); }
+  function second(target) { return target.getAttribute('data-bs-' + F('toggle')); }
+  element.setAttribute('data-bs-' + F('direct'), 'third');
+  element.setAttribute('data-bs-config', 'first');
+  element.setAttribute('data-bs-toggle', 'second');
+  return first(element) !== second(element);""",
+        "1111",
+    ),
+    "helper_regex_captured_chain": (
+        BOOTSTRAP_F + """
+  function key(name) { return F(name); }
+  function read(target, name) { return target.getAttribute('data-bs-' + key(name)); }
+  element.setAttribute('data-bs-config', 'first');
+  element.setAttribute('data-bs-toggle', 'second');
+  return read(element, 'config') !== read(element, 'toggle');""",
+        "1111",
+    ),
+    "helper_regex_original_h": (
+        BOOTSTRAP_F + "const H = {\n" + BOOTSTRAP_H_WRITES + "};\n" + BOOTSTRAP_H_ACTION,
+        "1111",
+    ),
     "helper_regex_range": (
         """const key = 'data-bs-' + 'config'.replace(/[0-9]/g, t => t);
   element.setAttribute(key, 'value');
@@ -441,6 +494,16 @@ BOOLEAN_SOURCES = tuple(
     for name, (body, _) in BOOLEAN_CASES.items()
 )
 HOST_CASES = {
+    "host_factory_original_h": (
+        "var host_factory_original_h = (function() {\n"
+        + BOOTSTRAP_F
+        + "const H = {\n"
+        + BOOTSTRAP_H_WRITES
+        + "};\nfunction host_factory_original_h(element) {\n"
+        + BOOTSTRAP_H_ACTION
+        + "\n}\nreturn {entry: host_factory_original_h};\n})().entry;\n",
+        "1111",
+    ),
     "host_capture_late_initialization": (
         """let hostLateKey;
 function host_capture_late_initialization(element) {
@@ -701,6 +764,11 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    **dict.fromkeys(
+        ("helper_regex_original_h", "host_factory_original_h"),
+        """assert(!doc.read().has_attribute(node, atoms.intern("data-bs-config")));
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
+    ),
     "helper_regex_direct": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
     "helper_regex_original": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
     "regex_mixed_constants": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");
@@ -708,6 +776,13 @@ BOOLEAN_CHECKS = {
     "helper_regex_distinct_names": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
         assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
     "helper_regex_forwarded_names": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
+    "helper_regex_captured_names": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
+    "helper_regex_captured_consumers": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-direct")) == "third");""",
+    "helper_regex_captured_chain": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
         assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
     "helper_regex_range": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
     "helper_regex_no_flags": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
@@ -1069,6 +1144,18 @@ HELPER_REFUSALS = {
     "helper_object_nested_receiver": "const helpers = {read(target) { const observe = () => this; observe(); return target.getAttribute('x'); }}; return helpers.read(element);",
 }
 REGEXP_REFUSALS = {
+    "template_optional": "return element.getAttribute(`data-${element.getAttribute('x')}`);",
+    "template_element": "return element.getAttribute(`data-${element}`);",
+    "template_boolean": "return element.getAttribute(`data-${true}`);",
+    "template_number": "return element.getAttribute(`data-${1}`);",
+    "regex_original_h_matching": REGEXP_CASES["helper_regex_original_h"][0].replace(
+        "H.setDataAttribute(element, 'config'", "H.setDataAttribute(element, 'Config'", 1
+    ),
+    "regex_original_h_live": REGEXP_CASES["helper_regex_original_h"][0].replace(
+        "H.setDataAttribute(element, 'toggle'",
+        "H.setDataAttribute(element, element.getAttribute('x')",
+        1,
+    ),
     "regex_factory_override": "__ctbrowser_regexp = function() { return null; }; "
     + BOOTSTRAP_F
     + " return element.getAttribute('data-bs-' + F('config'));",
@@ -1083,8 +1170,15 @@ REGEXP_REFUSALS = {
     + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F(element.getAttribute('x')));",
     "regex_mixed_live_first": BOOTSTRAP_F
     + " element.setAttribute('data-bs-' + F(element.getAttribute('x')), 'value'); return element.getAttribute('data-bs-' + F('toggle'));",
-    "regex_captured_callable": BOOTSTRAP_F
-    + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } return read(element, 'config');",
+    "regex_captured_reassigned": BOOTSTRAP_F
+    + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } F = name => name; return read(element, 'config');",
+    "regex_captured_reassigned_later": BOOTSTRAP_F
+    + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } const saved = read(element, 'config'); F = name => name; return saved;",
+    "regex_captured_early_call": "function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } const saved = read(element, 'config'); var F = t => t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); return saved;",
+    "regex_captured_identity": BOOTSTRAP_F
+    + " function read(target, name) { target.getAttribute('data-bs-' + F(name)); return F; } return read(element, 'config');",
+    "regex_captured_unused": BOOTSTRAP_F
+    + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } return element.getAttribute('data-bs-config');",
     "regex_forwarded_live": REGEXP_CASES["helper_regex_forwarded_names"][0].replace(
         "read(element, 'toggle')", "read(element, element.getAttribute('x'))"
     ),
@@ -1118,6 +1212,21 @@ REGEXP_REFUSALS = {
     "regex_escaped_range": r"return element.getAttribute('config'.replace(/[\x41-\x5a]/g, t => t));",
     "regex_nested_pattern": "return element.getAttribute('config'.replace(/([A-Z])/g, t => t));",
 }
+for case in ("names", "consumers", "chain"):
+    for order, name in (("first", "config"), ("last", "toggle")):
+        before = f"F('{name}')" if case == "consumers" else f"read(element, '{name}')"
+        for kind, value in (
+            ("matching", repr(name.title())),
+            ("live", "element.getAttribute('x')"),
+        ):
+            after = (
+                f"F({value.replace('element.', 'target.')})"
+                if case == "consumers"
+                else f"read(element, {value})"
+            )
+            REGEXP_REFUSALS[f"regex_captured_{case}_{kind}_{order}"] = REGEXP_CASES[
+                f"helper_regex_captured_{case}"
+            ][0].replace(before, after, 1)
 HELPER_REFUSALS.update(REGEXP_REFUSALS)
 REFUSALS.update(HELPER_REFUSALS)
 HOST_REFUSALS = {
@@ -1699,6 +1808,9 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
     }
     if prefix == "replacement-mixed":
         variants["second-matching"] = ('#ctjs.string<"toggle">', '#ctjs.string<"Toggle">')
+    if prefix == "replacement-captured":
+        # F is reached through the proved capture, so the imported call is indirect.
+        del variants["direct-target"]
     for name, (before, after) in variants.items():
         if before not in original:
             raise RuntimeError(f"replacement provenance anchor changed: {name}")
@@ -1728,8 +1840,8 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
 
 def main():
     vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
-    if BOOTSTRAP_F not in vendor.read_text():
-        raise RuntimeError("original Bootstrap F source changed")
+    if any(source not in vendor.read_text() for source in (BOOTSTRAP_F, BOOTSTRAP_H_WRITES)):
+        raise RuntimeError("original Bootstrap F/H source changed")
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "clang", "node", "reference"):
         parser.add_argument("--" + name, required=True)
@@ -1996,23 +2108,24 @@ function makeElement(value) {
         row for row in prepared if row[0] == "helper_regex_original"
     )
     replacement_checks = regexp_provenance_checks(args, regexp_ir, regexp_contract)
-    mixed_ir, mixed_contract = dom.prepare(
-        args, "replacement-mixed", REGEXP_MIXED_SOURCE, 1, entry_name="invalid"
-    )
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-        for optimize in (False, True):
-            label = f"replacement-mixed-{provider}-{optimize}"
-            native = dom.lower(
-                args,
-                mixed_ir,
-                dict(mixed_contract, provider=provider),
-                label,
-                optimize=optimize,
-            )
-            emitted(args, native, label)
-    replacement_checks += 4 + regexp_provenance_checks(
-        args, mixed_ir, mixed_contract, prefix="replacement-mixed"
-    )
+    for prefix, source in (
+        ("replacement-mixed", REGEXP_MIXED_SOURCE),
+        ("replacement-captured", REGEXP_CAPTURED_SOURCE),
+    ):
+        ir, contract = dom.prepare(args, prefix, source, 1, entry_name="invalid")
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                label = f"{prefix}-{provider}-{optimize}"
+                native = dom.lower(
+                    args,
+                    ir,
+                    dict(contract, provider=provider),
+                    label,
+                    optimize=optimize,
+                )
+                emitted(args, native, label)
+        replacement_checks += 4
+        replacement_checks += regexp_provenance_checks(args, ir, contract, prefix=prefix)
     print(
         f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "

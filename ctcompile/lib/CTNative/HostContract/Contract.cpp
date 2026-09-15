@@ -543,7 +543,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 return;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
-                binary && binary.getKind() == ctjs::BinaryKind::Add &&
+                binary &&
+                (binary.getKind() == ctjs::BinaryKind::Add ||
+                 binary.getKind() == ctjs::BinaryKind::Concat) &&
                 hasKind(binary.getLhs(), Kind::string) && hasKind(binary.getRhs(), Kind::string)) {
                 values[binary.getResult()] = Kind::string;
                 continue;
