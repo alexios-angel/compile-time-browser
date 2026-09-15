@@ -110,17 +110,16 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .body = values + produce + branch + done +
                                   "^no:\n  ctjs.store_global \"held\", %x\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
-            {.contents = {.what = "bounded static Add and right shifts supply exact array indices",
-                          .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" +
-                                  done,
-                          .failure = kind == ctjs::BinaryKind::Add ||
-                                             kind == ctjs::BinaryKind::UShr ||
-                                             kind == ctjs::BinaryKind::Shr
-                                         ? ArrayContentsFailure::None
-                                         : ArrayContentsFailure::UnknownIndex,
-                          .arrays = "a:[x]",
-                          .reads = "a[0]=x",
-                          .exit = "zero -> {}"}},
+            {.contents =
+                 {.what = "bounded static Add, masks and right shifts supply exact indices",
+                  .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" + done,
+                  .failure = kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
+                                     kind == ctjs::BinaryKind::UShr || kind == ctjs::BinaryKind::Shr
+                                 ? ArrayContentsFailure::None
+                                 : ArrayContentsFailure::UnknownIndex,
+                  .arrays = "a:[x]",
+                  .reads = "a[0]=x",
+                  .exit = "zero -> {}"}},
             {.contents = {.what = "a static Number result is not an exact own String key",
                           .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
                                   done,

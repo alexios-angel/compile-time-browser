@@ -1668,6 +1668,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     result.integerNumber = boundedNumberSum(left, right);
                 }
+                if (binary.getKind() == ctjs::BinaryKind::BitAnd) {
+                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    // Bounded Numbers have the same low 32 bits after ToInt32.
+                    // Only a clear result sign bit gives a nonnegative index;
+                    // keep the original result, including -0 becoming +0.
+                    if (a && b && (*a & *b) < 2147483648ULL) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.integerNumber = *a & *b;
+                    }
+                }
                 if (binary.getKind() == ctjs::BinaryKind::UShr ||
                     binary.getKind() == ctjs::BinaryKind::Shr) {
                     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
