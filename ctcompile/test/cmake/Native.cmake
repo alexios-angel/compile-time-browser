@@ -167,116 +167,18 @@ endif()
 # and those were never claimed. It now reads --ctjs-resolve-globals' own
 # counters, and prints the per-name refusal reasons as the roadmap for them.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
-  # The DOM public API needs C++23 std::expected, unavailable in the older
-  # Clang/libstdc++ pair used by the standalone scalar printing tests.
+  # THE BROWSER DRIVERS - CTNative/Browser/*.py and Ownership/native_data_session.py
+  # - are lit tests beside their sources since 2026-09-15, like the seventeen
+  # drivers that already were. The one thing they need that lit cannot find is
+  # the compiler for the DOM's public API, which needs C++23 std::expected -
+  # unavailable in the older Clang/libstdc++ pair the standalone scalar tests
+  # use - so it is chosen here and handed to lit.cfg.py as %dom_clang.
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(_native_dom_clang ${CMAKE_CXX_COMPILER})
   else()
     find_program(_native_dom_clang NAMES clang++-23 clang++
                  HINTS ${CTBROWSER_MONOREPO_ROOT}/tools/clang-std-embed/bin REQUIRED)
   endif()
-  add_test(NAME ctcompile_native_dom_entry
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-entry
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_entry PROPERTIES TIMEOUT 900)
-  add_test(NAME ctcompile_native_dom_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-session
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_session PROPERTIES TIMEOUT 300)
-  file(GLOB _session_node_bins LIST_DIRECTORIES TRUE "$ENV{HOME}/tools/node-*/bin")
-  find_program(_session_node NAMES node nodejs HINTS ${_session_node_bins} REQUIRED)
-  add_test(NAME ctcompile_native_dom_strings
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_strings.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-strings
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_strings PROPERTIES TIMEOUT 900)
-  add_test(NAME ctcompile_native_dom_json
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_json.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-json
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_json PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_dom_data_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_data_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-data-session
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_data_session PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_bootstrap_dom_data_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_bootstrap_dom_data_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-bootstrap-dom-data-session
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_bootstrap_dom_data_session PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_bootstrap_button_probe
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_bootstrap_button_probe.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-bootstrap-button-probe)
-  set_tests_properties(ctcompile_native_bootstrap_button_probe PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_data_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Ownership/native_data_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-data-session)
-  set_tests_properties(ctcompile_native_data_session PROPERTIES TIMEOUT 300)
   # `resolved` and `direct` are floors under the closed world. They are 0 on
   # the three real corpora, and THE REASON WRITTEN HERE WAS WRONG. It said all
   # three are open programs - "bootstrap's UMD header passes `globalThis`/

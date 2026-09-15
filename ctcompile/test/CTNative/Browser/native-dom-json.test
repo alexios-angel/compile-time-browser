@@ -1,0 +1,3 @@
+# Original M's protected body, JSON.parse(decodeURIComponent(t)), as native
+# json_value, compared against Node and the VM (native_dom_json.py).
+# RUN: python3 %S/native_dom_json.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference

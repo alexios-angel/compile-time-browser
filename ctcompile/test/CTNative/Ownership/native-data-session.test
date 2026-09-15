@@ -1,0 +1,2 @@
+# Compile the pinned Bootstrap Data probe with methods attached to their owner.
+# RUN: python3 %S/native_data_session.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t

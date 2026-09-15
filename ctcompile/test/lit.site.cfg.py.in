@@ -28,6 +28,8 @@ config.ctbrowser_tools_dir = "@CMAKE_BINARY_DIR@/tools"
 config.nm = "@_native_nm@"
 config.clean_compilers = "@CTCOMPILE_CLEAN_GXX@,@CTCOMPILE_CLEAN_CLANGXX@"
 config.cmake = "@CMAKE_COMMAND@"
+config.dom_clang = "@_native_dom_clang@"
+config.build_root = "@CMAKE_BINARY_DIR@"
 
 import lit.llvm
 lit.llvm.initialize(lit_config, config)

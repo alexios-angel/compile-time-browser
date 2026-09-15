@@ -156,6 +156,10 @@ config.substitutions.append(("%nm", config.nm))
 # pipeline.cmake is the build's own lowering script; default-optimizations.test
 # runs it under each switch so the modules it gates are what the build writes.
 config.substitutions.append(("%cmake", config.cmake))
+# The Browser drivers compile against the DOM's public API with the compiler
+# Native.cmake chose for it, and read the engine's build tree.
+config.substitutions.append(("%dom_clang", config.dom_clang))
+config.substitutions.append(("%build", config.build_root))
 
 # THE PYTHON DRIVERS IMPORT EACH OTHER ACROSS DIRECTORIES (CTNative/harness.py
 # says how), and a hand run wants the same path.
