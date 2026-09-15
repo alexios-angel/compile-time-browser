@@ -717,8 +717,8 @@ public:
 
     // THE STACK AS IT IS RIGHT NOW - for raise() and for a constructed
     // Error's `stack`. The function's INDEX as well as its name: most of a
-    // bundle's functions are anonymous, and the index is what lets
-    // `p5-ratchet.py --source N` be pointed straight at the failing code.
+    // bundle's functions are anonymous, and the index is what points the
+    // corpus ratchet (tools/corpus/ratchet.py) straight at the failing code.
     [[nodiscard]] std::string current_stack(std::size_t skip = 0) const {
         std::string trace;
         int shown = 0;

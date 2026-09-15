@@ -13,7 +13,7 @@
 // listed in .clang-format-ignore for exactly that reason.
 //
 //   upstream: llvm/llvm-project, tag llvmorg-22.1.8 - the FORK BASE. The
-//             build pins 23.1.0 (cmake/LLVMVersion.cmake); the 22 -> 23 bump
+//             build pins 23.1.0 (ctcompile/CMakeLists.txt); the 22 -> 23 bump
 //             only removed the `emitc.apply` printer here and deferred rebasing
 //             onto 23's emitter (ctcompile/docs/LLVMUpgrade.md), so the diff
 //             against 22.1.8 is still the one to read at the next bump.
