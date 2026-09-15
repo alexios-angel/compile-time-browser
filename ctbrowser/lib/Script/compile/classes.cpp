@@ -9,6 +9,8 @@
 
 #include "compiler_impl.hpp"
 
+#include <boost/scope/scope_exit.hpp>
+
 namespace ctbrowser::script::detail {
 
 void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t key,
@@ -132,10 +134,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             private_scopes_.back().names.push_back(m.text);
         }
     }
-    const struct close_private_scope {
-        std::vector<private_scope> & scopes;
-        ~close_private_scope() { scopes.pop_back(); }
-    } closing{private_scopes_};
+    const boost::scope::scope_exit closing{[&]() noexcept { private_scopes_.pop_back(); }};
     const std::uint32_t mark = reg_mark();
     const std::uint16_t prototype_reg = alloc_reg();
     proto().emit(instruction{op::new_object, prototype_reg});

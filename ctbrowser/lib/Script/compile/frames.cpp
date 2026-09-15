@@ -9,6 +9,8 @@
 
 #include "compiler_impl.hpp"
 
+#include <boost/scope/scope_exit.hpp>
+
 namespace ctbrowser::script::detail {
 
 compiler_impl::frame & compiler_impl::fn() {
@@ -379,13 +381,10 @@ void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> par
             }
         }
         tdz_frame_ = frames_.size() - 1;
-        const struct leave_tdz {
-            compiler_impl & self;
-            ~leave_tdz() {
-                self.tdz_names_.clear();
-                self.tdz_frame_ = static_cast<std::size_t>(-1);
-            }
-        } leaving{*this};
+        const boost::scope::scope_exit leaving{[&]() noexcept {
+            tdz_names_.clear();
+            tdz_frame_ = static_cast<std::size_t>(-1);
+        }};
         if (boxed[i]) {
             // `jump_if_defined` on the cell would always jump: test the value.
             const std::uint16_t current = alloc_reg();

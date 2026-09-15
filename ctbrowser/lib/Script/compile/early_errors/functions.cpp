@@ -10,6 +10,8 @@
 
 #include "checker.hpp"
 
+#include <boost/scope/scope_exit.hpp>
+
 #include <algorithm>
 #include <cctype>
 
@@ -192,14 +194,10 @@ void checker::check_class(std::int32_t idx) {
             private_names_.back().push_back(member.text);
         }
     }
-    const struct leave {
-        std::size_t & depth;
-        std::vector<std::vector<std::string_view>> & names;
-        ~leave() {
-            --depth;
-            names.pop_back();
-        }
-    } leaving{class_depth_, private_names_};
+    const boost::scope::scope_exit leaving{[&]() noexcept {
+        --class_depth_;
+        private_names_.pop_back();
+    }};
 
     std::vector<private_name> privates;
     std::size_t constructors = 0;
