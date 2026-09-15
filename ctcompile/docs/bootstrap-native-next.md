@@ -6,8 +6,10 @@ Latest slices **b3a443da / 1cd9a49a** preserve ordinary-call exception register
 CFGs and recover a guarded tail at its original handler installation site. Pre-try
 checks, early returns and throws stay outside the catch. The complete source stays
 available for rollback; partial recovery keeps an unstructured-prefix diagnostic.
-Focused **5/5 CTests + four lit tests PASS**. The complete devbox gate is **running**;
-see [HANDOFF](HANDOFF.md) for measured counts and final gate status.
+Focused **5/5 CTests + four lit tests PASS**. Complete **272-step build /
+602/602 CTests / 176/176 lit PASS**; all **1,443 frozen hashes** match devbox,
+local files and committed source. Fresh Bootstrap remains **19/574**, DOM Data
+**7/7**, Button **4/86**. See [HANDOFF](HANDOFF.md) for measurements.
 
 Fresh original M/F/H.getDataAttribute still refuses native DOM preparation in all
 four provider/policy combinations. M now preserves **24 nine-slot register blocks**

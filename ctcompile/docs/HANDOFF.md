@@ -36,9 +36,16 @@ snapshot restoration and real native-admission rollback. DOM Strings remain
 Stable formatting passes **829 C++ / 100 Python / 33 web**; the required pinned
 formatter matches its unchanged **nine-file / 26-diagnostic** baseline.
 
-The complete default devbox build/CTest gate is **running** on **1,443 frozen
-source hashes**. No full-suite result is claimed yet. Logs, hashes, source probes
-and continuation evidence live in `/tmp/ctcompile-tail-resume/`.
+Complete **272-step default build / 602/602 CTests in 1451.07s /
+176/176 lit in 969.00s PASS**. All **1,443 frozen hashes** match
+devbox, local files and committed source. Logs, hashes, source probes and
+continuation evidence live in `/tmp/ctcompile-tail-resume/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. DOM Data remains **7/7**, Button **4/86**
+with **22 Node observations** and its existing VM inheritance failure. Button/Data
+reports and all **1,123 escape baseline rows** are byte-identical to the prior gate.
+No full-bundle admission gain is claimed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** fresh original M/F/H.getDataAttribute still refuses the
 complete single-block helper census in all four provider/policy combinations.
