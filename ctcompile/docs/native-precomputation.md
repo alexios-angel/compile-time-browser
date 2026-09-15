@@ -38,23 +38,19 @@ valid, so no partially executed runtime effect needs rollback. Input
 discarded and rederived. The summary records expression and branch rewrites,
 steps, and budget exhaustion. `report=true` also emits those counters.
 
-`lib/CTNative/Symbolic/Precompute.pdll` owns scalar replacement for `ctjs.binary`,
+`lib/CTNative/Symbolic/Rewrite.cpp` owns scalar replacement for `ctjs.binary`,
 `ctjs.binary_static`, `ctjs.unary`, `ctjs.compare`, `ctjs.truthy`, and
-`arith.trunci`. Native callbacks capture the current analysis and adapt a proved
-literal to the result representation; PDLL constructs the appropriate CTJS or
-integer constant and replaces only the root. Analysis, budget scheduling, and
-structured-region splicing stay in C++. The callbacks and compiled patterns
-live within one invocation, with no global state or trusted proof attributes.
+`arith.trunci`: one `OpRewritePattern` template, instantiated per root, that
+captures the current analysis by reference, adapts a proved literal to the
+result representation, and replaces only the root with a CTJS or integer
+constant of the root's own type. Analysis, budget scheduling, and
+structured-region splicing stay beside it. The patterns live within one
+invocation, with no global state or trusted proof attributes. (Until
+2026-09-15 the six patterns were a PDLL file with native callbacks; every body
+was already one C++ call, so the file bought an mlir-pdll build step and a
+PDL bytecode interpreter for nothing a template does not say.)
 
-The policy's exemption for analysis-dependent rewrites is a design boundary,
-not a restriction of the callback API. MLIR 23 stores registered external
-constraints and rewrites as `std::function`; the callbacks can capture analysis
-and side tables directly. A native snippet embedded in PDLL does not implicitly
-see pass-local variables. Imported declarations and explicit registration supply
-that connection. Here the proof remains native while the operation replacement
-is declarative, and the compiled pattern set never outlives its captured facts.
-
-The driver derives scalar candidate kinds from the generated patterns and visits
+The driver derives scalar candidate kinds from the patterns' root kinds and visits
 them once in the same postorder as structured branches. A candidate without a
 literal still consumes its original budget step. It uses `PatternApplicator`
 directly, so greedy folding or dead-code elimination cannot remove producers,
