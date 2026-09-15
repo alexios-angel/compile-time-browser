@@ -6,20 +6,21 @@ top; `backend/` holds `software.hpp` and `compositor.hpp`; `text/` holds `ttf.hp
 
 ## FONTS: real ones (stage 6, 2026-07-25)
 
-**Text is drawn with outline faces.** `raster/text/ttf.hpp` is a `font_backend`
-over **SDL3_ttf** — the one place the engine knows about SDL, and a deliberate
-exception rather than an oversight. `TTF_Init` needs no video subsystem, so real
-text is still TESTABLE with no display, which is what makes the exception safe.
-`test/lint/api_surface` SWEEPS `lib/` and names the exceptions; the old
-hand-written list could not catch a new file that used SDL, and did not.
+**Text is drawn with outline faces.** `raster/text/ttf.hpp` declares a
+`font_backend` interface and `make_ttf_backend()`; `lib/Raster/text/ttf.cpp` is
+the implementation over **SDL3_ttf** — the one place the engine knows about SDL,
+and a deliberate exception rather than an oversight. `TTF_Init` needs no video
+subsystem, so real text is still TESTABLE with no display, which is what makes
+the exception safe. `test/lint/api_surface` SWEEPS `lib/` and names the
+exceptions; the old hand-written list could not catch a new file that used SDL,
+and did not.
 
 ## SVG
 
 `raster/svg.hpp` is two declarations — `svg_available()` and `render_svg(source,
 w, h)` — and `ctbrowser/lib/Raster/svg.cpp` is the only file in the tree that includes a
-**plutosvg** header. Stricter than `raster/text/ttf.hpp`, which puts `<SDL_ttf.h>` in
-a public header and pays with an `api_surface` allow-list entry; plutosvg hides
-completely and needs no exception.
+**plutosvg** header — the same shape as `raster/text/ttf.hpp`, whose SDL
+includes live in its `.cpp` too.
 
 **It rasterises at the size asked for**, and that is the whole point.
 `draw_image` scales nearest-neighbour, so a vector graphic decoded once at its

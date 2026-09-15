@@ -446,10 +446,9 @@ void test_canvas_text_uses_the_real_font() {
 // threads, on glyphs nobody has asked for yet - which is the only arrangement
 // where the lock is load bearing.
 void test_the_glyph_cache_is_thread_safe() {
-#if CTBROWSER_WITH_TTF
     if (!raster::ttf_available()) { return; }
-    raster::ttf_backend fonts;
-    check(fonts.ok(), "SDL3_ttf started");
+    const std::unique_ptr<raster::ttf_backend> fonts = raster::make_ttf_backend();
+    check(fonts != nullptr, "SDL3_ttf started");
     // Off disk through the registry, which probes the working directory the
     // way a page's <link> would.
     const std::vector<std::byte> regular =
@@ -457,8 +456,8 @@ void test_the_glyph_cache_is_thread_safe() {
     const std::vector<std::byte> bold =
         shell::asset_registry{}.load("resources/fonts/FiraSans-Bold.ttf");
     check(!regular.empty(), "the vendored face is readable");
-    check(fonts.add_face("Fira Sans", false, false, regular), "the face loads");
-    check(fonts.add_face("Fira Sans", true, false, bold), "and its bold");
+    check(fonts->add_face("Fira Sans", false, false, regular), "the face loads");
+    check(fonts->add_face("Fira Sans", true, false, bold), "and its bold");
 
     // Every thread measures a DIFFERENT size, so every one of them misses and
     // rasterizes - which is the state the lock exists for.
@@ -466,7 +465,7 @@ void test_the_glyph_cache_is_thread_safe() {
         std::string out;
         for (const char * word : {"Hamburgefonstiv", "quick brown fox", "0123456789"}) {
             out += std::to_string(
-                fonts.advance(word, static_cast<float>(size), "Fira Sans", size % 2 == 0, false));
+                fonts->advance(word, static_cast<float>(size), "Fira Sans", size % 2 == 0, false));
             out += ' ';
         }
         return out;
@@ -474,9 +473,9 @@ void test_the_glyph_cache_is_thread_safe() {
     std::vector<std::string> expected;
     for (int size = 8; size < 8 + 12; ++size) { expected.push_back(measure_all(size)); }
 
-    raster::ttf_backend concurrent;
-    check(concurrent.add_face("Fira Sans", false, false, regular), "the face loads again");
-    check(concurrent.add_face("Fira Sans", true, false, bold), "and its bold");
+    const std::unique_ptr<raster::ttf_backend> concurrent = raster::make_ttf_backend();
+    check(concurrent->add_face("Fira Sans", false, false, regular), "the face loads again");
+    check(concurrent->add_face("Fira Sans", true, false, bold), "and its bold");
     std::vector<std::string> got(expected.size());
     std::vector<std::thread> threads;
     for (std::size_t i = 0; i < expected.size(); ++i) {
@@ -484,8 +483,8 @@ void test_the_glyph_cache_is_thread_safe() {
             std::string out;
             for (const char * word : {"Hamburgefonstiv", "quick brown fox", "0123456789"}) {
                 const int size = static_cast<int>(i) + 8;
-                out += std::to_string(concurrent.advance(word, static_cast<float>(size),
-                                                         "Fira Sans", size % 2 == 0, false));
+                out += std::to_string(concurrent->advance(word, static_cast<float>(size),
+                                                          "Fira Sans", size % 2 == 0, false));
                 out += ' ';
             }
             got[i] = std::move(out);
@@ -493,7 +492,6 @@ void test_the_glyph_cache_is_thread_safe() {
     }
     for (std::thread & t : threads) { t.join(); }
     check(got == expected, "twelve threads measuring cold glyphs agree with one thread");
-#endif
 }
 
 // A page's OWN font, from its @font-face rule. The file is named by the page

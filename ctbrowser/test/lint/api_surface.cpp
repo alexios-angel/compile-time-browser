@@ -116,12 +116,11 @@ int main() {
     // WORKING_DIRECTORY = PROJECT_SOURCE_DIR, and that became ctbrowser/ when
     // the repository became a monorepo.
     const std::set<std::string> allowed = {
-        "include/ctbrowser/app/app.hpp",         // the window, the event loop, audio, image decode
-        "lib/App/app/internal.hpp",              //   and its implementation: the includes
-        "lib/App/app/hosts.cpp",                 //   and the host interface, the hosts,
-        "lib/App/app/run.cpp",                   //   and the loop that drives one
-        "include/ctbrowser/raster/text/ttf.hpp", // real fonts, through SDL3_ttf - see its header
-        "lib/Raster/text/ttf.cpp",               //   and its implementation
+        "include/ctbrowser/app/app.hpp", // the window, the event loop, audio, image decode
+        "lib/App/app/internal.hpp",      //   and its implementation: the includes
+        "lib/App/app/hosts.cpp",         //   and the host interface, the hosts,
+        "lib/App/app/run.cpp",           //   and the loop that drives one
+        "lib/Raster/text/ttf.cpp",       // real fonts, through SDL3_ttf - see its header
     };
     std::size_t swept = 0;
     for (const char * tree : {"include", "lib"}) {

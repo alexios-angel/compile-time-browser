@@ -15,13 +15,11 @@ ctbrowser::layout::measure_text_fn browser::measure() const {
 }
 
 void browser::load_page_fonts() {
-#if CTBROWSER_WITH_TTF
     if (!ttf_) { return; }
     for (const auto & face : styles_->page_fonts()) {
         const std::vector<std::byte> bytes = assets_.load(face.source);
         if (!bytes.empty()) { (void)ttf_->add_face(face.family, face.bold, face.italic, bytes); }
     }
-#endif
     // The faces may have changed, so the `0` advances measured before are
     // stale: hand the measurement over again, which drops the engine's cache.
     install_text_measure();
