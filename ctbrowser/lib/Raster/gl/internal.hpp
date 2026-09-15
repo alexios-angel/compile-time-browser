@@ -45,7 +45,6 @@ struct device::impl {
     EGLConfig config{};
     int width = 0;
     int height = 0;
-    bool announced_draw = false;
     std::string error;
 
     ~impl() {
