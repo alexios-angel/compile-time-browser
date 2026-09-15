@@ -394,7 +394,7 @@ llvm-mingw, jemalloc's mingw support is an afterthought. This tree ships Windows
 binaries and byte-compares thirteen goldens on them.
 
 **Adopted as v3.4.3**, pinned identically on both platforms - brew on Linux
-(`tools/Brewfile`), `tools/mingw/build-mimalloc-mingw.sh` into the mingw sysroot.
+(`tools/Brewfile`), `tools/mingw/build-libs-mingw.sh` into the mingw sysroot.
 
 | | Linux (instructions) | Windows `.exe` (600 frames, min of 7) |
 |---|---|---|

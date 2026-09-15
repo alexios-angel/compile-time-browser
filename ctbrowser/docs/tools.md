@@ -93,20 +93,15 @@ with it.
   `third-party/angle/`. ANGLE is fetched rather than built: it needs GN,
   depot_tools and, on Windows, clang-cl and the Windows SDK. `-DCTBROWSER_WITH_ANGLE=ON`
   then gives `raster/gles.hpp` a real GLES 3.1 device. See `docs/plans/angle.md`.
-- `tools/mingw/build-cpptrace-mingw.sh` — cpptrace for the Windows sysroot. TESTS
-  ONLY and optional: a missing trace makes a failure harder to read, not wrong.
-  It is here because llvm-mingw has no `<stacktrace>` at all, so the platform
-  where most of this project's expensive bugs have lived had no trace when a
-  test died.
-- `tools/mingw/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
-  allocator is not optional in the default build, so the cross build needs this
-  run once; `tools/remote-build.sh windows` runs it.
-- `tools/mingw/build-gmp-mingw.sh` — deleted 2026-09-10 with the GMP BigInt backend;
-  `docs/script.md` keeps the measurement that retired it.
-- `tools/mingw/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
-  libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
-  presets need this run once too. Versions are pinned on purpose; see
-  `docs/build.md`.
+- `tools/mingw/build-libs-mingw.sh` — every CMake-built library in the Windows
+  sysroot, one table: zlib, libpng and libjpeg-turbo (PNG and JPEG decode in the
+  SDL-FREE engine), mimalloc (not optional in the default build), simdutf, and
+  cpptrace (tests only, optional: a missing trace makes a failure harder to
+  read, not wrong - llvm-mingw has no `<stacktrace>`). Versions are pinned on
+  purpose and three of them match `tools/Brewfile`'s; `tools/remote-build.sh
+  windows` runs it. Was four scripts until 2026-09-15. `build-gmp-mingw.sh` was
+  deleted 2026-09-10 with the GMP BigInt backend; `docs/script.md` keeps the
+  measurement that retired it.
 - `tools/fetch-test262.sh` — shallow-fetches the OFFICIAL ECMAScript conformance
   suite at a PINNED commit into `~/.cache/ctbrowser/test262` and verifies the
   hash. The corpus is 53,580 files and is NEVER vendored; this is the one place

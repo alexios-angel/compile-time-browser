@@ -44,7 +44,7 @@ cmake --preset tsan -DCTBROWSER_USE_MIMALLOC=OFF && ctest --preset tsan   # and 
 ```
 **mimalloc backs `operator new`/`delete`** and is REQUIRED by default — `brew
 install mimalloc` (v3, pinned in `tools/Brewfile`), or
-`tools/mingw/build-mimalloc-mingw.sh` for the Windows sysroot. It measured -4.2%
+`tools/mingw/build-libs-mingw.sh` for the Windows sysroot. It measured -4.2%
 instructions on Linux and **-11.7% wall on the Windows .exe**, because Windows'
 CRT allocator is much further behind than glibc's. Opt out with
 `-DCTBROWSER_USE_MIMALLOC=OFF`; `ctbrowser/unittests/unit/core_basics` asks

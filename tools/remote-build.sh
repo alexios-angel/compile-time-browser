@@ -151,10 +151,10 @@ REMOTE
 if [ "${1:-}" = windows ]; then
   # `windows`, not `windows-fetch`: that preset no longer exists and this line
   # had gone stale, so the windows path failed at the first command with
-  # "No such preset". The cross build also needs FOUR compiled libraries in the
-  # mingw sysroot that the box does not ship - Boost.URL, zlib, libpng and
-  # libjpeg-turbo - so the two builder scripts run first. Both are idempotent
-  # and skip what is already installed.
+  # "No such preset". The cross build also needs compiled libraries in the
+  # mingw sysroot that the box does not ship - Boost.URL, zlib, libpng,
+  # libjpeg-turbo, mimalloc, simdutf and cpptrace - so the two builder scripts
+  # run first. Both are idempotent and skip what is already installed.
   # THE ISOLATED BOOST INCLUDE DIR the cross toolchain wants. It is one
   # symlink: cmake/toolchains/windows-x86_64.cmake puts this on the cross
   # compile's -isystem path, so it must hold boost/ AND NOTHING ELSE - pointing
@@ -165,7 +165,7 @@ if [ "${1:-}" = windows ]; then
   ssh "$host" 'inc="$HOME/projects/boost-inc"; mkdir -p "$inc";
     [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
     ls "$inc/boost/version.hpp" >/dev/null'
-  ssh "$host" "cd $remote_dir && tools/mingw/build-image-libs-mingw.sh && tools/mingw/build-boost-mingw.sh && tools/mingw/build-mimalloc-mingw.sh && tools/mingw/build-simdutf-mingw.sh && tools/mingw/build-cpptrace-mingw.sh"
+  ssh "$host" "cd $remote_dir && tools/mingw/build-libs-mingw.sh && tools/mingw/build-boost-mingw.sh"
   ssh "$host" "cd $remote_dir/ctbrowser && cmake --preset windows -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE && cmake --build --preset windows && cmake --build --preset windows --target windows-dist"
   rsync -az "$host:$remote_dir/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
