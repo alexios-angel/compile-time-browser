@@ -159,8 +159,7 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
             }
             mlir::Operation * copied = nullptr;
             llvm::SmallVector<mlir::Value> sources;
-            if (!isCatch &&
-                invocations.lookup(block->getTerminator()).getOperation() == &operation) {
+            if (!isCatch && invocations.lookup(block->getTerminator()) == &operation) {
                 // The invocation returns a value-only completion tuple:
                 // JS boolean, normal result, thrown payload, saved state.
                 // Convert the boolean only after leaving the invocation;

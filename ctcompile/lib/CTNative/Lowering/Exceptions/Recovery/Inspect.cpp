@@ -119,19 +119,19 @@ bool recovery::partition(const tail & normal, const tail & caught) {
 }
 
 bool recovery::inspectInvocation(ctjs::CheckOp check) {
-    ctjs::CallDirectOp call;
+    mlir::Operation * call = nullptr;
     for (mlir::Operation & operation : check->getBlock()->without_terminator()) {
         if (!spend()) { return false; }
-        if (auto found = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+        if (llvm::isa<ctjs::CallDirectOp, ctjs::CallOp>(operation)) {
             if (call) {
                 return reject("native invocation recovery needs one call per status edge");
             }
-            call = found;
+            call = &operation;
         }
     }
     if (!call) { return true; }
     for (mlir::Operation & operation : check->getBlock()->without_terminator()) {
-        if (&operation == call.getOperation()) { break; }
+        if (&operation == call) { break; }
         if (!spend()) { return false; }
         if (!llvm::isa<ctjs::RootOp>(operation) && !mlir::isPure(&operation)) {
             return reject("native invocation recovery needs independently checked fallible "
@@ -141,8 +141,8 @@ bool recovery::inspectInvocation(ctjs::CheckOp check) {
     // The importer checks a call before its result is moved into the
     // assignment target. Keep this boundary exact: even a pure operation
     // after the call belongs to the normal continuation, not its unwind.
-    if (call->getNextNode() != check.getOperation() || !call.getResult().hasOneUse() ||
-        call.getResult().use_begin()->getOwner() != check.getOperation() ||
+    if (call->getNextNode() != check.getOperation() || !call->getResult(0).hasOneUse() ||
+        call->getResult(0).use_begin()->getOwner() != check.getOperation() ||
         !llvm::equal(check.getHandlerOperands(), check->getBlock()->getArguments()) ||
         check.getContOperands().size() != width) {
         return reject("native invocation recovery needs an unpublished call result and its "
@@ -151,7 +151,7 @@ bool recovery::inspectInvocation(ctjs::CheckOp check) {
     unsigned resultSlots = 0;
     for (auto [normal, saved] : llvm::zip(check.getContOperands(), check.getHandlerOperands())) {
         if (!spend()) { return false; }
-        if (normal == call.getResult()) {
+        if (normal == call->getResult(0)) {
             ++resultSlots;
         } else if (normal != saved) {
             return reject("native invocation normal edge changes a non-result register");

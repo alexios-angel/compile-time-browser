@@ -14,6 +14,7 @@
 // RUN: not ctjs-opt %t/wrong-yield.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-8
 // RUN: not ctjs-opt %t/misplaced-exit.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-9
 // RUN: not ctjs-opt %t/misplaced-yield.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-10
+// RUN: not ctjs-opt %t/ordinary-result.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-2
 
 // ROUNDTRIP-LABEL: ctjs.func @caller(
 // ROUNDTRIP: [[BEFORE:%[a-zA-Z0-9_]+]] = ctjs.constant #ctjs.number<4621819117588971520>
@@ -38,10 +39,22 @@
 // ROUNDTRIP: ctjs.invoke_yield()
 // ROUNDTRIP-NEXT: }
 // ROUNDTRIP-NEXT: ctjs.return
+// ROUNDTRIP-LABEL: ctjs.func @ordinary(
+// ROUNDTRIP-SAME: [[RECEIVER:%[a-zA-Z0-9_]+]]: !ctjs.value, [[CALLEE:%[a-zA-Z0-9_]+]]: !ctjs.value, [[ARGUMENT:%[a-zA-Z0-9_]+]]: !ctjs.value
+// ROUNDTRIP: [[ORDINARY:%[a-zA-Z0-9_]+]] = ctjs.invoke {
+// ROUNDTRIP: [[CALLED:%[a-zA-Z0-9_]+]] = ctjs.call [[CALLEE]]([[RECEIVER]], [[ARGUMENT]])
+// ROUNDTRIP: ctjs.invoke_exit [[CALLED]] state([[ARGUMENT]])
+// ROUNDTRIP: } normal {
+// ROUNDTRIP: ^bb0([[NORMAL:%[a-zA-Z0-9_]+]]: !ctjs.value):
+// ROUNDTRIP: ctjs.invoke_yield([[NORMAL]])
+// ROUNDTRIP: } unwind {
+// ROUNDTRIP: ^bb0({{%[a-zA-Z0-9_]+}}: !ctjs.value, [[STATE:%[a-zA-Z0-9_]+]]: !ctjs.value):
+// ROUNDTRIP: ctjs.invoke_yield([[STATE]])
+// ROUNDTRIP: ctjs.return [[ORDINARY]]
 
-// INVALID-0: error: {{.*}}requires exactly one call_direct followed by invoke_exit
+// INVALID-0: error: {{.*}}requires exactly one call or call_direct followed by invoke_exit
 // INVALID-1: error: {{.*}}call result must be used only by normal completion dispatch
-// INVALID-2: error: {{.*}}must dispatch the immediately preceding call_direct result
+// INVALID-2: error: {{.*}}must dispatch the immediately preceding call or call_direct result
 // INVALID-3: error: {{.*}}requires an argument-free call body, one normal result argument and an unwind payload argument
 // INVALID-4: error: {{.*}}requires an argument-free call body, one normal result argument and an unwind payload argument
 // INVALID-5: error: {{.*}}continuation arguments must be JavaScript values
@@ -89,6 +102,40 @@ module {
       ctjs.invoke_yield()
     }
     ctjs.return %receiver
+  }
+  ctjs.func @ordinary(%receiver: !ctjs.value, %callee: !ctjs.value,
+                      %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    %result = ctjs.invoke {
+      %called = ctjs.call %callee(%receiver, %argument)
+      ctjs.invoke_exit %called state(%argument)
+    } normal {
+    ^bb0(%returned: !ctjs.value):
+      ctjs.invoke_yield(%returned)
+    } unwind {
+    ^bb0(%payload: !ctjs.value, %saved: !ctjs.value):
+      ctjs.invoke_yield(%saved)
+    } : !ctjs.value
+    ctjs.return %result
+  }
+}
+
+//--- ordinary-result.mlir
+module {
+  ctjs.func @ordinary(%receiver: !ctjs.value, %callee: !ctjs.value,
+                      %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    %result = ctjs.invoke {
+      %called = ctjs.call %callee(%receiver, %argument)
+      ctjs.invoke_exit %argument state(%argument)
+    } normal {
+    ^bb0(%returned: !ctjs.value):
+      ctjs.invoke_yield(%returned)
+    } unwind {
+    ^bb0(%payload: !ctjs.value, %saved: !ctjs.value):
+      ctjs.invoke_yield(%saved)
+    } : !ctjs.value
+    ctjs.return %result
   }
 }
 

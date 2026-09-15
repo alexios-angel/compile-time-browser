@@ -4,32 +4,49 @@
 
 namespace ctcompile::test::exception_recovery {
 
-void testMutations(mlir::MLIRContext & context, llvm::StringRef source) {
-    for (unsigned mutation = 0; mutation != 6; ++mutation) {
-        auto module = import(context, source);
+void testMutations(mlir::MLIRContext & context, llvm::StringRef source, bool resolve) {
+    for (unsigned mutation = 0; mutation != 8; ++mutation) {
+        auto module = import(context, source, resolve);
         if (!module) { return; }
         auto function = guarded(*module);
-        auto call = firstCall(function);
+        mlir::Operation * call = nullptr;
+        function.walk([&](mlir::Operation * operation) {
+            if (!call && llvm::isa<ctjs::CallDirectOp, ctjs::CallOp>(operation)) {
+                call = operation;
+            }
+        });
+        if (!check(call != nullptr, "mutation retains its original source call")) { return; }
         auto status = llvm::cast<ctjs::CheckOp>(call->getBlock()->getTerminator());
         const unsigned width = static_cast<unsigned>(status.getContOperands().size());
         mlir::OpBuilder at(status);
         if (mutation == 0) {
-            status->setOperand(width, call.getResult());
+            status->setOperand(width, call->getResult(0));
         } else if (mutation == 1) {
             status->setOperand(width, function.getBody().front().getArgument(3));
         } else if (mutation == 2) {
-            status->setOperand(0, call.getResult());
+            status->setOperand(0, call->getResult(0));
         } else if (mutation == 3) {
-            ctjs::ConstantOp::create(at, call.getLoc(), ctjs::ValueType::get(&context),
+            ctjs::ConstantOp::create(at, call->getLoc(), ctjs::ValueType::get(&context),
                                      ctjs::BooleanAttr::get(&context, true));
         } else if (mutation == 4) {
-            mlir::OperationState store(call.getLoc(), "ctjs.store_global");
+            mlir::OperationState store(call->getLoc(), "ctjs.store_global");
             store.addAttribute("name", at.getStringAttr("published"));
-            store.addOperands(call.getResult());
+            store.addOperands(call->getResult(0));
             at.create(store);
-        } else {
+        } else if (mutation == 5) {
             at.setInsertionPoint(call);
-            ctjs::LoadGlobalOp::create(at, call.getLoc(), "falliblePrefix");
+            ctjs::LoadGlobalOp::create(at, call->getLoc(), "falliblePrefix");
+        } else if (mutation == 6) {
+            at.setInsertionPoint(call);
+            at.clone(*call);
+        } else {
+            for (auto [index, value] : llvm::enumerate(status.getContOperands())) {
+                if (value == call->getResult(0)) {
+                    status->setOperand(static_cast<unsigned>(index),
+                                       call->getBlock()->getArgument(static_cast<unsigned>(index)));
+                    break;
+                }
+            }
         }
         const auto before = printed(function);
         auto result = recoverPrimitiveExceptionRegion(function, 100000,
@@ -38,14 +55,35 @@ void testMutations(mlir::MLIRContext & context, llvm::StringRef source) {
                   printed(function) == before,
               "late call/state/publication mutation refuses without changing the source");
     }
+    if (resolve) { return; }
     auto unresolved = import(context, source, false);
     if (!unresolved) { return; }
     auto function = guarded(*unresolved);
     const auto before = printed(function);
-    auto result = recoverPrimitiveExceptionRegion(function, 100000,
-                                                  ExceptionRecoveryMode::CheckedInvocations);
-    check(!result.recovered && printed(function) == before,
-          "an unresolved source call supplies no invocation recovery permission");
+    for (auto mode :
+         {ExceptionRecoveryMode::ExplicitThrows, ExceptionRecoveryMode::EffectCheckedInvocations}) {
+        auto result = recoverPrimitiveExceptionRegion(function, 100000, mode);
+        check(!result.recovered && printed(function) == before,
+              "an ordinary source call supplies no generic exception or effect permission");
+    }
+    auto recovered = recoverPrimitiveExceptionRegion(function, 100000,
+                                                     ExceptionRecoveryMode::CheckedInvocations);
+    if (!check(recovered.recovered, "ordinary native refusal starts from structural recovery")) {
+        return;
+    }
+    const auto structured = printed(function);
+    mlir::PassManager passes(&context);
+    passes.addPass(ctnative::createCTNativeLowerToEmitC());
+    if (!check(mlir::succeeded(passes.run(*unresolved)), "generic native lowering can refuse")) {
+        return;
+    }
+    check(function->hasAttr("ctnative.not_native"),
+          "structural ordinary invocation recovery supplies no native call admission");
+    function.walk([](mlir::Operation * operation) {
+        ctnative::removeAttrsWithPrefix(operation, "ctnative.");
+    });
+    check(printed(function) == structured,
+          "generic native refusal preserves every ordinary invocation continuation");
 }
 
 constexpr llvm::StringLiteral effectFixture = R"mlir(
@@ -470,6 +508,20 @@ leaf(false, this);
 }
 
 void testEffects(mlir::MLIRContext & context) {
+    {
+        auto source = effectFixture.str();
+        constexpr llvm::StringLiteral direct = "ctjs.call_direct @leaf(%r, %nt, %c)";
+        source.replace(source.find(direct.str()), direct.size(), "ctjs.call %c(%r)");
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+        if (!check(static_cast<bool>(module), "ordinary call effect fixture parses")) { return; }
+        auto function = guarded(*module);
+        const auto before = printed(*module);
+        auto result = recoverPrimitiveExceptionRegion(
+            function, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        check(!result.recovered && result.refusal.find("`ctjs.call`") != std::string::npos &&
+                  printed(*module) == before,
+              "an ordinary call without global loads still needs an independent effect proof");
+    }
     auto module = mlir::parseSourceString<mlir::ModuleOp>(effectFixture, &context);
     if (!check(static_cast<bool>(module), "closed primitive effect fixture parses")) { return; }
     auto function = guarded(*module);

@@ -68,7 +68,7 @@ struct recovery {
     unsigned width = 0;
     unsigned throws = 0;
     ExceptionRecoveryMode mode;
-    llvm::DenseMap<mlir::Operation *, ctjs::CallDirectOp> invocations;
+    llvm::DenseMap<mlir::Operation *, mlir::Operation *> invocations;
     llvm::DenseMap<mlir::StringAttr, ctjs::FuncOp> bindings;
     llvm::DenseSet<mlir::Operation *> boundTargets;
     llvm::DenseSet<mlir::Operation *> boundCalls;

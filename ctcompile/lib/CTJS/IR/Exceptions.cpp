@@ -141,9 +141,9 @@ mlir::LogicalResult InvokeOp::verify() {
                            "and an unwind payload argument");
     }
     auto & body = getBody().front();
-    if (body.getOperations().size() != 2 || !llvm::isa<CallDirectOp>(body.front()) ||
+    if (body.getOperations().size() != 2 || !llvm::isa<CallDirectOp, CallOp>(body.front()) ||
         !llvm::isa<InvokeExitOp>(body.back())) {
-        return emitOpError("requires exactly one call_direct followed by invoke_exit");
+        return emitOpError("requires exactly one call or call_direct followed by invoke_exit");
     }
     if (!llvm::isa<InvokeYieldOp>(getNormalBody().front().back()) ||
         !llvm::isa<InvokeYieldOp>(getUnwindBody().front().back())) {
@@ -163,11 +163,12 @@ mlir::LogicalResult InvokeExitOp::verify() {
     if (!parent || (*this)->getParentRegion() != &parent.getBody()) {
         return emitOpError("must terminate an invocation call body");
     }
-    auto call = llvm::dyn_cast_or_null<CallDirectOp>((*this)->getPrevNode());
-    if (!call || getNormalResult() != call.getResult()) {
-        return emitOpError("must dispatch the immediately preceding call_direct result");
+    auto * call = (*this)->getPrevNode();
+    if (!llvm::isa_and_nonnull<CallDirectOp, CallOp>(call) ||
+        getNormalResult() != call->getResult(0)) {
+        return emitOpError("must dispatch the immediately preceding call or call_direct result");
     }
-    if (!call.getResult().hasOneUse()) {
+    if (!call->getResult(0).hasOneUse()) {
         return emitOpError("call result must be used only by normal completion dispatch");
     }
     for (auto state : getState()) {

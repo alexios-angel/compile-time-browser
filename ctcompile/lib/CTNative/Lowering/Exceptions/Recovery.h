@@ -18,6 +18,8 @@ enum class ExceptionRecoveryMode {
     ExplicitThrows,
     // Structural prerequisite only. Native admission/emission do not consume
     // invocation completions yet, so ordinary lowering must use ExplicitThrows.
+    // Both original CallOp and resolved CallDirectOp retain their exact operands;
+    // recording an ordinary call supplies no host identity or effect authority.
     CheckedInvocations,
     // Also prove every operation outside the represented call unable to throw
     // or reenter before adopting the clone. This still does not admit the

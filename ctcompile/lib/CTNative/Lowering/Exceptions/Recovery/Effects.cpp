@@ -124,9 +124,11 @@ bool recovery::primitive(mlir::Value value) {
             }
             if (definition == landing.getOperation() && value == landing.getThrown()) {
                 if (context != 0 || invocations.empty() || throws != 0) { return false; }
-                for (auto [check, direct] : invocations) {
+                for (auto [check, invocation] : invocations) {
                     (void)check;
-                    if (!spend() || !completionInputs(direct, true, 0, contexts, pending)) {
+                    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(invocation);
+                    if (!spend() || !direct ||
+                        !completionInputs(direct, true, 0, contexts, pending)) {
                         return false;
                     }
                 }
@@ -248,7 +250,13 @@ bool recovery::proveEffects(const tail & normal, const tail & caught) {
             for (mlir::Operation & operation : *block) {
                 if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
                 auto invocation = invocations.lookup(block->getTerminator());
-                if (plan == &normal && invocation.getOperation() == &operation) { continue; }
+                // Structural recovery also records ordinary calls. This closed
+                // source effect proof has no authority for their host/unknown
+                // callee, even when the full unwind snapshot was preserved.
+                if (plan == &normal && invocation == &operation &&
+                    llvm::isa<ctjs::CallDirectOp>(operation)) {
+                    continue;
+                }
                 if (!nonthrowing(&operation)) {
                     return reject(("native invocation recovery cannot prove a nonthrowing "
                                    "status or continuation operation: `" +

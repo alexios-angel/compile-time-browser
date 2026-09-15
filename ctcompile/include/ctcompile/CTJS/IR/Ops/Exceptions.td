@@ -42,9 +42,9 @@ def CTJS_TryYieldOp : CTJS_Op<"try_yield", [Terminator,
 def CTJS_InvokeOp : CTJS_Op<"invoke", [
     DeclareOpInterfaceMethods<RegionBranchOpInterface,
       ["getSuccessorInputs", "getRegionInvocationBounds"]>]> {
-  let summary = "Dispatch one direct call to normal and exceptional continuations";
+  let summary = "Dispatch one call to normal and exceptional continuations";
   let description = [{
-    The body contains exactly one call_direct followed by invoke_exit. On
+    The body contains exactly one call or call_direct followed by invoke_exit. On
     normal return, only the normal continuation receives the call result. On
     JavaScript throw, only the unwind continuation executes, receiving the
     thrown value followed by the pre-call state carried by invoke_exit. Its
@@ -61,6 +61,8 @@ def CTJS_InvokeOp : CTJS_Op<"invoke", [
     claim or permission to compile a source call natively. Native admission
     must separately prove the callee, homogeneous owning payload and complete
     native call component. No source recovery or target lowering is implied.
+    An ordinary call retains its original callee, receiver and arguments; this
+    structure supplies no host identity or effect authority.
   }];
   let results = (outs Variadic<CTJS_ValueType>:$results);
   let regions = (region SizedRegion<1>:$body, SizedRegion<1>:$normalBody,
@@ -76,7 +78,7 @@ def CTJS_InvokeExitOp : CTJS_Op<"invoke_exit", [Terminator,
       ["getMutableSuccessorOperands"]>]> {
   let summary = "Dispatch a call completion without exposing its result on throw";
   let description = [{
-    This is the completion boundary of the immediately preceding call_direct,
+    This is the completion boundary of the immediately preceding call or call_direct,
     including its exceptional exit before a normal result exists. normalResult
     is selected only on normal return. The unwind successor receives state
     defined outside the invocation body plus an implicit owning thrown value.

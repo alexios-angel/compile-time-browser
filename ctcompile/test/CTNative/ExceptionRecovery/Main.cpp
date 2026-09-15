@@ -25,7 +25,15 @@ int main(int argc, char ** argv) {
         testSource(context, "sequential", source("sequential"), 2, 20, 32, mode);
         testSource(context, "argument", source("argument"), 1, 14, 14, mode);
     }
+    testSource(context, "ordinary assignment", source("assignment"), 1, 10, 32,
+               ExceptionRecoveryMode::CheckedInvocations, false);
+    testSource(context, "ordinary sequential", source("sequential"), 2, 20, 32,
+               ExceptionRecoveryMode::CheckedInvocations, false);
+    testSource(context, "ordinary argument", source("argument"), 1, 14, 14,
+               ExceptionRecoveryMode::CheckedInvocations, false);
     testMutations(context, source("assignment"));
+    testMutations(context, source("assignment"), false);
+    testOrdinaryCompletionTypes(context);
     testBindings(context, source("assignment"));
     for (auto name : {"assignment", "sequential", "argument"}) {
         testSourceCompletionTypes(context, name, source(name), "!ctnative.num<i32>",
