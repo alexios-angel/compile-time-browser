@@ -12,6 +12,7 @@ import lit.llvm
 
 lit.llvm.initialize(lit_config, config)
 from lit.llvm import llvm_config  # noqa: E402  (must follow initialize)
+from lit.llvm.subst import ToolSubst  # noqa: E402
 
 config.name = "ctcompile"
 config.suffixes = [".mlir", ".td", ".test"]
@@ -34,24 +35,33 @@ llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
 # THE TEST EXECUTABLES THE FORMER `cmake -P` CHECKS DROVE, by their target
 # names, from the directory CMake builds them into (this suite's exec root);
 # and ctbrowser's launcher and browser, which the packaging round trip runs.
+# unresolved="ignore", because add_tool_substitutions drops the WHOLE group
+# when one name is missing: a test executable that was not built should fail
+# its own RUN line by name, not turn eleven others into "command not found".
 llvm_config.add_tool_substitutions(
     [
-        "ctcompile-test-type-oracle",
-        "ctcompile-test-type-claims",
-        "ctcompile-test-escape-claims",
-        "ctcompile-test-escape-oracle-aot",
-        "ctcompile-test-escape-oracle-aot-return",
-        "ctcompile-test-launcher-vm",
-        "ctcompile-test-launcher-aot",
-        "ctcompile-test-launcher-page-vm",
-        "ctcompile-test-launcher-page-aot",
-        "ctcompile-test-native-vm-linked",
-        "ctcompile-test-native-values-vm-linked",
-        "ctcompile-test-app_bundle",
+        ToolSubst(name, unresolved="ignore")
+        for name in [
+            "ctcompile-test-type-oracle",
+            "ctcompile-test-type-claims",
+            "ctcompile-test-escape-claims",
+            "ctcompile-test-escape-oracle-aot",
+            "ctcompile-test-escape-oracle-aot-return",
+            "ctcompile-test-launcher-vm",
+            "ctcompile-test-launcher-aot",
+            "ctcompile-test-launcher-page-vm",
+            "ctcompile-test-launcher-page-aot",
+            "ctcompile-test-native-vm-linked",
+            "ctcompile-test-native-values-vm-linked",
+            "ctcompile-test-app_bundle",
+        ]
     ],
     [config.test_exec_root],
 )
-llvm_config.add_tool_substitutions(["ctrun", "ctbrowse"], [config.ctbrowser_tools_dir])
+llvm_config.add_tool_substitutions(
+    [ToolSubst(name, unresolved="ignore") for name in ["ctrun", "ctbrowse"]],
+    [config.ctbrowser_tools_dir],
+)
 
 # mlir-translate IS LLVM'S, not ours, so it is looked for where LLVM's tools
 # are rather than in the three directories ctcompile builds into. It is what
