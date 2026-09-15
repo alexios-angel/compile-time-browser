@@ -4,10 +4,10 @@
 
 Latest slice **61e47459** extends verbatim vendor `F` to differing constant
 attribute names and forwarded local parameters: **377 Node/VM observations /
-eight native binaries**, final focused **2/2 CTests PASS**. The complete standard
-gate is running; see [HANDOFF](HANDOFF.md) for its recovery paths and status.
-The previous full-bundle measurement remains **19/574 native**, DOM Data **7/7**,
-Button **4/86**; this slice makes no full-bundle admission claim.
+eight native binaries**, final focused **2/2 CTests PASS**. Complete **275-step
+build / 602/602 CTests / 176/176 lit PASS**; see [HANDOFF](HANDOFF.md) for measurements.
+Fresh full-bundle coverage remains **19/574 native**, DOM Data **7/7**, Button **4/86**;
+this slice makes no full-bundle admission gain claim.
 Captured F still refuses: its sibling caller obtains the function through a cell,
 and eager child expansion precedes capture-derived invocation facts. Compose
 those facts through the existing complete source proof, then address live M

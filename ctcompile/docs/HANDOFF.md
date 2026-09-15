@@ -32,15 +32,28 @@ inputs in either order and poisoned forwarding remain refused. Stable formatting
 passes **829 C++ / 100 Python / 33 web**; the required pinned formatter matches the
 unchanged **nine-file / 26-diagnostic** baseline. Changed C++ passes both formatters.
 
-The complete standard build and **602-test CTest gate are running**, with **1,443
-frozen inputs**. No complete-suite result or new full-bundle coverage is claimed
-yet. Recovery scripts, logs and hashes are in `/tmp/ctcompile-dom-string-set/`,
-particularly `full.sh`, `full.log` and `inputs.json`.
+Complete **275-step default build / 602/602 CTests in 1439.42s /
+176/176 lit in 968.12s PASS**. All **1,443 frozen hashes** match devbox, local files
+and committed source. Recovery scripts, logs, generated C++, `measured.json` and
+the static continuation audit are in `/tmp/ctcompile-dom-string-set/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with
+no skipped or pruned functions. DOM Data remains **7/7**; Button **4/86**, with
+**22 Node observations** and its existing VM inheritance failure. Button/Data
+reports and all **1,123 escape baseline rows** are byte-identical to the previous
+gate: zero escape violations, precision **40/172**. No full-bundle admission gain
+is claimed; full WPT/test262 were not remeasured.
 
 **Exact next boundary:** captured F remains refused when a sibling helper obtains
 it through a cell; eager child expansion precedes capture-derived invocation facts.
 Compose those facts through the checked original factory/global/H/F graph without
-weakening the leaf/census proof. Original M (vendor line **230**) then needs live
+weakening the leaf/census proof. Static review identifies a concrete next seam:
+keep eager target lookup, defer zero-upvalue helper expansion until it is ready,
+and bind inputs immediately before that expansion. Captured consumers can then
+expose calls before the F holder retires. This scheduling change is **not implemented
+or gated**; test multiple consumers, forwarded chains, poisoned inputs, reassignment,
+early calls, identity escape and the existing depth/budget controls. F with its own
+captures remains separate. Original M (vendor line **230**) then needs live
 optional-value branches, Number/toString, URI decoding, JSON and exceptions. A
 verbatim Node-only M witness passes **16 observations**, including negative zero,
 NaN/Infinity, JSON objects/arrays and malformed URI fallback; it establishes no
