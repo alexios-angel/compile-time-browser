@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -258,13 +259,15 @@ struct DOMSource {
                 return refuse("DOM helper forwarded capture lacks an exact enclosing slot");
             }
         }
-        for (mlir::Operation & operation : target.getBody().front()) {
-            if (!step()) { return false; }
+        const auto checked = target.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
             if (llvm::isa<ctjs::StoreUpvalueOp, ctjs::CreateClosureOp>(operation)) {
-                return refuse("DOM helper forwarded capture is mutable or unexpanded");
+                refuse("DOM helper forwarded capture is mutable or unexpanded");
+                return mlir::WalkResult::interrupt();
             }
-        }
-        return true;
+            return mlir::WalkResult::advance();
+        });
+        return !checked.wasInterrupted();
     }
 
     bool captureStorage(mlir::OpOperand & use) {
@@ -589,59 +592,112 @@ struct DOMSource {
                 }
             }
         }
-        mlir::Value frame;
-        bool entered = false, returned = false;
-        for (mlir::Operation & operation : block) {
-            if (!step()) { return false; }
-            if ((operation.getNumRegions() && !(entry && llvm::isa<mlir::scf::IfOp>(operation))) ||
-                operation.getNumSuccessors() || returned) {
-                return refuse("DOM helper requires a complete straight-line body");
+        mlir::DominanceInfo dominance(function);
+        const auto visit = [&](auto && self, mlir::Block & body, unsigned depth,
+                               mlir::Value & frame) -> bool {
+            if (depth == 64 || (depth && body.getNumArguments())) {
+                return refuse(entry ? "DOM entry branch depth or arguments are unsupported"
+                                    : "DOM helper branch depth or arguments are unsupported");
             }
-            for (mlir::Value operand : operation.getOperands()) {
+            bool entered = false, returned = false;
+            for (mlir::Operation & operation : body) {
                 if (!step()) { return false; }
-                if (!values.contains(operand) && operand != frame) {
-                    return refuse("DOM helper operand has no preceding local definition");
+                if ((operation.getNumRegions() && !llvm::isa<mlir::scf::IfOp>(operation)) ||
+                    operation.getNumSuccessors() || returned) {
+                    return refuse("DOM helper requires complete structured branches");
                 }
-                if (operand == frame && !llvm::isa<ctjs::RootOp, ctjs::FrameExitOp>(operation)) {
-                    return refuse("DOM helper observes its shadow frame");
+                for (mlir::Value operand : operation.getOperands()) {
+                    if (!step()) { return false; }
+                    if ((!values.contains(operand) && operand != frame) ||
+                        !dominance.dominates(operand, &operation)) {
+                        return refuse("DOM helper operand has no preceding local definition");
+                    }
+                    if (operand == frame &&
+                        !llvm::isa<ctjs::RootOp, ctjs::FrameExitOp>(operation)) {
+                        return refuse("DOM helper observes its shadow frame");
+                    }
+                }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    if (!branch.getCondition().getType().isInteger(1) ||
+                        !branch.getThenRegion().hasOneBlock() ||
+                        (!branch.getElseRegion().empty() &&
+                         !branch.getElseRegion().hasOneBlock()) ||
+                        (branch.getNumResults() && branch.getElseRegion().empty())) {
+                        return refuse("DOM helper branch lacks complete Boolean arms");
+                    }
+                    mlir::Value thenFrame = frame, elseFrame = frame;
+                    for (mlir::Region & region : branch->getRegions()) {
+                        if (region.empty()) { continue; }
+                        auto & armFrame =
+                            &region == &branch.getThenRegion() ? thenFrame : elseFrame;
+                        if (!self(self, region.front(), depth + 1, armFrame)) { return false; }
+                        auto yield =
+                            llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                        if (!yield || yield.getOperandTypes() != branch.getResultTypes()) {
+                            return refuse("DOM helper branch has incomplete result correspondence");
+                        }
+                    }
+                    if (thenFrame != elseFrame) {
+                        return refuse("DOM helper branch has inconsistent shadow frame exits");
+                    }
+                    frame = thenFrame;
+                    values.insert(branch.getResults().begin(), branch.getResults().end());
+                    continue;
+                }
+                if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
+                    if (depth || entered) {
+                        return refuse("DOM helper has repeated shadow frames");
+                    }
+                    entered = true;
+                    frame = enter.getContext();
+                } else if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
+                    if (!frame || root.getContext() != frame) {
+                        return refuse("DOM helper root is outside its shadow frame");
+                    }
+                } else if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
+                    if (!frame || exit.getContext() != frame) {
+                        return refuse("DOM helper exits an unknown shadow frame");
+                    }
+                    frame = {};
+                } else if (llvm::isa<ctjs::ReturnOp>(operation)) {
+                    if (depth || frame) {
+                        return refuse(
+                            "DOM helper returns inside a branch or with a live shadow frame");
+                    }
+                    returned = true;
+                } else if (llvm::isa<mlir::scf::YieldOp>(operation)) {
+                    if (!depth) { return refuse("DOM helper yield is outside a branch"); }
+                    returned = true;
+                } else {
+                    values.insert(operation.getResults().begin(), operation.getResults().end());
+                }
+                // Local ownership/call scheduling still requires a single source
+                // block. Branches carry only values checked by the final DOM proof.
+                if (depth &&
+                    llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::CreateObjectOp>(
+                        operation)) {
+                    return refuse("DOM helper branch contains an unproved local identity");
+                }
+                if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
+                    if (closure.getFunctionAttr().getInt() < 0 ||
+                        closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
+                        (closure.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
+                         !undefined(closure.getEnclosingThis()))) {
+                        return refuse("DOM helper lacks an exact local closure identity");
+                    }
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+                    if (entry || load.getClosure() != block.getArgument(ctjs::arg_callee) ||
+                        load.getIndex() < 0 || load.getIndex() >= function.getUpvalueCount()) {
+                        return refuse("DOM helper upvalue lacks an exact capture slot");
+                    }
                 }
             }
-            if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
-                if (entered) { return refuse("DOM helper has repeated shadow frames"); }
-                entered = true;
-                frame = enter.getContext();
-            } else if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
-                if (!frame || root.getContext() != frame) {
-                    return refuse("DOM helper root is outside its shadow frame");
-                }
-            } else if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
-                if (!frame || exit.getContext() != frame) {
-                    return refuse("DOM helper exits an unknown shadow frame");
-                }
-                frame = {};
-            } else if (llvm::isa<ctjs::ReturnOp>(operation)) {
-                if (frame) { return refuse("DOM helper returns with a live shadow frame"); }
-                returned = true;
-            } else {
-                values.insert(operation.getResults().begin(), operation.getResults().end());
-            }
-            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
-                if (closure.getFunctionAttr().getInt() < 0 ||
-                    closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
-                    (closure.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
-                     !undefined(closure.getEnclosingThis()))) {
-                    return refuse("DOM helper lacks an exact local closure identity");
-                }
-            }
-            if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                if (entry || load.getClosure() != block.getArgument(ctjs::arg_callee) ||
-                    load.getIndex() < 0 || load.getIndex() >= function.getUpvalueCount()) {
-                    return refuse("DOM helper upvalue lacks an exact capture slot");
-                }
-            }
-        }
-        if (!returned) { return refuse("DOM helper has no complete return"); }
-        return true;
+            if (!returned) { return refuse("DOM helper has no complete return or yield"); }
+            return true;
+        };
+        mlir::Value frame;
+        return visit(visit, block, 0, frame);
     }
 
     bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false) {
@@ -825,42 +881,67 @@ struct DOMSource {
                                    call.arguments)) {
                         mapping.map(formal, actual);
                     }
-                    mlir::OpBuilder at(call.operation);
-                    for (mlir::Operation & operation : body) {
-                        if (!step()) { return false; }
-                        if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
-                                operation)) {
-                            continue;
-                        }
-                        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                            // Read the checked cell at this invocation, never bind a
-                            // shared helper body to its first caller's SSA values.
-                            auto & capture = captures[static_cast<unsigned>(load.getIndex())];
-                            mlir::Value value;
-                            if (capture.enclosingIndex >= 0) {
-                                value = ctjs::LoadUpvalueOp::create(
-                                    at, load.getLoc(), load.getType(),
-                                    block.getArgument(ctjs::arg_callee), capture.enclosingIndex);
-                                ++operationCount;
-                            } else {
-                                value = capture.value();
+                    const auto cloneBody = [&](auto && self, mlir::Block & source,
+                                               mlir::OpBuilder & at) -> bool {
+                        for (mlir::Operation & operation : source) {
+                            if (!step()) { return false; }
+                            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
+                                    operation)) {
+                                continue;
                             }
-                            mapping.map(load.getResult(), value);
-                        } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                            call.operation->getResult(0).replaceAllUsesWith(
-                                mapping.lookup(result.getValue()));
-                        } else {
-                            auto * cloned = at.clone(operation, mapping);
-                            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
-                                callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
-                                                    callDepth.lookup(&operation);
-                                if (depth + callDepth[cloned] >= 64) {
-                                    return refuse("DOM helper call tree is recursive or too deep");
+                            if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+                                // Substitute at each invocation, including branch-local
+                                // loads, never bind a shared body to its first caller.
+                                auto & capture = captures[static_cast<unsigned>(load.getIndex())];
+                                mlir::Value value;
+                                if (capture.enclosingIndex >= 0) {
+                                    value = ctjs::LoadUpvalueOp::create(
+                                        at, load.getLoc(), load.getType(),
+                                        block.getArgument(ctjs::arg_callee),
+                                        capture.enclosingIndex);
+                                    ++operationCount;
+                                } else {
+                                    value = capture.value();
                                 }
+                                mapping.map(load.getResult(), value);
+                            } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                                call.operation->getResult(0).replaceAllUsesWith(
+                                    mapping.lookup(result.getValue()));
+                            } else if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                                mlir::OperationState state(branch.getLoc(),
+                                                           mlir::scf::IfOp::getOperationName());
+                                state.addOperands(mapping.lookup(branch.getCondition()));
+                                state.addTypes(branch.getResultTypes());
+                                state.addAttributes(branch->getAttrs());
+                                state.addRegion();
+                                state.addRegion();
+                                auto * cloned = at.create(state);
+                                ++operationCount;
+                                for (auto [from, to] :
+                                     llvm::zip(branch->getRegions(), cloned->getRegions())) {
+                                    if (from.empty()) { continue; }
+                                    auto & destination = to.emplaceBlock();
+                                    mlir::OpBuilder nested(&destination, destination.begin());
+                                    if (!self(self, from.front(), nested)) { return false; }
+                                }
+                                mapping.map(branch.getResults(), cloned->getResults());
+                            } else {
+                                auto * cloned = at.clone(operation, mapping);
+                                if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
+                                    callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
+                                                        callDepth.lookup(&operation);
+                                    if (depth + callDepth[cloned] >= 64) {
+                                        return refuse(
+                                            "DOM helper call tree is recursive or too deep");
+                                    }
+                                }
+                                ++operationCount;
                             }
-                            ++operationCount;
                         }
-                    }
+                        return true;
+                    };
+                    mlir::OpBuilder at(call.operation);
+                    if (!cloneBody(cloneBody, body, at)) { return false; }
                     methods.erase(call.operation);
                     callDepth.erase(call.operation);
                     call.operation->erase();

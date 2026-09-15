@@ -37,6 +37,7 @@ WIDE = r"""function readWideName(element) {
 # Keep the original refusal sources byte-for-byte when admitting their graphs.
 CAPTURE_RETURNS = {
     "branch_optional_return": "function invalid(element) { const saved = element.getAttribute('x'); let value; if (saved === null) { value = null; } else { value = saved; } return value; }\n",
+    "helper_optional_return": "function invalid(element) { function read(target) { const saved = target.getAttribute('x'); if (saved === null) return null; return saved; } return read(element); }\n",
     "capture_callable": "function invalid(element) { function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke(); }\n",
     "capture_holder": "function invalid(element) { const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke(); }\n",
     "capture_forwarded": "function invalid(element) { function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke(); }\n",
@@ -158,6 +159,96 @@ BOOLEAN_CASES.update(
     }
 )
 HELPER_CASES = {
+    "helper_branch": (
+        "function read(target) { if (target.hasAttribute('x')) return true; return false; } return read(element);",
+        "0111",
+    ),
+    "helper_branch_effects": (
+        """function change(target) {
+    if (target.getAttribute('x')) { target.setAttribute('marker', 'yes'); }
+    else { target.removeAttribute('marker'); }
+    return target.hasAttribute('marker');
+  }
+  return change(element);""",
+        "0011",
+    ),
+    "helper_branch_string_null": (
+        """function read(target) {
+    if (target.getAttribute('x') === null) return null;
+    return 'present';
+  }
+  return read(element) === null;""",
+        "1000",
+    ),
+    "helper_branch_saved": (
+        """function read(target) {
+    const saved = target.getAttribute('x');
+    if (saved === null) return null;
+    return saved;
+  }
+  const before = read(element); element.setAttribute('x', 'after');
+  return !before;""",
+        "1100",
+    ),
+    "helper_branch_early_effects": (
+        """function change(target) {
+    if (target.getAttribute('x') === null) {
+      target.setAttribute('marker', 'missing'); return true;
+    }
+    target.setAttribute('marker', 'present'); return false;
+  }
+  return change(element);""",
+        "1000",
+    ),
+    "helper_branch_nested": (
+        """function observe(target) {
+    function read(name) {
+      let answer;
+      if (target.hasAttribute(name)) {
+        if (target.getAttribute(name)) { answer = 'nonempty'; }
+        else { answer = 'empty'; }
+      } else { answer = 'absent'; }
+      return answer === 'empty';
+    }
+    return read('x');
+  }
+  return observe(element);""",
+        "0100",
+    ),
+    "helper_branch_capture": (
+        """const saved = element.getAttribute('x');
+  function read() { if (saved === null) return true; else return false; }
+  element.setAttribute('x', 'after'); return read();""",
+        "1000",
+    ),
+    "helper_branch_capture_arms": (
+        """const saved = element.getAttribute('x');
+  const missing = element.getAttribute('missing');
+  function read(target) {
+    if (target.hasAttribute('x')) return saved;
+    return missing;
+  }
+  const before = read(element); element.setAttribute('x', 'after');
+  return !before;""",
+        "1100",
+    ),
+    "helper_branch_holder": (
+        """const helpers = {read(target) {
+    let answer; if (target.getAttribute('x') === null) { answer = 'missing'; }
+    else { answer = 'present'; } return answer;
+  }};
+  function invoke() { return helpers.read(element) === 'missing'; }
+  return invoke();""",
+        "1000",
+    ),
+    "helper_branch_repeated": (
+        """function read(target, name) {
+    if (target.getAttribute(name) === null) return null;
+    return target.getAttribute(name);
+  }
+  return read(element, 'x') === read(element, 'missing');""",
+        "1000",
+    ),
     "helper_capture": (
         "function read() { return element.getAttribute('x'); } return read() === null;",
         "1000",
@@ -824,6 +915,11 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "helper_branch_effects": 'assert(doc.read().has_attribute(node, atoms.intern("marker")) == result);',
+    "helper_branch_saved": 'assert(doc.read().attribute_value(node, state) == "after");',
+    "helper_branch_capture": 'assert(doc.read().attribute_value(node, state) == "after");',
+    "helper_branch_capture_arms": 'assert(doc.read().attribute_value(node, state) == "after");',
+    "helper_branch_early_effects": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == (result ? "missing" : "present"));',
     **dict.fromkeys(
         ("helper_regex_original_h", "host_factory_original_h"),
         """assert(!doc.read().has_attribute(node, atoms.intern("data-bs-config")));
@@ -875,7 +971,7 @@ const names = [];
 assert.equal(readNames({getAttribute(name) { names.push(name); return name; }}), 'a\0b');
 assert.deepEqual(names, ['bad name', '', 'a\0b']);
 assert.equal(readWideName({getAttribute(name) { return name; }}), '\ud800');
-for (const entry of [readAttribute, savedAttribute, branch_optional_return, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
+for (const entry of [readAttribute, savedAttribute, branch_optional_return, helper_optional_return, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
   const key = entry === readAttribute || entry === savedAttribute ? 'DATA-State' : entry === helper_regex ? 'data-bs-config' : 'x';
   for (const expected of [null, '', 'a\0b', '\u00e9']) {
     let value = expected;
@@ -1145,6 +1241,26 @@ REFUSALS = {
     "non-string-name": "return element.getAttribute(null);",
 }
 HELPER_REFUSALS = {
+    # Preserve the draft source: LLVM completion dispatch still needs its own proof.
+    "helper_branch_completion_dispatch": """function observe(target) {
+    function read(name) {
+      if (target.getAttribute(name) === null) return false;
+      if (target.getAttribute(name) === '') return true;
+      return false;
+    }
+    return read('x');
+  }
+  return observe(element);""",
+    "helper_branch_unsafe_then": "function read(target) { if (target.hasAttribute('x')) { target.unknown(); } return target.getAttribute('x'); } return read(element);",
+    "helper_branch_unsafe_else": "function read(target) { if (target.hasAttribute('x')) { return target.getAttribute('x'); } else { target.unknown(); return null; } } return read(element);",
+    "helper_branch_loop": "function read(target) { while (target.hasAttribute('x')) { target.removeAttribute('x'); } return target.getAttribute('x'); } return read(element);",
+    "helper_branch_mixed_join": "function read(target) { if (target.hasAttribute('x')) return true; return 'text'; } return read(element);",
+    "helper_branch_optional_undefined": "function read(target) { if (target.hasAttribute('x')) return target.getAttribute('x'); return undefined; } return read(element);",
+    "helper_branch_borrowed_join": "function read(target) { let value; if (target.hasAttribute('x')) { value = target; } else { value = target.closest('button'); } return value.getAttribute('x'); } return read(element);",
+    "helper_branch_callable_join": "function read(target) { function first(node) { return node.getAttribute('x'); } function second(node) { return node.getAttribute('y'); } let chosen; if (target.hasAttribute('x')) { chosen = first; } else { chosen = second; } return chosen(target); } return read(element);",
+    "helper_branch_unused": "function read(target) { if (target.hasAttribute('x')) return true; return false; } return element.getAttribute('x');",
+    "helper_branch_unknown_after_return": "function read(target) { if (target.hasAttribute('x')) return true; sideEffect(); return false; } return read(element);",
+    "helper_branch_call_in_arm": "function read(target) { function attribute(node) { return node.getAttribute('x'); } if (target.hasAttribute('x')) return attribute(target); return null; } return read(element);",
     "capture_reassigned": "let key = 'x'; function read() { return element.getAttribute(key); } key = 'y'; return read();",
     "capture_reassigned_later": "let key = 'x'; function read() { return element.getAttribute(key); } const result = read(); key = 'y'; return result;",
     "capture_child_write": "let key = 'x'; function read() { key = 'y'; return element.getAttribute(key); } return read();",
@@ -1183,7 +1299,6 @@ HELPER_REFUSALS = {
     "helper_metadata": "function read(target) { return target.getAttribute('x'); } read(element); return read.name;",
     "helper_unused": "function read(target) { return target.getAttribute('x'); } return true;",
     "helper_unknown": "function read(target) { sideEffect(); return target.getAttribute('x'); } return read(element);",
-    "helper_branch": "function read(target) { if (target.hasAttribute('x')) return true; return false; } return read(element);",
     "helper_mutation": "function read(target) { return target.getAttribute('x'); } read.name = 'other'; return read(element);",
     "helper_optional_name": "function read(target, key) { return target.getAttribute(key); } return read(element, element.getAttribute('x'));",
     "helper_object_overwrite": "const helpers = {read(target) { return target.getAttribute('x'); }}; helpers.read = function(target) { return target.getAttribute('y'); }; return helpers.read(element);",
@@ -1342,7 +1457,7 @@ HOST_REFUSALS = {
 }
 
 
-def emitted(args, module, name):
+def emitted(args, module, name, *, optional_read=True):
     text = module.read_text()
     entries = dom.NATIVE.findall(text)
     if len(entries) != 1 or dom.FUNCTION.search(text) or "ctnative.not_native" in text:
@@ -1354,8 +1469,14 @@ def emitted(args, module, name):
             r"nullable_scalar|nullable_string|std::variant|shared_ptr|weak_ptr|invoke_callable|\bmain\s*\(",
             cpp,
         )
-        or "ctbrowser::get_element_attribute" not in cpp
-        or "std::optional<std::string>" not in cpp
+        or (
+            optional_read
+            and (
+                "ctbrowser::get_element_attribute" not in cpp
+                or "std::optional<std::string>" not in cpp
+            )
+        )
+        or (not optional_read and "ctnative::has_attribute" not in cpp)
     ):
         raise RuntimeError(
             f"{name}: expected an ordinary optional String using the shared DOM API\n{cpp}"
@@ -2016,7 +2137,9 @@ function makeElement(value) {
             headers, bodies, runs = set(), [], []
             for (name, owned), layouts in modules.items():
                 namespace = f"{name}_{'session' if owned else 'free'}"
-                cpp, symbol = emitted(args, layouts[layout], namespace)
+                cpp, symbol = emitted(
+                    args, layouts[layout], namespace, optional_read=name != "helper_branch"
+                )
                 # Hoist includes before isolating each complete translation unit;
                 # generated local helper names need not be globally unique.
                 headers.update(re.findall(r"^#include[^\n]*", cpp, re.M))
@@ -2138,6 +2261,20 @@ function makeElement(value) {
         )
         if "budget exhausted" not in diagnostic:
             raise RuntimeError(f"branch budget {budget}: wrong refusal\n{diagnostic}")
+    _, helper_branch_ir, helper_branch_contract = next(
+        row for row in prepared if row[0] == "helper_branch_nested"
+    )
+    for budget in (0, 1, 32):
+        diagnostic = dom.lower(
+            args,
+            helper_branch_ir,
+            helper_branch_contract,
+            f"helper-branch-budget-{budget}",
+            max_steps=budget,
+            success=False,
+        )
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(f"helper branch budget {budget}: wrong refusal\n{diagnostic}")
     for depth in (63, 64):
         source = (
             "function branchDepth(element) {"
@@ -2146,21 +2283,34 @@ function makeElement(value) {
             + "}" * depth
             + "return true;}"
         )
-        ir, contract = dom.prepare(
-            args, f"branch-depth-{depth}", source, 1, entry_name="branchDepth"
-        )
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                result = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider),
-                    f"branch-depth-{depth}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=depth == 63,
-                )
-                if depth == 64 and "DOM entry branch depth" not in result:
-                    raise RuntimeError(f"branch depth: wrong refusal\n{result}")
+        for kind in ("entry", "helper"):
+            branch_source = (
+                source
+                if kind == "entry"
+                else "function branchHelper(element) {" + source + "return branchDepth(element); }"
+            )
+            ir, contract = dom.prepare(
+                args,
+                f"{kind}-branch-depth-{depth}",
+                branch_source,
+                1,
+                entry_name="branchDepth" if kind == "entry" else "branchHelper",
+            )
+            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+                for optimize in (False, True):
+                    result = dom.lower(
+                        args,
+                        ir,
+                        dict(contract, provider=provider),
+                        f"{kind}-branch-depth-{depth}-{provider}-{optimize}",
+                        optimize=optimize,
+                        success=depth == 63,
+                    )
+                    expected = (
+                        "DOM entry branch depth" if kind == "entry" else "DOM helper branch depth"
+                    )
+                    if depth == 64 and expected not in result:
+                        raise RuntimeError(f"{kind} branch depth: wrong refusal\n{result}")
     _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_nested")
     for budget in (0, 1, 32):
         diagnostic = dom.lower(
@@ -2232,7 +2382,7 @@ function makeElement(value) {
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks; "
-        f"{replacement_checks} replacement provenance/budget checks; 11 branch depth/budget checks"
+        f"{replacement_checks} replacement provenance/budget checks; 22 branch depth/budget checks"
     )
 
 
