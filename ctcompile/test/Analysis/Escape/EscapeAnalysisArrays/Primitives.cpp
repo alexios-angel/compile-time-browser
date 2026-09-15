@@ -114,6 +114,8 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                  {.what = "bounded static Add, masks and right shifts supply exact indices",
                   .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" + done,
                   .failure = kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
+                                     kind == ctjs::BinaryKind::BitOr ||
+                                     kind == ctjs::BinaryKind::BitXor ||
                                      kind == ctjs::BinaryKind::UShr || kind == ctjs::BinaryKind::Shr
                                  ? ArrayContentsFailure::None
                                  : ArrayContentsFailure::UnknownIndex,
