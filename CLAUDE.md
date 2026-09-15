@@ -143,8 +143,7 @@ ctbrowser/                 the engine - and the CMake CONFIGURE ROOT
   cmake/                   dependencies.cmake, modules/CTTest.cmake
   docs/                    see ctbrowser/docs/README.md
 ctcompile/                 the whole-application compiler (a stub today)
-cmake/                     LLVMVersion.cmake, modules/CTProject.cmake,
-                           toolchains/windows-x86_64.cmake
+cmake/                     toolchains/windows-x86_64.cmake
 third-party/               ctjs + ctcss submodules, and the fetched ANGLE
 tools/                     mingw/ gen/ corpus/ check/ - see ctbrowser/docs/tools.md
 ```

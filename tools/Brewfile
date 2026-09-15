@@ -75,11 +75,11 @@ brew "sdl3_ttf"   # and sdl3 beneath it, as a dependency
 # LLVM does not silently start requiring 2 GB of it. This line makes the
 # dependency AVAILABLE on a provisioned box; it does not make it required.
 #
-# PINNED AT 22 by cmake/LLVMVersion.cmake and checked at configure time. ODS,
+# PINNED AT 23 by ctcompile/CMakeLists.txt and checked at configure time. ODS,
 # PDLL and pass-generation syntax move between releases, so an upgrade is its
 # own change rather than a surprise inside mlir-tblgen; see
 # ctcompile/docs/LLVMUpgrade.md.
-# 23.1.0 (cmake/LLVMVersion.cmake). PINNED ON THE BOX with `brew pin llvm`: on
+# 23.1.0 (ctcompile/CMakeLists.txt). PINNED ON THE BOX with `brew pin llvm`: on
 # 2026-09-02 a `brew bundle install` that ran for an unrelated formula floated
 # this from 22.1.8 to 23.1.0 under a build, and the pin is what stops the next
 # one. Bumping the major is its own change - ctcompile/docs/LLVMUpgrade.md.

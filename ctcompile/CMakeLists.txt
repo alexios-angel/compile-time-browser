@@ -36,8 +36,6 @@ project(ctcompile
 set(PROJECT_DESCRIPTION "Ahead-of-time compiler for ctbrowser applications.")
 
 get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)
-list(APPEND CMAKE_MODULE_PATH "${CTCOMPILE_MONOREPO_ROOT}/cmake/modules")
-include(CTProject)
 include(CTest)
 
 # THE ENGINE. Inside the monorepo its targets already exist and are used
@@ -125,13 +123,19 @@ if(CTCOMPILE_ENABLE_MLIR)
   # keeps the engine's bar where it is.
   include_directories(BEFORE SYSTEM ${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
 
-  # THE PIN, CHECKED AT CONFIGURE TIME, through the function that already owns
-  # that rule. Phase -1 put ct_require_llvm_version() in cmake/modules/ and
-  # wrote "unused until Phase 7 stands MLIR up - it is here now so that phase
-  # adds dialects rather than build plumbing". This is Phase 7, and a second
-  # copy of the check written here instead would be the drift the whole
-  # monorepo layout exists to prevent.
-  ct_require_llvm_version()
+  # THE LLVM/MLIR PIN, checked at configure time - a pin, not a floor. ODS,
+  # PDLL and pass-generation syntax move between releases, so an upgrade is its
+  # own change (ctcompile/docs/LLVMUpgrade.md) rather than a surprise inside
+  # mlir-tblgen, whose diagnostic names a template and never a version. 23 is
+  # what the devbox can have: apt ships MLIR 18 and brew ships 23.
+  set(CTCOMPILE_REQUIRED_LLVM_MAJOR 23)
+  set(CTCOMPILE_TESTED_LLVM_VERSION "23.1.0")
+  if(NOT LLVM_VERSION_MAJOR EQUAL CTCOMPILE_REQUIRED_LLVM_MAJOR)
+    message(FATAL_ERROR
+      "ctcompile needs LLVM/MLIR ${CTCOMPILE_REQUIRED_LLVM_MAJOR} "
+      "(tested at ${CTCOMPILE_TESTED_LLVM_VERSION}), found ${LLVM_PACKAGE_VERSION} at "
+      "${LLVM_DIR}. Upgrading LLVM is its own change - see ctcompile/docs/LLVMUpgrade.md.")
+  endif()
   message(STATUS "ctcompile: MLIR ${LLVM_PACKAGE_VERSION} at ${MLIR_DIR}")
 
   # WHERE GENERATED DOCUMENTATION GOES. add_mlir_doc writes under

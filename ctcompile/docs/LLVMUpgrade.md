@@ -4,16 +4,18 @@
 
 ## The pin
 
-`cmake/LLVMVersion.cmake`, at the monorepo root:
+`ctcompile/CMakeLists.txt`, beside `find_package(LLVM)`:
 
 ```cmake
 set(CTCOMPILE_REQUIRED_LLVM_MAJOR 23)
 set(CTCOMPILE_TESTED_LLVM_VERSION "23.1.0")
-set(CTCOMPILE_MAX_LLVM_MAJOR 23)
 ```
 
-`ct_require_llvm_version()` refuses to configure outside that range, with a
-message naming both versions and the install it found. That is deliberate:
+The check that follows refuses to configure on any other major, with a
+message naming both versions and the install it found. (Until 2026-09-15 it
+was `cmake/LLVMVersion.cmake` plus `ct_require_llvm_version()` in
+`cmake/modules/CTProject.cmake`, with a `CTCOMPILE_MAX_LLVM_MAJOR` that was
+always equal to the required one.) That is deliberate:
 without it the failure lands inside `mlir-tblgen`, in a diagnostic that names a
 TableGen template and never mentions a version.
 
@@ -81,7 +83,7 @@ In rough order of how often it has bitten LLVM downstreams:
 
 1. Install the new toolchain on the devbox (brew, per policy) and note the exact
    version.
-2. Move all three variables in `cmake/LLVMVersion.cmake` in one commit, and
+2. Move both variables in `ctcompile/CMakeLists.txt` in one commit, and
    nothing else in that commit.
 3. Configure with `-DCTCOMPILE_ENABLE_MLIR=ON` and build. Read the TableGen
    diagnostics first: they name the construct that moved.
