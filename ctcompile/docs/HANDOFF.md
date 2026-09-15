@@ -6,6 +6,59 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ordinary-call recovery and positive strides, 2026-09-15 UTC
+
+Resumed the interrupted **12:30 URI structural recovery / positive-stride** thread
+from nine dirty ctcompile files and AGENT-SYNC's **12:32:07** abandonment journal.
+Both histories and unmerged branches were checked; `codex-wip-20260907` is already
+an ancestor. Two agents recovered the code/tests, and a third reviewed the next
+URI consumer before hitting a service limit. Root reviewed, integrated and gated.
+
+**71d7af0c** proves invariant positive integral Number strides for bounded
+read-only array induction. Zero starts, strict own-array guards and exact
+backedge/source evidence remain required. Final overshoot is checked before
+addition and stays within **0..2^32-1**. CFG/SCF tests cover visited and skipped
+children, saved strides, changed backedges, maximum/invalid strides, exact exits,
+stale facts and every incomplete work budget. Measured induction: **78 rows /
+nine live states / 6,295 retention cutoffs**; structured contents: **75 rows /
+4,525 cutoffs**. Dense arrays remain **567 / 293 / 21,925**; escape fixture has
+**zero violations / precision 40/172**.
+
+**c2b4d209** structurally recovers ordinary `CallOp` completions through the
+existing `InvokeOp`, preserving original callee/receiver/arguments, unpublished
+normal result, complete pre-call state and handler installation site. The original
+URI source test retains its early return, assignment state and unused semantic
+payload; normal/unwind types remain unknown without a provider proof. Generic
+native/effect admission still refuses these calls. Raw assignment, sequential and
+argument cases exhaust **13,362 incomplete budgets**, with exact rollback.
+An initial test wrongly assumed all call operands were registers; fresh import
+showed the literal undefined receiver, and the test now checks exact copied
+literals as well as register slots. No compiler rule was relaxed for that failure.
+
+Focused build and **4/4 CTests in 2.79s / 2/2 targeted lit in 0.46s PASS**.
+Stable formatting passes **839 C++ / 101 Python / 33 web**; the pinned formatter's
+**nine-file / 26-diagnostic** baseline is byte-identical. All **1,453 frozen
+source hashes** match the devbox, working tree and committed source.
+
+**Full validation in progress:** the complete default build passed; the
+**606-test CTest gate** is running at `/tmp/ctcompile-uri-resume/full.log`.
+No complete-suite result or fresh Bootstrap census is claimed yet. Sources are
+committed; finish the full gate, collect measurements with `collect.sh`, then run
+`measure.py` in that evidence directory and update this section.
+
+**Exact next boundary:** integrate the preserved ordinary call into the private,
+fingerprinted DOMSource transaction only after proving explicit URI identity,
+every removed status edge, no catch-payload observation and owning String results.
+Select the existing Core decoder's optional presence; empty String succeeds and
+allocation failures must not select URIError handling. A URI-only premise must
+never authorize Number. The existing InvokeOp can carry the final normal/caught
+String continuations; this remains a design proposal in
+`/tmp/ctcompile-uri-resume/uri-design-review.md`, with full source obligations in
+`/tmp/ctcompile-json-core/uri-boundary-review.md`. Original M still additionally
+needs nullable typeof refinement, JSON identity/order, sequential failures and
+mixed-result ownership. Full H, initialization/inheritance, retained config/callbacks
+and the native application driver remain unfinished. No browser/runtime edits.
+
 ## Shared JSON Core prerequisite, 2026-09-15 UTC
 
 Continued the exact JSON prerequisite recorded by **e4318595**. Both recent
