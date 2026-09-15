@@ -1591,14 +1591,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         result.integerNumber = *a * *b;
                     }
                 }
-                if (binary.getKind() == ctjs::BinaryKind::Div) {
+                if (binary.getKind() == ctjs::BinaryKind::Div ||
+                    binary.getKind() == ctjs::BinaryKind::Mod) {
                     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
-                    // A nonzero bounded divisor and zero remainder give an exact
-                    // bounded Number quotient. Keep the original signed zero.
-                    if (a && b && *b != 0 && *a % *b == 0) {
+                    // Bounded integral operands give an exact remainder; division
+                    // also needs zero remainder. Keep the original signed zero.
+                    if (a && b && *b != 0 &&
+                        (binary.getKind() == ctjs::BinaryKind::Mod || *a % *b == 0)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = *a / *b;
+                        result.integerNumber =
+                            binary.getKind() == ctjs::BinaryKind::Mod ? *a % *b : *a / *b;
                     }
                 }
                 state.values[binary.getResult()] = result;

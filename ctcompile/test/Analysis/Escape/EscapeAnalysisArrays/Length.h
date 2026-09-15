@@ -673,6 +673,84 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                  "  %index = ctjs.binary div %zero, %divisor\n" +
                  indexed,
          .failure = ArrayContentsFailure::UnsupportedOperation});
+    run({.what = "a stored remainder keeps its read-time Number after replacement and transport",
+         .body = values + one + read +
+                 "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                 "  %remainder = ctjs.binary mod %length, %two {storage_test_id = \"remainder\"}\n"
+                 "  %saved = ctjs.create_array [%remainder] {storage_test_id = \"saved\"}\n"
+                 "  %loaded = ctjs.get_property %saved[%zero]\n"
+                 "  ctjs.set_property %saved[%zero], %x\n"
+                 "  ctjs.append %zero to %a\n"
+                 "  cf.br ^next(%loaded, %zero : !ctjs.value, !ctjs.value)\n"
+                 "^next(%before: !ctjs.value, %after: !ctjs.value):\n"
+                 "  cf.br ^swapped(%after, %before : !ctjs.value, !ctjs.value)\n"
+                 "^swapped(%replacement: !ctjs.value, %original: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %original, %one\n"
+                 "  ctjs.set_property %a[%index], %replacement\n  ctjs.return %a\n",
+         .arrays = "a:[zero,zero]; saved:[x]",
+         .reads = "saved[0]=remainder",
+         .exit = "a -> {a}"});
+    run({.what = "forwarded original Numbers give an exact remainder after their slot changes",
+         .body = values + one +
+                 "  %inputs = ctjs.create_array [%one] {storage_test_id = \"inputs\"}\n"
+                 "  %saved = ctjs.get_property %inputs[%zero]\n"
+                 "  ctjs.set_property %inputs[%zero], %x\n"
+                 "  cf.br ^next(%saved, %one : !ctjs.value, !ctjs.value)\n"
+                 "^next(%divisor: !ctjs.value, %numerator: !ctjs.value):\n"
+                 "  %index = ctjs.binary mod %numerator, %divisor\n" +
+                 indexed,
+         .arrays = "a:[zero]; inputs:[x]",
+         .reads = "inputs[0]=ctjs.constant",
+         .exit = "a -> {a}"});
+    run({.what = "a remainder index cannot release a returned saved child",
+         .body = values + read +
+                 "  %index = ctjs.binary mod %length, %length\n"
+                 "  %saved = ctjs.get_property %a[%index]\n" +
+                 overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
+    for (const std::string divisor : {"%two", "%near"}) {
+        run({.what = "a nonzero bounded remainder stays exact at the maximum Number endpoint",
+             .body = values + one +
+                     "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                     "  %near = ctjs.constant #ctjs.number<4751297606871678976>\n"
+                     "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                     "  %remainder = ctjs.binary mod %bound, " +
+                     divisor + "\n  %index = ctjs.binary sub %remainder, %one\n" + indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    for (const std::string literal : {"#ctjs.number<0>",
+                                      "#ctjs.number<9223372036854775808>",  // -0
+                                      "#ctjs.number<4602678819172646912>",  // 0.5
+                                      "#ctjs.number<13830554455654793216>", // -1
+                                      "#ctjs.number<4751297606875873280>",  // 2^32
+                                      "#ctjs.number<9218868437227405312>",  // infinity
+                                      "#ctjs.number<9221120237041090560>",  // NaN
+                                      "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
+                                      "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
+        run({.what = "remainder needs an exact nonzero bounded divisor without coercion",
+             .body = values + "  %divisor = ctjs.constant " + literal +
+                     "\n  %index = ctjs.binary mod %zero, %divisor\n" + indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    run({.what = "an out-of-range numerator cannot lend evidence to a later zero remainder",
+         .body = values + one +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606875873280>\n"
+                 "  %remainder = ctjs.binary mod %bound, %one\n"
+                 "  %index = ctjs.binary mod %remainder, %one\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnknownIndex});
+    run({.what = "a structural remainder arm cannot borrow another arm's Number",
+         .body = values + read +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(%p : !ctjs.value)\n"
+                 "^join(%divisor: !ctjs.value):\n"
+                 "  %index = ctjs.binary mod %zero, %divisor\n" +
+                 indexed,
+         .failure = ArrayContentsFailure::UnsupportedOperation});
     run({.what = "an original bounded Number subtraction supplies its exact computed offset",
          .body = values + one + read +
                  "  %offset = ctjs.binary sub %one, %zero\n"
@@ -862,6 +940,17 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,index]",
         .exit = "result -> {a,result}"};
     run(quotientShrink);
+    const contents_row remainderShrink{
+        .what = "a signed zero remainder supplies a non-growing length and keeps its origin",
+        .body = values + one + read +
+                "  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n"
+                "  %index = ctjs.binary mod %negativeZero, %one {storage_test_id = \"index\"}\n"
+                "  ctjs.set_property %a[%key], %index\n"
+                "  %result = ctjs.create_array [%a, %index] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,index]",
+        .exit = "result -> {a,result}"};
+    run(remainderShrink);
     const contents_row heldOffsetShrink{
         .what = "a held bounded Number offset supplies an exact non-growing shrink",
         .body = values + one + read +
@@ -1082,7 +1171,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         for (const std::string producer :
              {"ctjs.binary add %input, %zero", "ctjs.binary sub %input, %zero",
               "ctjs.binary mul %input, %zero", "ctjs.binary div %input, %input",
-              "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
+              "ctjs.binary mod %input, %input", "ctjs.unary plus %input",
+              "ctjs.unary neg %input"}) {
             run({.what = "a computed shrink needs exact Number operands without coercion",
                  .body = values + "  %input = ctjs.constant " + literal +
                          "\n  %wanted = " + producer +
@@ -1423,7 +1513,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     }
     for (const contents_row & source :
          {originalShrink, computedShrink, literalShrink, productShrink, quotientShrink,
-          heldOffsetShrink, unaryShrink, negatedShrink}) {
+          remainderShrink, heldOffsetShrink, unaryShrink, negatedShrink}) {
         auto module = parse(source);
         if (!module) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
@@ -1486,7 +1576,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         inspect((binary && binary.getKind() == ctjs::BinaryKind::Sub) ||
                         (unary && unary.getKind() == ctjs::UnaryKind::Neg)
                     ? ArrayContentsFailure::UnknownIndex
-                : (binary && binary.getKind() == ctjs::BinaryKind::Div)
+                : (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
+                              binary.getKind() == ctjs::BinaryKind::Mod))
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::MissingElement);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
@@ -1507,7 +1598,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             binary->setOperand(0, parameter);
             inspect(ArrayContentsFailure::UnsupportedOperation);
             binary->setOperand(0, lhs);
-            if (binaryKind.getValue() == ctjs::BinaryKind::Div) {
+            if (binaryKind.getValue() == ctjs::BinaryKind::Div ||
+                binaryKind.getValue() == ctjs::BinaryKind::Mod) {
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 0));
                 inspect(ArrayContentsFailure::UnknownIndex);
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 9223372036854775808ULL));
@@ -1522,6 +1614,10 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                         ? ArrayContentsFailure::UnknownIndex
                         : ArrayContentsFailure::None,
                     binaryKind.getValue() == ctjs::BinaryKind::Sub);
+            binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Mod));
+            inspect(binaryKind.getValue() == ctjs::BinaryKind::Mul
+                        ? ArrayContentsFailure::UnknownIndex
+                        : ArrayContentsFailure::None);
             binary.setKindAttr(binaryKind);
             inspect(ArrayContentsFailure::None);
         }
