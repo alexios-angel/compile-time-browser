@@ -1,84 +1,193 @@
 // Nullable scalars preserve null, undefined, booleans and numeric payloads.
 // Observations stay numeric so the differential exercises the value semantics
 // independently of the global-printing convention.
-function absent() { return; }
+function absent() {
+    return;
+}
+
 function maybeNumber(mode) {
-    if (mode < 0) { return; }
-    if (mode === 0) { return null; }
-    if (mode === 1) { return 0; }
-    if (mode === 2) { return -0; }
-    if (mode === 3) { return 0 / 0; }
+    if (mode < 0) {
+        return;
+    }
+    if (mode === 0) {
+        return null;
+    }
+    if (mode === 1) {
+        return 0;
+    }
+    if (mode === 2) {
+        return -0;
+    }
+    if (mode === 3) {
+        return 0 / 0;
+    }
     return 42;
 }
+
 function maybeBoolean(mode) {
-    if (mode < 0) { return; }
-    if (mode === 0) { return null; }
-    if (mode === 1) { return false; }
+    if (mode < 0) {
+        return;
+    }
+    if (mode === 0) {
+        return null;
+    }
+    if (mode === 1) {
+        return false;
+    }
     return true;
 }
-function forwardNumber(value) { return value; }
-function forwardBoolean(value) { return value; }
+
+function forwardNumber(value) {
+    return value;
+}
+
+function forwardBoolean(value) {
+    return value;
+}
+
 function numberFlags(value) {
     var flags = 0;
-    if (value === null) { flags = flags + 1; }
-    if (value == null) { flags = flags + 2; }
-    if (value === absent()) { flags = flags + 4; }
-    if (value == 0) { flags = flags + 8; }
-    if (value === 0) { flags = flags + 16; }
-    if (value !== value) { flags = flags + 32; }
-    if (value) { flags = flags + 64; }
-    if (typeof value === "number") { flags = flags + 128; }
-    if (typeof value === "object") { flags = flags + 256; }
-    if (typeof value === "undefined") { flags = flags + 512; }
+    if (value === null) {
+        flags = flags + 1;
+    }
+    if (value == null) {
+        flags = flags + 2;
+    }
+    if (value === absent()) {
+        flags = flags + 4;
+    }
+    if (value == 0) {
+        flags = flags + 8;
+    }
+    if (value === 0) {
+        flags = flags + 16;
+    }
+    if (value !== value) {
+        flags = flags + 32;
+    }
+    if (value) {
+        flags = flags + 64;
+    }
+    if (typeof value === "number") {
+        flags = flags + 128;
+    }
+    if (typeof value === "object") {
+        flags = flags + 256;
+    }
+    if (typeof value === "undefined") {
+        flags = flags + 512;
+    }
     return flags;
 }
+
 function booleanFlags(value) {
     var flags = 0;
-    if (value === null) { flags = flags + 1; }
-    if (value == null) { flags = flags + 2; }
-    if (value === absent()) { flags = flags + 4; }
-    if (value == false) { flags = flags + 8; }
-    if (value === false) { flags = flags + 16; }
-    if (value == 0) { flags = flags + 32; }
-    if (value === 0) { flags = flags + 64; }
-    if (value) { flags = flags + 128; }
-    if (typeof value === "boolean") { flags = flags + 256; }
-    if (typeof value === "object") { flags = flags + 512; }
-    if (typeof value === "undefined") { flags = flags + 1024; }
+    if (value === null) {
+        flags = flags + 1;
+    }
+    if (value == null) {
+        flags = flags + 2;
+    }
+    if (value === absent()) {
+        flags = flags + 4;
+    }
+    if (value == false) {
+        flags = flags + 8;
+    }
+    if (value === false) {
+        flags = flags + 16;
+    }
+    if (value == 0) {
+        flags = flags + 32;
+    }
+    if (value === 0) {
+        flags = flags + 64;
+    }
+    if (value) {
+        flags = flags + 128;
+    }
+    if (typeof value === "boolean") {
+        flags = flags + 256;
+    }
+    if (typeof value === "object") {
+        flags = flags + 512;
+    }
+    if (typeof value === "undefined") {
+        flags = flags + 1024;
+    }
     return flags;
 }
+
 function arithmetic(value) {
     // null converts to zero; undefined and a present NaN convert to NaN.
     return (+value) + (value + 2) + (value - 2) + value * 3 + value / 2;
 }
-function booleanArithmetic(value) { return (+value) + value * 2; }
+
+function booleanArithmetic(value) {
+    return (+value) + value * 2;
+}
+
 function ordering(value) {
     var flags = 0;
-    if (value < 0) { flags = flags + 1; }
-    if (value <= 0) { flags = flags + 2; }
-    if (value > 0) { flags = flags + 4; }
-    if (value >= 0) { flags = flags + 8; }
+    if (value < 0) {
+        flags = flags + 1;
+    }
+    if (value <= 0) {
+        flags = flags + 2;
+    }
+    if (value > 0) {
+        flags = flags + 4;
+    }
+    if (value >= 0) {
+        flags = flags + 8;
+    }
     return flags;
 }
-function fallbackNumber(value) { return value || 17; }
-function fallbackBoolean(value) { return value || true; }
-function conditionalNumber(flag) { return flag ? null : 42; }
-function conditionalBoolean(flag) { return flag ? false : null; }
-function stringType(value) { return typeof value === "string" ? 1 : 0; }
-function missingParameter(value) { return numberFlags(value); }
-function localBeforeWrite(flag) {
-    var value;
-    if (flag) { value = null; }
+
+function fallbackNumber(value) {
+    return value || 17;
+}
+
+function fallbackBoolean(value) {
+    return value || true;
+}
+
+function conditionalNumber(flag) {
+    return flag ? null : 42;
+}
+
+function conditionalBoolean(flag) {
+    return flag ? false : null;
+}
+
+function stringType(value) {
+    return typeof value === "string" ? 1 : 0;
+}
+
+function missingParameter(value) {
     return numberFlags(value);
 }
-function loopValue(count) {
+
+function localBeforeWrite(flag) {
     var value;
-    for (var i = 0; i < count; i = i + 1) {
-        if (i === 0) { value = null; }
-        else { value = i; }
+    if (flag) {
+        value = null;
     }
     return numberFlags(value);
 }
+
+function loopValue(count) {
+    var value;
+    for (var i = 0; i < count; i = i + 1) {
+        if (i === 0) {
+            value = null;
+        } else {
+            value = i;
+        }
+    }
+    return numberFlags(value);
+}
+
 function mapObservations() {
     var map = new Map();
     map.set("zero", 0);
@@ -89,35 +198,50 @@ function mapObservations() {
     var cleared = numberFlags(map.clear());
     return zero + nan * 1000 + missing * 1000000 + cleared * 1000000000;
 }
+
 function arrayObservations() {
     var values = [0, 0 / 0];
     return numberFlags(values[0]) + numberFlags(values[1]) * 1000 +
         numberFlags(values[2]) * 1000000;
 }
+
 function arrayNumberKey(key) {
     var values = [42, 99];
     return numberFlags(values[key]);
 }
+
 function arrayBooleanKey(key) {
     var values = [42, 99];
     return numberFlags(values[key]);
 }
+
 function fieldBeforeWrite(flag) {
     var object = {};
-    if (flag) { object.value = 42; }
+    if (flag) {
+        object.value = 42;
+    }
     return numberFlags(object.value);
 }
+
 function makeData() {
     const values = new Map();
     return {
-        set(key, value) { values.set(key, value); return values.size; },
+        set(key, value) {
+            values.set(key, value);
+            return values.size;
+        },
         get(key) {
-            if (!values.has(key)) { return null; }
+            if (!values.has(key)) {
+                return null;
+            }
             return values.get(key);
         },
-        remove(key) { return values.delete(key); }
+        remove(key) {
+            return values.delete(key);
+        }
     };
 }
+
 function retainedData() {
     const retained = makeData();
     retained.set("number", 42);

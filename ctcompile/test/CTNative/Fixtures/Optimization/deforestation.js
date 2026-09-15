@@ -1,19 +1,39 @@
 // Snapshot producers and scalar consumers are inferred before elaboration.
 // Conflicting consumers, aliases with mutation, calls and control retain the
 // intermediate vector; simple projections remove it without moving effects.
-function absent() { return; }
+function absent() {
+    return;
+}
+
 function flags(value) {
     var result = 0;
-    if (typeof value === "number") { result += 1; }
-    if (value === absent()) { result += 2; }
-    if (value !== value) { result += 4; }
-    if (value === 0) { result += 8; }
-    if (value === 10) { result += 16; }
-    if (value === 20) { result += 32; }
-    if (value === 30) { result += 64; }
-    if (value === 40) { result += 128; }
+    if (typeof value === "number") {
+        result += 1;
+    }
+    if (value === absent()) {
+        result += 2;
+    }
+    if (value !== value) {
+        result += 4;
+    }
+    if (value === 0) {
+        result += 8;
+    }
+    if (value === 10) {
+        result += 16;
+    }
+    if (value === 20) {
+        result += 32;
+    }
+    if (value === 30) {
+        result += 64;
+    }
+    if (value === 40) {
+        result += 128;
+    }
     return result;
 }
+
 function keyAt(index) {
     const map = new Map();
     map.set(10, 1).set(20, 2).set(30, 3);
@@ -22,6 +42,7 @@ function keyAt(index) {
     const keys = Array.from(map.keys());
     return flags(keys[index]);
 }
+
 function valueAt(index) {
     const map = new Map();
     map.set("a", 10).set("b", 20).set("c", 30);
@@ -29,23 +50,29 @@ function valueAt(index) {
     const values = Array.from(map.values());
     return flags(values[index]);
 }
+
 function specialValue(index) {
     const map = new Map();
     map.set(1, 0).set(2, 0 / 0);
     const values = Array.from(map.values());
     return flags(values[index]);
 }
+
 function emptyIndex(index) {
     const map = new Map();
     const values = Array.from(map.values());
     return flags(values[index]);
 }
+
 function snapshotLength(count) {
     const map = new Map();
-    for (var i = 0; i < count; ++i) { map.set(i, i + 1); }
+    for (var i = 0; i < count; ++i) {
+        map.set(i, i + 1);
+    }
     const values = Array.from(map.values());
     return values.length;
 }
+
 function nestedKey() {
     const outer = new Map();
     const inner = new Map();
@@ -53,6 +80,7 @@ function nestedKey() {
     outer.set(40, inner);
     return Array.from(outer.keys())[0] + 2;
 }
+
 function retainedZeroKey() {
     const map = new Map();
     map.set(-0, 10).set(0, 20);
@@ -60,6 +88,7 @@ function retainedZeroKey() {
     // The reference preserves the first inserted key's negative sign.
     return 1 / keys[0];
 }
+
 function scalarReuse() {
     const map = new Map();
     map.set(1, 21);
@@ -67,12 +96,14 @@ function scalarReuse() {
     const first = values[0];
     return first + first;
 }
+
 function multipleConsumers() {
     const map = new Map();
     map.set(1, 20).set(2, 22);
     const values = Array.from(map.values());
     return values[0] + values[1];
 }
+
 function mutateAlias() {
     const map = new Map();
     const alias = map.set(1, 42);
@@ -80,7 +111,12 @@ function mutateAlias() {
     alias.set(1, 99);
     return values[0] + 0;
 }
-function mutate(map) { map.clear(); return 0; }
+
+function mutate(map) {
+    map.clear();
+    return 0;
+}
+
 function mutateCall() {
     const map = new Map();
     map.set(1, 42);
@@ -88,14 +124,19 @@ function mutateCall() {
     mutate(map);
     return values[0] + 0;
 }
+
 function mutateCaptured() {
     const map = new Map();
     map.set(1, 42);
-    function clear() { map.clear(); }
+
+    function clear() {
+        map.clear();
+    }
     const values = Array.from(map.values());
     clear();
     return values[0] + 0;
 }
+
 function lengthBeforeMutation() {
     const map = new Map();
     map.set(1, 42);
@@ -103,13 +144,17 @@ function lengthBeforeMutation() {
     map.clear();
     return keys.length;
 }
+
 function acrossControl(flag) {
     const map = new Map();
     map.set(1, 42);
     const values = Array.from(map.values());
-    if (flag) { return values[0] + 0; }
+    if (flag) {
+        return values[0] + 0;
+    }
     return 0;
 }
+
 function loopSnapshots(count) {
     const map = new Map();
     map.set(1, 10);

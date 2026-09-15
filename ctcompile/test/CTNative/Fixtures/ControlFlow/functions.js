@@ -26,36 +26,56 @@
 //   mod_neg = -1.5          clamped = 1.25
 
 function fib(n) {
-    if (n < 2) { return n; }
+    if (n < 2) {
+        return n;
+    }
     return fib(n - 1) + fib(n - 2);
 }
 
 function sum_to(n) {
     var s = 0;
-    for (var i = 1; i <= n; i = i + 1) { s = s + i; }
+    for (var i = 1; i <= n; i = i + 1) {
+        s = s + i;
+    }
     return s;
 }
 
 function collatz_steps(n) {
     var steps = 0;
     while (n !== 1) {
-        if (n % 2 === 0) { n = n / 2; } else { n = 3 * n + 1; }
+        if (n % 2 === 0) {
+            n = n / 2;
+        } else {
+            n = 3 * n + 1;
+        }
         steps = steps + 1;
     }
     return steps;
 }
 
-function ratio(a, b) { return a / b; }
+function ratio(a, b) {
+    return a / b;
+}
 
-function negate(x) { return -x; }
+function negate(x) {
+    return -x;
+}
 
-function modulo(a, b) { return a % b; }
+function modulo(a, b) {
+    return a % b;
+}
 
-function is_between(x, lo, hi) { return x >= lo && x < hi; }
+function is_between(x, lo, hi) {
+    return x >= lo && x < hi;
+}
 
 function clamp01(x) {
-    if (is_between(x, 0, 1)) { return x; }
-    if (x < 0) { return 0; }
+    if (is_between(x, 0, 1)) {
+        return x;
+    }
+    if (x < 0) {
+        return 0;
+    }
     return 1;
 }
 

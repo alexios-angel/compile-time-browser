@@ -32,8 +32,12 @@ function Ship(x, y) {
 }
 
 function clampTo(v, lo, hi) {
-    if (v < lo) { return lo; }
-    if (v > hi) { return hi; }
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
     return v;
 }
 

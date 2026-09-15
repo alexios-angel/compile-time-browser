@@ -4,6 +4,7 @@ function leaf(value) {
     map.set("value", value);
     return map;
 }
+
 function aliasMutation() {
     var inner = leaf(1);
     var outer = new Map();
@@ -19,9 +20,12 @@ function retainedChild(value) {
     outer.set(1, leaf(value));
     return outer.get(1);
 }
+
 function lifetime() {
     var retained = retainedChild(42);
-    for (var i = 0; i < 100; i = i + 1) { retainedChild(i); }
+    for (var i = 0; i < 100; i = i + 1) {
+        retainedChild(i);
+    }
     return retained.get("value") + 0;
 }
 var lifetime42 = lifetime();
@@ -79,6 +83,7 @@ function makeNestedClosure(value) {
         return outer.get("value").get("value") + 0;
     };
 }
+
 function nestedClosureLifetime() {
     var read = makeNestedClosure(42);
     makeNestedClosure(17);
@@ -93,7 +98,9 @@ function noReads() {
     var removed = outer.delete(1);
     outer.set(2, leaf(22));
     outer.clear();
-    if (removed) { return before + outer.size; }
+    if (removed) {
+        return before + outer.size;
+    }
     return 0;
 }
 var erased1 = noReads();

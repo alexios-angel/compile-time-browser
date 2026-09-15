@@ -2,7 +2,9 @@
 // instead of console publication. The first-key read remains optional.
 function diagnostic(key, populated) {
     const map = new Map();
-    if (populated) { map.set(key, 7); }
+    if (populated) {
+        map.set(key, 7);
+    }
     return `Bootstrap doesn't allow more than one instance per element. Bound instance: ${Array.from(map.keys())[0]}.`;
 }
 var bootstrap_message = diagnostic("bs.modal", true) === "Bootstrap doesn't allow more than one instance per element. Bound instance: bs.modal." ? 42 : 0;
@@ -11,24 +13,51 @@ var bootstrap_empty_key = diagnostic("", true) === "Bootstrap doesn't allow more
 
 function firstKey(key, populated) {
     const map = new Map();
-    if (populated) { map.set(key, 1); }
+    if (populated) {
+        map.set(key, 1);
+    }
     return Array.from(map.keys())[0];
 }
-function missing() { return; }
+
+function missing() {
+    return;
+}
+
 function stringFlags(value) {
     var flags = 0;
-    if (value === missing()) { flags = flags + 1; }
-    if (value === null) { flags = flags + 2; }
-    if (value == null) { flags = flags + 4; }
-    if (value === "") { flags = flags + 8; }
-    if (value) { flags = flags + 16; }
-    if (!value) { flags = flags + 32; }
-    if (typeof value === "string") { flags = flags + 64; }
-    if (typeof value === "undefined") { flags = flags + 128; }
-    if (typeof value === "object") { flags = flags + 256; }
+    if (value === missing()) {
+        flags = flags + 1;
+    }
+    if (value === null) {
+        flags = flags + 2;
+    }
+    if (value == null) {
+        flags = flags + 4;
+    }
+    if (value === "") {
+        flags = flags + 8;
+    }
+    if (value) {
+        flags = flags + 16;
+    }
+    if (!value) {
+        flags = flags + 32;
+    }
+    if (typeof value === "string") {
+        flags = flags + 64;
+    }
+    if (typeof value === "undefined") {
+        flags = flags + 128;
+    }
+    if (typeof value === "object") {
+        flags = flags + 256;
+    }
     return flags;
 }
-function decorated(value) { return "[" + value + "]"; }
+
+function decorated(value) {
+    return "[" + value + "]";
+}
 var absent_flags = stringFlags(firstKey("seed", false));
 var empty_flags = stringFlags(firstKey("", true));
 var present_flags = stringFlags(firstKey("bs.modal", true));
@@ -74,7 +103,9 @@ var nan_index = stringFlags(indexed(0 / 0));
 var null_index = stringFlags(indexed(null));
 var undefined_index = stringFlags(indexed(missing()));
 
-function selected(flag) { return flag ? firstKey("bs.modal", true) : null; }
+function selected(flag) {
+    return flag ? firstKey("bs.modal", true) : null;
+}
 var selected_null = stringFlags(selected(false));
 var selected_string = stringFlags(selected(true));
 

@@ -92,7 +92,11 @@
 // `tick` a copy would answer 121 here and only the interpreter could say so.
 function counter() {
     var n = 0;
-    function tick() { n = n + 1; return n; }
+
+    function tick() {
+        n = n + 1;
+        return n;
+    }
     var a = tick();
     var b = tick();
     return a * 100 + b * 10 + n;
@@ -104,8 +108,16 @@ function counter() {
 // is the statement form --ctnative-prune-dead-stores turns into one.
 function shared_two(start) {
     var acc = start;
-    function add(k) { acc = acc + k; return acc; }
-    function scale(k) { acc = acc * k; return acc; }
+
+    function add(k) {
+        acc = acc + k;
+        return acc;
+    }
+
+    function scale(k) {
+        acc = acc * k;
+        return acc;
+    }
     add(3);
     scale(2);
     add(1);
@@ -118,7 +130,10 @@ function shared_two(start) {
 // `take` returns nothing, which is `undefined` - a NaN this tier never prints.
 function loop_sum(n) {
     var total = 0;
-    function take(v) { total = total + v; }
+
+    function take(v) {
+        total = total + v;
+    }
     var i = 0;
     while (i < n) {
         take(i * 2);
@@ -133,8 +148,14 @@ function loop_sum(n) {
 // signature, and `v` is shared whoever is looking at it.
 function read_and_write(base) {
     var v = base;
-    function bump() { v = v + 7; }
-    function peek() { return v * 2; }
+
+    function bump() {
+        v = v + 7;
+    }
+
+    function peek() {
+        return v * 2;
+    }
     var first = peek();
     bump();
     var second = peek();
@@ -155,8 +176,14 @@ function read_and_write(base) {
 function mixed(p) {
     var fixed = 10;
     var running = 0;
-    function bump() { running = running + 1; }
-    function step(k) { return running * fixed * k + p; }
+
+    function bump() {
+        running = running + 1;
+    }
+
+    function step(k) {
+        return running * fixed * k + p;
+    }
     bump();
     var a = step(2);
     bump();
@@ -173,8 +200,12 @@ function mixed(p) {
 // of a value.
 function nested_two() {
     var n = 100;
+
     function mid() {
-        function deep(k) { n = n + k; return n; }
+        function deep(k) {
+            n = n + k;
+            return n;
+        }
         return deep(1) + deep(2);
     }
     var t = mid();
@@ -189,7 +220,10 @@ function twice_written() {
     var n;
     n = 1;
     n = 2;
-    function get() { return n; }
+
+    function get() {
+        return n;
+    }
     return get();
 }
 
@@ -201,9 +235,14 @@ function twice_written() {
 function early_read() {
     var before = n;
     var n = 5;
-    function get() { return n; }
+
+    function get() {
+        return n;
+    }
     var hit = 0;
-    if (before) { hit = 1; }
+    if (before) {
+        hit = 1;
+    }
     return hit * 100 + get();
 }
 
@@ -216,11 +255,18 @@ function early_read() {
 function conditional(k) {
     var v;
     var t = k * 2;
-    if (k > 0) { v = t; }
-    function get() { return v; }
+    if (k > 0) {
+        v = t;
+    }
+
+    function get() {
+        return v;
+    }
     var seen = get();
     var hit = 0;
-    if (seen) { hit = 1; }
+    if (seen) {
+        hit = 1;
+    }
     return hit * 10 + k;
 }
 
@@ -235,9 +281,14 @@ function loop_after(n) {
         v = i * 10;
         i = i + 1;
     }
-    function get() { return v; }
+
+    function get() {
+        return v;
+    }
     var seen = get();
-    if (seen) { return seen + 1; }
+    if (seen) {
+        return seen + 1;
+    }
     return 7;
 }
 

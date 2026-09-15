@@ -34,14 +34,18 @@
 // ONE CAPTURE, CALLED ONCE. The smallest lift there is: `k` becomes `apply`'s
 // first parameter and `apply()` becomes `apply(k)`.
 function scaled(k) {
-    function apply() { return k * 2; }
+    function apply() {
+        return k * 2;
+    }
     return apply();
 }
 
 // TWO CAPTURES. They arrive in descriptor order, which is the order the
 // capture list is written in - not the order they are read in the body.
 function combine(a, b) {
-    function sum() { return a + b; }
+    function sum() {
+        return a + b;
+    }
     return sum() * 3;
 }
 
@@ -49,7 +53,9 @@ function combine(a, b) {
 // lowers to `at(double c, double x)`, and each call site passes the same `c`
 // with a different `x`.
 function poly(c) {
-    function at(x) { return c * x + 1; }
+    function at(x) {
+        return c * x + 1;
+    }
     return at(2) + at(5);
 }
 
@@ -58,7 +64,9 @@ function poly(c) {
 // The whole of the work is turning a ctjs.call through a local into a
 // ctjs.call_direct.
 function no_capture(n) {
-    function twice(v) { return v + v; }
+    function twice(v) {
+        return v + v;
+    }
     return twice(n) + 1;
 }
 
@@ -66,7 +74,9 @@ function no_capture(n) {
 // call inside it passes the same captured value every iteration - so nothing
 // is allocated per iteration, which is the property the lift buys.
 function accumulate(step, n) {
-    function delta() { return step; }
+    function delta() {
+        return step;
+    }
     var total = 0;
     var i = 0;
     while (i < n) {
@@ -78,7 +88,9 @@ function accumulate(step, n) {
 
 // TWO CAPTURES AND A PARAMETER, called three times.
 function line(m, b) {
-    function at(x) { return m * x + b; }
+    function at(x) {
+        return m * x + b;
+    }
     return at(1) + at(2) + at(3);
 }
 
@@ -90,7 +102,9 @@ function line(m, b) {
 // built out of it.
 function outer_two(k) {
     function mid(j) {
-        function inner() { return j + j; }
+        function inner() {
+            return j + j;
+        }
         return inner() * 2;
     }
     return mid(k) + mid(k + 1);
@@ -110,11 +124,19 @@ function arrowed(k) {
 // A CLOSURE THAT RETURNS A BOOLEAN, so the lowered function's return type is
 // `bool` and not `double`, and its result is used as a condition.
 function bounded(lo, hi) {
-    function inside(x) { return x >= lo && x < hi; }
+    function inside(x) {
+        return x >= lo && x < hi;
+    }
     var hits = 0;
-    if (inside(1)) { hits = hits + 1; }
-    if (inside(7)) { hits = hits + 10; }
-    if (inside(4)) { hits = hits + 100; }
+    if (inside(1)) {
+        hits = hits + 1;
+    }
+    if (inside(7)) {
+        hits = hits + 10;
+    }
+    if (inside(4)) {
+        hits = hits + 100;
+    }
     return hits;
 }
 

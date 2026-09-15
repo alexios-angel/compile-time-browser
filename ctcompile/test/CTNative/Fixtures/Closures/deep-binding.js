@@ -42,9 +42,13 @@
 // inside `deep` becomes a `ctjs.call_direct` of `base`'s target - written in a
 // frame two removes from the one that holds the closure value.
 function two_frames_in(n) {
-    var base = function (k) { return k + 1; };
+    var base = function (k) {
+        return k + 1;
+    };
     var mid = function (k) {
-        var deep = function (j) { return base(j) * 2; };
+        var deep = function (j) {
+            return base(j) * 2;
+        };
         return deep(k);
     };
     return mid(n);
@@ -55,10 +59,14 @@ function two_frames_in(n) {
 // reads to rewrite, which is the case a walk that only looked for reads would
 // leave behind. Three slots go, in the order three, two, one.
 function three_frames_in(n) {
-    var root = function (k) { return k * 3; };
+    var root = function (k) {
+        return k * 3;
+    };
     var one = function (k) {
         var two = function (j) {
-            var three = function (m) { return root(m) + 1; };
+            var three = function (m) {
+                return root(m) + 1;
+            };
             return three(j);
         };
         return two(k);
@@ -73,10 +81,14 @@ function three_frames_in(n) {
 // that took the whole capture list, or that renumbered `offset` wrongly, gives
 // 12 or a verifier error rather than 25.
 function deep_with_data(n) {
-    var scale = function (k) { return k * 4; };
+    var scale = function (k) {
+        return k * 4;
+    };
     var wrap = function (k) {
         var offset = k + 10;
-        var inner = function (j) { return scale(j) + offset; };
+        var inner = function (j) {
+            return scale(j) + offset;
+        };
         return inner(k);
     };
     return wrap(n);
@@ -89,9 +101,13 @@ function deep_with_data(n) {
 // name and this step writes the `ctjs.call_direct` itself. A rewrite that
 // stopped at the first depth prints 606.
 function both_depths(n) {
-    var step = function (k) { return k - 1; };
+    var step = function (k) {
+        return k - 1;
+    };
     var mid = function (k) {
-        var deep = function (j) { return step(j) * 10; };
+        var deep = function (j) {
+            return step(j) * 10;
+        };
         return step(k) + deep(k);
     };
     return step(n) + mid(n) * 100;
@@ -105,9 +121,13 @@ function both_depths(n) {
 // run before `hop` does.
 function deep_recursion(n) {
     var down = function (k) {
-        if (k <= 0) { return 0; }
+        if (k <= 0) {
+            return 0;
+        }
         var hop = function (j) {
-            var again = function (m) { return down(m); };
+            var again = function (m) {
+                return down(m);
+            };
             return again(j - 1) + j;
         };
         return hop(k);
@@ -122,10 +142,16 @@ function deep_recursion(n) {
 // avoid, and removing `deep`'s slot 0 alone would leave `times` being read at an
 // index that no longer means what it did.
 function two_names_deep(n) {
-    var plus = function (k) { return k + 2; };
-    var times = function (k) { return k * 5; };
+    var plus = function (k) {
+        return k + 2;
+    };
+    var times = function (k) {
+        return k * 5;
+    };
     var mid = function (k) {
-        var deep = function (j) { return plus(j) + times(j); };
+        var deep = function (j) {
+            return plus(j) + times(j);
+        };
         return deep(k);
     };
     return mid(n);
@@ -138,10 +164,16 @@ function two_names_deep(n) {
 // gone in one fixpoint. `inner_fn` never travels past one frame, so the two
 // names are erased by different depths of the same rule.
 function chained_deep(n) {
-    var inner_fn = function (k) { return k + 3; };
-    var outer_fn = function (k) { return inner_fn(k) * 7; };
+    var inner_fn = function (k) {
+        return k + 3;
+    };
+    var outer_fn = function (k) {
+        return inner_fn(k) * 7;
+    };
     var mid = function (k) {
-        var deep = function (j) { return outer_fn(j); };
+        var deep = function (j) {
+            return outer_fn(j);
+        };
         return deep(k);
     };
     return mid(n);
@@ -164,11 +196,19 @@ var two10 = two_frames_in(4);
 // no image for the slot `inner` still names: the compiler ABORTS on seven lines
 // of ordinary JavaScript, where step 4 merely refused them.
 function order_trap(n) {
-    var w = function (k) { return k + 3; };
-    var q = function (k) { return k + 4; };
+    var w = function (k) {
+        return k + 3;
+    };
+    var q = function (k) {
+        return k + 4;
+    };
     var mid = function (k) {
-        var p = function (j) { return j + 5; };
-        var inner = function (m) { return q(m) + p(m); };
+        var p = function (j) {
+            return j + 5;
+        };
+        var inner = function (m) {
+            return q(m) + p(m);
+        };
         return w(k) + inner(k);
     };
     return mid(n);
@@ -181,11 +221,17 @@ function order_trap(n) {
 // these two programs at once. A slot's depth measures how far a BINDING
 // travelled; the rewrite needs how deep the CLOSURE sits.
 function maxtrap(n) {
-    var far = function (k) { return k + 7; };
+    var far = function (k) {
+        return k + 7;
+    };
     var outer = function (k) {
-        var near = function (j) { return j + 8; };
+        var near = function (j) {
+            return j + 8;
+        };
         var a = function (j) {
-            var b = function (m) { return near(m); };
+            var b = function (m) {
+                return near(m);
+            };
             return b(j) + far(j);
         };
         return a(k);

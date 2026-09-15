@@ -5,14 +5,24 @@
 // so it lives in that function's frame as a C++ struct by value. The
 // interpreter has the last word on every printed global, as always.
 function area() {
-    var p = { x: 1, y: 2 };
+    var p = {
+        x: 1,
+        y: 2
+    };
     p.x = p.x + 3;
     return p.x * p.y;
 }
+
 function swap_sum() {
-    var a = { v: 10 };
-    var b = { v: 32 };
-    var t = { hold: 0 };
+    var a = {
+        v: 10
+    };
+    var b = {
+        v: 32
+    };
+    var t = {
+        hold: 0
+    };
     t.hold = a.v;
     a.v = b.v;
     b.v = t.hold;
@@ -26,7 +36,10 @@ function swap_sum() {
 // structuring, so every access is on the one literal and it is one struct
 // on the stack, updated in place. native-struct.mlir pins the shape of it.
 function accumulate(n) {
-    var acc = { total: 0, count: 0 };
+    var acc = {
+        total: 0,
+        count: 0
+    };
     var i = 0;
     while (i < n) {
         acc.total = acc.total + i * 0.5;
@@ -35,15 +48,23 @@ function accumulate(n) {
     }
     return acc.total / acc.count;
 }
+
 function read_before_write() {
-    var o = { seen: 1 };
-    var before = o.later;      // undefined, which is NaN as a number
+    var o = {
+        seen: 1
+    };
+    var before = o.later; // undefined, which is NaN as a number
     o.later = 5;
-    return before + o.later;   // NaN + 5 is NaN
+    return before + o.later; // NaN + 5 is NaN
 }
+
 function boolean_field(x) {
-    var f = { big: false };
-    if (x > 100) { f.big = true; }
+    var f = {
+        big: false
+    };
+    if (x > 100) {
+        f.big = true;
+    }
     return f.big ? 1 : 0;
 }
 // PHASE 56C: ONE SHAPE IS ONE DEFINITION. `{x, y}` is written at THREE sites
@@ -52,8 +73,14 @@ function boolean_field(x) {
 // struct passable between functions at all; 56B named them ctn_shape_0,
 // ctn_shape_1 and ctn_shape_2 and no two of them were the same type.
 function dot() {
-    var a = { x: 3, y: 4 };
-    var b = { x: 5, y: 6 };
+    var a = {
+        x: 3,
+        y: 4
+    };
+    var b = {
+        x: 5,
+        y: 6
+    };
     return a.x * b.x + a.y * b.y;
 }
 // AND WHERE THE NAMES MATCH AND A TYPE DIFFERS, ONE TEMPLATE. These two agree
@@ -69,13 +96,22 @@ function dot() {
 // refused before a shape was formed, so the disagreement that IS expressible
 // today is `double` against `bool`.
 function hit_flag(x) {
-    var h = { hit: false, at: 0 };
+    var h = {
+        hit: false,
+        at: 0
+    };
     h.at = x * 2;
-    if (x > 10) { h.hit = true; }
+    if (x > 10) {
+        h.hit = true;
+    }
     return h.hit ? h.at : 0;
 }
+
 function hit_count(x) {
-    var h = { hit: 0, at: 0 };
+    var h = {
+        hit: 0,
+        at: 0
+    };
     h.at = x;
     h.hit = h.hit + 1;
     return h.hit * h.at;

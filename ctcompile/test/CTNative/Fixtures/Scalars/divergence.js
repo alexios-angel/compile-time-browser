@@ -87,7 +87,9 @@ var negzero_times_neg = (0 * (0 - 1)) * (0 - 1);
 // refuses all three - divergence-refusals.mlir pins the refusals, because a
 // refusal cannot be witnessed by a program that runs.
 function undefined_field() {
-    var o = { seen: 1 };
+    var o = {
+        seen: 1
+    };
     return o.later;
 }
 var u_plus = undefined_field() + 1;
@@ -105,13 +107,19 @@ var u_gt = undefined_field() > 1 ? 1 : 0;
 var u_ge = undefined_field() >= 1 ? 1 : 0;
 // TRUTHINESS: undefined is falsy and NaN is falsy.
 var u_truthy = 0;
-if (undefined_field()) { u_truthy = 1; }
+if (undefined_field()) {
+    u_truthy = 1;
+}
 var u_not = !undefined_field() ? 1 : 0;
 // AND AN UNDEFINED-OR-BOOLEAN, whose carrier is `bool` with undefined as
 // false. Same claim, other carrier: exact in a branch and under `!`.
 function maybe_flag(x) {
-    var f = { seen: 1 };
-    if (x > 0) { f.flag = true; }
+    var f = {
+        seen: 1
+    };
+    if (x > 0) {
+        f.flag = true;
+    }
     return f.flag ? 1 : 0;
 }
 var b_undefined_is_false = maybe_flag(0 - 1);

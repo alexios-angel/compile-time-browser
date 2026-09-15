@@ -72,11 +72,10 @@ mapfile -t pyfiles < <({ git ls-files '*.py'
 # THE WEB HALF: js-beautify (the npm package - `npm install -g js-beautify`;
 # brew's is the Python port, which has no html-beautify) over the hand-written
 # JavaScript, HTML and CSS, .jsbeautifyrc at the root being its configuration.
-# Sources only: vendor/ is someone else's, and the test DATA stays byte-exact
-# - ctcompile/test/**'s fixtures are hashed by its drivers, ctbrowser/test/'s
-# corpus and goldens are what the engine is compared against. The example
-# pages ARE formatted: three of them render to goldens, and block-level
-# indentation is whitespace the engine collapses, which the gate proves.
+# Sources only: vendor/ is someone else's. Test fixtures and pages ARE
+# formatted, ctbrowser/test/ and ctcompile/test/ included: the drivers hash
+# inline sources, not these files, and block-level indentation is whitespace
+# the engine collapses, which the golden gate proves.
 html_beautify=$(command -v html-beautify || true)
 if [[ -z $html_beautify ]]; then
     echo "format.sh: no html-beautify found - npm install -g js-beautify" >&2
@@ -85,8 +84,7 @@ fi
 beautify_bin=$(dirname "$html_beautify")
 mapfile -t webfiles < <({ git ls-files '*.js' '*.html' '*.css'
                           git ls-files --others --exclude-standard '*.js' '*.html' '*.css'; } \
-                        | grep -v '^third-party/' | grep -v '^build' | grep -v '/vendor/' \
-                        | grep -v '^ctbrowser/test/' | grep -v '^ctcompile/test/')
+                        | grep -v '^third-party/' | grep -v '^build' | grep -v '/vendor/')
 # One process per file: the CLI has no --check, so a check is "does the
 # output equal the input", and --replace is the same run writing back.
 beautify() {  # beautify <check|replace> <file>...

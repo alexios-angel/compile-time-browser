@@ -1,83 +1,170 @@
 // Closed boolean/number unions retain their JavaScript tags through native
 // calls, fields, shared cells, closures, loops and the Bootstrap Data getter.
 // Numeric observations exercise both alternatives without broadening globals.
-function choose(flag) { return flag ? false : 42; }
+function choose(flag) {
+    return flag ? false : 42;
+}
+
 function chooseReturn(flag) {
-    if (flag) { return true; }
+    if (flag) {
+        return true;
+    }
     return 1;
 }
+
 function optional(mode) {
-    if (mode < 0) { return; }
-    if (mode === 0) { return null; }
-    if (mode === 1) { return false; }
-    if (mode === 2) { return true; }
-    if (mode === 3) { return 0; }
-    if (mode === 4) { return -0; }
-    if (mode === 5) { return 0 / 0; }
+    if (mode < 0) {
+        return;
+    }
+    if (mode === 0) {
+        return null;
+    }
+    if (mode === 1) {
+        return false;
+    }
+    if (mode === 2) {
+        return true;
+    }
+    if (mode === 3) {
+        return 0;
+    }
+    if (mode === 4) {
+        return -0;
+    }
+    if (mode === 5) {
+        return 0 / 0;
+    }
     return 42;
 }
-function forward(value) { return value; }
-function absent() { return; }
+
+function forward(value) {
+    return value;
+}
+
+function absent() {
+    return;
+}
+
 function flags(value) {
     var result = 0;
-    if (value === null) { result += 1; }
-    if (value === absent()) { result += 2; }
-    if (value === false) { result += 4; }
-    if (value === true) { result += 8; }
-    if (value === 0) { result += 16; }
-    if (value === 1) { result += 32; }
-    if (value == false) { result += 64; }
-    if (value == true) { result += 128; }
-    if (value) { result += 256; }
-    if (typeof value === "boolean") { result += 512; }
-    if (typeof value === "number") { result += 1024; }
-    if (typeof value === "object") { result += 2048; }
-    if (typeof value === "undefined") { result += 4096; }
-    if (value !== value) { result += 8192; }
+    if (value === null) {
+        result += 1;
+    }
+    if (value === absent()) {
+        result += 2;
+    }
+    if (value === false) {
+        result += 4;
+    }
+    if (value === true) {
+        result += 8;
+    }
+    if (value === 0) {
+        result += 16;
+    }
+    if (value === 1) {
+        result += 32;
+    }
+    if (value == false) {
+        result += 64;
+    }
+    if (value == true) {
+        result += 128;
+    }
+    if (value) {
+        result += 256;
+    }
+    if (typeof value === "boolean") {
+        result += 512;
+    }
+    if (typeof value === "number") {
+        result += 1024;
+    }
+    if (typeof value === "object") {
+        result += 2048;
+    }
+    if (typeof value === "undefined") {
+        result += 4096;
+    }
+    if (value !== value) {
+        result += 8192;
+    }
     return result;
 }
+
 function arithmetic(value) {
     return value + 2 + (+value) + value * 3 - value / 2;
 }
+
 function ordering(value) {
     return (value < 1 ? 1 : 0) + (value <= 1 ? 2 : 0) +
         (value > 1 ? 4 : 0) + (value >= 1 ? 8 : 0);
 }
+
 function localField(flag) {
-    var object = { value: false };
-    if (flag) { object.value = 42; }
+    var object = {
+        value: false
+    };
+    if (flag) {
+        object.value = 42;
+    }
     return flags(object.value);
 }
+
 function unreadField() {
-    var object = { value: false };
+    var object = {
+        value: false
+    };
     object.value = 42;
     return 42;
 }
+
 function sharedCell(flag) {
     var value = false;
-    function assign() { value = 42; }
-    if (flag) { assign(); }
+
+    function assign() {
+        value = 42;
+    }
+    if (flag) {
+        assign();
+    }
     return flags(value);
 }
-function capture(value) { return function() { return value; }; }
+
+function capture(value) {
+    return function () {
+        return value;
+    };
+}
+
 function retainedCapture(value) {
     const read = capture(value);
-    for (var i = 0; i < 20; ++i) { capture(i); }
+    for (var i = 0; i < 20; ++i) {
+        capture(i);
+    }
     return flags(read());
 }
+
 function loop(count) {
     var value = false;
     for (var i = 0; i < count; ++i) {
         value = i;
-        if (i === 1) { value = true; }
+        if (i === 1) {
+            value = true;
+        }
     }
     return flags(value);
 }
+
 function indexed(value) {
     const values = [42, 99];
     return flags(values[value]);
 }
-function logical(value) { return value && 7 || null; }
+
+function logical(value) {
+    return value && 7 || null;
+}
+
 function makeData() {
     const t = new Map();
     return {
@@ -89,13 +176,16 @@ function makeData() {
         // Verbatim getter expression from Bootstrap 5.3's vendor Data table.
         get: (e, i) => t.has(e) && t.get(e).get(i) || null,
         remove(e, i) {
-            if (!t.has(e)) { return; }
+            if (!t.has(e)) {
+                return;
+            }
             const n = t.get(e);
             n.delete(i);
             0 === n.size && t.delete(e);
         }
     };
 }
+
 function retainedData() {
     const data = makeData();
     const first = {};

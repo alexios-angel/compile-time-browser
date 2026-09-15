@@ -60,7 +60,10 @@
 // `base` runs after it; the CALL runs after both, which is condition 3.
 function one_level() {
     var base = 7;
-    function get() { return base * 3; }
+
+    function get() {
+        return base * 3;
+    }
     return get();
 }
 
@@ -69,8 +72,11 @@ function one_level() {
 // closure, which is slice 1b's mechanism over slice 2's binding.
 function two_levels() {
     var k = 10;
+
     function mid() {
-        function deep() { return k + 1; }
+        function deep() {
+            return k + 1;
+        }
         return deep() * 2;
     }
     return mid();
@@ -80,9 +86,12 @@ function two_levels() {
 // innermost call is handed has been passed through two capture parameters.
 function three_levels() {
     var k = 5;
+
     function mid() {
         function inner() {
-            function deep() { return k * 3; }
+            function deep() {
+                return k * 3;
+            }
             return deep() + 1;
         }
         return inner() * 2;
@@ -96,7 +105,9 @@ function three_levels() {
 // called twice through the local that holds it.
 function after_store(x) {
     var scale = 4;
-    var apply = function (v) { return v * scale; };
+    var apply = function (v) {
+        return v * scale;
+    };
     return apply(x) + apply(x + 1);
 }
 
@@ -105,7 +116,10 @@ function after_store(x) {
 // dominates all four reads, which is conditions 2 and 3 together.
 function many_reads(n) {
     var step = 3;
-    function at(i) { return step * i; }
+
+    function at(i) {
+        return step * i;
+    }
     return step + at(1) + at(2) + at(n);
 }
 
@@ -122,7 +136,9 @@ function per_iteration(n) {
     var i = 0;
     while (i < n) {
         var v = i * 10;
-        var take = function () { return v + 1; };
+        var take = function () {
+            return v + 1;
+        };
         total = total + take();
         i = i + 1;
     }
@@ -135,7 +151,10 @@ function per_iteration(n) {
 // initial, and it fails as a number rather than as a refusal.
 function computed(a, b) {
     var span = b - a;
-    function scaled(f) { return span * f; }
+
+    function scaled(f) {
+        return span * f;
+    }
     return scaled(2) + scaled(5);
 }
 

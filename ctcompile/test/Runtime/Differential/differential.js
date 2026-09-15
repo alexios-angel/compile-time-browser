@@ -18,29 +18,48 @@
 // `+` IS THE RE-ENTERING FAMILY. If it were lowered to op::add - the static
 // one, which `++` uses - an object with a valueOf would answer NaN instead of
 // running it.
-function plus(a, b) { return a + b; }
+function plus(a, b) {
+    return a + b;
+}
 
 // THE FOUR RELATIONAL OPERATORS ARE NOT NEGATIONS OF ONE ANOTHER, because
 // ct_aot_compare can answer UNORDERED and that makes all four false. Lowering
 // `>=` as `!(<)` makes `NaN >= NaN` true, which this catches.
-function ge(a, b) { return a >= b; }
+function ge(a, b) {
+    return a >= b;
+}
 
 // STRICT AND LOOSE EQUALITY REACH DIFFERENT HELPERS with different effect
 // profiles - one cannot throw at all, the other converts.
 // Two functions rather than one returning both: an array literal needs
 // ctjs.append, whose helper is one of the rows lib/Script/aot_bridge/ does not define.
-function strict(a, b) { return a === b; }
-function loose(a, b) { return a == b; }
+function strict(a, b) {
+    return a === b;
+}
+
+function loose(a, b) {
+    return a == b;
+}
 
 // CONTROL FLOW, whose block arguments are the shape the C++ emitter miscompiles
 // unless they are lowered to variables first.
-function pick(a, b) { if (a < b) { return a; } return b; }
+function pick(a, b) {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
 
 // GLOBALS, which are a read and a write with no status and no edge.
-function globals(a) { DIFF_W = a; return DIFF_R; }
+function globals(a) {
+    DIFF_W = a;
+    return DIFF_R;
+}
 
 // A CALL, the only operation needing a contiguous run of frame slots.
-function apply(k, a, b) { return k(a, b); }
+function apply(k, a, b) {
+    return k(a, b);
+}
 
 // A CAPTURED BINDING. `counter` itself is NOT compiled - it contains the
 // `closure` opcode, which the importer has no operation for - so the
@@ -52,7 +71,13 @@ function apply(k, a, b) { return k(a, b); }
 // thing every time. Before the closure reached the compiled frame it answered
 // `undefined` - the write landed on a non-cell and was dropped, and the read
 // found no closure - against the interpreter's 12.
-function counter(start) { var n = start; return function step() { n = n + 1; return n; }; }
+function counter(start) {
+    var n = start;
+    return function step() {
+        n = n + 1;
+        return n;
+    };
+}
 
 // TWO CLOSURES OVER ONE FUNCTION SEPARATE THE INSTANCE FROM THE PROTO, which is
 // the mistake the entry ABI invites: `site` is the function_proto and every
@@ -65,7 +90,15 @@ function counter(start) { var n = start; return function step() { n = n + 1; ret
 // `x` is NOT: it comes from middle's own closure, which is the arm that carries
 // a capture down through more than one level. A build that read both from the
 // registers, or both from the enclosing closure, gets one of them wrong.
-function outer(a) { var x = a; return function middle(b) { var y = b; return function inner() { return x + y; }; }; }
+function outer(a) {
+    var x = a;
+    return function middle(b) {
+        var y = b;
+        return function inner() {
+            return x + y;
+        };
+    };
+}
 
 // AN ARROW DECIDES ITS `this` WHERE IT IS WRITTEN, and this is the only shape
 // that separates that from the raw receiver an entry is handed.
@@ -76,7 +109,10 @@ function outer(a) { var x = a; return function middle(b) { var y = b; return fun
 // function the two are equal, so nothing else in this file can tell them apart.
 // Here they differ: `seen()` is called with no receiver at all, so the raw one
 // is undefined and the captured one is whatever `methodish` was called on.
-function methodish(ignored) { var seen = () => this; return seen(); }
+function methodish(ignored) {
+    var seen = () => this;
+    return seen();
+}
 
 // UNARY MINUS AND BITWISE NOT, WHOSE TWO ARMS ARE NOT ONE OPERATION.
 //
@@ -88,8 +124,13 @@ function methodish(ignored) { var seen = () => this; return seen(); }
 //
 // `~1n` is `-2n` for a related reason: there is no ToInt32 step, because a
 // BigInt has no width to truncate to.
-function neg(a) { return -a; }
-function bnot(a) { return ~a; }
+function neg(a) {
+    return -a;
+}
+
+function bnot(a) {
+    return ~a;
+}
 
 // A PROPERTY WRITE, WHOSE SLOW PATH IS NOT "THE NON-ARRAY CASE". The fast path
 // is array AND number, so `a['0'] = ...` on an ARRAY takes the named path
@@ -104,7 +145,10 @@ function bnot(a) { return ~a; }
 //
 // The answer packs both reads into one number for the same reason - `"" + x`
 // would need a string constant too. `| 0` turns a missing property into 0.
-function put(o, k, v, s) { o[k] = v; return o[0] * 100 + (o[s] | 0); }
+function put(o, k, v, s) {
+    o[k] = v;
+    return o[0] * 100 + (o[s] | 0);
+}
 
 // A STRING LITERAL, AND ITS MEMO.
 //
@@ -119,7 +163,13 @@ function put(o, k, v, s) { o[k] = v; return o[0] * 100 + (o[s] | 0); }
 // asking whether two reads are the same object. What it can check is that the
 // literal is still the right text after a loop, and that concatenating it works,
 // which is what a broken length or a truncating escape would break.
-function greet(n) { var out = ""; for (var i = 0; i < n; i++) { out = out + "ab"; } return out + "!"; }
+function greet(n) {
+    var out = "";
+    for (var i = 0; i < n; i++) {
+        out = out + "ab";
+    }
+    return out + "!";
+}
 
 // OBJECT AND ARRAY LITERALS. Both allocate and are RAISE TIER ONLY - allocate()
 // raises past the ceiling and still returns a well-formed object - so neither
@@ -127,14 +177,21 @@ function greet(n) { var out = ""; for (var i = 0; i < n; i++) { out = out + "ab"
 //
 // The array is built the way the bytecode builds one: new_array, then one
 // append per element.
-function pack(a, b) { var o = {}; o[a] = b; var arr = [a, b, a]; return arr[0] * 100 + arr[2] * 10 + (o[a] | 0); }
+function pack(a, b) {
+    var o = {};
+    o[a] = b;
+    var arr = [a, b, a];
+    return arr[0] * 100 + arr[2] * 10 + (o[a] | 0);
+}
 
 // `typeof`, WHICH IS TWO CALLS AND NOT MEMOISED. ct_aot_type_of_name answers
 // with a LENGTH and a pointer to static storage; ct_aot_new_string turns those
 // into a value, with a NULL site meaning do not memoise - because
 // VM_CASE(type_of) has no cache and memoising would allocate FEWER times than
 // the interpreter, which is a divergence in the raise tier.
-function kindOf(a) { return typeof a; }
+function kindOf(a) {
+    return typeof a;
+}
 
 // A THROW, CAUGHT BY AN INTERPRETED CALLER.
 //
@@ -149,25 +206,35 @@ function kindOf(a) { return typeof a; }
 // than it was. So the compiled body tests nothing and branches straight to the
 // epilogue, which must NOT call ct_aot_leave when the status is unwound - the
 // frame is already gone.
-function thrower(a) { throw a; }
+function thrower(a) {
+    throw a;
+}
 
 // --- the harness the driver calls -------------------------------------------
 //
 // It lives here rather than in the C++ so that the file the backend compiles
 // and the file the interpreter runs are THE SAME FILE. The functions above are
 // what is compiled; these are what drives them.
-var DIFF_R = 0, DIFF_W = 0, OUT = "";
+var DIFF_R = 0,
+    DIFF_W = 0,
+    OUT = "";
 
 // THE ARGUMENTS ARE BUILT HERE rather than passed from C++, so the harness
 // holds no JavaScript value in a C++ local of its own.
-var counter2 = { valueOf: function () { return 3; } };
+var counter2 = {
+    valueOf: function () {
+        return 3;
+    }
+};
 var nan = 0 / 0;
 var nothing;
 var undef;
 var big = 9007199254740993n;
 var zeroBig = 0n;
 
-function counters(a, b) { return counter(a)() + counter(b)(); }
+function counters(a, b) {
+    return counter(a)() + counter(b)();
+}
 
 // `new`, AND ITS TWO ANSWERS THAT ARE NOT THE BODY'S.
 //
@@ -180,10 +247,18 @@ function counters(a, b) { return counter(a)() + counter(b)(); }
 // AND THE INSTANCE HAS TO BE WIRED TO Point.prototype, which is
 // make_instance's half of the work rather than the body's: `twice` is on the
 // prototype and nothing in Point mentions it.
-function Point(x) { this.x = x; return 7; }
-Point.prototype.twice = function () { return this.x * 2; };
+function Point(x) {
+    this.x = x;
+    return 7;
+}
+Point.prototype.twice = function () {
+    return this.x * 2;
+};
 
-function build(a) { var p = new Point(a); return p.twice() + p.x; }
+function build(a) {
+    var p = new Point(a);
+    return p.twice() + p.x;
+}
 
 // A `new` ON SOMETHING THAT IS NOT A CONSTRUCTOR, which is the only case that
 // reads ct_aot_construct's `site`. Every other operand is a value the body
@@ -194,7 +269,9 @@ function build(a) { var p = new Point(a); return p.twice() + p.x; }
 // THE try IS IN drive AND NOT HERE on purpose: push_handler has no CTJS
 // operation, so a catch in this function would make the backend refuse it and
 // the case would test the interpreter against itself.
-function newBad(f) { return new f(); }
+function newBad(f) {
+    return new f();
+}
 
 // `??`, `?.` AND A DEFAULT PARAMETER - the three shapes that compile to the two
 // conditional jumps the importer's CFG classifier had never heard of.
@@ -204,9 +281,20 @@ function newBad(f) { return new f(); }
 // lowering either jump through ctjs.truthy answers 9 for each and is exactly
 // the bug optional chaining exists to avoid. A default parameter separates the
 // third: `dflt(0)` is 0 and `dflt()` is 5.
-function coalesce(a, b) { return a ?? b; }
-function chain(o) { return o?.p; }
-function dflt(a) { if (a === undefined) { a = 5; } return a; }
+function coalesce(a, b) {
+    return a ?? b;
+}
+
+function chain(o) {
+    return o?.p;
+}
+
+function dflt(a) {
+    if (a === undefined) {
+        a = 5;
+    }
+    return a;
+}
 
 // for-of AND SPREAD share op::iterable for an array or a string: the helper
 // answers with a plain ARRAY that the loop then indexes. Since 2026-09-12
@@ -224,10 +312,33 @@ function dflt(a) { if (a === undefined) { a = 5; } return a; }
 // same register. The case passed with the source taken from `c` instead of `b`
 // and said nothing. With a pad in front, r0 is a number and iterating it yields
 // nothing.
-function total(pad, xs) { var s = 0; for (var v of xs) { s = s + v; } return s; }
-function chars(pad, t) { var s = ""; for (var ch of t) { s = ch + s; } return s; }
-function nonobj(pad, n) { try { return total(pad, n); } catch (e) { return e.name; } }
-function spread(pad, xs) { return [...xs].length; }
+function total(pad, xs) {
+    var s = 0;
+    for (var v of xs) {
+        s = s + v;
+    }
+    return s;
+}
+
+function chars(pad, t) {
+    var s = "";
+    for (var ch of t) {
+        s = ch + s;
+    }
+    return s;
+}
+
+function nonobj(pad, n) {
+    try {
+        return total(pad, n);
+    } catch (e) {
+        return e.name;
+    }
+}
+
+function spread(pad, xs) {
+    return [...xs].length;
+}
 
 // `in`, `instanceof` AND `delete` - three opcode bodies that were inline in
 // run_loop and are now shared members, which is what stops the two tiers
@@ -243,9 +354,18 @@ function spread(pad, xs) { return [...xs].length; }
 // `5 instanceof Number` must be FALSE however many methods a primitive
 // resolves - applying the implicit pass to primitives is the mirror image of
 // the bug that pass fixed, so it is the case that pins the object-like guard.
-function hasIt(pad, o, k) { return k in o; }
-function isA(pad, x, C) { return x instanceof C; }
-function drop(pad, o, k) { delete o[k]; return "" + o.a + o.b; }
+function hasIt(pad, o, k) {
+    return k in o;
+}
+
+function isA(pad, x, C) {
+    return x instanceof C;
+}
+
+function drop(pad, o, k) {
+    delete o[k];
+    return "" + o.a + o.b;
+}
 
 // `super`, WHICH IS THREE OPCODES AND TWO SHAPES.
 //
@@ -262,12 +382,23 @@ function drop(pad, o, k) { delete o[k]; return "" + o.a + o.b; }
 // NEITHER hello NEEDS COMPILING. greetChain is the body holding load_home and
 // get_proto, and its name is unique, which is what lets a single patch reach
 // it - the build's entry lookup takes a name and no ordinal.
-class Sup { hello() { return "S"; } }
-class Sub extends Sup {
-  hello() { return "SUB"; }
-  greetChain() { return "B" + super.hello(); }
+class Sup {
+    hello() {
+        return "S";
+    }
 }
-function useSuper(pad) { return new Sub().greetChain(); }
+class Sub extends Sup {
+    hello() {
+        return "SUB";
+    }
+    greetChain() {
+        return "B" + super.hello();
+    }
+}
+
+function useSuper(pad) {
+    return new Sub().greetChain();
+}
 
 // AND THE CONSTRUCTOR FORM. `super(v * 2)` hands Parent this frame's
 // new.target and calls it.
@@ -279,9 +410,22 @@ function useSuper(pad) { return new Sub().greetChain(); }
 // difference. The mutant found that, not review.
 //
 // `v` COVERS THE CALL and `nt` covers the handoff, so a failure says which.
-class Parent { constructor(v) { this.v = v; this.nt = new.target === Kid; } }
-class Kid extends Parent { constructor(v) { super(v * 2); } }
-function useSuperCtor(pad, n) { var o = new Kid(n); return "" + o.v + "/" + o.nt; }
+class Parent {
+    constructor(v) {
+        this.v = v;
+        this.nt = new.target === Kid;
+    }
+}
+class Kid extends Parent {
+    constructor(v) {
+        super(v * 2);
+    }
+}
+
+function useSuperCtor(pad, n) {
+    var o = new Kid(n);
+    return "" + o.v + "/" + o.nt;
+}
 
 // SPREAD CALLS - op::apply, which is a DIFFERENT opcode from op::call and not a
 // variant of it. `f(a, b)` passes a contiguous window of values; `f(...xs)`
@@ -297,20 +441,45 @@ function useSuperCtor(pad, n) { var o = new Kid(n); return "" + o.v + "/" + o.nt
 // catches by name - where passing 5 along would answer "5/undefined/undefined"
 // and the old lenient runtime answered three undefineds. The runtime moved to
 // the specification on 2026-09-12 (ctbrowser-wpt, agent J: ed34ced8).
-function sum3(a, b, c) { return "" + a + "/" + b + "/" + c; }
-function spreadCall(pad, xs) { return sum3(...xs); }
-function spreadNonIterable(pad, n) { try { return spreadCall(pad, n); } catch (e) { return e.name; } }
+function sum3(a, b, c) {
+    return "" + a + "/" + b + "/" + c;
+}
+
+function spreadCall(pad, xs) {
+    return sum3(...xs);
+}
+
+function spreadNonIterable(pad, n) {
+    try {
+        return spreadCall(pad, n);
+    } catch (e) {
+        return e.name;
+    }
+}
 
 // THE RECEIVER IS A SEPARATE OPERAND from the callee and the array, and only a
 // method call can tell: ct_aot_call_spread takes it third, and passing
 // undefined instead makes `this.tag` read undefined.
-var recvObj = { tag: "R", m: function (a) { return this.tag + a; } };
-function spreadMethod(pad, xs) { return recvObj.m(...xs); }
+var recvObj = {
+    tag: "R",
+    m: function (a) {
+        return this.tag + a;
+    }
+};
+
+function spreadMethod(pad, xs) {
+    return recvObj.m(...xs);
+}
 
 // AND THE `new` FORM, which is op::construct_apply - a different opcode again,
 // with a different helper, sharing one VM_CASE with apply.
-function Pt(a, b) { this.s = "" + a + b; }
-function spreadNew(pad, xs) { return new Pt(...xs).s; }
+function Pt(a, b) {
+    this.s = "" + a + b;
+}
+
+function spreadNew(pad, xs) {
+    return new Pt(...xs).s;
+}
 
 // OBJECT SPREAD - op::copy_props, which is not a call at all: it mutates a
 // freshly built object in place and produces nothing.
@@ -321,9 +490,25 @@ function spreadNew(pad, xs) { return new Pt(...xs).s; }
 // before the earlier keys are written, changes both.
 //
 // AND AN ARRAY SOURCE SPREADS BY INDEX: `{...[7, 8]}` is {"0": 7, "1": 8}.
-function merge(pad, o) { return { a: 1, ...o, b: 9 }; }
-function mergeArray(pad, xs) { var m = { ...xs }; return "" + m[0] + m[1]; }
-function spreadOut(pad, o) { var m = merge(0, o); return "" + m.a + m.b; }
+function merge(pad, o) {
+    return {
+        a: 1,
+        ...o,
+        b: 9
+    };
+}
+
+function mergeArray(pad, xs) {
+    var m = {
+        ...xs
+    };
+    return "" + m[0] + m[1];
+}
+
+function spreadOut(pad, o) {
+    var m = merge(0, o);
+    return "" + m.a + m.b;
+}
 
 // A LOOP AS THE FIRST STATEMENT, which is the ONLY shape whose back edge
 // targets instruction ZERO - anything at all ahead of it, a `var` or a default
@@ -336,7 +521,12 @@ function spreadOut(pad, o) { var m = merge(0, o); return "" + m.a + m.b; }
 // IT MUST STILL LOOP. A body that ran the test once and fell through answers 9;
 // one that skipped the loop answers 9 too, so the input is chosen to make the
 // loop run four times and the answer be the number it stops at.
-function firstLoop(pad, n) { while (n > 3) { n = n - 1; } return n; }
+function firstLoop(pad, n) {
+    while (n > 3) {
+        n = n - 1;
+    }
+    return n;
+}
 
 // ACCESSORS - op::define_getter and op::define_setter, which are ONE helper and
 // one operation. The half is decided by the OPCODE and by nothing else: no
@@ -352,12 +542,20 @@ function firstLoop(pad, n) { while (n > 3) { n = n - 1; } return n; }
 // and then the setter must leave BOTH working, which a define that replaced the
 // entry would break.
 function accessors(pad, seed) {
-  var box = { hidden: seed, log: "" };
-  return {
-    get v() { return box.hidden; },
-    set v(x) { box.hidden = x; box.log = box.log + "s"; },
-    box: box
-  };
+    var box = {
+        hidden: seed,
+        log: ""
+    };
+    return {
+        get v() {
+            return box.hidden;
+        },
+        set v(x) {
+            box.hidden = x;
+            box.log = box.log + "s";
+        },
+        box: box
+    };
 }
 // try/catch, AND THE REGISTER FILE IS THE POINT.
 //
@@ -383,7 +581,9 @@ function accessors(pad, seed) {
 // ToNumber, so an object with a valueOf is where it differs from the generic
 // path - and the empty string and the empty array both coerce to 0 while
 // undefined coerces to NaN, which is what separates ToNumber from truthiness.
-function plusOf(pad, x) { return +x; }
+function plusOf(pad, x) {
+    return +x;
+}
 
 // for-in AND NAMED delete - op::own_keys and op::delete_prop.
 //
@@ -416,58 +616,76 @@ function plusOf(pad, x) { return +x; }
 //
 // EVERY CALL PASSES MORE THAN IT DECLARES, which is the whole point: a body
 // that could only see its declared parameters answers 2 and [] here.
-function howMany(a, b) { return arguments.length; }
-function sumAll() {
-  var t = 0;
-  for (var i = 0; i < arguments.length; i = i + 1) { t = t + arguments[i]; }
-  return t;
+function howMany(a, b) {
+    return arguments.length;
 }
-function restOf(a, ...xs) { return xs.length + ":" + xs.join(","); }
+
+function sumAll() {
+    var t = 0;
+    for (var i = 0; i < arguments.length; i = i + 1) {
+        t = t + arguments[i];
+    }
+    return t;
+}
+
+function restOf(a, ...xs) {
+    return xs.length + ":" + xs.join(",");
+}
 
 // AND THE PATH THAT ONLY EXISTS WHEN BOTH RUN. Building `arguments` claims a
 // register an extra argument may be sitting in, so gather_rest reads the
 // FRAME'S COPY rather than the window once it has - and a body with both is the
 // only shape that reaches it. No corpus contains one; this fixture is the only
 // coverage that arm will get.
-function bothOf(a, ...xs) { return arguments.length + "/" + xs.join(","); }
+function bothOf(a, ...xs) {
+    return arguments.length + "/" + xs.join(",");
+}
 
 function bigLits(pad) {
-  var a = 900000000000000000009n;
-  var b = 0x10n;
-  return "" + a + "/" + b + "/" + (a + 1n);
+    var a = 900000000000000000009n;
+    var b = 0x10n;
+    return "" + a + "/" + b + "/" + (a + 1n);
 }
 
 function keysOf(pad, o) {
-  var out = "";
-  for (var k in o) { out = out + k; }
-  return out;
+    var out = "";
+    for (var k in o) {
+        out = out + k;
+    }
+    return out;
 }
+
 function dropNamed(pad) {
-  var o = { a: 1, b: 2, c: 3 };
-  delete o.b;
-  return keysOf(0, o) + "/" + o.b;
+    var o = {
+        a: 1,
+        b: 2,
+        c: 3
+    };
+    delete o.b;
+    return keysOf(0, o) + "/" + o.b;
 }
+
 function coerce(pad) {
-  return "" + plusOf(0, "42") + "/" + plusOf(0, "") + "/" + (plusOf(0, undef) !== plusOf(0, undef));
+    return "" + plusOf(0, "42") + "/" + plusOf(0, "") + "/" + (plusOf(0, undef) !== plusOf(0, undef));
 }
 
 function guarded(pad, f, a) {
-  var n = 0;
-  try {
-    n = 1;
-    f(a);
-    n = 2;
-  } catch (e) {
-    return "" + n + ":" + e;
-  }
-  return "" + n;
+    var n = 0;
+    try {
+        n = 1;
+        f(a);
+        n = 2;
+    } catch (e) {
+        return "" + n + ":" + e;
+    }
+    return "" + n;
 }
 
 function useAccessor(pad, seed) {
-  var o = accessors(0, seed);
-  var first = o.v;
-  o.v = 7;
-  return "" + first + "/" + o.v + "/" + o.box.log;
+    var o = accessors(0, seed);
+    var first = o.v;
+    o.v = 7;
+    return "" + first + "/" + o.v + "/" + o.box.log;
 }
 
 // ASYNC WITHOUT await - op::wrap_promise, the only half of async that does not
@@ -484,7 +702,9 @@ function useAccessor(pad, seed) {
 // reading them is what lets this compare the OBJECT rather than whatever a
 // `.then` chain would eventually deliver. A driver that awaited would need the
 // microtask queue and would be testing the event loop instead.
-async function wrapped(a) { return a + 1; }
+async function wrapped(a) {
+    return a + 1;
+}
 
 // RETURNING A PROMISE MUST NOT NEST IT, which is the already-a-promise test.
 // `passes(p) === p` is the separator: a lowering that dropped the test answers
@@ -495,128 +715,240 @@ async function wrapped(a) { return a + 1; }
 // values are trivially identical - so `===` separates a lowering that NESTS
 // and says nothing about one that no-ops. The other two fields of arm 51 are
 // what caught that mutation.
-async function passes(p) { return p; }
+async function passes(p) {
+    return p;
+}
 
 // AND is_object() IS heap_kind::object EXACTLY, so an ARRAY returned from an
 // async function is ALWAYS re-wrapped. A lowering that used is_object_like -
 // which is what "is it already a promise" reads like in English - would pass
 // the array straight through, and then __value is undefined instead of the
 // array. This is the one case that separates the exact shape test.
-async function arrayOut() { return [7, 8]; }
+async function arrayOut() {
+    return [7, 8];
+}
 
 function drive(which) {
-  // A SENTINEL, so an arm that throws or never matches is visible. Without it
-  // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
-  // and agree - which is a broken case reporting success. That happened.
-  OUT = "<the arm did not run>";
-  DIFF_R = 41; DIFF_W = 0;
-  if (which === 0) { OUT = plus(counter2, 1); }
-  if (which === 1) { OUT = ge(nan, nan); }
-  if (which === 2) { OUT = strict(0, "0"); }
-  if (which === 3) { OUT = loose(0, "0"); }
-  if (which === 4) { OUT = pick(2, 7); }
-  if (which === 5) { OUT = "" + globals(7) + "/" + DIFF_W; }
-  if (which === 6) { OUT = apply(plus, counter2, 1); }
-  // CALLED TWICE, because one call cannot tell a captured cell from a copy:
-  // both answer 1. The second answer is 2 only if the binding persisted.
-  if (which === 7) { var c = counter(10); c(); OUT = c(); }
-  // 101 + 201 = 302 if the two closures capture separately; 101 + 102 = 203 if
-  // they share, which is what taking upvalues from the proto would do.
-  if (which === 8) { OUT = counters(100, 200); }
-  // BUILDING a closure rather than reading one.
-  if (which === 9) { var d = counter(50); d(); OUT = d(); }
-  // 1 + 2 = 3, and only if both descriptor arms picked the right binding.
-  if (which === 10) { OUT = outer(1)(2)(); }
-  // .call GIVES methodish A RECEIVER without needing an object literal, which
-  // would reach ct_aot_set_index - one of the rows with no body yet.
-  if (which === 11) { OUT = methodish.call("captured", 0); }
-  // THE NUMBER ARM, and -0 is the case a naive negation gets right by accident
-  // while `Object.is` can still tell: 1/-0 is -Infinity.
-  if (which === 12) { OUT = "" + neg(5) + "/" + (1 / neg(0)); }
-  // AND THE BIGINT ARM, which allocates. It reaches the compiled body as an
-  // ARGUMENT rather than a literal, because ct_aot_new_bigint_literal is one
-  // of the rows with no body yet.
-  if (which === 13) { OUT = "" + neg(big) + "/" + neg(zeroBig); }
-  if (which === 14) { OUT = "" + bnot(5) + "/" + bnot(big); }
-  // A NUMERIC key writes items[0]: 9*100 + 0 = 900. A STRING key does not -
-  // store_property's array arm drops everything but `length` - so items[0] is
-  // still 1 and nothing reads back: 1*100 + 0 = 100.
-  //
-  // WHAT THIS DOES NOT SEPARATE, said plainly: removing `key.is_number()` from
-  // store_index's guard leaves the answer unchanged. The fast path would then
-  // compute its index from as_number() of a STRING, which is undefined
-  // behaviour, and on this target it lands out of range and the write is
-  // dropped - the same observable result. A case that pins that guard would
-  // have to rely on what the UB happens to do, which is worse than not pinning
-  // it.
-  if (which === 15) { OUT = "" + put([1, 2], 0, 9, "0") + "/" + put([1, 2], "0", 9, "0"); }
-  if (which === 16) { OUT = greet(3); }
-  // 1*100 + 1*10 + 2 = 112, with the object read through `| 0` so a missing
-  // property is 0 rather than a string.
-  if (which === 17) { OUT = pack(1, 2); }
-  if (which === 18) { OUT = kindOf(1) + "/" + kindOf(nan) + "/" + kindOf(big); }
-  // THE VALUE MUST ARRIVE INTACT, which is what distinguishes a real throw from
-  // a frame that merely unwound: a lost `thrown_` would catch undefined.
-  if (which === 19) { try { thrower(7); OUT = "not thrown"; } catch (e) { OUT = "caught " + e; } }
-  // 3*2 + 3 = 9, and only if `new` answered the instance rather than the 7
-  // Point returns and the prototype came from Point.prototype.
-  if (which === 20) { OUT = build(3); }
-  // THE MESSAGE IS THE ASSERTION, because the function it names is the operand
-  // under test. `in \`newBad\`` is ct_aot_construct's `site`.
-  if (which === 21) { try { newBad(5); OUT = "not thrown"; } catch (e) { OUT = "" + e; } }
-  // 0 and "" are DEFINED, so `??` keeps them; a nullish left side takes the
-  // right. `?.` on null is undefined rather than a throw.
-  if (which === 23) { OUT = "" + total(0, [1, 2, 3]) + "/" + chars(0, "abc") + "/" + nonobj(0, 7); }
-  if (which === 24) { OUT = "" + spread(0, "hey") + "/" + spread(0, [1, 2]); }
-  if (which === 25) {
-    OUT = "" + hasIt(0, [7, 8], 0) + "/" + hasIt(0, [7, 8], "1x") + "/" + hasIt(0, [7, 8], 2) +
-          "/" + hasIt(0, { a: 1 }, "a") + "/" + hasIt(0, 5, "x");
-  }
-  if (which === 26) {
-    OUT = "" + isA(0, new Point(1), Point) + "/" + isA(0, [], Array) + "/" + isA(0, 5, Number);
-  }
-  if (which === 27) { OUT = drop(0, { a: 1, b: 2 }, "a"); }
-  if (which === 28) { OUT = useSuper(0); }
-  if (which === 29) { OUT = useSuperCtor(0, 10); }
-  if (which === 30) { OUT = spreadCall(0, [1, 2, 3]) + "|" + spreadNonIterable(0, 5); }
-  if (which === 31) { OUT = spreadMethod(0, [7]); }
-  if (which === 32) { OUT = spreadNew(0, [1, 2]); }
-  if (which === 33) { OUT = spreadOut(0, { a: 2, b: 3 }) + "/" + mergeArray(0, [7, 8]); }
-  if (which === 34) { OUT = "" + firstLoop(0, 9) + "/" + firstLoop(0, 1); }
-  if (which === 35) { OUT = useAccessor(0, 41); }
-  // thrower THROWS AND neg DOES NOT, so one arm takes the caught edge and the
-  // other runs the try to its end - the same compiled body, both ways through.
-  if (which === 36) { OUT = guarded(0, thrower, 7) + "/" + guarded(0, neg, 5); }
-  // NaN !== NaN, so the third field is `true` only if `+undefined` really is
-  // NaN - a coercion that answered 0 would make it false.
-  if (which === 37) { OUT = coerce(0); }
-  if (which === 38) { OUT = keysOf(0, { x: 1, y: 2 }) + "/" + keysOf(0, [7, 8]) + "/" + keysOf(0, 5); }
-  if (which === 39) { OUT = dropNamed(0); }
-  if (which === 40) { OUT = bigLits(0); }
-  if (which === 41) { OUT = howMany(1, 2, 3, 4) + "/" + howMany(1) + "/" + sumAll(5, 6, 7); }
-  if (which === 42) { OUT = restOf(1, 2, 3) + "/" + restOf(1) + "/" + bothOf(1, 2, 3); }
-  // 50 AND 51, NOT 41 AND 42, and the gap is deliberate: the `arguments` and
-  // rest-parameter work is landing 40-43 on a branch of its own, and two tracks
-  // numbering the same arm differently is a merge that compiles and tests the
-  // wrong thing.
-  //
-  // typeof IS IN THE ANSWER because "object" is what separates a promise from
-  // the number 2 - a lowering that skipped the wrap entirely would answer
-  // "number/2/undefined", with the __value field looking almost right.
-  if (which === 50) {
-    var p = wrapped(1);
-    OUT = "" + (typeof p) + "/" + p.__value + "/" + p.__settled + "/" + p.__rejected;
-  }
-  // THE TWO SHAPE QUESTIONS IN ONE LINE. `passes(p) === p` is the
-  // already-a-promise test; `arrayOut().__value[0]` is the exactness of
-  // is_object(), because an array must be re-wrapped and not passed through.
-  if (which === 51) {
-    var q = wrapped(2);
-    OUT = "" + (passes(q) === q) + "/" + arrayOut().__value[0] + "/" +
-          (typeof arrayOut().__value);
-  }
-  if (which === 22) {
-    OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
-          chain(null) + "/" + chain({ p: 4 }) + "/" + dflt(0);
-  }
+    // A SENTINEL, so an arm that throws or never matches is visible. Without it
+    // OUT keeps the PREVIOUS case's answer, both tiers read the same stale value
+    // and agree - which is a broken case reporting success. That happened.
+    OUT = "<the arm did not run>";
+    DIFF_R = 41;
+    DIFF_W = 0;
+    if (which === 0) {
+        OUT = plus(counter2, 1);
+    }
+    if (which === 1) {
+        OUT = ge(nan, nan);
+    }
+    if (which === 2) {
+        OUT = strict(0, "0");
+    }
+    if (which === 3) {
+        OUT = loose(0, "0");
+    }
+    if (which === 4) {
+        OUT = pick(2, 7);
+    }
+    if (which === 5) {
+        OUT = "" + globals(7) + "/" + DIFF_W;
+    }
+    if (which === 6) {
+        OUT = apply(plus, counter2, 1);
+    }
+    // CALLED TWICE, because one call cannot tell a captured cell from a copy:
+    // both answer 1. The second answer is 2 only if the binding persisted.
+    if (which === 7) {
+        var c = counter(10);
+        c();
+        OUT = c();
+    }
+    // 101 + 201 = 302 if the two closures capture separately; 101 + 102 = 203 if
+    // they share, which is what taking upvalues from the proto would do.
+    if (which === 8) {
+        OUT = counters(100, 200);
+    }
+    // BUILDING a closure rather than reading one.
+    if (which === 9) {
+        var d = counter(50);
+        d();
+        OUT = d();
+    }
+    // 1 + 2 = 3, and only if both descriptor arms picked the right binding.
+    if (which === 10) {
+        OUT = outer(1)(2)();
+    }
+    // .call GIVES methodish A RECEIVER without needing an object literal, which
+    // would reach ct_aot_set_index - one of the rows with no body yet.
+    if (which === 11) {
+        OUT = methodish.call("captured", 0);
+    }
+    // THE NUMBER ARM, and -0 is the case a naive negation gets right by accident
+    // while `Object.is` can still tell: 1/-0 is -Infinity.
+    if (which === 12) {
+        OUT = "" + neg(5) + "/" + (1 / neg(0));
+    }
+    // AND THE BIGINT ARM, which allocates. It reaches the compiled body as an
+    // ARGUMENT rather than a literal, because ct_aot_new_bigint_literal is one
+    // of the rows with no body yet.
+    if (which === 13) {
+        OUT = "" + neg(big) + "/" + neg(zeroBig);
+    }
+    if (which === 14) {
+        OUT = "" + bnot(5) + "/" + bnot(big);
+    }
+    // A NUMERIC key writes items[0]: 9*100 + 0 = 900. A STRING key does not -
+    // store_property's array arm drops everything but `length` - so items[0] is
+    // still 1 and nothing reads back: 1*100 + 0 = 100.
+    //
+    // WHAT THIS DOES NOT SEPARATE, said plainly: removing `key.is_number()` from
+    // store_index's guard leaves the answer unchanged. The fast path would then
+    // compute its index from as_number() of a STRING, which is undefined
+    // behaviour, and on this target it lands out of range and the write is
+    // dropped - the same observable result. A case that pins that guard would
+    // have to rely on what the UB happens to do, which is worse than not pinning
+    // it.
+    if (which === 15) {
+        OUT = "" + put([1, 2], 0, 9, "0") + "/" + put([1, 2], "0", 9, "0");
+    }
+    if (which === 16) {
+        OUT = greet(3);
+    }
+    // 1*100 + 1*10 + 2 = 112, with the object read through `| 0` so a missing
+    // property is 0 rather than a string.
+    if (which === 17) {
+        OUT = pack(1, 2);
+    }
+    if (which === 18) {
+        OUT = kindOf(1) + "/" + kindOf(nan) + "/" + kindOf(big);
+    }
+    // THE VALUE MUST ARRIVE INTACT, which is what distinguishes a real throw from
+    // a frame that merely unwound: a lost `thrown_` would catch undefined.
+    if (which === 19) {
+        try {
+            thrower(7);
+            OUT = "not thrown";
+        } catch (e) {
+            OUT = "caught " + e;
+        }
+    }
+    // 3*2 + 3 = 9, and only if `new` answered the instance rather than the 7
+    // Point returns and the prototype came from Point.prototype.
+    if (which === 20) {
+        OUT = build(3);
+    }
+    // THE MESSAGE IS THE ASSERTION, because the function it names is the operand
+    // under test. `in \`newBad\`` is ct_aot_construct's `site`.
+    if (which === 21) {
+        try {
+            newBad(5);
+            OUT = "not thrown";
+        } catch (e) {
+            OUT = "" + e;
+        }
+    }
+    // 0 and "" are DEFINED, so `??` keeps them; a nullish left side takes the
+    // right. `?.` on null is undefined rather than a throw.
+    if (which === 23) {
+        OUT = "" + total(0, [1, 2, 3]) + "/" + chars(0, "abc") + "/" + nonobj(0, 7);
+    }
+    if (which === 24) {
+        OUT = "" + spread(0, "hey") + "/" + spread(0, [1, 2]);
+    }
+    if (which === 25) {
+        OUT = "" + hasIt(0, [7, 8], 0) + "/" + hasIt(0, [7, 8], "1x") + "/" + hasIt(0, [7, 8], 2) +
+            "/" + hasIt(0, {
+                a: 1
+            }, "a") + "/" + hasIt(0, 5, "x");
+    }
+    if (which === 26) {
+        OUT = "" + isA(0, new Point(1), Point) + "/" + isA(0, [], Array) + "/" + isA(0, 5, Number);
+    }
+    if (which === 27) {
+        OUT = drop(0, {
+            a: 1,
+            b: 2
+        }, "a");
+    }
+    if (which === 28) {
+        OUT = useSuper(0);
+    }
+    if (which === 29) {
+        OUT = useSuperCtor(0, 10);
+    }
+    if (which === 30) {
+        OUT = spreadCall(0, [1, 2, 3]) + "|" + spreadNonIterable(0, 5);
+    }
+    if (which === 31) {
+        OUT = spreadMethod(0, [7]);
+    }
+    if (which === 32) {
+        OUT = spreadNew(0, [1, 2]);
+    }
+    if (which === 33) {
+        OUT = spreadOut(0, {
+            a: 2,
+            b: 3
+        }) + "/" + mergeArray(0, [7, 8]);
+    }
+    if (which === 34) {
+        OUT = "" + firstLoop(0, 9) + "/" + firstLoop(0, 1);
+    }
+    if (which === 35) {
+        OUT = useAccessor(0, 41);
+    }
+    // thrower THROWS AND neg DOES NOT, so one arm takes the caught edge and the
+    // other runs the try to its end - the same compiled body, both ways through.
+    if (which === 36) {
+        OUT = guarded(0, thrower, 7) + "/" + guarded(0, neg, 5);
+    }
+    // NaN !== NaN, so the third field is `true` only if `+undefined` really is
+    // NaN - a coercion that answered 0 would make it false.
+    if (which === 37) {
+        OUT = coerce(0);
+    }
+    if (which === 38) {
+        OUT = keysOf(0, {
+            x: 1,
+            y: 2
+        }) + "/" + keysOf(0, [7, 8]) + "/" + keysOf(0, 5);
+    }
+    if (which === 39) {
+        OUT = dropNamed(0);
+    }
+    if (which === 40) {
+        OUT = bigLits(0);
+    }
+    if (which === 41) {
+        OUT = howMany(1, 2, 3, 4) + "/" + howMany(1) + "/" + sumAll(5, 6, 7);
+    }
+    if (which === 42) {
+        OUT = restOf(1, 2, 3) + "/" + restOf(1) + "/" + bothOf(1, 2, 3);
+    }
+    // 50 AND 51, NOT 41 AND 42, and the gap is deliberate: the `arguments` and
+    // rest-parameter work is landing 40-43 on a branch of its own, and two tracks
+    // numbering the same arm differently is a merge that compiles and tests the
+    // wrong thing.
+    //
+    // typeof IS IN THE ANSWER because "object" is what separates a promise from
+    // the number 2 - a lowering that skipped the wrap entirely would answer
+    // "number/2/undefined", with the __value field looking almost right.
+    if (which === 50) {
+        var p = wrapped(1);
+        OUT = "" + (typeof p) + "/" + p.__value + "/" + p.__settled + "/" + p.__rejected;
+    }
+    // THE TWO SHAPE QUESTIONS IN ONE LINE. `passes(p) === p` is the
+    // already-a-promise test; `arrayOut().__value[0]` is the exactness of
+    // is_object(), because an array must be re-wrapped and not passed through.
+    if (which === 51) {
+        var q = wrapped(2);
+        OUT = "" + (passes(q) === q) + "/" + arrayOut().__value[0] + "/" +
+            (typeof arrayOut().__value);
+    }
+    if (which === 22) {
+        OUT = "" + coalesce(0, 9) + "/" + coalesce("", 9) + "/" + coalesce(nothing, 9) + "/" +
+            chain(null) + "/" + chain({
+                p: 4
+            }) + "/" + dflt(0);
+    }
 }

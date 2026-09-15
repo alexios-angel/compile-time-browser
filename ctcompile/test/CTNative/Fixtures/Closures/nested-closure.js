@@ -56,7 +56,9 @@
 // capture is now `mid`'s parameter - lifts to `deep(k)` in the second.
 function two_levels(k) {
     function mid() {
-        function deep() { return k + 1; }
+        function deep() {
+            return k + 1;
+        }
         return deep() * 2;
     }
     return mid();
@@ -68,7 +70,9 @@ function two_levels(k) {
 // they arrive in descriptor order whichever that is - the interpreter decides.
 function both_kinds(k) {
     function mid(j) {
-        function deep() { return k * 10 + j; }
+        function deep() {
+            return k * 10 + j;
+        }
         return deep();
     }
     return mid(3) + mid(4);
@@ -79,7 +83,9 @@ function both_kinds(k) {
 function three_levels(k) {
     function mid() {
         function inner() {
-            function deep() { return k * 3; }
+            function deep() {
+                return k * 3;
+            }
             return deep() + 1;
         }
         return inner() * 2;
@@ -91,7 +97,9 @@ function three_levels(k) {
 // the same value at both calls of `mid`; `j` differs, and `deep` reads both.
 function twice_frames(k) {
     function mid(j) {
-        function deep(x) { return k + j * x; }
+        function deep(x) {
+            return k + j * x;
+        }
         return deep(2) + deep(3);
     }
     return mid(1) * 100 + mid(5);
@@ -104,7 +112,9 @@ function twice_frames(k) {
 function chain_params(a, b) {
     function mid(c) {
         function inner(d) {
-            function deep(e) { return a * 1000 + b * 100 + c * 10 + d + e; }
+            function deep(e) {
+                return a * 1000 + b * 100 + c * 10 + d + e;
+            }
             return deep(1) + deep(2);
         }
         return inner(3) + inner(4);
@@ -116,13 +126,21 @@ function chain_params(a, b) {
 // `inside` through `mid`'s closure; `x` is `mid`'s parameter.
 function bounded_two(lo, hi) {
     function mid(x) {
-        function inside() { return x >= lo && x < hi; }
+        function inside() {
+            return x >= lo && x < hi;
+        }
         return inside();
     }
     var hits = 0;
-    if (mid(1)) { hits = hits + 1; }
-    if (mid(9)) { hits = hits + 10; }
-    if (mid(4)) { hits = hits + 100; }
+    if (mid(1)) {
+        hits = hits + 1;
+    }
+    if (mid(9)) {
+        hits = hits + 10;
+    }
+    if (mid(4)) {
+        hits = hits + 100;
+    }
     return hits;
 }
 
@@ -145,7 +163,9 @@ function arrow_two(k) {
 // upvalue read the boxed tier paid for and nothing consumed.)
 function shared_read(k) {
     function mid() {
-        function deep() { return k * 2; }
+        function deep() {
+            return k * 2;
+        }
         return deep() + k;
     }
     return mid();

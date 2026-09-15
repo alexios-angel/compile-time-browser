@@ -1,7 +1,9 @@
 // Factory construction is static. Closure bodies run only after their factory
 // has returned, with dynamic arguments and ordinary owning C++ environments.
 function makeRetained() {
-    const scratch = { amount: 1 };
+    const scratch = {
+        amount: 1
+    };
     scratch.amount = 20;
     const discarded = new Map();
     discarded.set("temporary", 99);
@@ -17,6 +19,7 @@ function makeRetained() {
         return before * 1000 + state.get("value") + state.get("calls") * 100;
     };
 }
+
 function retainedAliases() {
     const first = makeRetained();
     const alias = first;
@@ -25,6 +28,7 @@ function retainedAliases() {
     const b = alias(1);
     return a + b * 10 + second(2) * 100;
 }
+
 function retainedLifetime() {
     const retained = makeRetained();
     for (var i = 0; i < 40; ++i) {
@@ -33,16 +37,25 @@ function retainedLifetime() {
     }
     return retained(2);
 }
+
 function makeData() {
     const state = new Map();
     state.set("value", 0);
     state.set("value", 40);
     return {
-        get(delta) { return state.get("value") + delta; },
-        set(value) { state.set("value", value); return state.get("value") + 0; },
-        remove() { return state.delete("value") ? 1 : 0; }
+        get(delta) {
+            return state.get("value") + delta;
+        },
+        set(value) {
+            state.set("value", value);
+            return state.get("value") + 0;
+        },
+        remove() {
+            return state.delete("value") ? 1 : 0;
+        }
     };
 }
+
 function tableSharing() {
     const first = makeData();
     const alias = first;
@@ -52,6 +65,7 @@ function tableSharing() {
     return before + first.get(0) * 100 + second.get(2) * 10000 +
         first.remove() * 1000000 + alias.remove() * 10000000;
 }
+
 function makeKeyed() {
     const first = {};
     const second = {};
@@ -64,12 +78,14 @@ function makeKeyed() {
         return state.get(first) * 100 + state.get(second);
     };
 }
+
 function keyedLifetime() {
     const first = makeKeyed();
     const second = makeKeyed();
     const a = first(1);
     return a + first(2) * 10000 + second(3) * 100000000;
 }
+
 function makeSnapshot() {
     const state = new Map();
     state.set("value", 10);
@@ -77,15 +93,18 @@ function makeSnapshot() {
     const saved = state.get("value");
     return delta => saved + delta;
 }
+
 function scalarSnapshot() {
     const first = makeSnapshot();
     const second = makeSnapshot();
     return first(0) + second(3) * 100;
 }
+
 function makeText() {
     const text = "value:" + ("40" + 2) + "-a-string-long-enough-to-need-owned-storage";
     return suffix => text + suffix;
 }
+
 function textLifetime() {
     const first = makeText();
     const second = makeText();

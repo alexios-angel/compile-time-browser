@@ -21,7 +21,9 @@
 // also has to be in the call's CONTIGUOUS argument window - so this exercises
 // both kinds of rooting the backend does: one slot per produced value, and a
 // reserved run per call site.
-function f(a, b, c, k) { return k(a + b, c); }
+function f(a, b, c, k) {
+    return k(a + b, c);
+}
 
 // AND A CLOSURE BUILT IN COMPILED CODE, HELD ACROSS A COLLECTION.
 //
@@ -29,12 +31,22 @@ function f(a, b, c, k) { return k(a + b, c); }
 // it. Three things have to survive: the string `a + b` builds, the CELL holding
 // it, and the closure_object itself - none of which is reachable from anything
 // but this frame's slots while `k` runs user JavaScript.
-function held(a, b, c, k) { var s = a + b; var keep = function () { return s; }; return k(keep(), c); }
+function held(a, b, c, k) {
+    var s = a + b;
+    var keep = function () {
+        return s;
+    };
+    return k(keep(), c);
+}
 
+function built(a, b, c, k) {
+    var o = new Box(a + b);
+    return k(o.s, c);
+}
 
-function built(a, b, c, k) { var o = new Box(a + b); return k(o.s, c); }
-
-function cat(x, y) { return x + y; }
+function cat(x, y) {
+    return x + y;
+}
 
 // A CONSTRUCTOR, so ct_aot_construct's own argument window is covered.
 //
@@ -42,17 +54,47 @@ function cat(x, y) { return x + y; }
 // window_pointer in the backend - and nothing above reaches it. The string
 // `a + b` builds is handed to `new Box(...)` and then lives ONLY in that
 // window while make_instance allocates and the body runs.
-function Box(s) { this.s = s; }
+function Box(s) {
+    this.s = s;
+}
 
-function repeat(ch) { var s = ''; for (var i = 0; i < 32; i++) { s = s + ch; } return s; }
+function repeat(ch) {
+    var s = '';
+    for (var i = 0; i < 32; i++) {
+        s = s + ch;
+    }
+    return s;
+}
 
-var A = '', B = '', R = '';
+var A = '',
+    B = '',
+    R = '';
 
 // ITS valueOf ALLOCATES BEFORE IT ANSWERS, so the collection happens while the
 // caller is holding a value it has nowhere rooted.
-var c = { valueOf: function () { var j = ''; for (var i = 0; i < 8; i++) { j = j + 'q'; } return 'Z'; } };
+var c = {
+    valueOf: function () {
+        var j = '';
+        for (var i = 0; i < 8; i++) {
+            j = j + 'q';
+        }
+        return 'Z';
+    }
+};
 
-function setup() { A = repeat('A'); B = repeat('B'); }
-function run() { R = f(A, B, c, cat); }
-function runHeld() { R = held(A, B, c, cat); }
-function runBuilt() { R = built(A, B, c, cat); }
+function setup() {
+    A = repeat('A');
+    B = repeat('B');
+}
+
+function run() {
+    R = f(A, B, c, cat);
+}
+
+function runHeld() {
+    R = held(A, B, c, cat);
+}
+
+function runBuilt() {
+    R = built(A, B, c, cat);
+}

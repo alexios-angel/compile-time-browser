@@ -10,7 +10,10 @@
 // adopting the record's would leave the record holding the empty box
 // instantiate_module created, and this answers `undefined` while every
 // assertion inside main still passes.
-import { mine, raise2 } from "./main.js";
+import {
+    mine,
+    raise2
+} from "./main.js";
 
 READ_MINE = function () {
     raise2();

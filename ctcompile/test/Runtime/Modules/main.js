@@ -17,7 +17,11 @@
 // FOUR BINDINGS FROM ONE SPECIFIER: a default, a mutable one, a constant, and a
 // function. `def` and `count` differ in value AND in exported name, so reading
 // the wrong name index moves the answer rather than leaving it alone.
-import def, { count, tag, bump } from "./dep.js";
+import def, {
+    count,
+    tag,
+    bump
+} from "./dep.js";
 
 // TWO NAMESPACES OF THE SAME MODULE, which is the only way to see the identity
 // cache. `ns === ns2` is required to be true, and a lowering that built a
@@ -76,7 +80,7 @@ DRIVE = function (which) {
     // value - plus the identity the cache exists for.
     if (which === 1) {
         bump();
-        OUT = "" + ns.count + "/" + ns.tag + "/" + ns.default + "/" + (ns === ns2);
+        OUT = "" + ns.count + "/" + ns.tag + "/" + ns.default+"/" + (ns === ns2);
     }
     // BOTH MECHANISMS AGAINST ONE WRITE, so a tier that made the namespace out
     // of a DIFFERENT record than the named import - the resolved-specifier
@@ -86,7 +90,9 @@ DRIVE = function (which) {
         bump();
         OUT = "" + count + "/" + ns.count + "/" + (count === ns.count);
     }
-    if (which === 3) { OUT = loadTwo(); }
+    if (which === 3) {
+        OUT = loadTwo();
+    }
     // THIS MODULE'S OWN EXPORT, WRITTEN THROUGH THE ADOPTED CELL. Reading it
     // here only proves the local works; module-user.js is what reads it from
     // the OTHER side of the record, which is the half op::bind_export decides.

@@ -110,7 +110,9 @@ function method_on_instance() {
         this.w = w;
     };
     var b = new Box(5);
-    var scale = function (o, f) { return o.w * f; };
+    var scale = function (o, f) {
+        return o.w * f;
+    };
     return scale(b, 5);
 }
 

@@ -30,7 +30,12 @@
 // A READ-ONLY METHOD. The smallest receiver lift there is: `this.x` becomes
 // `self->x` and `p.bump(4)` becomes `bump_1(&p, 4)`.
 function read_only() {
-    var p = { x: 6, bump: function (n) { return this.x + n; } };
+    var p = {
+        x: 6,
+        bump: function (n) {
+            return this.x + n;
+        }
+    };
     return p.bump(4);
 }
 
@@ -39,7 +44,12 @@ function read_only() {
 // which a by-value receiver would not do, and which two calls in a row are what
 // prove - by value the answer would be 3 and not 9.
 function mutating() {
-    var c = { n: 1, step: function () { this.n = this.n * 3; } };
+    var c = {
+        n: 1,
+        step: function () {
+            this.n = this.n * 3;
+        }
+    };
     c.step();
     c.step();
     return c.n;
@@ -54,8 +64,12 @@ function chained() {
     var v = {
         w: 3,
         h: 5,
-        area: function () { return this.w * this.h; },
-        twice: function () { return this.area() * 2; }
+        area: function () {
+            return this.w * this.h;
+        },
+        twice: function () {
+            return this.area() * 2;
+        }
     };
     return v.twice();
 }
@@ -69,9 +83,17 @@ function chained() {
 // boxes a local MENTIONED inside a nested function, and nothing mentions `add`
 // inside one - so the closure value flows to both stores directly.
 function shared() {
-    var add = function (k) { return this.base + k; };
-    var a = { base: 100, plus: add };
-    var b = { base: 200, plus: add };
+    var add = function (k) {
+        return this.base + k;
+    };
+    var a = {
+        base: 100,
+        plus: add
+    };
+    var b = {
+        base: 200,
+        plus: add
+    };
     return a.plus(1) + b.plus(2);
 }
 
@@ -81,14 +103,24 @@ function shared() {
 // `times_N(ctn_v * self, double scale)`. The two lifts compose because a method
 // IS a closure in the IR and they share their capture clauses.
 function captured(scale) {
-    var o = { v: 2, times: function () { return this.v * scale; } };
+    var o = {
+        v: 2,
+        times: function () {
+            return this.v * scale;
+        }
+    };
     return o.times();
 }
 
 // A METHOD THAT RETURNS A BOOLEAN, so the lifted signature is `bool` and not
 // `double` - the return carrier is decided by the returns, receiver or not.
 function boolean_method(n) {
-    var g = { limit: 50, over: function (x) { return x > this.limit; } };
+    var g = {
+        limit: 50,
+        over: function (x) {
+            return x > this.limit;
+        }
+    };
     return g.over(n) ? 1 : 0;
 }
 
@@ -97,7 +129,12 @@ function boolean_method(n) {
 // phi for a variable assigned once before the loop, so `acc` is one object and
 // the call inside the loop is a call on it.
 function accumulated(n) {
-    var acc = { total: 0, add: function (k) { this.total = this.total + k; } };
+    var acc = {
+        total: 0,
+        add: function (k) {
+            this.total = this.total + k;
+        }
+    };
     var i = 0;
     while (i < n) {
         acc.add(i);

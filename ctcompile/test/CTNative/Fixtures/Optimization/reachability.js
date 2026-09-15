@@ -6,10 +6,12 @@ function seed(offset, input) {
     map.set("base", offset * 10);
     return map.get("base") + input;
 }
+
 function runtime(input) {
     effect = input;
     return seed(1, input);
 }
+
 function initialize() {
     return seed(2, 3) + seed(4, 5);
 }

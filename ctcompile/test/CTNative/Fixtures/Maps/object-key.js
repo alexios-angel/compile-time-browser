@@ -1,7 +1,16 @@
 // Empty object keys carry owning identity across calls and factory lifetimes.
-function makeKey() { return {}; }
-function forwardKey(key) { return key; }
-function readKey(map, key) { return map.get(key) + 0; }
+function makeKey() {
+    return {};
+}
+
+function forwardKey(key) {
+    return key;
+}
+
+function readKey(map, key) {
+    return map.get(key) + 0;
+}
+
 function keyAliases() {
     const first = makeKey();
     const second = makeKey();
@@ -12,6 +21,7 @@ function keyAliases() {
     map.set(alias, 22);
     return map.size * 10000 + readKey(map, first) * 100 + readKey(map, second);
 }
+
 function keyOperations() {
     const first = {};
     const second = {};
@@ -26,47 +36,62 @@ function keyOperations() {
     map.clear();
     return before + missing + removed + left + map.size;
 }
+
 function makeKeyedMap() {
     const map = new Map();
     map.set(makeKey(), 42);
     return map;
 }
+
 function retainedKeys() {
     const map = makeKeyedMap();
-    for (var i = 0; i < 100; ++i) { map.set(makeKey(), i); }
+    for (var i = 0; i < 100; ++i) {
+        map.set(makeKey(), i);
+    }
     return map.size * 1000 + Array.from(map.values())[0];
 }
+
 function retainedAlias() {
     const key = forwardKey(makeKey());
     const map = new Map();
     map.set(key, 42);
-    for (var i = 0; i < 100; ++i) { makeKeyedMap(); }
+    for (var i = 0; i < 100; ++i) {
+        makeKeyedMap();
+    }
     return readKey(map, key);
 }
+
 function makeData() {
     const entries = new Map();
     return {
         set(key, value) {
-            if (!entries.has(key)) { entries.set(key, new Map()); }
+            if (!entries.has(key)) {
+                entries.set(key, new Map());
+            }
             const data = entries.get(key);
             data.set("value", value);
             return value;
         },
         get(key) {
-            if (entries.has(key)) { return entries.get(key).get("value") + 0; }
+            if (entries.has(key)) {
+                return entries.get(key).get("value") + 0;
+            }
             return 0;
         },
         remove(key) {
             if (entries.has(key)) {
                 const data = entries.get(key);
                 data.delete("value");
-                if (data.size === 0) { entries.delete(key); }
+                if (data.size === 0) {
+                    entries.delete(key);
+                }
                 return 1;
             }
             return 0;
         }
     };
 }
+
 function dataLifetime() {
     const first = makeKey();
     const other = makeKey();

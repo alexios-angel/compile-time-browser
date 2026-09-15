@@ -48,8 +48,12 @@
 // call becomes `call_direct @twice` and whose capture slot goes with it - so
 // `bump` lowers to a function of one argument that closes over nothing.
 function one_level(n) {
-    var twice = function (k) { return k * 2; };
-    var bump = function (k) { return twice(k) + 1; };
+    var twice = function (k) {
+        return k * 2;
+    };
+    var bump = function (k) {
+        return twice(k) + 1;
+    };
     return bump(n);
 }
 
@@ -59,11 +63,17 @@ function one_level(n) {
 // direct call, its own body still holds a box holding a function.
 function two_levels(n) {
     var outer_helper = function (k) {
-        var add_one = function (j) { return j + 1; };
-        var tripled = function (j) { return add_one(j) * 3; };
+        var add_one = function (j) {
+            return j + 1;
+        };
+        var tripled = function (j) {
+            return add_one(j) * 3;
+        };
         return tripled(k);
     };
-    var lift_it = function (k) { return outer_helper(k) + 100; };
+    var lift_it = function (k) {
+        return outer_helper(k) + 100;
+    };
     return lift_it(n);
 }
 
@@ -77,7 +87,9 @@ function two_levels(n) {
 // store is not a call, so asking it to dominate itself asks the wrong question.
 function recursive(n) {
     var down = function (k) {
-        if (k <= 0) { return 0; }
+        if (k <= 0) {
+            return 0;
+        }
         return k + down(k - 1);
     };
     return down(n);
@@ -87,8 +99,12 @@ function recursive(n) {
 // `ctjs.call_direct`, so a rewrite that took only the first would print 3
 // where the interpreter prints 381.
 function many_calls() {
-    var add = function (a, b) { return a + b; };
-    var total = function () { return add(1, 2) * 100 + add(3, 4) * 10 + add(5, 6); };
+    var add = function (a, b) {
+        return a + b;
+    };
+    var total = function () {
+        return add(1, 2) * 100 + add(3, 4) * 10 + add(5, 6);
+    };
     return total();
 }
 
@@ -97,9 +113,15 @@ function many_calls() {
 // removed - which is the case that renumbers, since dropping slot 0 alone would
 // leave `negate` being read at an index that no longer means what it did.
 function two_names(n) {
-    var square = function (k) { return k * k; };
-    var negate = function (k) { return 0 - k; };
-    var mix = function (k) { return square(k) + negate(k); };
+    var square = function (k) {
+        return k * k;
+    };
+    var negate = function (k) {
+        return 0 - k;
+    };
+    var mix = function (k) {
+        return square(k) + negate(k);
+    };
     return mix(n);
 }
 
@@ -109,9 +131,15 @@ function two_names(n) {
 // fixpoint - so `scaled` lowers to a free function of one argument even though
 // its capture list was not empty when the rule looked at it.
 function captured_chain(n) {
-    var base = function (k) { return k + 7; };
-    var scaled = function (k) { return base(k) * 2; };
-    var run = function (k) { return scaled(k) + 3; };
+    var base = function (k) {
+        return k + 7;
+    };
+    var scaled = function (k) {
+        return base(k) * 2;
+    };
+    var run = function (k) {
+        return scaled(k) + 3;
+    };
     return run(n);
 }
 
@@ -121,8 +149,12 @@ function captured_chain(n) {
 // own rule makes that call direct, while the read one frame in has no closure
 // value to name and this step writes the `ctjs.call_direct` itself.
 function both_frames(n) {
-    var half = function (k) { return k / 2; };
-    var via = function (k) { return half(k) + 1; };
+    var half = function (k) {
+        return k / 2;
+    };
+    var via = function (k) {
+        return half(k) + 1;
+    };
     return half(n) * 100 + via(n);
 }
 
@@ -132,8 +164,13 @@ function both_frames(n) {
 // exists - exactly what `var base_step = function ...` emits. Both forms are
 // here so that a rule keyed on one of them would fail on the other.
 function declared(n) {
-    function base_step(k) { return k - 1; }
-    function scale_step(k) { return base_step(k) * 5 + 2; }
+    function base_step(k) {
+        return k - 1;
+    }
+
+    function scale_step(k) {
+        return base_step(k) * 5 + 2;
+    }
     return scale_step(n);
 }
 

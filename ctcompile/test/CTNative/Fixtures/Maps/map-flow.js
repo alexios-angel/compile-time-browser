@@ -3,15 +3,35 @@
 // a factory frame has returned and after unrelated stores are allocated.
 function makeStore(seed) {
     var store = new Map();
-    function initialize() { store.set("seed", seed); return store.size; }
+
+    function initialize() {
+        store.set("seed", seed);
+        return store.size;
+    }
     initialize();
     return store;
 }
-function put(store, key, value) { store.set(key, value); return store.size; }
-function read(store, key) { return store.get(key) + 0; }
-function identity(store) { return store; }
-function forward(store) { return identity(store); }
-function setAndReturn(store, key, value) { return store.set(key, value); }
+
+function put(store, key, value) {
+    store.set(key, value);
+    return store.size;
+}
+
+function read(store, key) {
+    return store.get(key) + 0;
+}
+
+function identity(store) {
+    return store;
+}
+
+function forward(store) {
+    return identity(store);
+}
+
+function setAndReturn(store, key, value) {
+    return store.set(key, value);
+}
 
 function afterReturn() {
     var store = makeStore(10);
@@ -39,9 +59,16 @@ var alias47 = returnedAlias();
 function localMethods(seed) {
     var store = makeStore(seed);
     var data = {
-        set(key, value) { store.set(key, value); return store.size; },
-        get(key) { return store.get(key) + 0; },
-        remove(key) { return store.delete(key) ? 1 : 0; }
+        set(key, value) {
+            store.set(key, value);
+            return store.size;
+        },
+        get(key) {
+            return store.get(key) + 0;
+        },
+        remove(key) {
+            return store.delete(key) ? 1 : 0;
+        }
     };
     data.set("component", 32);
     var before = data.get("seed") + data.get("component");
@@ -51,8 +78,12 @@ var methods43 = localMethods(10);
 
 function nestedCapture() {
     var store = makeStore(40);
+
     function outer(amount) {
-        function inner() { store.set("seed", read(store, "seed") + amount); return store.size; }
+        function inner() {
+            store.set("seed", read(store, "seed") + amount);
+            return store.size;
+        }
         return inner();
     }
     outer(2);
@@ -65,6 +96,7 @@ function differentSlots(numbers, strings) {
     strings.set("1", 22);
     return numbers.get(1) + strings.get("1");
 }
+
 function separateSchemas() {
     var numbers = new Map();
     var strings = new Map();
@@ -73,10 +105,13 @@ function separateSchemas() {
 var slots42 = separateSchemas();
 
 function fill(store, n) {
-    if (n <= 0) { return store.size; }
+    if (n <= 0) {
+        return store.size;
+    }
     store.set(n, n + 1);
     return fill(store, n - 1);
 }
+
 function recursiveStore(n) {
     var store = new Map();
     var size = fill(store, n);
@@ -84,18 +119,29 @@ function recursiveStore(n) {
 }
 var recursion7 = recursiveStore(5);
 
-function booleanStore() { return new Map().set(true, 40).set(false, 2); }
+function booleanStore() {
+    return new Map().set(true, 40).set(false, 2);
+}
+
 function returnedBoolean() {
     var store = booleanStore();
     return store.get(true) + store.get(false);
 }
 var boolean42 = returnedBoolean();
 
-function unusedStore(store) { return 5; }
-function discardedArgument() { return unusedStore(makeStore(42)); }
+function unusedStore(store) {
+    return 5;
+}
+
+function discardedArgument() {
+    return unusedStore(makeStore(42));
+}
 var unused5 = discardedArgument();
 
-function emptyStore() { return new Map(); }
+function emptyStore() {
+    return new Map();
+}
+
 function emptyReturn() {
     var store = emptyStore();
     return store.size + (store.has(1) ? 10 : 0);

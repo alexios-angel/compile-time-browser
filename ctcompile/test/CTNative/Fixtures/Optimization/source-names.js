@@ -7,10 +7,14 @@ function makeCatalog() {
     catalog.set("backup", item);
     return catalog;
 }
+
 function observePrice(catalog) {
-    if (!catalog.has("featured")) { return -1; }
+    if (!catalog.has("featured")) {
+        return -1;
+    }
     return +catalog.get("featured").get("price");
 }
+
 function observeSharing(first, second) {
     var score = -1;
     if (first.has("featured")) {
@@ -23,31 +27,47 @@ function observeSharing(first, second) {
     }
     return score;
 }
+
 function collision(double, v1, NAN, _private, score$1, score_1) {
     const score = double + v1 + NAN + _private + score$1 + score_1;
     return score;
 }
+
 function accumulate(limit) {
     var score = 0;
-    for (var i = 0; i < limit; ++i) { score = score + i; }
+    for (var i = 0; i < limit; ++i) {
+        score = score + i;
+    }
     return score;
 }
-function makeReader(catalog) { return offset => catalog + offset; }
+
+function makeReader(catalog) {
+    return offset => catalog + offset;
+}
+
 function scopeReuse(input) {
     var score = input;
-    { let entry = 5; score = score + entry; }
-    { let entry = 7; score = score + entry; }
+    {
+        let entry = 5;
+        score = score + entry;
+    } {
+        let entry = 7;
+        score = score + entry;
+    }
     return score;
 }
+
 function macroTokens(name, site) {
     const is_same_v = name + site;
     return is_same_v;
 }
+
 function numericAlias(js_num) {
     const first = js_num + 1;
     const second = first * 2;
     return second;
 }
+
 function observeClosure() {
     const read = makeReader(10);
     return read(3);

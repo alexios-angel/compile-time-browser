@@ -1,14 +1,34 @@
 // The exact Bootstrap getter with owning component identities and scalar payloads.
 // Fieldful components and the vendor's UMD/console paths remain separate gates.
-function makeInstance() { return {}; }
-function absent() { return; }
-function forward(value) { return value; }
-function choose(flag, instance) { return flag ? instance : null; }
+function makeInstance() {
+    return {};
+}
+
+function absent() {
+    return;
+}
+
+function forward(value) {
+    return value;
+}
+
+function choose(flag, instance) {
+    return flag ? instance : null;
+}
+
 function chooseReturn(flag, instance) {
-    if (flag) { return instance; }
+    if (flag) {
+        return instance;
+    }
     return false;
 }
-function retain(value) { return function () { return value; }; }
+
+function retain(value) {
+    return function () {
+        return value;
+    };
+}
+
 function makeData() {
     const t = new Map();
     return {
@@ -19,13 +39,16 @@ function makeData() {
         },
         get: (e, i) => t.has(e) && t.get(e).get(i) || null,
         remove(e, i) {
-            if (!t.has(e)) { return; }
+            if (!t.has(e)) {
+                return;
+            }
             const n = t.get(e);
             n.delete(i);
             0 === n.size && t.delete(e);
         }
     };
 }
+
 function dataLifetime() {
     const first = makeInstance();
     const second = makeInstance();
@@ -77,6 +100,7 @@ function dataLifetime() {
     }
     return saved === first && readSaved() === first && saved !== second ? 42 : 0;
 }
+
 function rawValues() {
     const map = new Map();
     const instance = makeInstance();
@@ -106,7 +130,7 @@ function rawValues() {
     traceNaN = +(map.get("nan") !== map.get("nan"));
     traceSignedZero = +(map.get("negativeZero") === map.get("zero"));
     traceFalsy = +(!map.get("zero") && !map.get("negativeZero") && !map.get("nan") &&
-                  !map.get("false") && !map.get("null") && !map.get("undefined"));
+        !map.get("false") && !map.get("null") && !map.get("undefined"));
     traceTruthy = +(!!map.get("infinity") && !!map.get("true") && !!map.get("number"));
     map.clear();
     traceSavedClear = +(saved === instance && map.get("instance") === absent());
@@ -114,6 +138,7 @@ function rawValues() {
     traceFreshAfterClear = +(map.get("instance") !== saved);
     return saved === instance ? 42 : 0;
 }
+
 function loopValue(limit) {
     const map = new Map();
     const instance = makeInstance();

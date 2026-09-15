@@ -139,8 +139,16 @@ var allocation55 = loopAllocations(10);
 
 function evaluationOrder() {
     var count = 0;
-    function key() { count = count + 1; return "key"; }
-    function value() { count = count * 10; return 42; }
+
+    function key() {
+        count = count + 1;
+        return "key";
+    }
+
+    function value() {
+        count = count * 10;
+        return 42;
+    }
     var map = new Map();
     map.set(key(), value());
     return count + map.get("key");

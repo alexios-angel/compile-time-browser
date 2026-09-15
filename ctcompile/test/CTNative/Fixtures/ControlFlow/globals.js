@@ -11,8 +11,8 @@
 var total = 0;
 var count = 0;
 while (count < 10) {
-  total = total + count * 0.5;
-  count = count + 1;
+    total = total + count * 0.5;
+    count = count + 1;
 }
 var ratio = total / count;
 var neg = -ratio;
@@ -31,19 +31,35 @@ var inf = 1 / 0;
 var ninf = -1 / 0;
 var nan = 0 / 0;
 var branch = 0;
-if (total > 20) { branch = 1; } else { branch = 2; }
+if (total > 20) {
+    branch = 1;
+} else {
+    branch = 2;
+}
 var nested = 0;
 var i = 0;
 while (i < 5) {
-  var j = 0;
-  while (j < i) {
-    if (j % 2 == 0) { nested = nested + j; } else { nested = nested - 1; }
-    j = j + 1;
-  }
-  i = i + 1;
+    var j = 0;
+    while (j < i) {
+        if (j % 2 == 0) {
+            nested = nested + j;
+        } else {
+            nested = nested - 1;
+        }
+        j = j + 1;
+    }
+    i = i + 1;
 }
 var truthy = 0;
-if (nan) { truthy = truthy + 1; }
-if (0.5) { truthy = truthy + 2; }
-if (-0) { truthy = truthy + 4; }
-if (!0) { truthy = truthy + 8; }
+if (nan) {
+    truthy = truthy + 1;
+}
+if (0.5) {
+    truthy = truthy + 2;
+}
+if (-0) {
+    truthy = truthy + 4;
+}
+if (!0) {
+    truthy = truthy + 8;
+}

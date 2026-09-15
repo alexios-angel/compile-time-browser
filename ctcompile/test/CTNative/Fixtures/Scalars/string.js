@@ -1,5 +1,7 @@
 function placements(direction) {
-    var isRTL = function () { return direction === "rtl"; };
+    var isRTL = function () {
+        return direction === "rtl";
+    };
     var topStart = isRTL() ? "top-end" : "top-start";
     var topEnd = isRTL() ? "top-start" : "top-end";
     var bottomStart = isRTL() ? "bottom-end" : "bottom-start";
@@ -23,7 +25,9 @@ function decorate(value) {
 var returned7 = decorate("rtl") === "pre-rtl-post" ? 7 : 0;
 
 function choose(mode, left, right) {
-    if (mode > 0) { return left; }
+    if (mode > 0) {
+        return left;
+    }
     return right;
 }
 var branches11 = choose(1, "rtl", "ltr") === "rtl" && choose(-1, "rtl", "ltr") === "ltr" ? 11 : 0;
@@ -40,6 +44,7 @@ var loop13 = repeated(3) === "ababab" && repeated(0) === "" ? 13 : 0;
 function truth(value) {
     return value ? 1 : 0;
 }
+
 function negate(value) {
     return !value ? 10 : 0;
 }
@@ -57,7 +62,10 @@ var loose31 = join("r", "tl") == "rtl" ? 31 : 0;
 
 function shared(seed) {
     var value = seed;
-    var append = function (suffix) { value = value + suffix; return value; };
+    var append = function (suffix) {
+        value = value + suffix;
+        return value;
+    };
     var first = append("x");
     var second = append("y");
     return first === "0123456789abcdef0123456789abcdefx" && second === "0123456789abcdef0123456789abcdefxy" && value === "0123456789abcdef0123456789abcdefxy" ? 37 : 0;
@@ -75,7 +83,9 @@ var copied43 = copied() === "a:ab" ? 43 : 0;
 
 function keyAndValue() {
     var key = "tag";
-    var record = {tag: 42};
+    var record = {
+        tag: 42
+    };
     return key + (record[key] === 42 ? "!" : "?");
 }
 var key47 = keyAndValue() === "tag!" ? 47 : 0;

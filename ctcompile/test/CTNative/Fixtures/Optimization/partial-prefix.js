@@ -1,7 +1,9 @@
 // These callers deliberately supply different arguments. Only each factory's
 // initialization prefix is static; its boundary and suffix execute at runtime.
 function mixedSeed(input) {
-    const scratch = { amount: 10 };
+    const scratch = {
+        amount: 10
+    };
     scratch.amount = 40;
     const discarded = new Map();
     discarded.set("temporary", 99);
@@ -15,15 +17,23 @@ function mixedSeed(input) {
     child.set("before", before);
     return root;
 }
+
 function observeMixed(first, second) {
-    if (!first.has("left")) { return -1; }
-    if (!first.has("right")) { return -2; }
-    if (!second.has("right")) { return -3; }
+    if (!first.has("left")) {
+        return -1;
+    }
+    if (!first.has("right")) {
+        return -2;
+    }
+    if (!second.has("right")) {
+        return -3;
+    }
     const before = first.get("left").get("before");
     first.get("left").set("value", 77);
     return before * 1000000 + first.get("right").get("value") * 1000 +
         second.get("right").get("value");
 }
+
 function scalarSnapshot(input) {
     const map = new Map();
     map.set("value", 10);
@@ -32,14 +42,21 @@ function scalarSnapshot(input) {
     map.set("value", input);
     return before * 100 + map.get("value");
 }
+
 function branchPrefix(choose) {
-    const object = { value: 10 };
+    const object = {
+        value: 10
+    };
     object.value = 40;
     const before = object.value + 2;
-    if (choose) { object.value = 3; }
-    else { object.value = 5; }
+    if (choose) {
+        object.value = 3;
+    } else {
+        object.value = 5;
+    }
     return before * 100 + object.value;
 }
+
 function loopPrefix(count) {
     const map = new Map();
     map.set("value", 10);
@@ -49,6 +66,7 @@ function loopPrefix(count) {
     }
     return +map.get("value");
 }
+
 function effectPrefix(input) {
     const map = new Map();
     map.set("value", 10);
@@ -57,10 +75,12 @@ function effectPrefix(input) {
     published = input;
     return before;
 }
+
 function mutateOnce(map, input) {
     map.set("value", map.get("value") + input);
     return map.get("value");
 }
+
 function callPrefix(input) {
     const map = new Map();
     map.set("value", 10);
@@ -69,6 +89,7 @@ function callPrefix(input) {
     const after = mutateOnce(map, input);
     return before * 100 + after;
 }
+
 function keyPrefix(input) {
     const first = {};
     const second = {};
