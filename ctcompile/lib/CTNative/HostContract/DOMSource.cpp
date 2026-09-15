@@ -225,6 +225,8 @@ struct DOMSource {
             publication = store;
         }
         auto * call = publication ? publication.getValue().getDefiningOp() : nullptr;
+        auto selection = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(call);
+        if (selection) { call = selection.getObject().getDefiningOp(); }
         auto indirect = llvm::dyn_cast_or_null<ctjs::CallOp>(call);
         auto direct = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(call);
         if (!indirect && !direct) { return true; }
@@ -261,15 +263,26 @@ struct DOMSource {
         }
         for (mlir::Operation * use : call->getResult(0).getUsers()) {
             if (!step()) { return false; }
-            if (use != publication && !llvm::isa<ctjs::RootOp>(use)) {
+            if (use != (selection ? selection.getOperation() : publication.getOperation()) &&
+                !llvm::isa<ctjs::RootOp>(use)) {
                 return refuse("DOM entry factory result escapes its unique publication");
+            }
+        }
+        if (selection) {
+            for (mlir::Operation * use : selection.getResult().getUsers()) {
+                if (!step()) { return false; }
+                if (use != publication && !llvm::isa<ctjs::RootOp>(use)) {
+                    return refuse("DOM entry factory selection escapes its unique publication");
+                }
             }
         }
         auto & body = factory.getBody().front();
         auto result = llvm::cast<ctjs::ReturnOp>(body.back());
         auto entry = result.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        if (!entry || entry.getFunction() < 0 ||
-            static_cast<unsigned>(entry.getFunction()) != *functionIndex(target)) {
+        auto table = result.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+        if (selection ? !table
+                      : !entry || entry.getFunction() < 0 ||
+                            static_cast<unsigned>(entry.getFunction()) != *functionIndex(target)) {
             return refuse("DOM entry factory must return its exact source entry");
         }
         // The single invocation moves its local cells with the returned closure.
@@ -297,6 +310,20 @@ struct DOMSource {
         }
         call->getResult(0).replaceAllUsesWith(mapping.lookup(result.getValue()));
         call->erase();
+        if (selection) {
+            auto object = mapping.lookup(table.getResult()).getDefiningOp<ctjs::CreateObjectOp>();
+            llvm::DenseSet<mlir::Operation *> methods;
+            if (!resolveMethods(object, methods)) { return false; }
+            // Selection removes only checked own slots. Every source callable,
+            // including unselected slots, still needs its invocation proof.
+            while (!object.getResult().use_empty()) {
+                if (!step()) { return false; }
+                auto root = llvm::dyn_cast<ctjs::RootOp>(*object.getResult().getUsers().begin());
+                if (!root) { return refuse("DOM entry factory table has an unexpanded use"); }
+                root.erase();
+            }
+            object.erase();
+        }
         for (ctjs::RootOp root : roots) { root.erase(); }
         closure.erase();
         functions.erase(*functionIndex(factory));

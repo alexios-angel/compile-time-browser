@@ -520,6 +520,88 @@ function host_capture_order(element) {
 """,
         "0010",
     ),
+    "host_factory_table_entry": (
+        """var host_factory_table_entry = (function() {
+  function host_factory_table_entry(element) { return element.getAttribute('x') === null; }
+  return {entry: host_factory_table_entry};
+})().entry;
+""",
+        "1000",
+    ),
+    "host_factory_table_key": (
+        """var host_factory_table_key = (function(key) {
+  function host_factory_table_key(element) { return element.getAttribute(key) === null; }
+  return {'read-attribute': host_factory_table_key};
+})('x')['read-attribute'];
+""",
+        "1000",
+    ),
+    "host_factory_table_late_initialization": (
+        """var host_factory_table_late_initialization = (() => {
+  let key;
+  function host_factory_table_late_initialization(element) {
+    return element.getAttribute(key) === null;
+  }
+  const table = {entry: host_factory_table_late_initialization};
+  key = 'x';
+  return table;
+})().entry;
+""",
+        "1000",
+    ),
+    "host_factory_table_callable": (
+        """var host_factory_table_callable = (function() {
+  const key = 'x';
+  const read = target => target.getAttribute(key);
+  function host_factory_table_callable(element) { return read(element) === null; }
+  return {entry: host_factory_table_callable};
+})().entry;
+""",
+        "1000",
+    ),
+    "host_factory_table_holder": (
+        """var host_factory_table_holder = (function() {
+  const key = 'x';
+  const helpers = {read(target) { return target.getAttribute(key); }};
+  function host_factory_table_holder(element) { return helpers.read(element) === null; }
+  return {entry: host_factory_table_holder};
+})().entry;
+""",
+        "1000",
+    ),
+    "host_factory_table_order": (
+        r"""var host_factory_table_order = (function() {
+  const key = 'x';
+  const change = (target, saved) => {
+    target.setAttribute(key, 'a\0b');
+    return saved === target.getAttribute(key);
+  };
+  function host_factory_table_order(element) {
+    return change(element, element.getAttribute(key));
+  }
+  return {entry: host_factory_table_order};
+})().entry;
+""",
+        "0010",
+    ),
+    "host_factory_table_multiple": (
+        """var host_factory_table_multiple = (function() {
+  function host_factory_table_multiple(element) { return element.getAttribute('x') === null; }
+  return {entry: host_factory_table_multiple, alias: host_factory_table_multiple};
+})().alias;
+""",
+        "1000",
+    ),
+    "host_factory_table_own_prototype_name": (
+        """var host_factory_table_own_prototype_name = (function() {
+  function host_factory_table_own_prototype_name(element) {
+    return element.getAttribute('x') === null;
+  }
+  return {toString: host_factory_table_own_prototype_name};
+})().toString;
+""",
+        "1000",
+    ),
 }
 HOST_CASES = {name: ("{\n" + source + "}\n", bits) for name, (source, bits) in HOST_CASES.items()}
 BOOLEAN_CASES.update(HOST_CASES)
@@ -556,6 +638,7 @@ BOOLEAN_CHECKS = {
     "host_capture_name": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "host_capture_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "host_factory_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "host_factory_table_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_capture_saved": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_capture_repeated": 'assert(doc.read().attribute_value(node, state) == "after");',
     "helper_capture_callable_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
@@ -939,6 +1022,21 @@ HOST_REFUSALS = {
     "host_factory_missing_argument": "var host_refusal = (function(key) { function host_refusal(element) { return element.getAttribute(key); } return host_refusal; })();",
     "host_factory_identity": "const make = function() { function host_refusal(element) { return element.getAttribute('x'); } return host_refusal; }; const name = make.name; var host_refusal = make();",
     "host_factory_early_read": "var host_refusal = (function() { const saved = key; var key = 'x'; function host_refusal(element) { return element.getAttribute(saved); } return host_refusal; })();",
+    "host_factory_table_missing": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal}; })().missing;",
+    "host_factory_table_inherited": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal}; })().toString;",
+    "host_factory_table_duplicate": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal, entry: host_refusal}; })().entry;",
+    "host_factory_table_mutation": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } const table = {entry: host_refusal}; table.entry = host_refusal; return table; })().entry;",
+    "host_factory_table_getter": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {get entry() { return host_refusal; }}; })().entry;",
+    "host_factory_table_identity": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } const table = {entry: host_refusal}; const same = table === table; return table; })().entry;",
+    "host_factory_table_repeated": "const make = function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal}; }; var host_refusal = make().entry; const second = make().entry;",
+    "host_factory_table_capture": "const key = 'x'; var host_refusal = (function() { function host_refusal(element) { return element.getAttribute(key); } return {entry: host_refusal}; })().entry;",
+    "host_factory_table_effect": "var host_refusal = (function() { sideEffect(); function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal}; })().entry;",
+    "host_factory_table_escape": "const table = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal}; })(); escaped = table; var host_refusal = table.entry;",
+    "host_factory_table_dynamic_key": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal}; })()[externalKey];",
+    "host_factory_table_receiver": "var host_refusal = (function() { function host_refusal(element) { element.getAttribute('x'); return this; } return {entry: host_refusal}; })().entry;",
+    "host_factory_table_unused_method": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal, unused(target) { return target.getAttribute('y'); }}; })().entry;",
+    "host_factory_table_wrong_slot": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {intended: host_refusal, entry(target) { return target.getAttribute('y'); }}; })().entry;",
+    "host_factory_table_data_slot": "var host_refusal = (function() { function host_refusal(element) { return element.getAttribute('x'); } return {entry: host_refusal, count: 1}; })().entry;",
 }
 
 
@@ -1118,12 +1216,13 @@ def helper_provenance_refusals(args, ir, contract):
     return len(variants) * 4 + 4
 
 
-def factory_provenance_checks(args, ir, contract):
+def factory_provenance_checks(args, ir, contract, *, table=False):
+    prefix = "factory-table" if table else "factory"
     original = ir.read_text()
     creator = "ctjs.create_closure %arg2[1] this %1"
     entry = "ctjs.create_closure %arg2[2] this %2 captures %1"
     call = "ctjs.call_direct @fn$1(%4, %5, %2, %3)"
-    returned = "ctjs.return %3"
+    returned = "ctjs.return %4" if table else "ctjs.return %3"
     if any(original.count(anchor) != 1 for anchor in (creator, entry, call, returned)):
         raise RuntimeError("factory provenance anchors changed")
     variants = {
@@ -1132,7 +1231,7 @@ def factory_provenance_checks(args, ir, contract):
             creator, creator.replace("%arg2", "%arg0") + " {ctnative.host_proved = true}"
         ),
         "duplicate-creator": original.replace(creator, creator + "\n    %duplicate = " + creator),
-        "wrong-callee": original.replace(call, call.replace("@fn$1", "@host_factory_key$2")),
+        "wrong-callee": original.replace(call, call.replace("@fn$1", "@" + contract["entry"])),
         "receiver": original.replace(call, call.replace("(%4,", "(%3,")),
         "new-target": original.replace(call, call.replace("%4, %5,", "%4, %2,")),
         "repeated-call": original.replace(call, call + "\n    %again = " + call),
@@ -1143,8 +1242,34 @@ def factory_provenance_checks(args, ir, contract):
         "foreign-entry-creator": original.replace(entry, entry.replace("%arg2", "%arg0")),
         "implicit-capture": original.replace("ctjs.create_cell %arg3", "ctjs.create_cell %arg0"),
     }
+    if table:
+        selected = "ctjs.get_property %6[%7]"
+        slot = "ctjs.set_property %4[%5], %3"
+        name = '%7 = ctjs.constant #ctjs.string<"read-attribute">'
+        if any(original.count(anchor) != 1 for anchor in (selected, slot, name)):
+            raise RuntimeError("factory table provenance anchors changed")
+        variants.update(
+            {
+                "missing-slot": original.replace(name, name.replace("read-attribute", "missing")),
+                "prototype-setter": original.replace("read-attribute", "__proto__"),
+                "duplicate-slot": original.replace(slot, slot + "\n    " + slot),
+                "noncallable-slot": original.replace(slot, slot.replace(", %3", ", %arg3")),
+                "early-slot-read": original.replace(
+                    slot, "%early = ctjs.get_property %4[%5]\n    " + slot
+                ),
+                "dynamic-selection": original.replace(
+                    selected, selected.replace("[%7]", "[%arg0]")
+                ),
+                "observed-selection": original.replace(
+                    selected, selected + "\n    %same = ctjs.compare strict_eq %8, %8"
+                ),
+                "repeated-selection": original.replace(
+                    selected, selected + "\n    %again = " + selected
+                ),
+            }
+        )
     for name, text in variants.items():
-        mutated = args.work / f"factory-provenance-{name}.mlir"
+        mutated = args.work / f"{prefix}-provenance-{name}.mlir"
         mutated.write_text(text)
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -1153,19 +1278,19 @@ def factory_provenance_checks(args, ir, contract):
                     args,
                     mutated,
                     dict(checked, provider=provider),
-                    f"factory-provenance-{name}-{provider}-{optimize}",
+                    f"{prefix}-provenance-{name}-{provider}-{optimize}",
                     optimize=optimize,
                     success=False,
                 )
                 if "error: native DOM source:" not in diagnostic:
-                    raise RuntimeError(f"factory {name}: wrong refusal\n{diagnostic}")
-    indirect = args.work / "factory-indirect.mlir"
+                    raise RuntimeError(f"{prefix} {name}: wrong refusal\n{diagnostic}")
+    indirect = args.work / f"{prefix}-indirect.mlir"
     indirect.write_text(original.replace(call, "ctjs.call %2(%4, %3)"))
     checked = dict(contract, module_sha256=dom.fingerprint(args.opt, indirect))
-    dom.lower(args, indirect, checked, "factory-indirect")
+    dom.lower(args, indirect, checked, f"{prefix}-indirect")
     for budget in (0, 1, 128):
         diagnostic = dom.lower(
-            args, ir, contract, f"factory-budget-{budget}", max_steps=budget, success=False
+            args, ir, contract, f"{prefix}-budget-{budget}", max_steps=budget, success=False
         )
         if "budget exhausted" not in diagnostic:
             raise RuntimeError(f"factory initialization: missing budget refusal\n{diagnostic}")
@@ -1692,6 +1817,10 @@ function makeElement(value) {
     capture_checks += host_provenance_checks(args, host_ir, host_contract)
     _, factory_ir, factory_contract = next(row for row in prepared if row[0] == "host_factory_key")
     capture_checks += factory_provenance_checks(args, factory_ir, factory_contract)
+    _, table_ir, table_contract = next(
+        row for row in prepared if row[0] == "host_factory_table_key"
+    )
+    capture_checks += factory_provenance_checks(args, table_ir, table_contract, table=True)
     print(
         f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "
