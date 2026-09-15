@@ -6,6 +6,52 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Returned DOM callable tables and exact quotients, 2026-09-15 UTC
+
+Resumed the interrupted **03:31 / 03:37 DOM table and division** thread from the
+four-file dirty diff and AGENT-SYNC journal, explicitly abandoned at **03:38:16**.
+Both histories and unmerged branches were inspected; the September 7 WIP is already
+landed. Three agents reviewed division, source tests and the complete DOM proof;
+root finished the frozen drafts after two agents reached service limits.
+
+**8c05463c** proves exact bounded Number quotients in the charged array contents
+analysis. Nonzero integral divisors and zero remainders preserve exact values;
+signed zero keeps its SSA origin. Zero divisors, fractions, coercion, overflow,
+opaque branches, retained children and stale metadata remain checked. Measured
+**311 dense-length rows / 151 live states / 11,753 retention cutoffs**, with
+**zero escape violations / precision 40/172**.
+
+**823b71b8** extends the existing unique factory proof to a fresh returned table
+with unique own callable slots and one constant String selection. Initialization
+order, original creator/callee/receiver/new-target and publication remain checked;
+all callable bodies still require actual invocations. The table disappears before
+complete DOM reproof and ordinary C++ emission. General export tables, observed
+identity, effects, inherited/accessor/repeated slots and captured factories refuse.
+
+Final focused **4/4 CTests in 63.10s PASS**: **341 Node/VM observations / eight
+GCC-Clang binaries / 508 source refusals / 44 provenance-depth / 24 method /
+241 capture-initialization-budget controls**, plus four existing helper controls.
+Stable formatting passes **829 C++ / 100 Python / 33 web**. The required pinned
+formatter matches the unchanged **nine-file / 26-diagnostic** baseline; all changed
+C++ files pass both formatters.
+
+The complete standard build and **602-test CTest gate are running**, with **1,443
+frozen source inputs**. No full result or fresh Bootstrap measurement is claimed yet.
+Recovery: `/tmp/ctcompile-table-finalize/full.sh`, `full.log`, `inputs.json` and
+`focus-last-test.log`. Source commits are frozen; finish this gate before new work.
+
+**Exact next boundary:** original Bootstrap's complete factory/global/H/F/M graph
+remains unproved. Original `F("config")` at vendor line **243** needs checked standard
+String/RegExp replacement, execution and property lookup before helper expansion.
+The fold must prove that the replacement callback is never invoked; otherwise its
+escape and complete function census still refuse. The DOM manifest whitelist and
+DOM admission independently reject initial intrinsics, so extending the generic
+intrinsic-name parser alone is insufficient. `M` at line **230** then needs live
+optional-value normalization, branches, Number/toString, URI decoding, JSON and
+exceptions. Dataset, inherited receivers and retained config/callback ownership
+follow. Full native Bootstrap and the application driver remain unfinished. No
+browser/runtime files or WPT/test262 expectations changed.
+
 ## Single-invocation DOM entry factories and bounded products, 2026-09-15 UTC
 
 Continued the completed **dd4479dc / 4ef7649c** initialization thread from this

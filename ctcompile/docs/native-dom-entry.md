@@ -92,8 +92,12 @@ accepts one uniquely called, uncaptured local factory returning exactly that exp
 entry. Arguments and private initialization stay in source order; the factory's
 implicit arguments, creator identity, complete uses and direct-call symbol/new-target
 are checked before cloning. The existing capture proof then eliminates every private
-cell/holder/callable. Factory globals, nested/captured factories, returned method tables,
-observed identities and observable initialization remain refused.
+cell/holder/callable. A factory may also return a fresh table of unique own callable
+slots and publish one constant String selection. Multiple slots may hold the same
+closure; every callable body still requires a source invocation. Table identities,
+missing/inherited/accessor or repeated slots, factory globals, nested/captured
+factories and observable initialization remain refused. The table disappears before
+emission; generated C++ still calls the public DOM library directly.
 
 Only a checked inert declaration or the proved initialization above may be omitted.
 Skipped source, additional initialization effects, calls to the entry from JavaScript,

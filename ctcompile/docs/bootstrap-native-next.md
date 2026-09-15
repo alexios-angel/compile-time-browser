@@ -167,12 +167,19 @@ existing expansion eliminates every setup cell/holder/callable before DOM reproo
 the exported entry: **309 Node/VM observations / eight GCC-Clang binaries / 448 source
 refusals / 44 depth / 24 method / 161 capture-initialization controls**. Exact source
 creator/callee/argument/publication proof precedes cloning at the original call, then
-complete capture and DOM reproof gate emission. Top-level global bindings, nested or
-captured factories and returned method tables remain refused. Original Bootstrap still
-needs its complete factory/global initialization and H/F/M source graph.
+complete capture and DOM reproof gate emission. Returned fresh own-callable tables now
+also permit one constant String selection, with the same complete identity, source-order
+and capture proof. Every unselected callable still requires an actual invocation;
+this does not admit the complete Bootstrap export table. Top-level global bindings
+and nested/captured factories remain refused. Original Bootstrap still needs its
+complete factory/global initialization and H/F/M source graph.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
-reentry. The current DOM manifest supplies none of those intrinsic identities.
+reentry. The current DOM manifest supplies none of those intrinsic identities, and DOM
+admission separately rejects initial intrinsics. Specialization must run before
+helper expansion and prove that the replacement callback is never invoked; otherwise
+that callback escapes and its complete source census still requires an invocation.
+Extending the generic intrinsic-name parser alone cannot authorize the fold.
 The original regex helper remains a source refusal in the gate. `M` still consumes
 the live optional attribute value: preserve its normalization source instead of
 replacing it with browser helper code.
