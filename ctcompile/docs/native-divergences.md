@@ -869,6 +869,28 @@ X-macro table.
   specialisation to cap and no divergence it could introduce. Recorded in
   `ctcompile/docs/native-ab.md` rather than here.
 
+## Refusals whose plan documents were retired (2026-09-15)
+
+Four `docs/plans/` files nothing linked to were deleted; history keeps them.
+The refusal each carried, in two lines, so it is not re-derived:
+
+* **`await` / `yield` (`async-and-generators.md`).** A compiled body is a C++
+  stack frame; `coroutine_object` suspends by copying a REGISTER WINDOW out of
+  the flat register file, and a compiled frame has none. The importer refuses
+  both by a pre-walk scan, not a switch case; `wrap_promise` (an `async` with
+  no `await`) is lowered.
+* **ES modules (`es-modules.md`).** All four opcodes landed. One shape stays
+  refused: a `module_record *` held across any module-loading helper dangles,
+  so every lookup stays inside its helper — the ABI row says so, and `run_loop`
+  copies it rather than trusting "not held across anything today".
+* **`new` (`construct.md`, DONE).** `ctjs.construct` lowers exactly like
+  `ctjs.call` — a parked argument window, a safepoint — and `new.target` is
+  bound, not refused. The refusal test it once carried predicted its own end.
+* **The library map (`stdlib-mapping.md`).** ND-14 above is the surviving
+  form. `Math.cbrt` is refused beyond it: the engine rounds an exact cube to
+  the integer because glibc once answered `3.0000000000000004` for `cbrt(27)`,
+  and an exactness that belongs to the host's libm cannot be proved.
+
 ---
 
 *Next entry: ND-15.*
