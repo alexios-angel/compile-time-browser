@@ -375,6 +375,12 @@ BOOTSTRAP_F = """    function F(t) {
         return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
     }
 """
+# Keep the newly admitted refusal source unchanged, both directly and in the oracle wrapper.
+REGEXP_MIXED_SOURCE = (
+    "function invalid(element) { "
+    + BOOTSTRAP_F
+    + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F('toggle')); }\n"
+)
 REGEXP_CASES = {
     "helper_regex_direct": (
         """const key = 'data-bs-' + 'config'.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`);
@@ -386,6 +392,27 @@ REGEXP_CASES = {
         BOOTSTRAP_F + """
   element.setAttribute('data-bs-' + F('config'), 'value');
   return element.getAttribute('data-bs-' + F('config')) === 'value';""",
+        "1111",
+    ),
+    "regex_mixed_constants": (
+        REGEXP_MIXED_SOURCE + "return invalid(element) === null;",
+        "1111",
+    ),
+    "helper_regex_distinct_names": (
+        BOOTSTRAP_F
+        + """
+  element.setAttribute('data-bs-' + F('config'), 'first');
+  element.setAttribute('data-bs-' + F('toggle'), 'second');
+  return element.getAttribute('data-bs-' + F('config')) !== element.getAttribute('data-bs-' + F('toggle'));""",
+        "1111",
+    ),
+    "helper_regex_forwarded_names": (
+        "function read(target, name) {\n" + BOOTSTRAP_F + """
+    return target.getAttribute('data-bs-' + F(name));
+  }
+  element.setAttribute('data-bs-config', 'first');
+  element.setAttribute('data-bs-toggle', 'second');
+  return read(element, 'config') !== read(element, 'toggle');""",
         "1111",
     ),
     "helper_regex_range": (
@@ -676,6 +703,12 @@ BOOLEAN_OBSERVATIONS = "\n".join(
 BOOLEAN_CHECKS = {
     "helper_regex_direct": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
     "helper_regex_original": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
+    "regex_mixed_constants": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");
+        assert(!doc.read().has_attribute(node, atoms.intern("data-bs-toggle")));""",
+    "helper_regex_distinct_names": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
+    "helper_regex_forwarded_names": """assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "first");
+        assert(doc.read().attribute_value(node, atoms.intern("data-bs-toggle")) == "second");""",
     "helper_regex_range": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
     "helper_regex_no_flags": 'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == "value");',
     "helper_regex_bytes": r'assert(doc.read().attribute_value(node, atoms.intern("data-bs-config")) == std::string_view("a\0\xc3\xa9", 4));',
@@ -1042,8 +1075,22 @@ REGEXP_REFUSALS = {
     "regex_matching": BOOTSTRAP_F + " return element.getAttribute('data-bs-' + F('Config'));",
     "regex_dynamic": BOOTSTRAP_F
     + " return element.getAttribute('data-bs-' + F(element.getAttribute('x')));",
-    "regex_mixed_constants": BOOTSTRAP_F
-    + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F('toggle'));",
+    "regex_mixed_matching": BOOTSTRAP_F
+    + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F('Toggle'));",
+    "regex_mixed_matching_first": BOOTSTRAP_F
+    + " element.setAttribute('data-bs-' + F('Config'), 'value'); return element.getAttribute('data-bs-' + F('toggle'));",
+    "regex_mixed_live": BOOTSTRAP_F
+    + " element.setAttribute('data-bs-' + F('config'), 'value'); return element.getAttribute('data-bs-' + F(element.getAttribute('x')));",
+    "regex_mixed_live_first": BOOTSTRAP_F
+    + " element.setAttribute('data-bs-' + F(element.getAttribute('x')), 'value'); return element.getAttribute('data-bs-' + F('toggle'));",
+    "regex_captured_callable": BOOTSTRAP_F
+    + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } return read(element, 'config');",
+    "regex_forwarded_live": REGEXP_CASES["helper_regex_forwarded_names"][0].replace(
+        "read(element, 'toggle')", "read(element, element.getAttribute('x'))"
+    ),
+    "regex_forwarded_matching": REGEXP_CASES["helper_regex_forwarded_names"][0].replace(
+        "read(element, 'toggle')", "read(element, 'Toggle')"
+    ),
     "regex_live_callback": "const key = 'Config'.replace(/[A-Z]/g, t => { element.setAttribute('x', t); return 'c'; }); return element.getAttribute('data-bs-' + key);",
     "regex_replace_override": "String.prototype.replace = function() { return 'other'; }; "
     + BOOTSTRAP_F
@@ -1639,7 +1686,7 @@ def method_provenance_checks(args, ir, contract):
     return len(variants) * 4
 
 
-def regexp_provenance_checks(args, ir, contract):
+def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
     original = ir.read_text()
     variants = {
         "factory": ('ctjs.load_global "__ctbrowser_regexp"', 'ctjs.load_global "RegExp"'),
@@ -1650,10 +1697,12 @@ def regexp_provenance_checks(args, ir, contract):
         "direct-target": ("ctjs.call_direct @F$2(", "ctjs.call_direct @fn$3("),
         "mixed-arguments": ('#ctjs.string<"config">', '#ctjs.string<"Config">'),
     }
+    if prefix == "replacement-mixed":
+        variants["second-matching"] = ('#ctjs.string<"toggle">', '#ctjs.string<"Toggle">')
     for name, (before, after) in variants.items():
         if before not in original:
             raise RuntimeError(f"replacement provenance anchor changed: {name}")
-        mutated = args.work / f"replacement-provenance-{name}.mlir"
+        mutated = args.work / f"{prefix}-provenance-{name}.mlir"
         mutated.write_text(original.replace(before, after, 1))
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -1662,7 +1711,7 @@ def regexp_provenance_checks(args, ir, contract):
                     args,
                     mutated,
                     dict(checked, provider=provider),
-                    f"replacement-provenance-{name}-{provider}-{optimize}",
+                    f"{prefix}-provenance-{name}-{provider}-{optimize}",
                     optimize=optimize,
                     success=False,
                 )
@@ -1670,7 +1719,7 @@ def regexp_provenance_checks(args, ir, contract):
                     raise RuntimeError(f"replacement {name}: wrong refusal\n{diagnostic}")
     for budget in (0, 32, 64):
         diagnostic = dom.lower(
-            args, ir, contract, f"replacement-budget-{budget}", max_steps=budget, success=False
+            args, ir, contract, f"{prefix}-budget-{budget}", max_steps=budget, success=False
         )
         if "budget exhausted" not in diagnostic:
             raise RuntimeError(f"replacement budget {budget}: wrong refusal\n{diagnostic}")
@@ -1947,6 +1996,23 @@ function makeElement(value) {
         row for row in prepared if row[0] == "helper_regex_original"
     )
     replacement_checks = regexp_provenance_checks(args, regexp_ir, regexp_contract)
+    mixed_ir, mixed_contract = dom.prepare(
+        args, "replacement-mixed", REGEXP_MIXED_SOURCE, 1, entry_name="invalid"
+    )
+    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for optimize in (False, True):
+            label = f"replacement-mixed-{provider}-{optimize}"
+            native = dom.lower(
+                args,
+                mixed_ir,
+                dict(mixed_contract, provider=provider),
+                label,
+                optimize=optimize,
+            )
+            emitted(args, native, label)
+    replacement_checks += 4 + regexp_provenance_checks(
+        args, mixed_ir, mixed_contract, prefix="replacement-mixed"
+    )
     print(
         f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4} source refusal checks, "

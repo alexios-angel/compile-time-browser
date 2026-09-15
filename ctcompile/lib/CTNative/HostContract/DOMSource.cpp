@@ -27,6 +27,7 @@ struct DOMSource {
     };
     llvm::DenseMap<mlir::Value, Capture> cells;
     llvm::DenseMap<mlir::Operation *, unsigned> callDepth;
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::StringAttr>> stringInputs;
 
     bool refuse(llvm::StringRef message) {
         if (reason.empty()) { reason = message.str(); }
@@ -58,8 +59,8 @@ struct DOMSource {
             return true;
         }
         auto & body = target.getBody().front();
-        llvm::SmallVector<mlir::Attribute> constants(body.getNumArguments());
-        bool first = true;
+        llvm::SmallVector<llvm::SmallVector<ctjs::StringAttr>> inputs(body.getNumArguments());
+        llvm::SmallVector<bool> complete(body.getNumArguments(), true);
         for (mlir::OpOperand & use : closure.getResult().getUses()) {
             if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
@@ -83,26 +84,42 @@ struct DOMSource {
             for (auto [index, argument] : llvm::enumerate(arguments)) {
                 if (!step()) { return false; }
                 auto constant = argument.getDefiningOp<ctjs::ConstantOp>();
-                mlir::Attribute value = constant ? constant.getValue() : mlir::Attribute{};
-                if (!llvm::isa_and_nonnull<ctjs::StringAttr>(value)) { value = {}; }
-                auto & known = constants[index + ctjs::implicit_arguments];
-                if (first) {
-                    known = value;
-                } else if (known != value) {
-                    known = {};
+                auto string = constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                                       : ctjs::StringAttr{};
+                auto found = stringInputs.find(argument);
+                const unsigned slot = static_cast<unsigned>(index) + ctjs::implicit_arguments;
+                if (!string && found == stringInputs.end()) { complete[slot] = false; }
+                if (!complete[slot]) { continue; }
+                if (string) {
+                    inputs[slot].push_back(string);
+                } else {
+                    for (ctjs::StringAttr value : found->second) {
+                        if (!step()) { return false; }
+                        inputs[slot].push_back(value);
+                    }
                 }
             }
-            first = false;
         }
-        // ponytail: one constant String per formal across all exact local calls;
-        // differing arguments need invocation-specific specialization.
+        // Publish only after every use has an exact invocation proof. Unknown
+        // inputs poison the whole formal, including earlier constant calls.
         mlir::OpBuilder at(&body, body.begin());
-        for (auto [argument, constant] : llvm::zip(body.getArguments(), constants)) {
+        for (auto [argument, values, known] : llvm::zip(body.getArguments(), inputs, complete)) {
             if (!step()) { return false; }
-            if (!constant) { continue; }
-            auto value = ctjs::ConstantOp::create(at, target.getLoc(), constant);
-            argument.replaceAllUsesWith(value.getResult());
-            ++operationCount;
+            if (!known || values.empty()) { continue; }
+            bool common = true;
+            for (ctjs::StringAttr value : values) {
+                if (!step()) { return false; }
+                common &= value == values.front();
+            }
+            if (common) {
+                auto value = ctjs::ConstantOp::create(at, target.getLoc(), values.front());
+                argument.replaceAllUsesWith(value.getResult());
+                ++operationCount;
+            } else {
+                // ponytail: retain charged inputs, including duplicates; a set
+                // becomes worthwhile if repeated calls exhaust the work budget.
+                stringInputs[argument] = std::move(values);
+            }
         }
         return true;
     }
@@ -116,7 +133,9 @@ struct DOMSource {
             auto text = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
             auto string =
                 text ? llvm::dyn_cast<ctjs::StringAttr>(text.getValue()) : ctjs::StringAttr{};
-            if (!read || read.getObject() != call.getReceiver() || !string ||
+            auto found = stringInputs.find(call.getReceiver());
+            if (!read || read.getObject() != call.getReceiver() ||
+                (!string && found == stringInputs.end()) ||
                 ctjs::constantKey(read.getKey()) != "replace" || call.getArgs().size() != 2) {
                 continue;
             }
@@ -149,10 +168,15 @@ struct DOMSource {
                 continue;
             }
             bool matches = false;
-            for (unsigned char c : string.getValue().bytes()) {
+            const auto values = string ? llvm::ArrayRef<ctjs::StringAttr>(string)
+                                       : llvm::ArrayRef<ctjs::StringAttr>(found->second);
+            for (ctjs::StringAttr value : values) {
                 if (!step()) { return false; }
-                matches |= c >= static_cast<unsigned char>(pattern[1]) &&
-                           c <= static_cast<unsigned char>(pattern[3]);
+                for (unsigned char c : value.getValue().bytes()) {
+                    if (!step()) { return false; }
+                    matches |= c >= static_cast<unsigned char>(pattern[1]) &&
+                               c <= static_cast<unsigned char>(pattern[3]);
+                }
             }
             if (matches) { continue; }
             auto target = functions.lookup(static_cast<unsigned>(callback.getFunction()));

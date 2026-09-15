@@ -155,8 +155,11 @@ prototype chains. The literal, method and uncaptured callback must have only tha
 one use; callback identity and the complete source body are checked before proving
 it is never invoked. No RegExp or callback runtime reaches generated C++.
 One unique local helper may supply the String when all its exact ordinary calls
-pass the same constant argument. Matching strings, live inputs, differing helper
-arguments, other patterns/flags and prototype mutations still refuse.
+pass a bounded set of constant Strings. The proof follows these sets through local
+helper parameters and checks every possible input; the result keeps its original
+receiver value at each invocation. A live input invalidates the whole parameter.
+Matching strings, captured callable aliases, other patterns/flags and prototype
+mutations still refuse.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private
