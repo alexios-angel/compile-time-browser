@@ -1441,11 +1441,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // rejects publication, calls and handlers, so that early
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
-                    if (unary.getKind() == ctjs::UnaryKind::Plus) {
-                        // Plus preserves an exact Number, including either zero
-                        // sign. Primitive coercions supply no bounded fact.
+                    if (unary.getKind() != ctjs::UnaryKind::BitNot) {
+                        // Plus preserves an exact Number; Neg preserves its
+                        // bounded index/length only at zero. Keep the original
+                        // signed value; coercions supply no bounded fact.
                         integerNumber = input.integerNumber ? input.integerNumber
                                                             : boundedNumber(input.origin());
+                        if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
+                            integerNumber.reset();
+                        }
                         if (integerNumber && !spend()) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
@@ -1788,16 +1792,6 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         auto wanted = target.integerNumber;
                         if (!wanted && literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())) {
                             wanted = ownArrayIndex(value);
-                        }
-                        // The importer spells source -0 as neg(Number(0)) when
-                        // folding is disabled. Either zero sign means length 0;
-                        // retain the original expression everywhere else.
-                        auto negation =
-                            value ? value.getDefiningOp<ctjs::UnaryOp>() : ctjs::UnaryOp{};
-                        if (!wanted && negation && negation.getKind() == ctjs::UnaryKind::Neg &&
-                            boundedNumber(negation.getOperand()) == 0) {
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            wanted = 0;
                         }
                         if (!wanted) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                         if (*wanted > elements.size()) {
