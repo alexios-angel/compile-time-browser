@@ -67,9 +67,18 @@ inherited reads, `__proto__`, object/callable escapes and unknown uses refuse.
 The holder is compiler-only evidence and disappears after all its calls are proved;
 no callable table or dynamic dispatch is emitted.
 
+Local leaf helpers may capture immutable primitive or DOM values. The shared
+closure/cell queries prove unique source identities and no binding mutation or
+escape; the DOM proof additionally requires each assignment to precede every
+read and invocation. Hoisted closure creation may precede the assignment. Captures
+are substituted at each call, preserving copied Strings across later DOM writes.
+Object-held leaf methods use the same proof. Cells never become runtime storage.
+Captured callable/holder graphs, forwarded upvalues, helpers that themselves create
+closures while capturing, and captured host entries remain refused.
+
 Only its checked, inert function-declaration wrapper may otherwise be omitted. Skipped
 source, additional initialization effects, calls to the entry from JavaScript,
-captures, borrowed returns, handle retention, prototype or method writes,
+captured entry bindings, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, and nested control flow refuse. Current operations are
 strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
@@ -139,13 +148,14 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **145** copied-value and Boolean
+The `ctcompile_native_dom_strings` CTest compares **173** copied-value and Boolean
 observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
 across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-**224** source refusals for unsupported coercion, control flow, handles and retention,
-**41** provenance/depth refusals, **24** method provenance checks and four
+**264** source refusals for unsupported coercion, control flow, handles and retention,
+**41** provenance/depth refusals, **24** method provenance checks, **45** capture
+provenance/budget refusals and four
 work-budget/fingerprint controls. Helper
 cases preserve argument evaluation order, saved String values, repeated calls and
 nested name construction. These clients link DOM/Core only and reject Script symbols

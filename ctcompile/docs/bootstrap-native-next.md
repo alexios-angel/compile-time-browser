@@ -1,6 +1,6 @@
 # What native Bootstrap needs next
 
-## Current boundary, 2026-09-14
+## Current boundary, 2026-09-15
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
@@ -144,8 +144,12 @@ object-held helper slots and exact method receivers under the isolated standard
 Object-prototype premise. The expanded gate passes **145 Node/VM observations /
 eight GCC-Clang binaries / 224 source refusals / 24 method provenance checks**,
 with the earlier 41 provenance/depth and four budget/fingerprint controls intact.
-Original Bootstrap's outer-scope captured helper graph remains beyond this local
-capture-free proof.
+**d1c1ab96** additionally proves local immutable leaf captures, including object-held
+methods: **173 Node/VM observations / eight GCC-Clang binaries / 45 capture
+provenance-budget controls**. It reuses the shared cell/closure proof and checks
+assignment-before-read/call, then substitutes each invocation independently.
+Original Bootstrap's outer-scope captured callable/holder graph and forwarded
+upvalues remain beyond this leaf proof.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities.

@@ -6,6 +6,46 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Immutable DOM captures and held array offsets, 2026-09-15 UTC
+
+Continued the completed **50266ae7 / 1aa5c2c2** thread from this handoff and
+**00:00 AGENT-SYNC** journal. Both histories and unmerged branches were checked;
+the tree was clean, no interrupted source/gate remained, and the September 7 WIP
+was confirmed as an ancestor. Two agents supplied capture-provenance findings
+before service limits; another supplied the independent escape change.
+
+**cc3d13fb** reuses held exact Number offsets for bounded array subtraction.
+Saved values, structural alternatives, underflow/coercion refusals and charged
+retention stay intact. Dense length passes **207 rows / 65 live states / 6,722
+budget cutoffs**; the complete escape fixture retains **zero violations /
+precision 40/172**. **d1c1ab96** reuses the existing immutable closure/cell queries
+for local leaf DOM helpers. Exact target/slot provenance, complete cell uses and
+assignment-before-read/call are checked; each invocation maps its own captured
+values. Shared queries and cloned operations are charged against the work budget.
+Cells and closures disappear before the complete DOM reproof; generated C++ keeps
+ordinary borrowed element handles and owning optional Strings.
+
+Final focused **2/2 DOM String/host CTests in 32.55s PASS**, following the escape
+focus **4/4 in 32.85s**. Strings: **173 Node/VM observations / eight GCC-Clang
+binaries / 264 source refusals / 41 provenance-depth refusals / 24 method provenance
+checks / 45 capture provenance-budget refusals / four existing budget-fingerprint
+controls**. Stable formatting passes **829 C++ / 100 Python / 33 web**; required
+pinned formatting matches the existing **nine-file / 26-diagnostic** baseline.
+
+The complete **276-step default devbox build passed**. The **602-test CTest gate
+is running**, with four jobs and **1,443 frozen inputs**. Final full-suite results
+are not yet claimed.
+Recovery scripts, logs and source hashes are in `/tmp/ctcompile-dom-captures/`.
+No browser/runtime files or WPT/test262 expectations changed.
+
+**Exact next boundary:** this admits primitive and DOM captures in local leaf
+helpers, including object-held methods; it does not admit captured callable/holder
+graphs, forwarded upvalues or captured host entries. Original Bootstrap still needs
+its outer `H`/`F`/`M` identities, then checked String/RegExp intrinsics for
+`F("config")` (vendor line 243) and live normalization through `M` (line 230).
+Dataset iteration, inherited receivers and retained config/callback ownership
+remain open. Full native Bootstrap and the application driver remain unfinished.
+
 ## Resumed object-held DOM helpers and computed length shrink, 2026-09-14 UTC
 
 Resumed the interrupted **23:19 AGENT-SYNC** thread, explicitly abandoned at
