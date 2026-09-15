@@ -401,10 +401,7 @@ void install_string(context & cx) {
                      continue;
                  }
                  const std::uint32_t cp = 0x10000u + ((cu - 0xD800u) << 10) + (next - 0xDC00u);
-                 out += static_cast<char>(0xF0u | (cp >> 18));
-                 out += static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu));
-                 out += static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
-                 out += static_cast<char>(0x80u | (cp & 0x3Fu));
+                 append_utf8(out, static_cast<char32_t>(cp));
                  i += 5;
              }
              return c.string(out);

@@ -86,10 +86,6 @@ bool enter_compiled_body(context & ctx, const function_proto & target, value clo
                                                                        : transition::cxx_to_aot;
     ++counts[static_cast<std::size_t>(crossing)];
 
-    // A body sizes its own frame storage with the number the ABI publishes, and
-    // this is the caller's half of that contract.
-    alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
-    (void)storage;
     std::uint64_t produced = 0;
     aot::ct_aot_status status = aot::ct_aot_status::failed;
     // THE CLOSURE TRAVELS THROUGH THE CONTEXT, not through the signature, for

@@ -12,8 +12,8 @@
 #include <string>
 #include <string_view>
 
+#include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/script/bigint.hpp>
-#include <ctbrowser/script/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -41,7 +41,7 @@ double context::to_number(value v) {
     if (v.is_string()) {
         // string_to_number, not std::stod: stod reads LC_NUMERIC for the decimal
         // separator, throws to report a failure this VM then had to catch, and
-        // accepted neither "+5" nor the radix prefixes. See script/number_format.hpp.
+        // accepted neither "+5" nor the radix prefixes. See core/number_format.hpp.
         return string_to_number(static_cast<string_object *>(v.as_heap())->text);
     }
     return std::nan("");
@@ -69,7 +69,7 @@ std::string context::to_string(value v) {
     // number_to_string, not std::to_string(double), which is `%f` to six
     // decimals - so this returned "0.333333" for 1/3, "0" for anything smaller
     // than about 1e-7, and 309 literal digits for the largest double. It is also
-    // locale-dependent. See script/number_format.hpp.
+    // locale-dependent. See core/number_format.hpp.
     if (v.is_number()) { return number_to_string(v.as_number()); }
     if (v.is_string()) { return static_cast<string_object *>(v.as_heap())->text; }
     // The KEY, not the description: this is what makes `o[sym]` reach a slot

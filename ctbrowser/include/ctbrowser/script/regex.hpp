@@ -154,36 +154,15 @@ inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
 	return true;
 }
 
-// One code point decoded forward from `at`, and its width in bytes. A byte
-// that does not start a well-formed sequence is one code point of width 1
-// (its own value), so a scan never stalls and a stray byte still compares.
+// One code point decoded forward from `at`, and its width in bytes. Core's
+// decode_utf8 has the contract this needs: a byte that does not start a
+// well-formed sequence is one code point of width 1 (its own value), so a
+// scan never stalls and a stray byte still compares.
 inline std::uint32_t rx_utf8_decode(std::string_view s, std::size_t at, std::size_t & width) {
-	const auto lead = static_cast<std::uint32_t>(static_cast<unsigned char>(s[at]));
-	const auto trail = [&](std::size_t i) {
-		return static_cast<std::uint32_t>(static_cast<unsigned char>(s[at + i]) & 0x3Fu);
-	};
-	const auto continues = [&](std::size_t n) {
-		if (s.size() - at < n) { return false; }
-		for (std::size_t i = 1; i < n; ++i) {
-			if ((static_cast<unsigned char>(s[at + i]) & 0xC0u) != 0x80u) { return false; }
-		}
-		return true;
-	};
-	width = 1;
-	if (lead < 0x80u) { return lead; }
-	if ((lead & 0xE0u) == 0xC0u && continues(2)) {
-		width = 2;
-		return ((lead & 0x1Fu) << 6) | trail(1);
-	}
-	if ((lead & 0xF0u) == 0xE0u && continues(3)) {
-		width = 3;
-		return ((lead & 0x0Fu) << 12) | (trail(1) << 6) | trail(2);
-	}
-	if ((lead & 0xF8u) == 0xF0u && continues(4)) {
-		width = 4;
-		return ((lead & 0x07u) << 18) | (trail(1) << 12) | (trail(2) << 6) | trail(3);
-	}
-	return lead;
+	const std::size_t start = at;
+	const auto cp = static_cast<std::uint32_t>(decode_utf8(s, at));
+	width = at - start;
+	return cp;
 }
 
 inline char rx_escape_char(char e) {
