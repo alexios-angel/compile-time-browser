@@ -10,7 +10,7 @@ foreach(test IN LISTS tests)
 endforeach()
 
 # Public Core clients also run without the browser or interpreter.
-foreach(client core_basics core_text)
+foreach(client core_basics core_text core_uri)
   get_target_property(_core_libs ctbrowser-test-${client} LINK_LIBRARIES)
   list(FILTER _core_libs EXCLUDE REGEX "^ctbrowser::(dom|script|style|layout|paint|raster|shell|ctbrowser)$")
   set_property(TARGET ctbrowser-test-${client} PROPERTY LINK_LIBRARIES "${_core_libs}")
