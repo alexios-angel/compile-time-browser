@@ -279,4 +279,251 @@ bool browser::handle_popup_press(const input_event & event) {
     return true;
 }
 
+std::string browser::option_value_at(const read_txn & txn, node_id select, std::size_t index) {
+    const atom option_tag = atoms_.intern_lower("option");
+    std::size_t at = 0;
+    for (const node_id child : txn.children(select)) {
+        if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+        if (at++ == index) { return form_store::option_value(txn, atoms_, child); }
+    }
+    return {};
+}
+
+bool browser::paint_svg(node_id id, const rect & box, ctbrowser::paint::display_list & into) {
+    const int width = std::max(1, static_cast<int>(std::lround(box.width)));
+    const int height = std::max(1, static_cast<int>(std::lround(box.height)));
+    auto pixels = svg_.pixels_for(id, width, height);
+    if (!pixels) { return false; }
+    into.draw_image(rect{box.x, box.y, static_cast<float>(width), static_cast<float>(height)},
+                    std::move(pixels), id);
+    return true;
+}
+
+void browser::paint_replaced(node_id id, const rect & box, const rect & content,
+                             const ctbrowser::style::computed_style_ptr & style,
+                             ctbrowser::paint::display_list & into) {
+    const auto txn = doc_->read();
+    const std::string_view tag = atoms_.text(txn.tag(id).value_or(atom{}));
+
+    if (tag == "canvas") {
+        if (auto pixels = canvases_.pixels_of(id)) { into.draw_image(box, std::move(pixels), id); }
+        return;
+    }
+    if (tag == "img") {
+        // A missing image draws NOTHING - not a broken-image icon, which is
+        // chrome this browser does not have yet, and not a filled box,
+        // which would look like a rendering bug.
+        if (auto pixels = image_of(id)) {
+            into.draw_image(box, std::move(pixels), id);
+        } else {
+            paint_svg(id, box, into);
+        }
+        return;
+    }
+    if (tag == "svg") {
+        // Same route as an <img> pointing at an .svg, and deliberately so:
+        // the source got here differently - sliced out of the document
+        // rather than loaded from a file - but from `svg_store` on it is
+        // the same graphic rasterised the same way at the same size.
+        paint_svg(id, box, into);
+        return;
+    }
+    const std::string_view type = txn.attribute_value(id, atoms_.intern("type"));
+    const control_kind kind = control_kind_of(tag, type);
+    if (kind == control_kind::none) { return; }
+
+    control_state & control = forms_.state_of(txn, atoms_, id);
+    const bool focused = focused_ == id;
+    const bool disabled = is_disabled(id);
+    const color frame{ctbrowser::style::ua_widget_frame};
+    const color field{disabled ? color{ctbrowser::style::ua_widget_disabled_face}
+                               : color{ctbrowser::style::ua_widget_field}};
+    const color accent{disabled ? color{ctbrowser::style::ua_widget_disabled_text}
+                                : color{ctbrowser::style::ua_widget_accent}};
+
+    switch (kind) {
+    case control_kind::checkbox: {
+        into.fill(box, control.checked ? accent : field, id);
+        outline(box, frame, into, id);
+        if (control.checked) { check_mark(box, into, id); }
+        break;
+    }
+    case control_kind::radio: {
+        // A RADIO IS ROUND, and that is the whole visual difference between
+        // it and a checkbox - the shape is what tells you one of them is
+        // exclusive.
+        into.fill_ellipse(box, frame, id);
+        into.fill_ellipse(rect{box.x + 1, box.y + 1, box.width - 2, box.height - 2},
+                          control.checked ? accent : field, id);
+        if (control.checked) {
+            const float inset = box.width * 0.3f;
+            into.fill_ellipse(
+                rect{box.x + inset, box.y + inset, box.width - 2 * inset, box.height - 2 * inset},
+                color{ctbrowser::style::ua_widget_mark}, id);
+        }
+        break;
+    }
+    case control_kind::button: {
+        // `<button>` does not reach here - it is not a replaced element -
+        // so this is `<input type=button|submit|reset>`, whose border comes
+        // from the UA sheet like every other control's.
+        const std::string label = button_label(txn, id, control, type);
+        if (!label.empty()) { label_text(box, label, id, style, into); }
+        break;
+    }
+    case control_kind::select: {
+        // NO FRAME OF ITS OWN. The UA sheet gives every control a real
+        // border, so the recorder has already drawn one. Only the selected
+        // option's text and the arrow are drawn here.
+        const std::string label = selected_option(txn, id);
+        if (!label.empty()) {
+            const float size = font_size_of(id);
+            into.text(rect{content.x, box.y + baseline_inset(box, size),
+                           std::max(0.0f, content.width - 20), size * 1.25f},
+                      label, size, control_text_colour(id, style), id, face_of(id));
+        }
+        // The drop-down arrow, in the gutter the intrinsic width reserves.
+        const float arrow = 4;
+        const float cx = box.x + box.width - 12;
+        const float cy = box.y + box.height / 2 - arrow / 2;
+        for (float row = 0; row < arrow; ++row) {
+            into.fill(rect{cx - (arrow - row), cy + row, 2 * (arrow - row), 1}, frame, id);
+        }
+        break;
+    }
+    case control_kind::text:
+    case control_kind::textarea: {
+        // NO BACKGROUND OR BORDER OF ITS OWN: both are the UA sheet's and
+        // the recorder has already painted them. ONLY THE FOCUS RING, which
+        // is a state indicator rather than a CSS border.
+        if (focused) { outline(box, accent, into, id); }
+        (void)field;
+        paint_field_text(box, id, control, kind, style, focused, into);
+        break;
+    }
+    case control_kind::none: break;
+    }
+}
+
+void browser::check_mark(const rect & box, ctbrowser::paint::display_list & into, node_id id) {
+    const color mark{ctbrowser::style::ua_widget_mark};
+    const float unit = std::max(1.0f, std::round(box.width / 13.0f));
+    // The elbow sits below and left of centre, where a drawn tick's does.
+    const float elbow_x = box.x + box.width * 0.42f;
+    const float elbow_y = box.y + box.height * 0.72f;
+    const float thick = unit * 2;
+    // Down-right into the elbow, then up-right and twice as far.
+    for (float step = 0; step < 3; ++step) {
+        into.fill(rect{elbow_x - (3 - step) * unit, elbow_y - (3 - step) * unit - thick, unit,
+                       thick + unit},
+                  mark, id);
+    }
+    for (float step = 0; step < 5; ++step) {
+        into.fill(rect{elbow_x + step * unit, elbow_y - step * unit - thick, unit, thick}, mark,
+                  id);
+    }
+}
+
+void browser::label_text(const rect & box, const std::string & label, node_id id,
+                         const ctbrowser::style::computed_style_ptr & style,
+                         ctbrowser::paint::display_list & into) {
+    const float size = font_size_of(id);
+    const float width = measure()(label, size, face_of(id));
+    const rect inner = content_box_of(id, box);
+    const float x = inner.x + std::max(0.0f, (inner.width - width) / 2);
+    into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
+              label, size, control_text_colour(id, style), id, face_of(id));
+}
+
+void browser::paint_field_text(const rect & box, node_id id, const control_state & control,
+                               control_kind kind,
+                               const ctbrowser::style::computed_style_ptr & style, bool focused,
+                               ctbrowser::paint::display_list & into) {
+    const field_layout geometry = layout_of_field(box, id, control, kind);
+    const rect inner = geometry.inner;
+    const float size = geometry.size;
+    const float line_height = geometry.line_height;
+    const ctbrowser::paint::font_face face = face_of(id);
+    // MEASURED WITH THE FONT THAT DRAWS IT, and with the text that IS
+    // drawn - a password's bullets are wider than its letters, so measuring
+    // the letters puts the caret inside the bullets.
+    const auto advance = [&](std::string_view text) {
+        return measure()(shown(text, geometry.masked), size, geometry.metrics_face);
+    };
+
+    // Scrolled out to the left. Subtracted from every x below; offset_at_point
+    // adds the same number back, and those two must always agree - it is
+    // what the one-place-for-geometry rule exists to protect.
+    const float dx = geometry.scroll_x;
+
+    // The field clips its own contents: a value longer than the box must not
+    // paint over the page beside it. Clipped to the inner box HORIZONTALLY,
+    // because a run's rect width does not bound it - the clip is the only
+    // thing that does - so with a scroll offset the glyphs would otherwise
+    // slide into the padding gutter and under the border.
+    //
+    // Vertically it stays the full BOX. `inner` is six pixels shorter, and
+    // clipping to that shaves the descenders off the bottom row and cuts
+    // the caret's line-height bar short.
+    into.push_clip(rect{inner.x, box.y, inner.width, box.height});
+    const std::size_t from = std::min(control.caret, control.selection);
+    const std::size_t to = std::max(control.caret, control.selection);
+    // Where the caret is, decided ONCE. Drawn per-line without this, a
+    // caret sitting on a soft-wrap boundary belongs to two lines and gets a
+    // bar on each.
+    const std::size_t on_line = caret_line(geometry, control.caret);
+    // Lines above the scroll offset are not drawn at all, and the rest are
+    // positioned relative to it. This and offset_at_point below must agree,
+    // which is the whole reason the geometry lives in one place.
+    const std::size_t first = geometry.scroll_line;
+    for (std::size_t index = first; index < geometry.lines.size(); ++index) {
+        const auto [begin, end] = geometry.lines[index];
+        const std::string_view line{control.value.data() + begin, end - begin};
+        const float y = inner.y + static_cast<float>(index - first) * line_height;
+        // Past the bottom of the box: the clip would drop it anyway, and
+        // stopping here means a long value costs nothing to skip.
+        if (y > inner.y + inner.height) { break; }
+        if (from != to && from < end && to > begin) {
+            const std::size_t a = std::max(from, begin) - begin;
+            const std::size_t b = std::min(to, end) - begin;
+            into.fill(rect{inner.x - dx + advance(line.substr(0, a)), y,
+                           advance(line.substr(a, b - a)), line_height},
+                      color{ctbrowser::style::ua_selection_highlight}, id);
+        }
+        if (!line.empty()) {
+            // The rect's WIDTH is the run's true advance, not the box's.
+            // Nothing clips a glyph to it - both backends read only
+            // `where.x`/`where.y` - but display_list::intersecting culls by
+            // these bounds per tile, so a rect narrower than the glyphs
+            // drops the whole run in a tile it visibly covers. It is also
+            // what an underline band is measured against.
+            into.text(rect{inner.x - dx, y, advance(line), line_height},
+                      shown(line, geometry.masked), size, control_text_colour(id, style), id, face);
+        }
+        // The caret sits on the line CONTAINING it - see caret_line(),
+        // which puts a caret on a boundary at the end of the earlier line,
+        // as browsers do.
+        if (focused && caret_visible() && index == on_line) {
+            into.fill(rect{inner.x - dx + advance(line.substr(0, control.caret - begin)), y, 1,
+                           line_height},
+                      control_text_colour(id, style), id);
+        }
+    }
+    into.pop_clip();
+}
+
+std::string browser::button_label(const read_txn & txn, node_id id, const control_state & control,
+                                  std::string_view type) const {
+    if (!control.value.empty()) { return control.value; }
+    if (type == "submit") { return "Submit"; }
+    if (type == "reset") { return "Reset"; }
+    std::string text;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        text += txn.text(at);
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, id);
+    return text;
+}
+
 } // namespace ctbrowser::shell

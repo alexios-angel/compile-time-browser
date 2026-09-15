@@ -659,15 +659,7 @@ private:
 
     // The value of the nth <option>, for the popup's pick.
     [[nodiscard]] std::string option_value_at(const read_txn & txn, node_id select,
-                                              std::size_t index) {
-        const atom option_tag = atoms_.intern_lower("option");
-        std::size_t at = 0;
-        for (const node_id child : txn.children(select)) {
-            if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
-            if (at++ == index) { return form_store::option_value(txn, atoms_, child); }
-        }
-        return {};
-    }
+                                              std::size_t index);
 
     // Every <option>'s text, in document order.
     [[nodiscard]] std::vector<std::string> option_labels(const read_txn & txn, node_id select);
@@ -690,15 +682,7 @@ private:
     // already the right size to within a fraction of a pixel - reintroducing
     // exactly the stair-stepping this exists to remove. Snapped, it is a 1:1
     // blit.
-    bool paint_svg(node_id id, const rect & box, ctbrowser::paint::display_list & into) {
-        const int width = std::max(1, static_cast<int>(std::lround(box.width)));
-        const int height = std::max(1, static_cast<int>(std::lround(box.height)));
-        auto pixels = svg_.pixels_for(id, width, height);
-        if (!pixels) { return false; }
-        into.draw_image(rect{box.x, box.y, static_cast<float>(width), static_cast<float>(height)},
-                        std::move(pixels), id);
-        return true;
-    }
+    bool paint_svg(node_id id, const rect & box, ctbrowser::paint::display_list & into);
 
     // What a <canvas> or a form control draws. Everything here is chrome the
     // UA supplies rather than anything the document asked for, which is why the
@@ -710,111 +694,7 @@ private:
     // sheet could not change.
     void paint_replaced(node_id id, const rect & box, const rect & content,
                         const ctbrowser::style::computed_style_ptr & style,
-                        ctbrowser::paint::display_list & into) {
-        const auto txn = doc_->read();
-        const std::string_view tag = atoms_.text(txn.tag(id).value_or(atom{}));
-
-        if (tag == "canvas") {
-            if (auto pixels = canvases_.pixels_of(id)) {
-                into.draw_image(box, std::move(pixels), id);
-            }
-            return;
-        }
-        if (tag == "img") {
-            // A missing image draws NOTHING - not a broken-image icon, which is
-            // chrome this browser does not have yet, and not a filled box,
-            // which would look like a rendering bug.
-            if (auto pixels = image_of(id)) {
-                into.draw_image(box, std::move(pixels), id);
-            } else {
-                paint_svg(id, box, into);
-            }
-            return;
-        }
-        if (tag == "svg") {
-            // Same route as an <img> pointing at an .svg, and deliberately so:
-            // the source got here differently - sliced out of the document
-            // rather than loaded from a file - but from `svg_store` on it is
-            // the same graphic rasterised the same way at the same size.
-            paint_svg(id, box, into);
-            return;
-        }
-        const std::string_view type = txn.attribute_value(id, atoms_.intern("type"));
-        const control_kind kind = control_kind_of(tag, type);
-        if (kind == control_kind::none) { return; }
-
-        control_state & control = forms_.state_of(txn, atoms_, id);
-        const bool focused = focused_ == id;
-        const bool disabled = is_disabled(id);
-        const color frame{ctbrowser::style::ua_widget_frame};
-        const color field{disabled ? color{ctbrowser::style::ua_widget_disabled_face}
-                                   : color{ctbrowser::style::ua_widget_field}};
-        const color accent{disabled ? color{ctbrowser::style::ua_widget_disabled_text}
-                                    : color{ctbrowser::style::ua_widget_accent}};
-
-        switch (kind) {
-        case control_kind::checkbox: {
-            into.fill(box, control.checked ? accent : field, id);
-            outline(box, frame, into, id);
-            if (control.checked) { check_mark(box, into, id); }
-            break;
-        }
-        case control_kind::radio: {
-            // A RADIO IS ROUND, and that is the whole visual difference between
-            // it and a checkbox - the shape is what tells you one of them is
-            // exclusive.
-            into.fill_ellipse(box, frame, id);
-            into.fill_ellipse(rect{box.x + 1, box.y + 1, box.width - 2, box.height - 2},
-                              control.checked ? accent : field, id);
-            if (control.checked) {
-                const float inset = box.width * 0.3f;
-                into.fill_ellipse(rect{box.x + inset, box.y + inset, box.width - 2 * inset,
-                                       box.height - 2 * inset},
-                                  color{ctbrowser::style::ua_widget_mark}, id);
-            }
-            break;
-        }
-        case control_kind::button: {
-            // `<button>` does not reach here - it is not a replaced element -
-            // so this is `<input type=button|submit|reset>`, whose border comes
-            // from the UA sheet like every other control's.
-            const std::string label = button_label(txn, id, control, type);
-            if (!label.empty()) { label_text(box, label, id, style, into); }
-            break;
-        }
-        case control_kind::select: {
-            // NO FRAME OF ITS OWN. The UA sheet gives every control a real
-            // border, so the recorder has already drawn one. Only the selected
-            // option's text and the arrow are drawn here.
-            const std::string label = selected_option(txn, id);
-            if (!label.empty()) {
-                const float size = font_size_of(id);
-                into.text(rect{content.x, box.y + baseline_inset(box, size),
-                               std::max(0.0f, content.width - 20), size * 1.25f},
-                          label, size, control_text_colour(id, style), id, face_of(id));
-            }
-            // The drop-down arrow, in the gutter the intrinsic width reserves.
-            const float arrow = 4;
-            const float cx = box.x + box.width - 12;
-            const float cy = box.y + box.height / 2 - arrow / 2;
-            for (float row = 0; row < arrow; ++row) {
-                into.fill(rect{cx - (arrow - row), cy + row, 2 * (arrow - row), 1}, frame, id);
-            }
-            break;
-        }
-        case control_kind::text:
-        case control_kind::textarea: {
-            // NO BACKGROUND OR BORDER OF ITS OWN: both are the UA sheet's and
-            // the recorder has already painted them. ONLY THE FOCUS RING, which
-            // is a state indicator rather than a CSS border.
-            if (focused) { outline(box, accent, into, id); }
-            (void)field;
-            paint_field_text(box, id, control, kind, style, focused, into);
-            break;
-        }
-        case control_kind::none: break;
-        }
-    }
+                        ctbrowser::paint::display_list & into);
 
     // THE TICK IN A CHECKED CHECKBOX.
     //
@@ -828,38 +708,14 @@ private:
     // Two rows per step so the stroke reads as a stroke at 13px rather than as
     // a dotted line, and the short arm rises half as far as the long one, which
     // is what makes it a tick rather than a V.
-    void check_mark(const rect & box, ctbrowser::paint::display_list & into, node_id id) {
-        const color mark{ctbrowser::style::ua_widget_mark};
-        const float unit = std::max(1.0f, std::round(box.width / 13.0f));
-        // The elbow sits below and left of centre, where a drawn tick's does.
-        const float elbow_x = box.x + box.width * 0.42f;
-        const float elbow_y = box.y + box.height * 0.72f;
-        const float thick = unit * 2;
-        // Down-right into the elbow, then up-right and twice as far.
-        for (float step = 0; step < 3; ++step) {
-            into.fill(rect{elbow_x - (3 - step) * unit, elbow_y - (3 - step) * unit - thick, unit,
-                           thick + unit},
-                      mark, id);
-        }
-        for (float step = 0; step < 5; ++step) {
-            into.fill(rect{elbow_x + step * unit, elbow_y - step * unit - thick, unit, thick}, mark,
-                      id);
-        }
-    }
+    void check_mark(const rect & box, ctbrowser::paint::display_list & into, node_id id);
 
     // A button's label is CENTRED, horizontally and on the box's middle. Left
     // aligned at a fixed inset it drifts off centre the moment the button is
     // wider than its text, which is every button with a width.
     void label_text(const rect & box, const std::string & label, node_id id,
                     const ctbrowser::style::computed_style_ptr & style,
-                    ctbrowser::paint::display_list & into) {
-        const float size = font_size_of(id);
-        const float width = measure()(label, size, face_of(id));
-        const rect inner = content_box_of(id, box);
-        const float x = inner.x + std::max(0.0f, (inner.width - width) / 2);
-        into.text(rect{x, box.y + baseline_inset(box, size), box.width - (x - box.x), size * 1.25f},
-                  label, size, control_text_colour(id, style), id, face_of(id));
-    }
+                    ctbrowser::paint::display_list & into);
 
     // Where a single line of text sits inside a control: vertically centred on
     // the box rather than pinned to a constant, so a control that is taller
@@ -900,16 +756,7 @@ private:
     // about where a field's text starts: they all ask this, and it asks the
     // cascade.
     [[nodiscard]] rect content_box_of(node_id id, const rect & box) const {
-        const layout::box_node * found = nullptr;
-        const auto walk = [&](auto && self, const layout::box_node & at) -> void {
-            if (found != nullptr) { return; }
-            if (at.source == id) {
-                found = &at;
-                return;
-            }
-            for (const layout::box_node & c : at.children) { self(self, c); }
-        };
-        walk(walk, boxes_);
+        const layout::box_node * found = find_box(boxes_, id);
         if (found == nullptr) { return box; }
         const layout::resolved_edges e = layout::resolve_edges(
             *found, layout::constraints{box.width, box.height, found->font_size});
@@ -919,47 +766,7 @@ private:
     }
 
     [[nodiscard]] field_layout layout_of_field(const rect & border_box, node_id id,
-                                               const control_state & control, control_kind kind) {
-        // EVERY caller hands over the border box and this converts once, which is
-        // what stops the four of them drifting apart.
-        const rect box = content_box_of(id, border_box);
-        field_layout out;
-        out.size = font_size_of(id);
-        out.metrics_face = face_of(id);
-        out.line_height = out.size * 1.25f;
-        out.masked = is_password(id);
-        const bool multiline = kind == control_kind::textarea;
-        out.inner = rect{box.x, box.y + (multiline ? 0 : baseline_inset(box, out.size)), box.width,
-                         box.height};
-        // A single-line field does not wrap - it scrolls horizontally, which it
-        // has always done by clipping. Only a textarea gets visual lines.
-        out.lines =
-            multiline
-                ? value_lines(control.value, out.inner.width, out.size, out.metrics_face, measure())
-                : std::vector<std::pair<std::size_t, std::size_t>>{{0, control.value.size()}};
-        out.visible_lines = out.line_height > 0
-                                ? std::max<std::size_t>(1, static_cast<std::size_t>(
-                                                               out.inner.height / out.line_height))
-                                : 1;
-        // Clamp the requested view to what there is to look at.
-        const std::size_t most =
-            out.lines.size() > out.visible_lines ? out.lines.size() - out.visible_lines : 0;
-        out.scroll_line = std::min(control.scroll_line, most);
-        // The WIDEST line, not the current one: a field scrolls its content as
-        // a whole, so moving between a long line and a short one must not jerk
-        // the view sideways.
-        for (const auto & [begin, end] : out.lines) {
-            const std::string_view line{control.value.data() + begin, end - begin};
-            out.content_width = std::max(
-                out.content_width, measure()(shown(line, out.masked), out.size, out.metrics_face));
-        }
-        // `+ 1` because the caret is a 1px bar drawn AT the caret's x: without
-        // the extra pixel a caret at the very end of the value sits exactly on
-        // the clip's right edge and is invisible.
-        out.scroll_x = std::clamp(control.scroll_x, 0.0f,
-                                  std::max(0.0f, out.content_width + 1 - out.inner.width));
-        return out;
-    }
+                                               const control_state & control, control_kind kind);
 
     // A control is disabled by its own attribute or by an enclosing <fieldset>,
     // which is how a form greys out a whole section at once.
@@ -978,90 +785,13 @@ private:
     // on the line the point is on - which is the ONLY way a click can put the
     // caret where the user pointed.
     [[nodiscard]] std::size_t offset_at_point(node_id id, const control_state & control,
-                                              control_kind kind, float x, float y) {
-        const rect box = viewport_box_of(id);
-        if (box.empty()) { return control.caret; }
-        const field_layout geometry = layout_of_field(box, id, control, kind);
-        if (geometry.lines.empty()) { return 0; }
-
-        // Relative to the FIRST VISIBLE line, not to the first line: a click
-        // maps through the same scroll offset the painter drew with, or a
-        // scrolled textarea puts the caret several lines from where you
-        // pointed.
-        const auto line_index =
-            static_cast<std::ptrdiff_t>(std::floor((y - geometry.inner.y) / geometry.line_height)) +
-            static_cast<std::ptrdiff_t>(geometry.scroll_line);
-        const std::size_t index = static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(
-            line_index, 0, static_cast<std::ptrdiff_t>(geometry.lines.size()) - 1));
-        const auto [begin, end] = geometry.lines[index];
-        const std::string_view line{control.value.data() + begin, end - begin};
-
-        // Nearest BOUNDARY, not nearest character: clicking the right half of a
-        // glyph puts the caret after it, which is what makes clicking at the
-        // end of a word land where you meant.
-        //
-        // `+ scroll_x` puts the click back into VALUE space: `where` below is
-        // measured from the start of the line, `x` arrives in box space, and
-        // the scroll is exactly the difference. Same sign convention as the
-        // `+ scroll_line` above, and the exact inverse of the `- dx` the
-        // painter applies.
-        const float want = x - geometry.inner.x + geometry.scroll_x;
-        std::size_t best = 0;
-        float best_distance = std::numeric_limits<float>::infinity();
-        for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
-            const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
-                                          geometry.metrics_face);
-            if (const float distance = std::fabs(where - want); distance < best_distance) {
-                best_distance = distance;
-                best = at;
-            }
-            if (at == line.size()) { break; }
-        }
-        return begin + best;
-    }
+                                              control_kind kind, float x, float y);
 
     // Move the caret one VISUAL LINE, keeping the column. A textarea without
     // this has arrow keys that walk character by character through a newline,
     // which is not what up and down mean.
     bool move_caret_by_line(node_id id, control_state & control, control_kind kind, int direction,
-                            bool extend) {
-        const rect box = viewport_box_of(id);
-        if (box.empty()) { return false; }
-        const field_layout geometry = layout_of_field(box, id, control, kind);
-        // The same rule the painter uses, so Up/Down start from the line the
-        // caret is DRAWN on. Two copies of "which line is this" is how the
-        // caret and the arrow keys start disagreeing at a wrap boundary.
-        const std::size_t index = caret_line(geometry, control.caret);
-        const auto target = static_cast<std::ptrdiff_t>(index) + direction;
-        if (target < 0 || target >= static_cast<std::ptrdiff_t>(geometry.lines.size())) {
-            return false;
-        }
-        // The COLUMN is a distance, not a character count: two lines of the
-        // same text in a proportional font do not share character positions.
-        const auto [begin, end] = geometry.lines[index];
-        const float column =
-            measure()(shown(std::string_view{control.value}.substr(begin, control.caret - begin),
-                            geometry.masked),
-                      geometry.size, geometry.metrics_face);
-        const auto [to_begin, to_end] = geometry.lines[static_cast<std::size_t>(target)];
-        const std::string_view line{control.value.data() + to_begin, to_end - to_begin};
-        std::size_t best = 0;
-        float best_distance = std::numeric_limits<float>::infinity();
-        for (std::size_t at = 0; at <= line.size();
-             at = at < line.size() ? form_store::next_code_point(line, at) : line.size() + 1) {
-            const float where = measure()(shown(line.substr(0, at), geometry.masked), geometry.size,
-                                          geometry.metrics_face);
-            if (const float distance = std::fabs(where - column); distance < best_distance) {
-                best_distance = distance;
-                best = at;
-            }
-            if (at == line.size()) { break; }
-        }
-        control.caret = to_begin + best;
-        if (!extend) { control.selection = control.caret; }
-        return true;
-    }
+                            bool extend);
 
     // THREE THINGS MOVE A FIELD'S VIEW, and they must never run on the same
     // event or they fight each other. Every bug in this area is a violation of
@@ -1087,153 +817,15 @@ private:
     // single-line field, which has exactly one line; the horizontal half is NOT
     // a no-op for a textarea, because an unbreakable word longer than the line
     // overflows sideways there too.
-    void reveal_caret(node_id id, control_state & control, control_kind kind) {
-        if (kind != control_kind::text && kind != control_kind::textarea) { return; }
-        const rect box = viewport_box_of(id);
-        if (box.empty()) { return; }
-        const field_layout geometry = layout_of_field(box, id, control, kind);
-        if (geometry.lines.empty()) { return; }
-        const std::size_t on_line = caret_line(geometry, control.caret);
-        bool moved = false;
-
-        // --- vertical ---
-        const std::size_t visible = std::max<std::size_t>(1, geometry.visible_lines);
-        // From the EFFECTIVE origin, not the stored one, so this converges on
-        // the clamp in layout_of_field instead of arguing with it.
-        std::size_t first = geometry.scroll_line;
-        if (on_line < first) {
-            first = on_line;
-        } else if (on_line >= first + visible) {
-            first = on_line - visible + 1;
-        }
-        // Never leave blank rows below a value that would fill them: deleting
-        // a long value while scrolled down otherwise shows an empty box.
-        const std::size_t most =
-            geometry.lines.size() > visible ? geometry.lines.size() - visible : 0;
-        first = std::min(first, most);
-        if (first != control.scroll_line) {
-            control.scroll_line = first;
-            moved = true;
-        }
-
-        // --- horizontal ---
-        const auto [begin, end] = geometry.lines[on_line];
-        const std::string_view line{control.value.data() + begin, end - begin};
-        const auto advance = [&](std::size_t upto) {
-            return measure()(shown(line.substr(0, upto), geometry.masked), geometry.size,
-                             geometry.metrics_face);
-        };
-        const float caret_x = advance(control.caret >= begin ? control.caret - begin : 0);
-        float scroll = geometry.scroll_x;
-        // A pixel of slack on the right so the caret bar itself is inside the
-        // box rather than drawn on its edge.
-        if (caret_x < scroll) {
-            scroll = caret_x;
-        } else if (caret_x > scroll + geometry.inner.width - 1) {
-            scroll = caret_x - geometry.inner.width + 1;
-        }
-        // ...and never scrolled past the end of the content, for the same
-        // reason as `most` above: a shrinking value must not leave an empty box.
-        scroll = std::clamp(scroll, 0.0f,
-                            std::max(0.0f, geometry.content_width + 1 - geometry.inner.width));
-        if (scroll != control.scroll_x) {
-            control.scroll_x = scroll;
-            moved = true;
-        }
-        if (moved) { mark(dirty::paint); }
-    }
+    void reveal_caret(node_id id, control_state & control, control_kind kind);
 
     // Home and End are per LINE in a textarea, as they are in every editor.
     bool move_to_line_edge(node_id id, control_state & control, control_kind kind, bool to_end,
-                           bool extend) {
-        const rect box = viewport_box_of(id);
-        if (box.empty()) { return false; }
-        const field_layout geometry = layout_of_field(box, id, control, kind);
-        for (const auto & [begin, end] : geometry.lines) {
-            if (control.caret < begin || control.caret > end) { continue; }
-            control.caret = to_end ? end : begin;
-            if (!extend) { control.selection = control.caret; }
-            return true;
-        }
-        return false;
-    }
+                           bool extend);
 
     void paint_field_text(const rect & box, node_id id, const control_state & control,
                           control_kind kind, const ctbrowser::style::computed_style_ptr & style,
-                          bool focused, ctbrowser::paint::display_list & into) {
-        const field_layout geometry = layout_of_field(box, id, control, kind);
-        const rect inner = geometry.inner;
-        const float size = geometry.size;
-        const float line_height = geometry.line_height;
-        const ctbrowser::paint::font_face face = face_of(id);
-        // MEASURED WITH THE FONT THAT DRAWS IT, and with the text that IS
-        // drawn - a password's bullets are wider than its letters, so measuring
-        // the letters puts the caret inside the bullets.
-        const auto advance = [&](std::string_view text) {
-            return measure()(shown(text, geometry.masked), size, geometry.metrics_face);
-        };
-
-        // Scrolled out to the left. Subtracted from every x below; offset_at_point
-        // adds the same number back, and those two must always agree - it is
-        // what the one-place-for-geometry rule exists to protect.
-        const float dx = geometry.scroll_x;
-
-        // The field clips its own contents: a value longer than the box must not
-        // paint over the page beside it. Clipped to the inner box HORIZONTALLY,
-        // because a run's rect width does not bound it - the clip is the only
-        // thing that does - so with a scroll offset the glyphs would otherwise
-        // slide into the padding gutter and under the border.
-        //
-        // Vertically it stays the full BOX. `inner` is six pixels shorter, and
-        // clipping to that shaves the descenders off the bottom row and cuts
-        // the caret's line-height bar short.
-        into.push_clip(rect{inner.x, box.y, inner.width, box.height});
-        const std::size_t from = std::min(control.caret, control.selection);
-        const std::size_t to = std::max(control.caret, control.selection);
-        // Where the caret is, decided ONCE. Drawn per-line without this, a
-        // caret sitting on a soft-wrap boundary belongs to two lines and gets a
-        // bar on each.
-        const std::size_t on_line = caret_line(geometry, control.caret);
-        // Lines above the scroll offset are not drawn at all, and the rest are
-        // positioned relative to it. This and offset_at_point below must agree,
-        // which is the whole reason the geometry lives in one place.
-        const std::size_t first = geometry.scroll_line;
-        for (std::size_t index = first; index < geometry.lines.size(); ++index) {
-            const auto [begin, end] = geometry.lines[index];
-            const std::string_view line{control.value.data() + begin, end - begin};
-            const float y = inner.y + static_cast<float>(index - first) * line_height;
-            // Past the bottom of the box: the clip would drop it anyway, and
-            // stopping here means a long value costs nothing to skip.
-            if (y > inner.y + inner.height) { break; }
-            if (from != to && from < end && to > begin) {
-                const std::size_t a = std::max(from, begin) - begin;
-                const std::size_t b = std::min(to, end) - begin;
-                into.fill(rect{inner.x - dx + advance(line.substr(0, a)), y,
-                               advance(line.substr(a, b - a)), line_height},
-                          color{ctbrowser::style::ua_selection_highlight}, id);
-            }
-            if (!line.empty()) {
-                // The rect's WIDTH is the run's true advance, not the box's.
-                // Nothing clips a glyph to it - both backends read only
-                // `where.x`/`where.y` - but display_list::intersecting culls by
-                // these bounds per tile, so a rect narrower than the glyphs
-                // drops the whole run in a tile it visibly covers. It is also
-                // what an underline band is measured against.
-                into.text(rect{inner.x - dx, y, advance(line), line_height},
-                          shown(line, geometry.masked), size, control_text_colour(id, style), id,
-                          face);
-            }
-            // The caret sits on the line CONTAINING it - see caret_line(),
-            // which puts a caret on a boundary at the end of the earlier line,
-            // as browsers do.
-            if (focused && caret_visible() && index == on_line) {
-                into.fill(rect{inner.x - dx + advance(line.substr(0, control.caret - begin)), y, 1,
-                               line_height},
-                          control_text_colour(id, style), id);
-            }
-        }
-        into.pop_clip();
-    }
+                          bool focused, ctbrowser::paint::display_list & into);
 
     // A value's VISUAL lines as [begin, end) offsets: split on newlines, then
     // soft-wrapped within each of those to `wrap_width`. Always at least one,
@@ -1251,32 +843,7 @@ private:
     [[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>> value_lines(
         const std::string & value, float wrap_width, float size,
         const ctbrowser::layout::text_face & face,
-        const ctbrowser::layout::measure_text_fn & measure) {
-        std::vector<std::pair<std::size_t, std::size_t>> out;
-        std::size_t begin = 0;
-        for (std::size_t at = 0; at <= value.size(); ++at) {
-            if (at != value.size() && value[at] != '\n') { continue; }
-            // One hard segment, [begin, at). Wrapped greedily with the SAME
-            // rule the page's inline layout uses, so a field and the text
-            // around it never disagree about where a line breaks.
-            std::size_t from = begin;
-            while (wrap_width > 0 && from < at) {
-                const std::string_view rest{value.data() + from, at - from};
-                if (measure(rest, size, face) <= wrap_width) { break; }
-                const std::size_t take =
-                    ctbrowser::layout::words_that_fit(rest, wrap_width, size, face, measure);
-                // words_that_fit only returns 0 when there is no room at all,
-                // and it returns an over-long word whole otherwise - but guard
-                // anyway, because a 0 here would never terminate.
-                if (take == 0 || take >= rest.size()) { break; }
-                out.emplace_back(from, from + take);
-                from += take;
-            }
-            out.emplace_back(from, at);
-            begin = at + 1;
-        }
-        return out;
-    }
+        const ctbrowser::layout::measure_text_fn & measure);
 
     // The line a caret is ON, as an index into `lines`. FIRST match wins: a
     // soft break makes end == begin, so a caret sitting on a wrap boundary
@@ -1291,18 +858,7 @@ private:
 
     [[nodiscard]] std::string button_label(const read_txn & txn, node_id id,
                                            const control_state & control,
-                                           std::string_view type) const {
-        if (!control.value.empty()) { return control.value; }
-        if (type == "submit") { return "Submit"; }
-        if (type == "reset") { return "Reset"; }
-        std::string text;
-        const auto walk = [&](auto && self, node_id at) -> void {
-            text += txn.text(at);
-            for (const node_id child : txn.children(at)) { self(self, child); }
-        };
-        walk(walk, id);
-        return text;
-    }
+                                           std::string_view type) const;
 
     // The colour a control's own text is drawn in. A DISABLED control ignores
     // the cascade here: `color` on a disabled button is not what a user needs
