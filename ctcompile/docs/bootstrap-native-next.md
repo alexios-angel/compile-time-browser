@@ -5,8 +5,9 @@
 Latest slice **755af20b** expands structured DOM helpers and simple lifted early
 returns, preserving complete arm, frame and capture proof. Focused **4/4 CTests
 PASS**: **481 Node/VM observations / eight native binaries / 764 source refusals /
-22 branch depth-budget controls**. The full default build/CTest gate is running on
-**1,443 frozen inputs**; see [HANDOFF](HANDOFF.md) for measurements.
+22 branch depth-budget controls**. Complete **274-step build / 602/602 CTests / 176/176 lit PASS**; all
+**1,443 frozen hashes** match devbox/local/committed source. See
+[HANDOFF](HANDOFF.md) for measurements.
 
 Original H `getDataAttribute` still reaches multi-block original M. A fresh probe
 refuses that helper under both providers/policies. Next is completion-dispatch and
@@ -16,7 +17,7 @@ introduces completion dispatch and poison; simple two-return helpers now compile
 The preceding captured F/H set/remove slice remains admitted. Full H dataset
 iteration, Bootstrap initialization, inherited receivers, retained config/callback
 ownership and the application driver remain unfinished. No full-bundle admission
-gain is claimed; the last complete gate measured Bootstrap **19/574 native**,
+gain is claimed; fresh measurements remain Bootstrap **19/574 native**,
 DOM Data **7/7**, Button **4/86**.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original

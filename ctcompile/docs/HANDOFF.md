@@ -32,11 +32,21 @@ refusal control, alongside a separate supported nested-helper source.
 
 Focused **4/4 CTests in 96.06s PASS**: **481 Node/VM observations / eight GCC-Clang
 binaries / 764 source refusals / 44 provenance-depth / 24 method / 241 capture /
-101 replacement / 22 branch depth-budget controls**. Required pinned formatting
-matches the unchanged **nine-file / 26-diagnostic** baseline; changed C++ and Python
-pass formatting. Stable formatter check and the complete default build/CTest gate
-are running. **1,443 source inputs** are frozen. Recovery scripts, logs and the
-fresh continuation probe are in `/tmp/ctcompile-helper-resume/`.
+101 replacement / 22 branch depth-budget controls**.
+
+Complete **274-step default build / 602/602 CTests in 1449.36s /
+176/176 lit in 968.74s PASS**. All **1,443 frozen hashes** match
+devbox, local files and committed source. Stable formatting passes **829 C++ /
+100 Python / 33 web**; required pinned formatting matches the unchanged
+**nine-file / 26-diagnostic** baseline. Recovery scripts, focused/full logs,
+generated C++, `measured.json` and `next-boundary.md` are in
+`/tmp/ctcompile-helper-resume/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skipped or pruned functions. DOM Data remains **7/7**, Button **4/86**
+with **22 Node observations** and its existing VM inheritance failure. Button/Data
+reports and all **1,123 escape baseline rows** are byte-identical to the prior gate.
+No full-bundle admission gain is claimed.
 
 **Exact next boundary:** original M/F/H.getDataAttribute still refuses the complete
 single-block helper census under both providers and policies. Prove completion
@@ -44,9 +54,8 @@ control flow and exceptions before Number/toString, URI decoding, JSON and catch
 fallback. Reuse the existing exception recovery/SCF machinery without removing
 source effects or accepting unproved carriers. Full H/dataset, Bootstrap
 initialization, inheritance, retained config/callback ownership and the application
-driver remain unfinished. The preceding full gate measured Bootstrap **19/574**,
-DOM Data **7/7**, Button **4/86**; this session's full-bundle measurement is pending.
-No browser/runtime or WPT/test262 expectation files changed.
+driver remain unfinished. No browser/runtime or WPT/test262 expectation files
+changed; full WPT/test262 were not remeasured.
 
 ## Structured DOM branches and signed shifts, 2026-09-15 UTC
 
