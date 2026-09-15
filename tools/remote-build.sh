@@ -112,9 +112,8 @@ rsync -az --delete \
   --filter 'protect *.d' \
   "$repo_root"/ "$host:$remote_dir/"
 
-# Converge project-owned deps on the box: brew-only deps ride in
-# tools/Brewfile (glm >= 1.0 for constexpr math); apt glm is the
-# brew-less fallback (everything but the constexpr-math tests).
+# Converge project-owned deps on the box: the compiled ones ride in
+# tools/Brewfile, and a box without linuxbrew gets none of them.
 ssh "$host" CLANG_STD_EMBED_RELEASE="$CLANG_STD_EMBED_RELEASE" CT_REMOTE_DIR="$remote_dir" 'bash -s' <<'REMOTE'
 set -euo pipefail
 BREW=/home/linuxbrew/.linuxbrew/bin/brew
@@ -122,10 +121,6 @@ if [ -x "$BREW" ]; then
   export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
   "$BREW" bundle check --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile" >/dev/null 2>&1 \
     || "$BREW" bundle install --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile"
-else
-  # no linuxbrew on this box: apt glm builds everything except the
-  # constexpr-math tests (needs glm >= 1.0)
-  dpkg -s libglm-dev >/dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libglm-dev
 fi
 tool="$HOME/$CT_REMOTE_DIR/tools/clang-std-embed"
 # KEYED ON THE RELEASE, not merely on the binary existing. The guard used to be
