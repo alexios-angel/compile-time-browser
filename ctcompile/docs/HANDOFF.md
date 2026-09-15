@@ -6,6 +6,52 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded exception tails and Number left shifts, 2026-09-15 UTC
+
+Resumed the interrupted **08:37 guarded-tail / register-CFG / left-shift** thread
+from **14 dirty ctcompile files** and AGENT-SYNC's **08:40** draft journal,
+explicitly abandoned at **08:41:11**. Both histories and unmerged branches were
+checked; `codex-wip-20260907` is already an ancestor. Three agents reviewed the
+drafts and tests; root completed integration after the test agent's service limit.
+
+**0743ad77** proves bounded original Number left shifts using the existing uint32
+facts, masked counts and unsigned truncation. Negative signed results and unproved
+operands still refuse. Dense arrays measure **567 rows / 293 live states / 21,925
+retention cutoffs**; the escape fixture has **zero violations / precision 40/172**.
+
+**b3a443da** preserves ordinary global/property/call exception register CFGs before
+SCF lifting. This retains source state; it proves no builtin identity or effect.
+**1cd9a49a** recovers a guarded exception tail at its original handler installation
+site. A bounded acyclic prefix partition preserves pre-try checks, early returns,
+throws and register vectors. Only collected tails are replaced; CFG reachability
+proves remaining dead blocks unreachable, and the rollback snapshot retains all
+original source. A remaining multi-block prefix keeps its unstructured diagnostic;
+failed native admission also restores an originally absent diagnostic marker.
+
+Focused **5/5 CTests in 100.95s**, **2/2 lift lit tests in 0.03s**, and **2/2 existing
+exception/admission lit tests in 40.30s PASS**. Guarded tails check **1,891 incomplete
+budgets across three modes**, **30 malformed CFG/state refusals**, dead-source
+snapshot restoration and real native-admission rollback. DOM Strings remain
+**493 Node/VM observations / eight GCC-Clang binaries / 780 source refusals**.
+Stable formatting passes **829 C++ / 100 Python / 33 web**; the required pinned
+formatter matches its unchanged **nine-file / 26-diagnostic** baseline.
+
+The complete default devbox build/CTest gate is **running** on **1,443 frozen
+source hashes**. No full-suite result is claimed yet. Logs, hashes, source probes
+and continuation evidence live in `/tmp/ctcompile-tail-resume/`.
+
+**Exact next boundary:** fresh original M/F/H.getDataAttribute still refuses the
+complete single-block helper census in all four provider/policy combinations.
+M now retains the importer's **nine-slot vectors in all 24 register blocks**;
+its handler stays at **`^bb12`**, outside the preceding returning tests. Guarded
+tail recovery is a structural prerequisite, not native M admission. Next prove
+builtin identities and complete prefix/try/catch effects and result ownership,
+then integrate recovery with DOMSource's fingerprinted private transaction.
+Number/toString, strict URI decoding, JSON parsing, catch-state and heterogeneous
+returns remain unproved. Full H/dataset, Bootstrap initialization/inheritance,
+retained config/callback ownership and the application driver remain unfinished.
+No browser/runtime or WPT/test262 expectations changed.
+
 ## DOM completion paths and Number OR/XOR, 2026-09-15 UTC
 
 Continued the completed **a932998e / 755af20b** thread recorded in this handoff

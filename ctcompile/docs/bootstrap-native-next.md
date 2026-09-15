@@ -2,24 +2,21 @@
 
 ## Current boundary, 2026-09-15
 
-Latest slice **83da7d42** proves complete acyclic DOM helper completion paths.
-The unchanged three-return source now compiles; all original operations, effects
-and frame exits are checked, and observed poison or unknown selectors refuse.
-Focused **4/4 CTests PASS**: **493 Node/VM observations / eight native binaries /
-780 source refusals / 27 completion controls**. Complete **274-step build /
-602/602 CTests / 176/176 lit PASS**; all **1,443 frozen hashes** match devbox,
-local files and committed source. See [HANDOFF](HANDOFF.md) for measurements.
+Latest slices **b3a443da / 1cd9a49a** preserve ordinary-call exception register
+CFGs and recover a guarded tail at its original handler installation site. Pre-try
+checks, early returns and throws stay outside the catch. The complete source stays
+available for rollback; partial recovery keeps an unstructured-prefix diagnostic.
+Focused **5/5 CTests + four lit tests PASS**. The complete devbox gate is **running**;
+see [HANDOFF](HANDOFF.md) for measured counts and final gate status.
 
-A fresh original M/F/H.getDataAttribute probe still refuses the multi-block helper
-under both providers/policies. Next: preserve M's complete register vectors, recover
-its handler tail at the original push site and keep the pre-try Number/toString
-prefix outside the catch. Existing recovery requires an entry-block handler and
-host contracts skip that recovery. Builtin identity, fallible URI/JSON calls,
-catch-state and heterogeneous result ownership still need proof. Full H dataset
-iteration, Bootstrap initialization, inherited receivers, retained config/callback
-ownership and the application driver remain unfinished. No full-bundle admission
-gain is claimed; fresh measurements remain Bootstrap **19/574 native**,
-DOM Data **7/7**, Button **4/86**.
+Fresh original M/F/H.getDataAttribute still refuses native DOM preparation in all
+four provider/policy combinations. M now preserves **24 nine-slot register blocks**
+and its handler at **^bb12**. Next prove builtin identities, complete prefix/try/catch
+effects and result ownership, then integrate recovery with DOMSource's private,
+fingerprinted source transaction. Number/toString, strict URI decoding, JSON parsing,
+catch-state and heterogeneous returns remain unproved. Full H dataset iteration,
+Bootstrap initialization/inheritance, retained config/callback ownership and the
+application driver remain unfinished. No full-bundle admission gain is claimed.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
