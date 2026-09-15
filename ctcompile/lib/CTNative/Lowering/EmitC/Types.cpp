@@ -29,6 +29,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (domStringResults.contains(v)) {
+            needsString = true;
+            v.setType(carrierType(context, carrier::string));
+            return;
+        }
         if (domReads.contains(v.getDefiningOp()) || domUnusedPayloads.contains(v)) {
             // Checked builtin/receiver bookkeeping never needs a value carrier.
             v.setType(mlir::Float64Type::get(context));

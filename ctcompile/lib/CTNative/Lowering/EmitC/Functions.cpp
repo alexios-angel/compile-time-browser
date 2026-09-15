@@ -54,6 +54,7 @@ void lowering::lower(ctjs::FuncOp fn) {
     }
     applyDeclarativeRules(fn);
     retype(fn);
+    prepareDOMStrings();
     convertBoundaries(fn);
     prepareExceptions(fn);
 

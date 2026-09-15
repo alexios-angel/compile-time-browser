@@ -26,6 +26,8 @@ std::string lowering::domDataDefinition() const {
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     needsDOM = true;
+    domStringResults.insert(entry.stringResults().begin(), entry.stringResults().end());
+    domStringRefinements.assign(entry.stringRefinements().begin(), entry.stringRefinements().end());
     domOptionalStrings.insert(entry.optionalStringJoins().begin(),
                               entry.optionalStringJoins().end());
     needsDOMAttributeRead |= !domOptionalStrings.empty();
@@ -138,6 +140,23 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     }
 }
 
+void lowering::prepareDOMStrings() {
+    for (const auto & refinement : domStringRefinements) {
+        if (refinement.uses.empty()) { continue; }
+        mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(refinement.block);
+        // Copy only inside the proved-present arm. The original optional remains
+        // intact, and Invoke's call body keeps its exact call/exit shape.
+        auto text = ec::MemberCallOpaqueOp::create(
+            at, refinement.optional.getLoc(),
+            mlir::TypeRange{carrierType(context, carrier::string)}, refinement.optional,
+            at.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
+        for (const auto & use : refinement.uses) {
+            use.operation->setOperand(use.operandIndex, text.getResult(0));
+        }
+    }
+    domStringRefinements.clear();
+}
+
 bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domReads.contains(operation)) { return true; } // erased after their calls
     mlir::OpBuilder at(operation);
@@ -216,6 +235,15 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true;
     }
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+    if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
+        unary.getOperand().getType() == optionalString) {
+        auto present = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne,
+                                         unary.getOperand(), null());
+        swap(ec::ConditionalOp::create(at, where, carrierType(context, carrier::string), present,
+                                       stringConstant(at, where, "string"),
+                                       stringConstant(at, where, "object")));
+        return true;
+    }
     auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
     const mlir::Value tested = truth ? truth.getValue()
                                : unary && unary.getKind() == ctjs::UnaryKind::Not

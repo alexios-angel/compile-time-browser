@@ -122,6 +122,19 @@ struct HostDOMCall {
     }
 };
 
+struct HostDOMStringUse {
+    mlir::Operation * operation;
+    unsigned operandIndex;
+};
+
+// One exact optional snapshot, observed as String only in this selected arm.
+// Uses retain their source identities; the producer and sibling stay optional.
+struct HostDOMStringRefinement {
+    mlir::Block * block;
+    mlir::Value optional;
+    std::vector<HostDOMStringUse> uses;
+};
+
 // Live evidence for one synchronous typed DOM entry. Only the checked source
 // declaration wrapper may be omitted. No source invocation, retained handle,
 // receiver/capture observation, or arbitrary property dispatch is authorized.
@@ -149,6 +162,12 @@ public:
     [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
         return optionalStrings;
     }
+    [[nodiscard]] llvm::ArrayRef<HostDOMStringRefinement> stringRefinements() const {
+        return refinements;
+    }
+    // Complete String-only branch/invocation yields, independently of the
+    // producer-wide lattice. This never narrows a getAttribute result.
+    [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return strings; }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
 
@@ -162,6 +181,8 @@ private:
     std::vector<ctjs::LoadGlobalOp> uriIntrinsics;
     std::vector<ctjs::InvokeOp> invocations;
     std::vector<mlir::Value> optionalStrings;
+    std::vector<HostDOMStringRefinement> refinements;
+    std::vector<mlir::Value> strings;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;
     unsigned workSteps = 0;

@@ -107,6 +107,14 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                 domResult = ec::OpaqueType::get(context, kDOMOptionalStringType);
             }
         });
+        if (!domResult) {
+            fn.getBody().walk([&](ctjs::ReturnOp ret) {
+                if (domStringResults.contains(ret.getValue())) {
+                    domResult = carrierType(context, carrier::string);
+                    needsString = true;
+                }
+            });
+        }
         resultTypes[fn.getSymName()] = domResult ? domResult : scalarType(joinedReturnType(fn));
         auto & params = parameterTypes[fn.getSymName()];
         for (mlir::BlockArgument arg : fn.getBody().front().getArguments()) {

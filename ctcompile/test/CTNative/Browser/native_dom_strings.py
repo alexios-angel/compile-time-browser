@@ -9,6 +9,7 @@ from urllib.parse import quote_from_bytes
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_numbers as numbers
+from CTNative.Browser import native_dom_nullable_uri as nullable_uri
 from CTNative.Browser import native_dom_uri as uri
 from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
@@ -2135,6 +2136,7 @@ def main():
         raise RuntimeError("native DOM String gate requires nm")
     numbers.check_oracles(args)
     uri.check_oracles(args)
+    nullable_uri.check_oracles(args)
     boolean_values = [
         "true" if bit == "1" else "false" for _, bits in BOOLEAN_CASES.values() for bit in bits
     ]
@@ -2218,6 +2220,7 @@ function makeElement(value) {
     ]
     prepared.extend(numbers.prepare(args))
     prepared.extend(uri.prepare(args))
+    prepared.extend(nullable_uri.prepare(args))
     for optimize in (False, True):
         modules = {}
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -2239,7 +2242,7 @@ function makeElement(value) {
                     layouts[layout],
                     namespace,
                     optional_read=name != "helper_branch" and name not in uri.CASES,
-                    uri_call=name in uri.CASES,
+                    uri_call=name in uri.CASES or name in nullable_uri.CASES,
                 )
                 # Hoist includes before isolating each complete translation unit;
                 # generated local helper names need not be globally unique.
@@ -2247,6 +2250,9 @@ function makeElement(value) {
                 body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 entry = namespace + "::" + symbol
+                if name in nullable_uri.CASES:
+                    runs.append(nullable_uri.client(name, entry, owned))
+                    continue
                 if name in uri.CASES:
                     runs.append(uri.client(name, entry, owned))
                     continue
@@ -2311,6 +2317,7 @@ function makeElement(value) {
                 + "\n"
                 + "\n".join(bodies)
                 + numbers.CLIENT
+                + nullable_uri.CLIENT
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
             for index, compiler in enumerate(compilers):
@@ -2318,7 +2325,10 @@ function makeElement(value) {
                 run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
                 if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
                     raise RuntimeError("native DOM optional Strings link Script/AOT")
-                if run([str(binary)]).stdout != (expected + numbers.EXPECTED + uri.EXPECTED) * 2:
+                if (
+                    run([str(binary)]).stdout
+                    != (expected + numbers.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED) * 2
+                ):
                     raise RuntimeError("native optional String observations disagree with source")
     for name, body in REFUSALS.items():
         ir, contract = dom.prepare(
@@ -2491,9 +2501,10 @@ function makeElement(value) {
         replacement_checks += regexp_provenance_checks(args, ir, contract, prefix=prefix)
     numeric_refusals = numbers.refusal_checks(args, prepared)
     uri_refusals = uri.refusal_checks(args, prepared)
+    nullable_uri_refusals = nullable_uri.refusal_checks(args, prepared)
     print(
-        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values) + len(numbers.RESULTS) + len(uri.RESULTS)} Node/VM observations, 8 GCC/Clang binaries, "
-        f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4 + numeric_refusals + uri_refusals} source refusal checks, "
+        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values) + len(numbers.RESULTS) + len(uri.RESULTS) + len(nullable_uri.RESULTS)} Node/VM observations, 8 GCC/Clang binaries, "
+        f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4 + numeric_refusals + uri_refusals + nullable_uri_refusals} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks; "
         f"{replacement_checks} replacement provenance/budget checks; 22 branch depth/budget checks; "

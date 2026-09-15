@@ -6,6 +6,7 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
+#include "DOMNullable.h"
 #include "DOMNumbers.h"
 #include "DOMURI.h"
 #include "Fingerprint.h"
@@ -838,6 +839,7 @@ int main() {
     checkDOMEntry(context);
     checkDOMNumbers(context);
     checkDOMURI(context);
+    checkDOMNullable(context);
     checkSessionProvider(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
