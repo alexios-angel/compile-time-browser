@@ -6,6 +6,55 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native DOM Number prefix and held unit steps, 2026-09-15 UTC
+
+Continued the exact Number/toString boundary recorded by **811c1656**. The
+shared tree was clean; both histories and unmerged branches were checked, and
+`codex-wip-20260907` is already an ancestor. Three agents drafted disjoint source
+proof, differential tests and escape work; root recovered their frozen drafts
+after service limits, reviewed them and completed integration.
+
+**a8f486c5** proves invariant held Number-one steps for the existing bounded,
+read-only array induction. Complete actual/header/backedge correspondence,
+original scalar facts, zero starts, strict own-array bounds and charged work
+budgets remain required. Saved lengths survive later mutation; changing or
+swapped backedges, repeated computed producers and stale/forged facts refuse.
+Focused measurements: **61 induction rows / six live states / 4,561 retention
+cutoffs**; structured contents **63 rows / 3,652 cutoffs**. Dense arrays remain
+**567 / 293 / 21,925**; escape fixture **zero violations / precision 40/172**.
+
+**6482553f** adds explicit DOM `initial_intrinsics: ["Number"]` and complete live
+source proof for String/null conversion and exact no-radix Number `toString`.
+The numeric prefix and saved-attribute strict comparison emit `double`, owning
+Strings and direct public Core calls. The existing private source transaction,
+mutation/reentry refusals and fingerprint/budget checks remain. Generic global
+and value censuses now omit only proved unobserved builtin bookkeeping. Two
+intermediate output-gate failures caught and removed the unused boxed global
+and nullable receiver helpers; no output checks were weakened.
+
+Focused **177-step build / escape arrays, escape fixture and host proof PASS**;
+final numeric/host gate **2/2 in 105.05s PASS**. DOM Strings measures **625 Node/VM
+observations / eight GCC-Clang binaries / 908 source refusals**, including
+**132 new numeric observations**. Native clients have no Script/AOT symbols or
+generic nullable value helpers. Stable formatting passes **835 C++ / 101 Python /
+33 web**; the pinned formatter's **nine-file / 26-diagnostic** baseline is
+byte-identical. All **1,450 source hashes** are frozen for the full gate.
+
+**Full validation is running**, not yet claimed: locked default remote build and
+CTest, followed by frozen-hash checks and fresh unchanged Bootstrap/Data/Button/
+original-M measurements. Logs and scripts: `/tmp/ctcompile-number-prefix/`;
+`full-gate.sh`, `full.log`, `full-last-test.log`, `inputs.json`, `collect.sh` and
+`measure.py`. Finish that gate before choosing another plan item.
+
+**Next boundary:** original M still needs complete guarded-CFG/try/catch effects,
+provider-authorized URI/JSON calls, unobserved error-payload proof and mixed-result
+ownership. Keep the handler at its original installation site and preserve
+pre-try failures. JSON needs a shared plain RAII core extracted from Script;
+full H/dataset, Bootstrap initialization/inheritance, retained config/callbacks
+and the application driver remain unfinished. Shared numeric Core retains the
+VM's known edge-case limitations; no arbitrary-string ECMAScript equivalence
+or full-bundle admission gain is claimed.
+
 ## Shared Number/URI Core and proved-zero induction, 2026-09-15 UTC
 
 Resumed the interrupted **09:35 Number/URI Core / held-zero induction** thread
