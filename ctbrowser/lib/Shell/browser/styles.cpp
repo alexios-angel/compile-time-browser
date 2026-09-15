@@ -8,7 +8,7 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// `@import`, EXPANDED IN PLACE. The sheet parser drops the statement because it
+// `@import`, EXPANDED IN PLACE. The sheet parser records the statement because it
 // cannot fetch; this can, through the same registry the `<link>` came from. The
 // imported text goes where the statement stood - so it precedes the sheet's own
 // rules, as the cascade requires - wrapped in the import's media query when it
@@ -17,8 +17,9 @@ namespace {
 std::string expand_imports(const asset_registry & assets, std::string css, std::string_view base,
                            std::vector<std::string> & chain) {
     if (chain.size() >= 16) { return css; }
+    ctbrowser::atom_table atoms;
     const std::vector<ctbrowser::style::css::import_statement> imports =
-        ctbrowser::style::css::leading_imports(css);
+        ctbrowser::style::css::parse_stylesheet(css, atoms).imports;
     if (imports.empty()) { return css; }
     std::string out;
     std::size_t at = 0;

@@ -116,6 +116,22 @@ struct namespace_declaration {
     std::string uri;
 };
 
+// One `@import` of the sheet's LEADING RUN - CSS Cascade 5 §5. The parser
+// consumes the statement but cannot fetch what it names; whoever can - the
+// browser collecting the author's sheets, the CSSOM building a CSSImportRule -
+// reads these, loads each one and splices the loaded text where the statement
+// stood. Only the leading run is recorded: an `@import` after any rule other
+// than `@charset`, `@layer x;` or another `@import` is invalid and ignored.
+//
+// `media` is the query list as written, trimmed and with `layer` / `layer(...)`
+// / `supports(...)` removed; empty means unconditional.
+struct import_statement {
+    std::string href;
+    std::string media;
+    std::size_t begin = 0; // the byte span of the whole statement in the input,
+    std::size_t end = 0;   // `@import` through its `;` inclusive
+};
+
 struct stylesheet {
     // §3.3-preprocessed input plus decoded escapes. Owns every byte every view
     // below points into.
@@ -127,6 +143,7 @@ struct stylesheet {
     // refusing it would drop a rule the sheet may well have declared.
     std::vector<namespace_declaration> namespaces;
     bool prefixes_checked = true;
+    std::vector<import_statement> imports;
     // How much of the pool is the INPUT. Beyond it is decoded escape text, which
     // appears nowhere in the source - so a run of tokens is a contiguous source
     // substring only when every one of them starts below this. That is the test
