@@ -125,6 +125,7 @@ static FailureOr<int> getOperatorPrecedence(Operation *operation) {
       .Case<emitc::BitwiseXorOp>([&](auto op) { return 6; })
       .Case<emitc::CallOp>([&](auto op) { return 16; })
       .Case<emitc::CallOpaqueOp>([&](auto op) { return 16; })
+      .Case<emitc::MemberCallOpaqueOp>([&](auto op) { return 16; })
       .Case<emitc::CastOp>([&](auto op) { return 15; })
       .Case<emitc::CmpOp>([&](auto op) -> FailureOr<int> {
         switch (op.getPredicate()) {
@@ -978,19 +979,11 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::CallOp callOp) {
 static FailureOr<bool> printCallableCreation(CppEmitter &emitter,
                                             emitc::CallOpaqueOp call);
 
-static LogicalResult printOperation(CppEmitter &emitter,
-                                    emitc::CallOpaqueOp callOpaqueOp) {
-  auto creation = printCallableCreation(emitter, callOpaqueOp);
-  if (failed(creation))
-    return failure();
-  if (*creation)
-    return success();
+template <typename CallOp>
+static LogicalResult printOpaqueCallArguments(CppEmitter &emitter, CallOp call,
+                                              ValueRange operands) {
   raw_ostream &os = emitter.ostream();
-  Operation &op = *callOpaqueOp.getOperation();
-
-  if (failed(emitter.emitAssignPrefix(op)))
-    return failure();
-  os << callOpaqueOp.getCallee();
+  Operation &op = *call.getOperation();
 
   // Template arguments can't refer to SSA values and as such the template
   // arguments which are supplied in form of attributes can be emitted as is. We
@@ -1000,9 +993,9 @@ static LogicalResult printOperation(CppEmitter &emitter,
     return emitter.emitAttribute(op.getLoc(), attr);
   };
 
-  if (callOpaqueOp.getTemplateArgs()) {
+  if (call.getTemplateArgs()) {
     os << "<";
-    if (failed(interleaveCommaWithError(*callOpaqueOp.getTemplateArgs(), os,
+    if (failed(interleaveCommaWithError(*call.getTemplateArgs(), os,
                                         emitTemplateArgs)))
       return failure();
     os << ">";
@@ -1013,7 +1006,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
       // Index attributes are treated specially as operand index.
       if (t.getType().isIndex()) {
         int64_t idx = t.getInt();
-        Value operand = op.getOperand(idx);
+        Value operand = operands[idx];
         return emitter.emitOperand(operand);
       }
     }
@@ -1026,13 +1019,41 @@ static LogicalResult printOperation(CppEmitter &emitter,
   os << "(";
 
   LogicalResult emittedArgs =
-      callOpaqueOp.getArgs()
-          ? interleaveCommaWithError(*callOpaqueOp.getArgs(), os, emitArgs)
-          : emitter.emitOperands(op);
+      call.getArgs()
+          ? interleaveCommaWithError(*call.getArgs(), os, emitArgs)
+          : interleaveCommaWithError(operands, os, [&](Value operand) {
+              return emitter.emitOperand(operand, /*isInBrackets=*/true);
+            });
   if (failed(emittedArgs))
     return failure();
   os << ")";
   return success();
+}
+
+static LogicalResult printOperation(CppEmitter &emitter,
+                                    emitc::CallOpaqueOp callOpaqueOp) {
+  auto creation = printCallableCreation(emitter, callOpaqueOp);
+  if (failed(creation))
+    return failure();
+  if (*creation)
+    return success();
+  if (failed(emitter.emitAssignPrefix(*callOpaqueOp)))
+    return failure();
+  emitter.ostream() << callOpaqueOp.getCallee();
+  return printOpaqueCallArguments(emitter, callOpaqueOp,
+                                  callOpaqueOp.getArgOperands());
+}
+
+static LogicalResult printOperation(CppEmitter &emitter,
+                                    emitc::MemberCallOpaqueOp call) {
+  if (failed(emitter.emitAssignPrefix(*call)) ||
+      failed(emitter.emitOperand(call.getReceiver())))
+    return failure();
+  emitter.ostream() << (isa<emitc::PointerType>(call.getReceiver().getType())
+                           ? "->"
+                           : ".")
+                    << call.getCallee();
+  return printOpaqueCallArguments(emitter, call, call.getArgOperands());
 }
 
 
@@ -2049,7 +2070,8 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
                 emitc::GetGlobalOp, emitc::GlobalOp, emitc::IfOp,
                 emitc::IncludeOp, emitc::LiteralOp, emitc::LoadOp,
                 emitc::LogicalAndOp, emitc::LogicalNotOp, emitc::LogicalOrOp,
-                emitc::MemberOfPtrOp, emitc::MemberOp, emitc::MulOp,
+                emitc::MemberCallOpaqueOp, emitc::MemberOfPtrOp,
+                emitc::MemberOp, emitc::MulOp,
                 emitc::RemOp, emitc::ReturnOp, emitc::SubscriptOp, emitc::SubOp,
                 emitc::SwitchOp, emitc::UnaryMinusOp, emitc::UnaryPlusOp,
                 emitc::VariableOp, emitc::VerbatimOp>(
