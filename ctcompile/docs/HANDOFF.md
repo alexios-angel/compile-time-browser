@@ -49,8 +49,10 @@ completed tests and is not a complete-suite result.
 
 Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned
 formatting matches the existing **nine-file / 26-diagnostic** baseline. The final
-source is committed and **1,443 input hashes** are frozen. The final complete default
-build and **602-test CTest gate** are running; their final result is pending. Recovery scripts, focused
+source is committed and **1,443 input hashes** are frozen. The complete **276-step default build and 601 non-lit CTests passed**. The final
+**176-case lit suite** is running within the 602-test gate; its result is pending.
+DOM entry passed in **216.80s**, session in **61.32s**, Strings in **52.98s** and
+shared Map ownership in **315.53s**. Recovery scripts, focused
 logs and evidence are retained in `/tmp/ctcompile-dom-graphs/`.
 
 **Exact next boundary:** forwarded upvalues and helpers that create nested closures
