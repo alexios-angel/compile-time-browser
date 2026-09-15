@@ -120,6 +120,31 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
     return true;
 }
 
+// THE PRIVATE-CLONE PROTOCOL every host preparation follows, once. The
+// module is never mutated speculatively: `prepare` works on a clone under a
+// copy of the contract whose fingerprint it refreshes whenever it reproves a
+// stage of its own, the prepared clone is fingerprinted and reproved by
+// `Analysis`, and only a complete proof publishes the clone's attributes and
+// body into the module and the refreshed contract into `hostContract`.
+// `prepare` may swap the clone for a further clone of it. The return is the
+// refusal - `prefix` heads an analysis refusal so each caller's diagnostic
+// reads as it always has - and empty means the module now holds the prepared
+// body.
+template <typename Analysis, typename Prepare>
+std::string withProvedClone(mlir::ModuleOp module, std::optional<HostContract> & hostContract,
+                            unsigned maxSteps, llvm::StringRef prefix, Prepare prepare) {
+    mlir::OwningOpRef<mlir::ModuleOp> prepared(module.clone());
+    HostContract transformed = *hostContract;
+    if (std::string refusal = prepare(prepared, transformed); !refusal.empty()) { return refusal; }
+    transformed.moduleSha256 = hostContractFingerprint(*prepared);
+    const Analysis checked(*prepared, transformed, maxSteps);
+    if (!checked.proved()) { return (prefix + checked.reason()).str(); }
+    module->setAttrs((*prepared)->getAttrs());
+    module.getBodyRegion().takeBody(prepared->getBodyRegion());
+    hostContract = std::move(transformed);
+    return {};
+}
+
 struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerToEmitCPass> {
     using CTNativeLowerToEmitCBase::CTNativeLowerToEmitCBase;
 
@@ -173,29 +198,28 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     "native DOM Data source: host contract module fingerprint mismatch");
                 return signalPassFailure();
             }
-            mlir::OwningOpRef<mlir::ModuleOp> prepared(llvm::cast<mlir::ModuleOp>(module->clone()));
-            normalizeOwnedSource(*prepared);
-            HostContract transformed = *hostContract;
-            transformed.moduleSha256 = hostContractFingerprint(*prepared);
-            const OwnedGlobalRoots source(*prepared, transformed, hostMaxSteps);
-            if (!source.proved()) {
-                module.emitError() << "native DOM Data source: " << source.reason();
+            const std::string refusal = withProvedClone<OwnedGlobalRoots>(
+                module, hostContract, hostMaxSteps, "native DOM Data preparation: ",
+                [&](mlir::OwningOpRef<mlir::ModuleOp> & prepared,
+                    HostContract & transformed) -> std::string {
+                    normalizeOwnedSource(*prepared);
+                    transformed.moduleSha256 = hostContractFingerprint(*prepared);
+                    const OwnedGlobalRoots source(*prepared, transformed, hostMaxSteps);
+                    if (!source.proved()) {
+                        return ("native DOM Data source: " + source.reason()).str();
+                    }
+                    if (auto wrapper = source.wrapper()) {
+                        prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+                    }
+                    prepared->walk(
+                        [](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+                    prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
+                    return {};
+                });
+            if (!refusal.empty()) {
+                module.emitError() << refusal;
                 return signalPassFailure();
             }
-            if (auto wrapper = source.wrapper()) {
-                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
-            }
-            prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-            prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
-            transformed.moduleSha256 = hostContractFingerprint(*prepared);
-            const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
-            if (!checked.proved()) {
-                module.emitError() << "native DOM Data preparation: " << checked.reason();
-                return signalPassFailure();
-            }
-            module->setAttrs((*prepared)->getAttrs());
-            module.getBodyRegion().takeBody(prepared->getBodyRegion());
-            hostContract = std::move(transformed);
         }
 
         std::unique_ptr<DOMEntryAnalysis> domEntry;
@@ -207,92 +231,102 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 module.emitError("native DOM entry: fingerprint mismatch or incomplete source");
                 return signalPassFailure();
             }
-            mlir::OwningOpRef<mlir::ModuleOp> composed(module.clone());
-            // A handler in the entry is normalized in place. A handler owned by
-            // a local helper is normalized first, under the same fingerprinted
-            // proof, so helper expansion then inlines one structured invoke.
-            HostContract composedContract = *hostContract;
-            llvm::SmallVector<std::string> handlers;
-            for (auto function : composed->getOps<ctjs::FuncOp>()) {
-                bool hasHandler = false;
-                function.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
-                if (hasHandler) { handlers.push_back(function.getSymName().str()); }
-            }
-            const bool entryHandler = llvm::is_contained(handlers, hostContract->entry);
-            llvm::Error sourceError = llvm::Error::success();
-            for (const std::string & handler : handlers) {
-                if (sourceError) { break; }
-                sourceError = normalizeDOMURI(*composed, composedContract, hostMaxSteps, handler);
-                composedContract.moduleSha256 = hostContractFingerprint(*composed);
-            }
-            if (!sourceError && !entryHandler) {
-                sourceError = expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps);
-            }
-            if (sourceError) {
-                module.emitError()
-                    << "native DOM source: " << llvm::toString(std::move(sourceError));
+            const std::string refusal = withProvedClone<DOMEntryAnalysis>(
+                module, hostContract, hostMaxSteps, "native DOM entry preparation: ",
+                [&](mlir::OwningOpRef<mlir::ModuleOp> & composed,
+                    HostContract & transformed) -> std::string {
+                    // A handler in the entry is normalized in place. A handler
+                    // owned by a local helper is normalized first, under the
+                    // same fingerprinted proof, so helper expansion then
+                    // inlines one structured invoke.
+                    llvm::SmallVector<std::string> handlers;
+                    for (auto function : composed->getOps<ctjs::FuncOp>()) {
+                        bool hasHandler = false;
+                        function.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
+                        if (hasHandler) { handlers.push_back(function.getSymName().str()); }
+                    }
+                    const bool entryHandler = llvm::is_contained(handlers, hostContract->entry);
+                    llvm::Error sourceError = llvm::Error::success();
+                    for (const std::string & handler : handlers) {
+                        if (sourceError) { break; }
+                        sourceError =
+                            normalizeDOMURI(*composed, transformed, hostMaxSteps, handler);
+                        transformed.moduleSha256 = hostContractFingerprint(*composed);
+                    }
+                    if (!sourceError && !entryHandler) {
+                        sourceError =
+                            expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps);
+                    }
+                    if (sourceError) {
+                        return "native DOM source: " + llvm::toString(std::move(sourceError));
+                    }
+                    transformed.moduleSha256 = hostContractFingerprint(*composed);
+                    // An explicit library entry may replace only its proved
+                    // inert declaration wrapper. Prepare privately, discard
+                    // supplied native reports, and reprove before publishing
+                    // the exported function. `source` borrows `composed`, so
+                    // the swap waits until it is gone.
+                    mlir::OwningOpRef<mlir::ModuleOp> prepared;
+                    {
+                        const DOMEntryAnalysis source(*composed, transformed, hostMaxSteps);
+                        if (!source.proved()) {
+                            return ("native DOM entry: " + source.reason()).str();
+                        }
+                        mlir::IRMapping mapping;
+                        prepared = llvm::cast<mlir::ModuleOp>((*composed)->clone(mapping));
+                        if (auto wrapper = source.wrapper()) {
+                            prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+                        }
+                        // Only the initialized DOM provider and complete source
+                        // proof authorize this binding. Normalize in the private
+                        // clone, then reprove it; no VM lookup or C++ global
+                        // survives emission.
+                        prepared->walk([](ctjs::LoadGlobalOp load) {
+                            if (load.getName() != "undefined") { return; }
+                            mlir::OpBuilder at(load);
+                            auto constant = ctjs::ConstantOp::create(
+                                at, load.getLoc(), ctjs::UndefinedAttr::get(load.getContext()));
+                            load.getResult().replaceAllUsesWith(constant.getResult());
+                            load.erase();
+                        });
+                        // Normalize optional force while the original method
+                        // proof is available. Token lists omit undefined;
+                        // Element coerces it to false. The emitter then needs
+                        // only ordinary Boolean arguments.
+                        source.entry().walk([&](ctjs::CallOp original) {
+                            const auto * edge = source.call(original);
+                            if (!edge || (edge->kind != HostDOMMethod::toggleClass &&
+                                          edge->kind != HostDOMMethod::toggleAttribute)) {
+                                return;
+                            }
+                            auto call =
+                                llvm::cast<ctjs::CallOp>(mapping.lookup(original.getOperation()));
+                            if (call.getArgs().size() != 2) { return; }
+                            auto force = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
+                            if (!force || !llvm::isa<ctjs::UndefinedAttr>(force.getValue())) {
+                                return;
+                            }
+                            if (edge->kind == HostDOMMethod::toggleClass) {
+                                call.getArgsMutable().erase(1);
+                            } else {
+                                mlir::OpBuilder at(call);
+                                auto value = ctjs::ConstantOp::create(
+                                    at, call.getLoc(),
+                                    ctjs::BooleanAttr::get(call.getContext(), false));
+                                call.getArgsMutable().slice(1, 1).assign(value.getResult());
+                            }
+                        });
+                    }
+                    prepared->walk(
+                        [](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+                    prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
+                    composed = std::move(prepared);
+                    return {};
+                });
+            if (!refusal.empty()) {
+                module.emitError() << refusal;
                 return signalPassFailure();
             }
-            composedContract.moduleSha256 = hostContractFingerprint(*composed);
-            const DOMEntryAnalysis source(*composed, composedContract, hostMaxSteps);
-            if (!source.proved()) {
-                module.emitError() << "native DOM entry: " << source.reason();
-                return signalPassFailure();
-            }
-            // An explicit library entry may replace only its proved inert
-            // declaration wrapper. Prepare privately, discard supplied native
-            // reports, and reprove before publishing the exported function.
-            mlir::IRMapping mapping;
-            mlir::OwningOpRef<mlir::ModuleOp> prepared(
-                llvm::cast<mlir::ModuleOp>((*composed)->clone(mapping)));
-            if (auto wrapper = source.wrapper()) {
-                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
-            }
-            // Only the initialized DOM provider and complete source proof
-            // authorize this binding. Normalize in the private clone, then
-            // reprove it below; no VM lookup or C++ global survives emission.
-            prepared->walk([](ctjs::LoadGlobalOp load) {
-                if (load.getName() != "undefined") { return; }
-                mlir::OpBuilder at(load);
-                auto constant = ctjs::ConstantOp::create(
-                    at, load.getLoc(), ctjs::UndefinedAttr::get(load.getContext()));
-                load.getResult().replaceAllUsesWith(constant.getResult());
-                load.erase();
-            });
-            // Normalize optional force while the original method proof is
-            // available. Token lists omit undefined; Element coerces it to
-            // false. The emitter then needs only ordinary Boolean arguments.
-            source.entry().walk([&](ctjs::CallOp original) {
-                const auto * edge = source.call(original);
-                if (!edge || (edge->kind != HostDOMMethod::toggleClass &&
-                              edge->kind != HostDOMMethod::toggleAttribute)) {
-                    return;
-                }
-                auto call = llvm::cast<ctjs::CallOp>(mapping.lookup(original.getOperation()));
-                if (call.getArgs().size() != 2) { return; }
-                auto force = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-                if (!force || !llvm::isa<ctjs::UndefinedAttr>(force.getValue())) { return; }
-                if (edge->kind == HostDOMMethod::toggleClass) {
-                    call.getArgsMutable().erase(1);
-                } else {
-                    mlir::OpBuilder at(call);
-                    auto value = ctjs::ConstantOp::create(
-                        at, call.getLoc(), ctjs::BooleanAttr::get(call.getContext(), false));
-                    call.getArgsMutable().slice(1, 1).assign(value.getResult());
-                }
-            });
-            prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-            prepared->lookupSymbol<ctjs::FuncOp>(hostContract->entry).setPublic();
-            HostContract transformed = *hostContract;
-            transformed.moduleSha256 = hostContractFingerprint(*prepared);
-            const DOMEntryAnalysis checked(*prepared, transformed, hostMaxSteps);
-            if (!checked.proved()) {
-                module.emitError() << "native DOM entry preparation: " << checked.reason();
-                return signalPassFailure();
-            }
-            module->setAttrs((*prepared)->getAttrs());
-            module.getBodyRegion().takeBody(prepared->getBodyRegion());
-            hostContract = std::move(transformed);
             domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
         }
 
@@ -332,63 +366,63 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract->moduleSha256 == hostContractFingerprint(module)) {
             // Local cell/unused receiver normalization needs no host assumptions.
             // It is speculative: only a complete fresh owner proof can publish it.
-            mlir::OwningOpRef<mlir::ModuleOp> normalized(
-                llvm::cast<mlir::ModuleOp>(module->clone()));
-            const auto locals = normalizeOwnedSource(*normalized);
-            HostContract normalizedContract = *hostContract;
-            normalizedContract.moduleSha256 = hostContractFingerprint(*normalized);
-            const OwnedGlobalRoots original(*normalized, normalizedContract, hostMaxSteps);
-            if (original.proved() && !original.roots().empty() &&
-                materializeHostPrimitives(*normalized, normalizedContract, original,
-                                          hostMaxSteps - original.steps())) {
-                // Prepare only the checked table and environment, speculatively.
-                // A stale input never reaches this rewrite. Its internally
-                // derived contract is usable only if the complete live owner
-                // and callable queries succeed again on the transformed IR.
-                mlir::OwningOpRef<mlir::ModuleOp> prepared(std::move(normalized));
-                normalizedContract.moduleSha256 = hostContractFingerprint(*prepared);
-                const OwnedGlobalRoots source(*prepared, normalizedContract, hostMaxSteps);
-                closureLifter preparation{*prepared};
-                std::optional<liftReport> result;
-                if (source.proved() && !source.roots().empty()) {
-                    if (source.roots().front().methodTable) {
-                        result = preparation.prepareOwnedGlobalMethodTables(
-                            source, normalizedContract, hostMaxSteps);
-                    } else {
-                        // Scalar owners need no closure rewrite, but old native
-                        // facts must not erase their live stores either.
-                        preparation.discardNativeSourceFacts();
-                        result = liftReport{};
+            // Nothing here is a diagnostic - a refusal leaves the module as it was.
+            liftReport locals;
+            std::optional<liftReport> result;
+            const std::string refusal = withProvedClone<OwnedGlobalRoots>(
+                module, hostContract, hostMaxSteps, "",
+                [&](mlir::OwningOpRef<mlir::ModuleOp> & prepared,
+                    HostContract & transformed) -> std::string {
+                    locals = normalizeOwnedSource(*prepared);
+                    transformed.moduleSha256 = hostContractFingerprint(*prepared);
+                    const OwnedGlobalRoots original(*prepared, transformed, hostMaxSteps);
+                    if (!original.proved() || original.roots().empty() ||
+                        !materializeHostPrimitives(*prepared, transformed, original,
+                                                   hostMaxSteps - original.steps())) {
+                        return "no complete fresh owner proof";
                     }
-                }
-                if (result) {
-                    HostContract transformed = normalizedContract;
+                    // Prepare only the checked table and environment,
+                    // speculatively. A stale input never reaches this rewrite.
+                    // Its internally derived contract is usable only if the
+                    // complete live owner and callable queries succeed again
+                    // on the transformed IR.
+                    transformed.moduleSha256 = hostContractFingerprint(*prepared);
+                    const OwnedGlobalRoots source(*prepared, transformed, hostMaxSteps);
+                    closureLifter preparation{*prepared};
+                    if (source.proved() && !source.roots().empty()) {
+                        if (source.roots().front().methodTable) {
+                            result = preparation.prepareOwnedGlobalMethodTables(source, transformed,
+                                                                                hostMaxSteps);
+                        } else {
+                            // Scalar owners need no closure rewrite, but old
+                            // native facts must not erase their live stores
+                            // either.
+                            preparation.discardNativeSourceFacts();
+                            result = liftReport{};
+                        }
+                    }
+                    if (!result) { return "no owned global preparation"; }
                     transformed.moduleSha256 = hostContractFingerprint(*prepared);
                     const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
-                    if (checked.proved()) {
-                        // Map identity may pass the proved ordinary-root reads,
-                        // never arbitrary host reads. Its annotations change
-                        // the prepared fingerprint, so final ownership is
-                        // independently checked once more before publication.
-                        if (checked.roots().front().methodTable &&
-                            checked.roots().front().methodTable->capturedMap) {
-                            prepareNativeMaps(*prepared, &checked);
-                            // The host body proves confinement of future local
-                            // leaves, not their C++ representation. Rebuild the
-                            // existing object/field use proof after Map actions
-                            // are known, just as for an ordinary native source.
-                            prepareNativeObjectIdentities(*prepared, &checked);
-                            transformed.moduleSha256 = hostContractFingerprint(*prepared);
-                        }
-                        const OwnedGlobalRoots final(*prepared, transformed, hostMaxSteps);
-                        if (final.proved()) {
-                            module.getBodyRegion().takeBody(prepared->getBodyRegion());
-                            hostContract = std::move(transformed);
-                            lifted = *result;
-                            lifted.cells += locals.cells;
-                        }
+                    if (!checked.proved()) { return checked.reason().str(); }
+                    // Map identity may pass the proved ordinary-root reads,
+                    // never arbitrary host reads. Its annotations change the
+                    // prepared fingerprint, so final ownership is independently
+                    // checked once more before publication.
+                    if (checked.roots().front().methodTable &&
+                        checked.roots().front().methodTable->capturedMap) {
+                        prepareNativeMaps(*prepared, &checked);
+                        // The host body proves confinement of future local
+                        // leaves, not their C++ representation. Rebuild the
+                        // existing object/field use proof after Map actions are
+                        // known, just as for an ordinary native source.
+                        prepareNativeObjectIdentities(*prepared, &checked);
                     }
-                }
+                    return {};
+                });
+            if (refusal.empty()) {
+                lifted = *result;
+                lifted.cells += locals.cells;
             }
         }
         closureLifter lifter{module, census};
