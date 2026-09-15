@@ -37,12 +37,19 @@ binaries / 724 source refusals / 44 provenance-depth / 24 method / 241 capture /
 **829 C++ / 100 Python / 33 web**. Required pinned formatting matches the unchanged
 **nine-file / 26-diagnostic** baseline; changed C++ passes both formatters.
 
-Full **310-step default build PASS**; the standard **602-test CTest gate is running**
-against **1,443 frozen inputs**. No complete-suite result is claimed yet. Recovery:
-`/tmp/ctcompile-dom-branches-resume/full.sh`, `full.log`, source manifests and focused
-logs. An earlier incremental gate reused one stale test object after a source edit
+Complete **310-step default build / 602/602 CTests in 1442.67s /
+176/176 lit in 968.74s PASS**. All **1,443 frozen hashes** match devbox, local files
+and committed source. Recovery scripts, focused/full logs, generated C++,
+`measured.json` and the continuation audit are in `/tmp/ctcompile-dom-branches-resume/`.
+An earlier incremental gate reused one stale test object after a source edit
 between rsync and compilation; all changed C++ inputs were refreshed after that
 gate, then rebuilt and frozen before the passing focused run.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with
+no skipped or pruned functions. Original DOM Data remains **7/7**; Button **4/86**,
+with **22 Node observations** and its existing VM inheritance failure. Button/Data
+reports and all **1,123 escape baseline rows** are byte-identical to the prior gate.
+No full-bundle admission gain is claimed.
 
 **Exact next boundary:** a fresh verbatim M/F/H.getDataAttribute probe still refuses
 `DOM helper requires complete source functions and an uncaptured wrapper` under

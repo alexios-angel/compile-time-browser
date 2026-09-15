@@ -5,9 +5,10 @@
 Latest slice **781a9a46** proves structured direct-entry DOM branches and owning
 optional String joins. Both arms retain complete source proof; effects stay inside
 the selected branch. Focused **4/4 CTests PASS**: **437 Node/VM observations / eight
-native binaries / 724 source refusals / 11 branch depth-budget controls**. Full
-**310-step build PASS**; the **602-test CTest gate is running**. See
-[HANDOFF](HANDOFF.md) for the frozen inputs and final gate status.
+native binaries / 724 source refusals / 11 branch depth-budget controls**. Complete
+**310-step build / 602/602 CTests / 176/176 lit PASS**. All **1,443 frozen hashes**
+match devbox/local/committed source. Fresh Bootstrap remains **19/574 native**,
+DOM Data **7/7**, Button **4/86**; see [HANDOFF](HANDOFF.md) for measurements.
 
 Original H `getDataAttribute` still reaches multi-block original M. A fresh probe
 refuses that helper under both providers/policies. Next is complete helper and
