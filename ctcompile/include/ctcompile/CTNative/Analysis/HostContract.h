@@ -61,9 +61,9 @@ struct HostContract {
     std::vector<std::string> undefinedBindings;
     // Explicit identities supplied by the embedding, not effect summaries.
     // Closed-source providers accept Map/Array and the class helper. DOM entry
-    // providers accept only Number: its standard own global data binding and
-    // unmodified Number.prototype.toString chain. Source replacement/escape
-    // and external script reentry still refuse the complete live proof.
+    // providers accept Number and decodeURIComponent as standard own global
+    // data bindings, including the unmodified Number.prototype.toString chain. Source
+    // replacement/escape and external script reentry still refuse the complete live proof.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
     // The embedding invokes this entry as a classic script, with its stable
@@ -97,7 +97,8 @@ enum class HostDOMMethod {
     matches,
     closest,
     number,
-    numberToString
+    numberToString,
+    decodeURIComponent
 };
 
 struct HostDOMCall {
@@ -108,7 +109,9 @@ struct HostDOMCall {
     [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
     [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
     [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
-    [[nodiscard]] bool returnsString() const { return kind == HostDOMMethod::numberToString; }
+    [[nodiscard]] bool returnsString() const {
+        return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent;
+    }
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
                !returnsString() && kind != HostDOMMethod::setAttribute &&
@@ -139,6 +142,10 @@ public:
     [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
+    [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
+    // Exactly one URI call and two owning String continuations; the implicit
+    // error payload is proved unused. This is fresh provider evidence.
+    [[nodiscard]] bool invocation(ctjs::InvokeOp operation) const;
     [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
         return optionalStrings;
     }
@@ -152,6 +159,8 @@ private:
     std::vector<mlir::BlockArgument> elements;
     std::vector<ctjs::GetPropertyOp> tokenLists;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
+    std::vector<ctjs::LoadGlobalOp> uriIntrinsics;
+    std::vector<ctjs::InvokeOp> invocations;
     std::vector<mlir::Value> optionalStrings;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;

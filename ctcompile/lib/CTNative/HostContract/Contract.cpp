@@ -126,8 +126,9 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                         names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
                     return std::move(failure);
                 }
-                if (llvm::any_of(result.initialIntrinsics,
-                                 [](const auto & name) { return name != "Number"; })) {
+                if (llvm::any_of(result.initialIntrinsics, [](const auto & name) {
+                        return name != "Number" && name != "decodeURIComponent";
+                    })) {
                     return error("unsupported DOM initial intrinsic identity");
                 }
             }
@@ -252,8 +253,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 1 ||
-        (!contract.initialIntrinsics.empty() && contract.initialIntrinsics.front() != "Number") ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 2 ||
+        llvm::any_of(
+            contract.initialIntrinsics,
+            [](const auto & name) { return name != "Number" && name != "decodeURIComponent"; }) ||
+        (contract.initialIntrinsics.size() == 2 &&
+         contract.initialIntrinsics[0] == contract.initialIntrinsics[1]) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
         refusal = "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
@@ -329,6 +334,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         matches,
         closest,
         numberIntrinsic,
+        uriIntrinsic,
         numberToString,
         number,
         string,
@@ -337,7 +343,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         undefined
     };
     std::vector<ctjs::GetPropertyOp> provedTokens;
-    std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics;
+    std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics;
+    std::vector<ctjs::InvokeOp> provedInvocations;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
     std::vector<mlir::Value> provedOptionalStrings;
@@ -348,13 +355,14 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         }
         return;
     }
-    const bool suppliedNumber = !contract.initialIntrinsics.empty();
-    if (declaration && suppliedNumber) {
+    const bool suppliedNumber = llvm::is_contained(contract.initialIntrinsics, "Number");
+    const bool suppliedURI = llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent");
+    if (declaration) {
         for (ctjs::StoreGlobalOp store :
              declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
             if (!spend()) { return; }
-            if (store.getName() == "Number") {
-                refusal = "DOM entry source declaration replaces the initial Number intrinsic";
+            if (llvm::is_contained(contract.initialIntrinsics, store.getName())) {
+                refusal = "DOM entry source declaration replaces an initial intrinsic";
                 return;
             }
         }
@@ -379,14 +387,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         // need a separate control-flow proof. Both arms are checked, always.
         const auto visit = [&](auto && self, mlir::Block & body, unsigned depth,
                                mlir::Value frame) -> bool {
-            if (depth == 64 || (!body.getArguments().empty() && depth != 0)) {
+            if (depth == 64 || (!body.getArguments().empty() && depth != 0 &&
+                                !llvm::isa<ctjs::InvokeOp>(body.getParentOp()))) {
                 refusal = "DOM entry branch depth or block arguments are unsupported";
                 return false;
             }
             bool entered = false, returned = false;
             for (mlir::Operation & operation : body) {
                 if (!spend()) { return false; }
-                if ((operation.getNumRegions() != 0 && !llvm::isa<mlir::scf::IfOp>(operation)) ||
+                if ((operation.getNumRegions() != 0 &&
+                     !llvm::isa<mlir::scf::IfOp, ctjs::InvokeOp>(operation)) ||
                     operation.getNumSuccessors() != 0 || returned) {
                     refusal =
                         "DOM entry does not admit nested control flow or a source continuation";
@@ -463,6 +473,61 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     }
                     continue;
                 }
+                if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
+                    if (invocation->getParentOfType<ctjs::InvokeOp>() ||
+                        invocation.getNumResults() != 1 || !invocation.getBody().hasOneBlock() ||
+                        !invocation.getNormalBody().hasOneBlock() ||
+                        !invocation.getUnwindBody().hasOneBlock()) {
+                        refusal = "DOM URI invocation requires complete unnested continuations";
+                        return false;
+                    }
+                    auto & called = invocation.getBody().front();
+                    auto & normal = invocation.getNormalBody().front();
+                    auto & caught = invocation.getUnwindBody().front();
+                    auto call = called.empty() ? ctjs::CallOp{}
+                                               : llvm::dyn_cast<ctjs::CallOp>(called.front());
+                    auto exit = called.empty() ? ctjs::InvokeExitOp{}
+                                               : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
+                    if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
+                        exit.getNormalResult() != call.getResult() ||
+                        !call.getResult().hasOneUse() || !exit.getState().empty() ||
+                        normal.getNumArguments() != 1 || caught.getNumArguments() != 1 ||
+                        !llvm::isa<ctjs::ValueType>(normal.getArgument(0).getType()) ||
+                        !llvm::isa<ctjs::ValueType>(caught.getArgument(0).getType()) ||
+                        !llvm::isa<ctjs::ValueType>(invocation.getResult(0).getType()) ||
+                        !llvm::isa<ctjs::ValueType>(call.getResult().getType()) ||
+                        !caught.getArgument(0).use_empty() ||
+                        !hasKind(call.getCallee(), Kind::uriIntrinsic)) {
+                        refusal = "DOM URI invocation requires exact call and unused catch payload";
+                        return false;
+                    }
+                    if (!self(self, called, depth + 1, frame)) { return false; }
+                    values[normal.getArgument(0)] = Kind::string;
+                    for (mlir::Block * continuation : {&normal, &caught}) {
+                        if (!self(self, *continuation, depth + 1, frame)) { return false; }
+                        auto yielded =
+                            llvm::dyn_cast<ctjs::InvokeYieldOp>(continuation->getTerminator());
+                        if (!yielded || yielded.getValues().size() != 1 ||
+                            !hasKind(yielded.getValues().front(), Kind::string)) {
+                            refusal = "DOM URI continuations must both return owning Strings";
+                            return false;
+                        }
+                    }
+                    values[invocation.getResult(0)] = Kind::string;
+                    provedInvocations.push_back(invocation);
+                    continue;
+                }
+                if (llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(operation)) {
+                    auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(body.getParentOp());
+                    if (!invocation || &operation != body.getTerminator() ||
+                        (llvm::isa<ctjs::InvokeExitOp>(operation) !=
+                         (&body == &invocation.getBody().front()))) {
+                        refusal = "DOM URI completion is outside its original continuation";
+                        return false;
+                    }
+                    returned = true;
+                    continue;
+                }
                 if (llvm::isa<mlir::scf::YieldOp>(operation)) {
                     if (!depth) {
                         refusal = "DOM entry yield is outside a branch";
@@ -533,6 +598,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         values[load.getResult()] = Kind::undefined;
                         continue;
                     }
+                    if (suppliedURI && load.getName() == "decodeURIComponent") {
+                        values[load.getResult()] = Kind::uriIntrinsic;
+                        provedURIIntrinsics.push_back(load);
+                        continue;
+                    }
                     if (suppliedNumber && load.getName() == "Number") {
                         values[load.getResult()] = Kind::numberIntrinsic;
                         provedNumberIntrinsics.push_back(load);
@@ -595,6 +665,20 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
                     auto arguments = invoke.getArgs();
+                    if (hasKind(invoke.getCallee(), Kind::uriIntrinsic)) {
+                        auto parent = llvm::dyn_cast<ctjs::InvokeOp>(invoke->getParentOp());
+                        if (!parent || invoke->getParentRegion() != &parent.getBody() ||
+                            !hasKind(invoke.getReceiver(), Kind::undefined) ||
+                            arguments.size() != 1 || !hasKind(arguments[0], Kind::string)) {
+                            refusal = "URI call requires explicit identity, an undefined receiver, "
+                                      "one String and preserved failure continuation";
+                            return false;
+                        }
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::decodeURIComponent, arguments[0]});
+                        values[invoke.getResult()] = Kind::string;
+                        continue;
+                    }
                     if (hasKind(invoke.getCallee(), Kind::numberIntrinsic)) {
                         if (!hasKind(invoke.getReceiver(), Kind::undefined) ||
                             arguments.size() != 1 ||
@@ -750,6 +834,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     elements = std::move(provedElements);
     tokenLists = std::move(provedTokens);
     numberIntrinsics = std::move(provedNumberIntrinsics);
+    uriIntrinsics = std::move(provedURIIntrinsics);
+    invocations = std::move(provedInvocations);
     methods = std::move(provedMethods);
     calls = std::move(provedCalls);
 }
@@ -771,6 +857,14 @@ bool DOMEntryAnalysis::isTokenList(mlir::Value value) const {
 
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
     return llvm::is_contained(numberIntrinsics, load);
+}
+
+bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
+    return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load);
+}
+
+bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {
+    return llvm::is_contained(invocations, operation);
 }
 
 std::optional<HostDOMMethod> DOMEntryAnalysis::method(ctjs::GetPropertyOp read) const {

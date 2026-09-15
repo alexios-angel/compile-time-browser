@@ -7,6 +7,7 @@
 // Everything else is verbatim, in its original order.
 
 #include "DOMNumbers.h"
+#include "DOMURI.h"
 
 using namespace ctcompile::test::host_contract;
 
@@ -834,6 +835,7 @@ int main() {
     checkCapturedCallables(context);
     checkDOMEntry(context);
     checkDOMNumbers(context);
+    checkDOMURI(context);
     checkSessionProvider(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
