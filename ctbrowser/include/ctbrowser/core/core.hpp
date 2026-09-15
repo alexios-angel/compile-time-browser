@@ -6,7 +6,7 @@
 //   containers the third-party containers, aliased in one place
 //   handle     generation-tagged references, so a stale reference FAILS a
 //              lookup instead of resolving to a recycled object
-//   slab       chunked, slot-stable storage behind those handles
+//   slab       slot-stable storage behind those handles
 //   atom       interned strings, so name comparison is an integer compare
 //   scheduler  thread pool for raster tiles
 //   geometry   points, rects, sides, colors
