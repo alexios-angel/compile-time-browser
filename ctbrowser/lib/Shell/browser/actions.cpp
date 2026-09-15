@@ -209,21 +209,7 @@ void browser::scroll_to_fragment(std::string_view id) {
     // Fragment bounds are relative to the containing block, so finding the
     // element is not enough - the walk has to accumulate to get an absolute
     // y, which is what a scroll offset is measured in.
-    bool found = false;
-    float top = 0;
-    const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,
-                          float dy) -> void {
-        if (found) { return; }
-        const rect box = f.absolute_bounds(dx, dy);
-        if (f.source == target) {
-            found = true;
-            top = box.y;
-            return;
-        }
-        for (const auto & child : f.children) { self(self, child, box.x, box.y); }
-    };
-    walk(walk, fragments_, 0, 0);
-    if (found) { scroll_to(top); }
+    if (const std::optional<rect> box = absolute_rect_of(fragments_, target)) { scroll_to(box->y); }
 }
 
 void browser::submit(node_id form) {

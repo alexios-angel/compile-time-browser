@@ -242,16 +242,7 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
 
 rect dom_bindings::box_of(node_id id) const {
     if (fragments_ == nullptr) { return rect{}; }
-    const auto find = [&](auto && self, const layout::fragment & f, float dx,
-                          float dy) -> std::optional<rect> {
-        const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
-        if (f.source == id) { return box; }
-        for (const auto & child : f.children) {
-            if (const std::optional<rect> hit = self(self, child, box.x, box.y)) { return hit; }
-        }
-        return std::nullopt;
-    };
-    return find(find, *fragments_, 0, 0).value_or(rect{});
+    return absolute_rect_of(*fragments_, id).value_or(rect{});
 }
 
 std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {

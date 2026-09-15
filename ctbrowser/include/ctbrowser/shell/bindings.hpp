@@ -6,6 +6,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -78,6 +79,24 @@ void define_getter(context & cx, Obj & obj, const std::string & name, script::na
     obj.define_accessor(name, native(cx, "get " + name, std::move(get)),
                         set ? native(cx, "set " + name, std::move(set)) : value::undefined(),
                         attrs);
+}
+
+// The first fragment for `id` in tree order, with its bounds made ABSOLUTE:
+// a fragment's bounds are relative to its containing block, so "where is this
+// element on the page" is a different question from `fragment::find`'s "which
+// fragment is it". Nothing when the node has no fragment. This is
+// fragment::find with the offsets accumulated and belongs beside it in
+// layout/fragment.hpp; it sits here because that header is Layout's.
+[[nodiscard]] inline std::optional<rect> absolute_rect_of(const layout::fragment & at, node_id id,
+                                                          float dx = 0, float dy = 0) noexcept {
+    const rect box = at.absolute_bounds(dx, dy);
+    if (at.source == id) { return box; }
+    for (const layout::fragment & child : at.children) {
+        if (const std::optional<rect> hit = absolute_rect_of(child, id, box.x, box.y)) {
+            return hit;
+        }
+    }
+    return std::nullopt;
 }
 
 // Bytes as the u8 array the typed-array builtins recognise, and the

@@ -107,16 +107,7 @@ std::vector<std::string> browser::option_labels(const read_txn & txn, node_id se
 }
 
 rect browser::viewport_box_of(node_id id) const {
-    const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,
-                          float dy) -> rect {
-        const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
-        if (f.source == id && !box.empty()) { return box; }
-        for (const auto & child : f.children) {
-            if (const rect hit = self(self, child, box.x, box.y); !hit.empty()) { return hit; }
-        }
-        return rect{};
-    };
-    rect box = walk(walk, fragments_, 0, 0);
+    rect box = absolute_rect_of(fragments_, id).value_or(rect{});
     if (!box.empty()) { box.y -= scroll_y_; }
     return box;
 }

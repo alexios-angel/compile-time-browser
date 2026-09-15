@@ -106,28 +106,6 @@ constexpr std::array<std::string_view, 12> length_properties{
     return nullptr;
 }
 
-// The same lookup, but in ABSOLUTE coordinates. A fragment's bounds are relative
-// to its parent, so "where is this element on the page" is a different question
-// from "which fragment is it" - and it is the question the used value of `top`
-// and `left` is asked against.
-[[nodiscard]] rect absolute_rect_of(const layout::fragment * root, node_id id) {
-    rect found{};
-    bool got = false;
-    const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy) -> void {
-        if (got) { return; }
-        if (at.source == id) {
-            found = rect{dx + at.bounds.x, dy + at.bounds.y, at.bounds.width, at.bounds.height};
-            got = true;
-            return;
-        }
-        for (const layout::fragment & c : at.children) {
-            self(self, c, dx + at.bounds.x, dy + at.bounds.y);
-        }
-    };
-    if (root != nullptr && id) { walk(walk, *root, 0, 0); }
-    return found;
-}
-
 // Everything about one element that answering a property needs, gathered ONCE.
 // Per-property tree walks would be O(properties x boxes): the object publishes
 // every property in the table, and rebuilding this for each of them would mean
@@ -253,13 +231,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         // asked here rather than shared because the two have different inputs -
         // that one walks the fragment tree once, this one answers about one node.
         at.position = at.box != nullptr ? at.box->position : layout::position_kind::static_;
-        at.box_abs = absolute_rect_of(fragments_, id);
+        const auto abs_rect = [&](node_id of) {
+            return fragments_ != nullptr ? absolute_rect_of(*fragments_, of).value_or(rect{})
+                                         : rect{};
+        };
+        at.box_abs = abs_rect(id);
         at.containing = rect{0, 0, static_cast<float>(viewport_width_),
                              fragments_ != nullptr ? fragments_->bounds.height : 0.0f};
         for (std::size_t up = 1; up < at.chain.size(); ++up) {
             const layout::box_node * ancestor = box_for(boxes_, at.chain[up]);
             if (ancestor == nullptr || !ancestor->is_positioned()) { continue; }
-            const rect outer = absolute_rect_of(fragments_, at.chain[up]);
+            const rect outer = abs_rect(at.chain[up]);
             const layout::constraints c{outer.width, outer.height, ancestor->font_size};
             const layout::resolved_edges e = layout::resolve_edges(*ancestor, c);
             at.containing = rect{outer.x + e.border_left, outer.y + e.border_top,
