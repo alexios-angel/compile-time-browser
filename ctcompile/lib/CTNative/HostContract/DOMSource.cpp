@@ -799,7 +799,11 @@ struct DOMSource {
             bool entered = false, returned = false;
             for (mlir::Operation & operation : body) {
                 if (!step()) { return false; }
-                if ((operation.getNumRegions() && !llvm::isa<mlir::scf::IfOp>(operation)) ||
+                // A normalized URI invoke is opaque here: normalizeDOMURI proved
+                // its regions, and the complete DOM entry proof reproves the
+                // inlined result before anything is published.
+                if ((operation.getNumRegions() &&
+                     !llvm::isa<mlir::scf::IfOp, ctjs::InvokeOp>(operation)) ||
                     operation.getNumSuccessors() || returned) {
                     return refuse("DOM helper requires complete structured branches");
                 }
@@ -1124,6 +1128,17 @@ struct DOMSource {
                                 mapping.map(branch.getResults(), cloned->getResults());
                             } else {
                                 auto * cloned = at.clone(operation, mapping);
+                                // Regions (a normalized invoke) clone with the
+                                // same mapping; charge every nested operation.
+                                for (mlir::Region & region : cloned->getRegions()) {
+                                    for (mlir::Block & nested : region) {
+                                        for (mlir::Operation & inner : nested) {
+                                            (void)inner;
+                                            if (!step()) { return false; }
+                                            ++operationCount;
+                                        }
+                                    }
+                                }
                                 if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
                                     callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
                                                         callDepth.lookup(&operation);

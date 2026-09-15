@@ -333,7 +333,7 @@ struct DOMURI {
 } // namespace
 
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
-                            unsigned maxSteps) {
+                            unsigned maxSteps, llvm::StringRef function) {
     unsigned remaining = maxSteps;
     const auto scanned = candidate.walk([&](mlir::Operation * operation) {
         const uint64_t cost = uint64_t(1) + operation->getNumOperands();
@@ -355,12 +355,13 @@ llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contr
             llvm::inconvertibleErrorCode(),
             "DOM URI requires its fingerprinted initial provider binding");
     }
-    auto function = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    if (!function || function.getBody().empty()) {
+    auto target =
+        candidate.lookupSymbol<ctjs::FuncOp>(function.empty() ? contract.entry : function);
+    if (!target || target.getBody().empty()) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), "DOM URI entry is missing");
     }
     candidate.getContext()->getOrLoadDialect<mlir::scf::SCFDialect>();
-    DOMURI attempt(function, remaining);
+    DOMURI attempt(target, remaining);
     if (!attempt.run()) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), attempt.reason);
     }

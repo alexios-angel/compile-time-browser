@@ -208,19 +208,31 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 return signalPassFailure();
             }
             mlir::OwningOpRef<mlir::ModuleOp> composed(module.clone());
-            bool hasHandler = false;
-            if (auto entry = composed->lookupSymbol<ctjs::FuncOp>(hostContract->entry)) {
-                entry.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
+            // A handler in the entry is normalized in place. A handler owned by
+            // a local helper is normalized first, under the same fingerprinted
+            // proof, so helper expansion then inlines one structured invoke.
+            HostContract composedContract = *hostContract;
+            llvm::SmallVector<std::string> handlers;
+            for (auto function : composed->getOps<ctjs::FuncOp>()) {
+                bool hasHandler = false;
+                function.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
+                if (hasHandler) { handlers.push_back(function.getSymName().str()); }
             }
-            auto sourceError = hasHandler
-                                   ? normalizeDOMURI(*composed, *hostContract, hostMaxSteps)
-                                   : expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps);
+            const bool entryHandler = llvm::is_contained(handlers, hostContract->entry);
+            llvm::Error sourceError = llvm::Error::success();
+            for (const std::string & handler : handlers) {
+                if (sourceError) { break; }
+                sourceError = normalizeDOMURI(*composed, composedContract, hostMaxSteps, handler);
+                composedContract.moduleSha256 = hostContractFingerprint(*composed);
+            }
+            if (!sourceError && !entryHandler) {
+                sourceError = expandDOMHelpers(*composed, hostContract->entry, hostMaxSteps);
+            }
             if (sourceError) {
                 module.emitError()
                     << "native DOM source: " << llvm::toString(std::move(sourceError));
                 return signalPassFailure();
             }
-            HostContract composedContract = *hostContract;
             composedContract.moduleSha256 = hostContractFingerprint(*composed);
             const DOMEntryAnalysis source(*composed, composedContract, hostMaxSteps);
             if (!source.proved()) {

@@ -17,8 +17,10 @@ namespace ctcompile::ctnative::lowering_detail {
 // Only on the fingerprinted private DOM candidate. Preserve the original
 // function on refusal; success still requires complete fresh DOM identity,
 // String ownership and invocation proof before publication or native lowering.
+// `function` defaults to the contract entry; a handler-owning local helper is
+// normalized under the same checks before expandDOMHelpers inlines it.
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
-                            unsigned maxSteps = 100000);
+                            unsigned maxSteps = 100000, llvm::StringRef function = {});
 
 struct ExceptionRecoveryResult {
     bool recovered = false;
