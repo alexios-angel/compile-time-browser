@@ -1550,7 +1550,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // to_primitive followed by static Number/String operations;
                 // Concat uses primitive to_string. Their result is independent,
                 // without a Number/String tag, value, index or key inference
-                // except for bounded Number addition and length subtraction.
+                // except for bounded Number addition and subtraction.
                 // Add and numeric conversions have a depth guard that may
                 // throw an unrelated RangeError. This whole-frame query refuses
                 // calls, handlers and publication, so it cannot retain fresh
@@ -1563,6 +1563,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     result.integerNumber = boundedNumberSum(left, right);
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
+                    const auto original =
+                        left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
                     const auto number =
                         right.integerNumber ? right.integerNumber : boundedNumber(rhs);
@@ -1574,9 +1576,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // Held Numbers keep their read-time value; canonical decimal
                     // Strings convert exactly without object hooks. Both operands
                     // are bounded integers; guard subtraction before unsigned wrap.
-                    if (left.integerNumber && offset && *offset <= *left.integerNumber) {
+                    if (original && offset && *offset <= *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = *left.integerNumber - *offset;
+                        result.integerNumber = *original - *offset;
                     }
                 }
                 state.values[binary.getResult()] = result;

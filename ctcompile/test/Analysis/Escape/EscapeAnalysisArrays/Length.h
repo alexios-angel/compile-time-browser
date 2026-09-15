@@ -508,8 +508,14 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
          .exit = "a -> {a,x}"},
         "");
     for (const std::string producer :
-         {"ctjs.binary sub %one, %one", "ctjs.binary sub %zero, %one",
-          "ctjs.binary sub %one, %length", "ctjs.binary add %length, %one",
+         {"ctjs.binary sub %one, %one", "ctjs.binary sub %one, %length"}) {
+        run({.what = "an original bounded Number subtraction selects its exact overwritten slot",
+             .body = values + one + read + "  %index = " + producer + "\n" + indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    for (const std::string producer :
+         {"ctjs.binary sub %zero, %one", "ctjs.binary add %length, %one",
           "ctjs.binary mul %length, %zero", "ctjs.binary_static add %length, %zero"}) {
         run({.what = "other arithmetic does not borrow length-subtraction index authority",
              .body = values + one + read + "  %index = " + producer + "\n" + indexed,
@@ -518,12 +524,51 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                             ? ArrayContentsFailure::MissingElement
                             : ArrayContentsFailure::UnknownIndex});
     }
-    run({.what = "an independently primitive computed offset supplies no exact Number value",
+    run({.what = "an original bounded Number subtraction supplies its exact computed offset",
          .body = values + one + read +
                  "  %offset = ctjs.binary sub %one, %zero\n"
                  "  %index = ctjs.binary sub %length, %offset\n" +
                  indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
+    for (const std::string literal : {"#ctjs.number<0>",
+                                      "#ctjs.number<9223372036854775808>",    // -0
+                                      "#ctjs.number<4751297606873776128>"}) { // 2^32-1
+        run({.what = "original bounded Number subtraction preserves both endpoint values",
+             .body = values + "  %bound = ctjs.constant " + literal +
+                     "\n  %index = ctjs.binary sub %bound, %bound\n" + indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "the maximum array length remains outside own element indices",
+         .body = values +
+                 "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                 "  %index = ctjs.binary sub %bound, %zero\n" +
+                 indexed,
          .failure = ArrayContentsFailure::UnknownIndex});
+    run({.what = "a loaded original Number keeps its value after replacement and transport",
+         .body = values + one +
+                 "  %inputs = ctjs.create_array [%one] {storage_test_id = \"inputs\"}\n"
+                 "  %saved = ctjs.get_property %inputs[%zero]\n"
+                 "  ctjs.set_property %inputs[%zero], %x\n"
+                 "  cf.br ^pair(%saved, %zero : !ctjs.value, !ctjs.value)\n"
+                 "^pair(%before: !ctjs.value, %after: !ctjs.value):\n"
+                 "  cf.br ^swapped(%after, %before : !ctjs.value, !ctjs.value)\n"
+                 "^swapped(%newInput: !ctjs.value, %oldInput: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %oldInput, %one\n"
+                 "  ctjs.set_property %a[%index], %newInput\n  ctjs.return %a\n",
+         .arrays = "a:[zero]; inputs:[x]",
+         .reads = "inputs[0]=ctjs.constant",
+         .exit = "a -> {a}"});
+    run({.what = "a literal Number subtraction cannot release a returned saved child",
+         .body = values + one +
+                 "  %index = ctjs.binary sub %one, %one\n"
+                 "  %saved = ctjs.get_property %a[%index]\n" +
+                 overwrite + "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        "");
     for (const std::string operation : {"ctjs.binary", "ctjs.binary_static"}) {
         run({.what = "a held bounded Number sum supplies its exact subtraction offset",
              .body = values + one + read + "  %offset = " + operation +
@@ -590,7 +635,16 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                  "  %length = ctjs.get_property %empty[%key]\n" +
                  subtract + indexed,
          .failure = ArrayContentsFailure::UnknownIndex});
-    for (const std::string alternative : {"%one", "%zero", "%key"}) {
+    run({.what = "a literal Number and own length each prove their structural subtraction arm",
+         .body = values + one + read +
+                 "  %flag = ctjs.truthy %zero\n"
+                 "  cf.cond_br %flag, ^join(%length : !ctjs.value), ^join(%one : !ctjs.value)\n"
+                 "^join(%before: !ctjs.value):\n"
+                 "  %index = ctjs.binary sub %before, %one\n" +
+                 indexed,
+         .arrays = "a:[zero] | a:[zero]",
+         .exit = "a -> {a}; a -> {a}"});
+    for (const std::string alternative : {"%zero", "%key", "%p", "%x"}) {
         run({.what = "one length-valued edge cannot authorize another edge's category or value",
              .body = values + one + read +
                      "  %flag = ctjs.truthy %zero\n"
@@ -599,7 +653,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                      " : !ctjs.value)\n^join(%before: !ctjs.value):\n"
                      "  %index = ctjs.binary sub %before, %one\n" +
                      indexed,
-             .failure = ArrayContentsFailure::UnknownIndex});
+             .failure = alternative == "%p" || alternative == "%x"
+                            ? ArrayContentsFailure::UnsupportedOperation
+                            : ArrayContentsFailure::UnknownIndex});
     }
     const std::string shrink = "  ctjs.set_property %a[%key], %zero\n";
     // Preserve the exact formerly refused length-write body.
@@ -624,6 +680,17 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,length]",
         .exit = "result -> {a,result}"};
     run(computedShrink);
+    const contents_row literalShrink{
+        .what = "original bounded Number subtraction supplies a non-growing length",
+        .body = values + one + read +
+                "  %input = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                "  %index = ctjs.binary sub %input, %one\n"
+                "  ctjs.set_property %a[%key], %index\n"
+                "  %result = ctjs.create_array [%a, %length] {storage_test_id = \"result\"}\n"
+                "  ctjs.return %result\n",
+        .arrays = "a:[]; result:[a,length]",
+        .exit = "result -> {a,result}"};
+    run(literalShrink);
     const contents_row heldOffsetShrink{
         .what = "a held bounded Number offset supplies an exact non-growing shrink",
         .body = values + one + read +
@@ -842,7 +909,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
                                       "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
         for (const std::string producer :
-             {"ctjs.binary add %input, %zero", "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
+             {"ctjs.binary add %input, %zero", "ctjs.binary sub %input, %zero",
+              "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
             run({.what = "a computed shrink needs exact Number operands without coercion",
                  .body = values + "  %input = ctjs.constant " + literal +
                          "\n  %wanted = " + producer +
@@ -1161,7 +1229,14 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(offset);
         inspect(ArrayContentsFailure::None);
         binary->setOperand(0, binary.getRhs());
+        inspect(ArrayContentsFailure::None);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
+        inspect(ArrayContentsFailure::None);
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606875873280ULL));
+        inspect(ArrayContentsFailure::UnknownIndex);
+        literal.setValueAttr(offset);
         binary->setOperand(0, lhs);
         binary.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Add));
         inspect(ArrayContentsFailure::MissingElement);
@@ -1174,8 +1249,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         fail(row{.what = originalIndex.what, .body = originalIndex.body, .expected = ""},
              "the live subtracted-index fixture did not parse");
     }
-    for (const contents_row & source :
-         {originalShrink, computedShrink, heldOffsetShrink, unaryShrink, negatedShrink}) {
+    for (const contents_row & source : {originalShrink, computedShrink, literalShrink,
+                                        heldOffsetShrink, unaryShrink, negatedShrink}) {
         auto module = parse(source);
         if (!module) {
             fail(row{.what = source.what, .body = source.body, .expected = ""},
