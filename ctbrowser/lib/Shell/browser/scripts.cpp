@@ -437,8 +437,7 @@ bool browser::add_script_image(std::vector<std::byte> image) {
         // toString and drop-then-keep did not. THE ONE THAT KEEPS THE SOURCE
         // WINS, whichever arrives first, because the other is an optimisation
         // that removes behaviour and silently taking it when the better image
-        // was also offered is the wrong default. `clear_script_images` is how a
-        // caller says it means the lean one.
+        // was also offered is the wrong default.
         if (held.option == script::image_option::keep_source &&
             head->option == script::image_option::drop_source) {
             return true;

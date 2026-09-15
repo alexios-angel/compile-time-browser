@@ -824,7 +824,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         // `b`, so `length` is 2 and `item(1)` is `b` - and it is what every
         // operation edits and then serialises back, which is why `add("a")` on
         // that attribute writes "a b".
-        const auto tokens_now = [attribute_now] { return ordered_set(attribute_now()); };
+        const auto tokens_now = [attribute_now] { return parse_ordered_tokens(attribute_now()); };
         // THE UPDATE STEPS: nothing is written when there is no attribute and
         // nothing to put in one, otherwise the set, space-joined.
         const auto update = [this, id, attribute_name](const std::vector<std::string> & tokens) {

@@ -262,18 +262,6 @@ void dom_bindings::set_text(node_id id, std::string text) {
     mutated();
 }
 
-std::vector<std::string_view> dom_bindings::split(std::string_view text) {
-    std::vector<std::string_view> out;
-    std::size_t at = 0;
-    while (at < text.size()) {
-        while (at < text.size() && text[at] == ' ') { ++at; }
-        const std::size_t start = at;
-        while (at < text.size() && text[at] != ' ') { ++at; }
-        if (at > start) { out.push_back(text.substr(start, at - start)); }
-    }
-    return out;
-}
-
 void dom_bindings::mutated() {
     // THE MUTATION OBSERVERS FIRST, and from here rather than from each of the 23
     // natives that change the document: this is the funnel they all already go

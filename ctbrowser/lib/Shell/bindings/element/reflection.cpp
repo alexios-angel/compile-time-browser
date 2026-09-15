@@ -1066,7 +1066,11 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
     if (!answered) {
         if (!present) { return value::null(); }
         if (list) {
-            for (const std::string_view token : split(raw)) {
+            // "Split on ASCII whitespace" - all five, not just the space.
+            // ponytail: split_top_level also honours quotes and parentheses,
+            // which an id could in theory contain; a plain whitespace split
+            // is the fix if one ever does.
+            for (const std::string_view token : split_top_level(raw, html_whitespace)) {
                 if (const node_id node = element_reference_by_id(txn, id, token)) {
                     found.push_back(node);
                 }

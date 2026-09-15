@@ -299,10 +299,6 @@ public:
     void resize(paint::bitmap * surface, int width, int height);
 
     [[nodiscard]] bool ok() const;
-    // Why the context could not be made, for a page that asked for one and got
-    // null. EGL fails before there is a GL error to read, so this is not
-    // `take_error`'s job.
-    [[nodiscard]] const std::string & device_error() const;
 
     // --- context and surface -------------------------------------------------
 

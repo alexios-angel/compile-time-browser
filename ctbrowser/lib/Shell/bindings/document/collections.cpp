@@ -167,10 +167,6 @@ std::string dom_bindings::namespace_of(node_id id) const {
     return {};
 }
 
-std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
-    return parse_ordered_tokens(text);
-}
-
 std::vector<node_id> dom_bindings::all_by_class(node_id root,
                                                 const std::vector<std::string> & tokens) {
     if (tokens.empty()) { return {}; }
@@ -182,7 +178,8 @@ std::vector<node_id> dom_bindings::all_by_class(node_id root,
     // getElementsByClassName-14.htm, a doctype-less page with `class="a A"`.
     const bool quirks = doc_->quirks();
     const auto has_every = [&](node_id at) {
-        const std::vector<std::string> held = ordered_set(txn.attribute_value(at, class_attribute));
+        const std::vector<std::string> held =
+            parse_ordered_tokens(txn.attribute_value(at, class_attribute));
         return std::ranges::all_of(tokens, [&](const std::string & want) {
             return std::ranges::any_of(held, [&](const std::string & one) {
                 return quirks ? ascii_iequals(one, want) : one == want;

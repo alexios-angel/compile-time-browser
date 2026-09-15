@@ -290,13 +290,13 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     };
     set_method(cx, *obj, "getActiveUniform", [gl, active_info](context & c, std::span<value> a) {
         const auto all = gl->active_uniforms(id_of(c, a.empty() ? value::undefined() : a[0]));
-        const auto i = static_cast<std::size_t>(std::max(0.0f, number(a, 1)));
+        const auto i = static_cast<std::size_t>(std::max(0.0, arg_number(a, 1)));
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });
     set_method(cx, *obj, "getActiveAttrib", [gl, active_info](context & c, std::span<value> a) {
         const auto all = gl->active_attributes(id_of(c, a.empty() ? value::undefined() : a[0]));
-        const auto i = static_cast<std::size_t>(std::max(0.0f, number(a, 1)));
+        const auto i = static_cast<std::size_t>(std::max(0.0, arg_number(a, 1)));
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });

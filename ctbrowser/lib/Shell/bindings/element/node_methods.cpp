@@ -493,7 +493,7 @@ void dom_bindings::install_node_methods(context & cx) {
     // element is not one of its own results.
     method(element, "getElementsByClassName", 1, [this](context & c, std::span<value> args) {
         const node_id from = receiver(c);
-        const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
+        const std::vector<std::string> tokens = parse_ordered_tokens(arg_string(c, args, 0));
         return make_live_collection(c, [this, from, tokens] {
             return from ? all_by_class(from, tokens) : std::vector<node_id>{};
         });

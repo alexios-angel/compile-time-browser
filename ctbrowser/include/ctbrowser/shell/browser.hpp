@@ -197,10 +197,6 @@ public:
     // rather than assuming it.
     bool add_script_image(std::vector<std::byte> image);
 
-    // Forget every image. A page keyed on old bytes should stop matching when a
-    // packager says so, rather than when the browser happens to be destroyed.
-    void clear_script_images() noexcept { script_images_.clear(); }
-
     // How many classic scripts this browser compiled rather than loaded from an
     // image. Zero after a load whose every script was cached; without this a
     // cache that silently misses looks exactly like one that works.

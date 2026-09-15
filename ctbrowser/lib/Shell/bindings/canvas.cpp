@@ -15,6 +15,13 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+// arg_number as the float the canvas works in.
+[[nodiscard]] float number(std::span<value> args, std::size_t i) {
+    return static_cast<float>(arg_number(args, i));
+}
+} // namespace
+
 // A DOMMatrix: the six numbers a page reads, and the methods it composes with.
 //
 // Every method is IMMUTABLE - `inverse()`, `multiply()`, `translate()` and
@@ -552,10 +559,6 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         return value::object(metrics);
     });
     return self;
-}
-
-float dom_bindings::number(std::span<value> args, std::size_t i) {
-    return i < args.size() ? static_cast<float>(context::to_number(args[i])) : 0.0f;
 }
 
 bool dom_bindings::apply_canvas_font(canvas_context & canvas, std::string_view font) {

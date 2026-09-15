@@ -1291,8 +1291,6 @@ private:
     // GC root, because the page may drop its reference and ask again.
     flat_map<std::uint64_t, script::object_object *> webgl_objects_;
 
-    [[nodiscard]] static float number(std::span<value> args, std::size_t i);
-
     // `ctx.font = "..."`, read as the CSS `font` shorthand it is: the size in
     // px, the first family, bold and italic. False for a string that is not
     // one, which the specification says leaves the font as it was.
@@ -1312,8 +1310,6 @@ private:
     [[nodiscard]] std::string text_of(node_id id) const;
 
     void set_text(node_id id, std::string text);
-
-    [[nodiscard]] static std::vector<std::string_view> split(std::string_view text);
 
     void mutated();
 
@@ -1621,11 +1617,6 @@ private:
     // and `getOwnPropertyDescriptor` traps over `document_target_` and returns
     // it.
     [[nodiscard]] value make_document_proxy(context & cx, value target);
-    // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
-    // FF and CR, all five - and drop duplicates. `split` above splits on spaces
-    // alone, which is right for nothing in particular and wrong for a class
-    // attribute written across two lines.
-    [[nodiscard]] static std::vector<std::string> ordered_set(std::string_view text);
     // A COLLECTION THAT IS LIVE, which is the whole difficulty. `getElementsBy*`
     // returns a view of the document rather than a snapshot of it: a page takes
     // the collection, appends an element, and reads `length` again expecting the

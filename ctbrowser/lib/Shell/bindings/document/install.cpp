@@ -266,7 +266,7 @@ void dom_bindings::install_document(context & cx) {
     // the suite's own tests take the collection, mutate the document and read
     // the collection again. See make_live_collection.
     set_method(cx, *doc, "getElementsByClassName", [this](context & c, std::span<value> args) {
-        const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
+        const std::vector<std::string> tokens = parse_ordered_tokens(arg_string(c, args, 0));
         return make_live_collection(c, [this, tokens] { return all_by_class(node_id{}, tokens); });
     });
     // `document.getElementsByName`, which is keyed on the `name` ATTRIBUTE and
