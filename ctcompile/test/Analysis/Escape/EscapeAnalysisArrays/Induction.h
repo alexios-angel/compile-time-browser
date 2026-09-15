@@ -130,6 +130,76 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,two,three] | a:[one,two,three]",
          .reads = "a[0]=one; a[1]=two; a[2]=three; a[0]=one; a[1]=two; a[2]=three",
          .exit = "added -> {}; added -> {}"});
+    const std::string makeUnit =
+        "  %unit = ctjs.binary sub %two, %one {storage_test_id = \"unit\"}\n";
+    const std::string unitLoop = replace(loop, "add %i, %one", "add %i, %unit");
+    const std::string computedUnit = prefix + makeUnit + unitLoop;
+    run({.what = "an independently computed Number one supplies an invariant unit step",
+         .body = computedUnit,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const std::string computedUnitChild =
+        replace(replace(savedChild, "  cf.br ^header", makeUnit + "  cf.br ^header"),
+                "add %i, %one", "add %i, %unit");
+    run({.what = "held-unit induction retains its exact final child",
+         .body = computedUnitChild,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "held-unit induction discharges only unreturned children",
+         .body = replace(computedUnitChild, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    const std::string savedUnit =
+        prefix +
+        "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"
+        "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+        "  %unit = ctjs.get_property %seed[%name]\n"
+        "  ctjs.append %one to %seed\n" +
+        unitLoop;
+    run({.what = "a saved one-length step survives later growth of its source array",
+         .body = savedUnit,
+         .arrays = "a:[one,two,three]; seed:[one,one]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    std::string carriedUnit = replace(
+        computedUnit, "^header(%a, %zero, %zero : !ctjs.value, !ctjs.value, !ctjs.value)",
+        "^header(%a, %zero, %zero, %unit : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value)");
+    carriedUnit =
+        replace(carriedUnit, "%sum: !ctjs.value):", "%sum: !ctjs.value, %delta: !ctjs.value):");
+    carriedUnit = replace(
+        carriedUnit, "^body(%array, %index, %sum : !ctjs.value, !ctjs.value, !ctjs.value)",
+        "^body(%array, %index, %sum, %delta : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value)");
+    carriedUnit = replace(carriedUnit, "%s: !ctjs.value):", "%s: !ctjs.value, %d: !ctjs.value):");
+    carriedUnit = replace(carriedUnit, "add %i, %unit", "add %i, %d");
+    carriedUnit = replace(
+        carriedUnit, "^header(%base, %step, %added : !ctjs.value, !ctjs.value, !ctjs.value)",
+        "^header(%base, %step, %added, %d : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value)");
+    run({.what = "held Number-one steps survive exact CFG header/body/backedge transport",
+         .body = carriedUnit,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "a carried header step may pass through its backedge directly",
+         .body = replace(carriedUnit, "^header(%base, %step, %added, %d",
+                         "^header(%base, %step, %added, %delta"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const std::string alternateUnit = prefix + makeUnit +
+                                      "  %choice = ctjs.truthy %one\n"
+                                      "  cf.cond_br %choice, ^entry(%unit : !ctjs.value), "
+                                      "^entry(%one : !ctjs.value)\n"
+                                      "^entry(%chosen: !ctjs.value):\n" +
+                                      replace(unitLoop, "add %i, %unit", "add %i, %chosen");
+    run({.what = "separate literal and computed unit steps survive predecessor transport",
+         .body = alternateUnit,
+         .arrays = "a:[one,two,three] | a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three; a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}; added -> {}"});
     run({.what = "unrelated registers swap simultaneously on each backedge",
          .body = prefix + "  cf.br ^header(%a, %zero, %one, %two : !ctjs.value, !ctjs.value, "
                           "!ctjs.value, !ctjs.value)\n"
@@ -172,6 +242,33 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     }
     reject("a computed start leaves every indexed read subject to the original own bound",
            replace(computed, "%base[%i]", "%base[%three]"), ArrayContentsFailure::MissingElement);
+    reject("a computed two step cannot borrow a Number-one certificate",
+           replace(computedUnit, "binary sub %two, %one", "binary sub %two, %zero"));
+    reject("a saved nonunit length cannot borrow its source array's later unit length",
+           replace(replace(savedUnit, "%seed = ctjs.create_array [%one]",
+                           "%seed = ctjs.create_array [%one, %one]"),
+                   "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %one"));
+    for (const std::string constant :
+         {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>"}) {
+        reject("held coercible or fractional values cannot supply a Number-one step",
+               replace(computedUnit, "ctjs.binary sub %two, %one", "ctjs.constant " + constant));
+    }
+    reject("an opaque held unit step cannot borrow any source Number fact",
+           replace(computedUnit, "add %i, %unit", "add %i, %p"));
+    reject("a changing carried step cannot reuse its initial Number-one fact",
+           replace(carriedUnit, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %zero"));
+    reject("a swapping carried step cannot borrow another register's initial Number one",
+           replace(carriedUnit, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %d, %added"));
+    reject("a body-computed unit step needs its own invariant proof",
+           replace(replace(computedUnit, makeUnit, ""), "  %step =", makeUnit + "  %step ="));
+    reject("a header-computed unit step needs the same invariant proof",
+           replace(replace(computedUnit, makeUnit, ""), "  %key =", makeUnit + "  %key ="));
+    reject("a held unit step still cannot hide loop mutation",
+           replace(computedUnit, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="));
+    reject("an untaken predecessor must independently supply a Number-one step",
+           replace(alternateUnit, "^entry(%one :", "^entry(%zero :"));
     reject("inclusive guards do not prove an own index",
            replace(original, "compare lt", "compare le"));
     reject("inverted guards do not borrow strict induction",
@@ -257,55 +354,58 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(original, "%base[%i]", "%base[%s]"), "^header(%base, %step, %added",
                    "^header(%base, %step, %p"),
            ArrayContentsFailure::UnknownIndex);
-    contents_row live{.what = "live initialization facts override stale solver and forged markers",
-                      .body = replace(computedChild, "ctjs.return %result", "ctjs.return %zero"),
-                      .arrays = "a:[one,x]",
-                      .reads = "a[0]=one; a[1]=x",
-                      .exit = "zero -> {}"};
     unsigned liveStates = 0;
-    if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + live.body + "}\n", &context)) {
-        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
-        ctjs::BinaryOp start;
-        mlir::Value zero;
-        module->walk([&](ctjs::BinaryOp op) { start = op; });
-        module->walk([&](ctjs::ConstantOp op) {
-            if (contentsLabel(op) == "zero") { zero = op.getResult(); }
-        });
-        const mlir::Value one = start.getRhs();
-        mlir::OpBuilder builder(function);
-        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
-        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
-        start->setAttr("ctnative.array_index", builder.getI64IntegerAttr(0));
-        mlir::DataFlowSolver stale;
-        stale.load<mlir::dataflow::DeadCodeAnalysis>();
-        stale.load<mlir::dataflow::SparseConstantPropagation>();
-        stale.load<EscapeAnalysis>();
-        if (failed(stale.initializeAndRun(*module))) {
-            fail(row{.what = live.what, .body = live.body, .expected = ""},
-                 "the initialization stale solver did not converge");
-        }
-        for (mlir::Value rhs : {one, zero, one}) {
-            start->setOperand(1, rhs);
-            const bool complete = rhs == one;
-            live.failure = complete ? ArrayContentsFailure::None
-                                    : ArrayContentsFailure::UnsupportedControlFlow;
-            checkArrayContents(*module, live);
-            budgets += checkArrayRetention(*module, {.what = live.what,
-                                                     .body = live.body,
-                                                     .discharged = complete ? "x" : "",
-                                                     .complete = complete});
-            const auto verdicts = computeVerdicts(stale, function);
-            if (verdicts.arrayRetentionComplete != complete ||
-                verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+    for (const std::string & source : {computedChild, computedUnitChild}) {
+        contents_row live{.what = "live induction facts override stale solver and forged markers",
+                          .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                          .arrays = "a:[one,x]",
+                          .reads = "a[0]=one; a[1]=x",
+                          .exit = "zero -> {}"};
+        if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
+                std::string{kPrologue} + live.body + "}\n", &context)) {
+            ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+            ctjs::BinaryOp producer;
+            mlir::Value zero;
+            module->walk([&](ctjs::BinaryOp op) { producer = op; });
+            module->walk([&](ctjs::ConstantOp op) {
+                if (contentsLabel(op) == "zero") { zero = op.getResult(); }
+            });
+            const mlir::Value one = producer.getRhs();
+            mlir::OpBuilder builder(function);
+            function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+            function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+            producer->setAttr("ctnative.array_index",
+                              builder.getI64IntegerAttr(source == computedChild ? 0 : 1));
+            mlir::DataFlowSolver stale;
+            stale.load<mlir::dataflow::DeadCodeAnalysis>();
+            stale.load<mlir::dataflow::SparseConstantPropagation>();
+            stale.load<EscapeAnalysis>();
+            if (failed(stale.initializeAndRun(*module))) {
                 fail(row{.what = live.what, .body = live.body, .expected = ""},
-                     "stale solver or forged marker supplied zero initialization authority");
+                     "the induction stale solver did not converge");
             }
-            ++liveStates;
+            for (mlir::Value rhs : {one, zero, one}) {
+                producer->setOperand(1, rhs);
+                const bool complete = rhs == one;
+                live.failure = complete ? ArrayContentsFailure::None
+                                        : ArrayContentsFailure::UnsupportedControlFlow;
+                checkArrayContents(*module, live);
+                budgets += checkArrayRetention(*module, {.what = live.what,
+                                                         .body = live.body,
+                                                         .discharged = complete ? "x" : "",
+                                                         .complete = complete});
+                const auto verdicts = computeVerdicts(stale, function);
+                if (verdicts.arrayRetentionComplete != complete ||
+                    verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+                    fail(row{.what = live.what, .body = live.body, .expected = ""},
+                         "stale solver or forged marker supplied induction authority");
+                }
+                ++liveStates;
+            }
+        } else {
+            fail(row{.what = live.what, .body = live.body, .expected = ""},
+                 "the live induction fixture did not parse");
         }
-    } else {
-        fail(row{.what = live.what, .body = live.body, .expected = ""},
-             "the live initialization fixture did not parse");
     }
     std::string many = "%one";
     for (unsigned i = 1; i < 32; ++i) { many += ", %one"; }

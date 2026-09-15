@@ -169,6 +169,56 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]; seed:[one]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const std::string makeUnit = "  %unit = ctjs.unary plus %one\n";
+    const std::string unitLoop = replace(loop, "add %i, %one", "add %i, %unit");
+    const std::string computedUnit = prefix + makeUnit + unitLoop + "  ctjs.return %result\n";
+    rows.push_back({.what = "structured induction accepts an independently computed unit step",
+                    .body = computedUnit,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    const std::string savedUnit =
+        prefix +
+        "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"
+        "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+        "  %unit = ctjs.get_property %seed[%name]\n"
+        "  ctjs.set_property %seed[%name], %zero\n" +
+        unitLoop + "  ctjs.return %result\n";
+    rows.push_back({.what = "structured unit steps preserve saved length after the source shrinks",
+                    .body = savedUnit,
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    std::string carriedUnit = replace(computedUnit, "%finalIndex, %result, %finalArray =",
+                                      "%finalIndex, %result, %finalArray, %finalUnit =");
+    carriedUnit = replace(carriedUnit, "%saved = %zero)", "%saved = %zero, %delta = %unit)");
+    carriedUnit = replace(carriedUnit, "(!ctjs.value, !ctjs.value, !ctjs.value) ->",
+                          "(!ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value) ->");
+    carriedUnit = replace(carriedUnit, "-> (!ctjs.value, !ctjs.value, !ctjs.value) {",
+                          "-> (!ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value) {");
+    carriedUnit = replace(
+        carriedUnit, "%index, %saved, %array :", "%index, %saved, %array, %delta : !ctjs.value,");
+    carriedUnit =
+        replace(carriedUnit, "%base: !ctjs.value):", "%base: !ctjs.value, %d: !ctjs.value):");
+    carriedUnit = replace(carriedUnit, "add %i, %unit", "add %i, %d");
+    carriedUnit =
+        replace(carriedUnit, "%base, %step, %read :", "%base, %step, %read, %d : !ctjs.value,");
+    rows.push_back({.what = "unit facts survive reordered structured condition and yield transport",
+                    .body = carriedUnit,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    const std::string alternateUnit =
+        replace(computedUnit, makeUnit,
+                "  %unit = scf.if %flag -> (!ctjs.value) {\n"
+                "    %proved = ctjs.unary plus %one\n"
+                "    scf.yield %proved : !ctjs.value\n"
+                "  } else {\n    scf.yield %one : !ctjs.value\n  }\n");
+    rows.push_back({.what = "independently proved structured unit alternatives keep both paths",
+                    .body = alternateUnit,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; y -> {y}"});
     rows.push_back(
         {.what = "a zero-trip structured loop returns its initial scalar",
          .body = replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
@@ -231,6 +281,24 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(savedLength, "%seed = ctjs.create_array []",
                            "%seed = ctjs.create_array [%one]"),
                    "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %zero"));
+    reject("structured induction refuses an exact computed zero step",
+           replace(computedUnit, "unary plus %one", "unary plus %zero"));
+    reject("a structured String step cannot become a proved Number one",
+           replace(computedUnit, "ctjs.unary plus %one", "ctjs.constant #ctjs.string<\"1\">"));
+    reject("a structured BigInt step cannot borrow its Number spelling",
+           replace(computedUnit, "ctjs.unary plus %one", "ctjs.constant #ctjs.bigint<\"1\">"));
+    reject("a structured unit step cannot borrow another arm's Number fact",
+           replace(alternateUnit, "scf.yield %one :", "scf.yield %zero :"));
+    reject("a saved zero length cannot borrow a later unit source length",
+           replace(replace(savedUnit, "%seed = ctjs.create_array [%one]",
+                           "%seed = ctjs.create_array []"),
+                   "ctjs.set_property %seed[%name], %zero", "ctjs.append %one to %seed"));
+    reject("a structured carried step must remain unchanged on its backedge",
+           replace(carriedUnit, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+    reject("a structured swapped step cannot reuse its first iteration's Number one",
+           replace(carriedUnit, "%base, %step, %read, %d :", "%base, %step, %d, %read :"));
+    reject("a structured repeated step producer needs a separate invariant proof",
+           replace(replace(computedUnit, makeUnit, ""), "    %step =", makeUnit + "    %step ="));
     reject("a structured inclusive guard does not prove an own index",
            replace(original, "compare lt", "compare le"));
     reject("a structured guard must read the current array length",
@@ -291,6 +359,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     rows.push_back({.what = "computed zero also initializes an invariant direct-array loop",
                     .body = prefix + "  %start = ctjs.unary plus %zero\n" +
                             replace(directLoop, "%index = %zero", "%index = %start") +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "held unit steps also support invariant direct-array loops",
+                    .body = prefix + makeUnit +
+                            replace(directLoop, "add %i, %one", "add %i, %unit") +
                             "  ctjs.return %result\n",
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",

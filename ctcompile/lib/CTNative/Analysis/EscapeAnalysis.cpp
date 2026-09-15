@@ -1050,9 +1050,32 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         };
         auto step = backedge[index.getArgNumber()].getDefiningOp<ctjs::BinaryStaticOp>();
         if (!step || step->getBlock() != body || step.getKind() != ctjs::BinaryKind::Add ||
-            fromHeader(step.getLhs()) != index || boundedNumber(step.getRhs()) != 1 ||
+            fromHeader(step.getLhs()) != index ||
             (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
+        }
+        // A held unit step must survive every backedge unchanged. Read a body
+        // formal through its actual header operand before the body has executed.
+        mlir::Value increment = step.getRhs();
+        if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
+        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(increment);
+            argument && argument.getOwner() == header) {
+            const mlir::Value next = backedge[argument.getArgNumber()];
+            if (next != increment && fromHeader(next) != increment) { return unsupported; }
+        }
+        if (boundedNumber(increment) != 1) {
+            // Repeated producers need their own invariant proof; a prior
+            // iteration's saved fact cannot certify a header/body computation.
+            auto * definition = increment.getDefiningOp();
+            if (definition &&
+                (definition->getBlock() == header || definition->getBlock() == body)) {
+                return unsupported;
+            }
+            const ContentsValue unit = held(increment);
+            if ((unit.integerNumber ? unit.integerNumber : boundedNumber(unit.origin())) != 1) {
+                return unsupported;
+            }
         }
         // Initialization may be a saved empty length or an exact arithmetic
         // result. Check both the original input and its transported snapshot;

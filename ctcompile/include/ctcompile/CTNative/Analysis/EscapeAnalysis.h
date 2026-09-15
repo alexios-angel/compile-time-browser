@@ -550,8 +550,10 @@ struct ArrayContentsEvidence {
 /// unknown roots, stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
 /// path snapshots are charged to the same work budget. Other unknown forwarded
 /// values refuse. A certified read-only CFG or scf.while header/body loop may replay with proved
-/// Number-zero initialization and literal +1 steps under a strict current own-array length guard,
-/// within the same work budget. Allocation, mutation and nested control in that loop refuse.
+/// Number-zero initialization and proved Number-one steps under a strict current own-array length
+/// guard, within the same work budget. Held steps must remain invariant across the actual
+/// header/body/backedge transport; repeated computations cannot borrow an earlier iteration's
+/// scalar facts. Allocation, mutation and nested control in that loop refuse.
 /// The guarded array may be a transported header argument or a direct allocation
 /// already known on this path after SCF eliminates an invariant array argument.
 /// Other repeated blocks refuse. Unvisited ordinary blocks are unreachable
