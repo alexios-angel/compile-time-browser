@@ -135,9 +135,10 @@ def refusal_sources(factory):
         + ordinary_run
     )
     mutable = factory.replace("const state = new Map();", "let state = new Map();").replace(
-        'set(value) { state.set("value", value);',
-        'set(value) { state = new Map(); state.set("value", value);',
+        'state.set("value", value);', 'state = new Map(); state.set("value", value);'
     )
+    if mutable.count("state = new Map(); state.set") != 1:
+        raise RuntimeError("mutable capture anchor changed in the specimen")
     sources["mutable_capture"] = (
         mutable
         + "function publish(seed) { const ns = {exports: makeData(seed)}; return ns.exports; }\n"

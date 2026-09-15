@@ -354,7 +354,8 @@ globalThis.__runProbes = function (canvas) {
                     scene.dispose();
                 }
             } catch (e) {
-                /* a probe may have broken it */ }
+                /* a probe may have broken it */
+            }
         }
     }
     passed.sort();

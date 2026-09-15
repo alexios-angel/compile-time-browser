@@ -32,7 +32,8 @@
 // failure mode this whole file exists to catch.
 function refuses(gl, body) {
     while (gl.getError() !== gl.NO_ERROR) {
-        /* drain what came before */ }
+        /* drain what came before */
+    }
     body();
     var err = gl.getError();
     if (err !== gl.INVALID_OPERATION) {
@@ -309,7 +310,8 @@ globalThis.__probes = [
     // which is the exact failure this whole plan exists to avoid.
     ['unscoped', 'refusing is loud', function (gl) {
         while (gl.getError() !== gl.NO_ERROR) {
-            /* drain */ }
+            /* drain */
+        }
         gl.createQuery();
         var err = gl.getError();
         if (err !== gl.INVALID_OPERATION) {
@@ -363,7 +365,8 @@ globalThis.__probes = [
             throw 'an unknown block said ' + missing;
         }
         while (gl.getError() !== gl.NO_ERROR) {
-            /* drain */ }
+            /* drain */
+        }
         gl.uniformBlockBinding(p, index, 1);
         var buffer = gl.createBuffer();
         gl.bindBuffer(gl.UNIFORM_BUFFER, buffer);

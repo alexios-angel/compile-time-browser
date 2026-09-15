@@ -4,7 +4,7 @@
   file(READ "${_corpus}" _fixture_source)
   string(REGEX MATCH "function objectFrameBigIntShiftEarly\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _shift_error_source "${_fixture_source}")
   string(SHA256 _shift_error_hash "${_shift_error_source}")
-  if(NOT _shift_error_hash STREQUAL "2a35f86f51344a271fec92b345a6b0b5e748f2295cb454d501cf26e2b79df51c")
+  if(NOT _shift_error_hash STREQUAL "ad0d55f50570016466a7d91649e25508e777398c8d4e4255592acd1472fcb9eb")
     message(FATAL_ERROR "the signed-shift exception source changed; remeasure its bytecode coordinate before updating this case")
   endif()
   # Div and Mod have distinct error-producing source operations. Their fixed
@@ -13,9 +13,9 @@
     string(REGEX MATCH "function objectFrameBigIntDivMod${_kind}Early\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _divmod_error_source "${_fixture_source}")
     string(SHA256 _divmod_error_hash "${_divmod_error_source}")
     if(_kind STREQUAL "Div")
-      set(_expected_divmod_error_hash "c742ba470b572744485a85ac7a3cc67f67797cc245ff63d69e31f9d2d5d4678f")
+      set(_expected_divmod_error_hash "6c68903dc496b7644562597929ae68c21e34728e9b17c4229aac42eafab23f48")
     else()
-      set(_expected_divmod_error_hash "5d4ec3ed2578c19fa1dfd80d5cd9ee5168625675a3c26b03b6acc46d69c1bcd6")
+      set(_expected_divmod_error_hash "cd95b19bbca5f3678ae266a056844bf2abf70802499fbf9841992f697e231b3d")
     endif()
     if(NOT _divmod_error_hash STREQUAL _expected_divmod_error_hash)
       message(FATAL_ERROR "the BigInt ${_kind} exception source changed; remeasure its bytecode coordinate before updating this case")
@@ -25,87 +25,87 @@
   # Pin source bodies and measured coordinates separately from source literals.
   string(REGEX MATCH "function objectFrameBigIntPowNegativeEarly\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _pow_error_source "${_fixture_source}")
   string(SHA256 _pow_error_hash "${_pow_error_source}")
-  if(NOT _pow_error_hash STREQUAL "a5ac019be0eb44465c848414e51d732c6b291a99cbd2db37151f5558127d4073")
+  if(NOT _pow_error_hash STREQUAL "bcd270c0edaec69b4a00bf1b8b615094ee15efb18bc1ed2056ad503edc9d2258")
     message(FATAL_ERROR "the BigInt Pow Negative source changed; remeasure its bytecode coordinate before updating this case")
   endif()
   string(REGEX MATCH "function objectFrameBigIntPowCapEarly\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _pow_error_source "${_fixture_source}")
   string(SHA256 _pow_error_hash "${_pow_error_source}")
-  if(NOT _pow_error_hash STREQUAL "31462dc9b17e9c47e4ad4255559bbffda5aea3dc9100e7044c25a7fbb93bbea1")
+  if(NOT _pow_error_hash STREQUAL "c7bb794736cdd22418caaafe2200e405ea6c174e8d0210f0f2883280e060fad1")
     message(FATAL_ERROR "the BigInt Pow Cap source changed; remeasure its bytecode coordinate before updating this case")
   endif()
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
-      "denseLengthChanged d81feec2016b530c6a2a44b90e88056c93c2d2abeddfed99031cf05379440960"
-      "denseLengthIndexed d913f38cdfd97c5412fb3dfeb8a6fac7a056f5cced92f2627e2153cd360d0873"
-      "denseIndexSaved 546f22710de37cd120009a46ac98c2b2ddd8f0528c279f3c1044006023823b32"
-      "denseIndexLoaded 738ffb514520303b4e71e5820629df78cc57e7b8783b25c857b741cc515ad6fb"
-      "denseIndexPaths 939e0519acee07b22586441ab9064718e84d13891eb4ad726ce02dff89bb01e6"
-      "denseIndexStringOffset 373e33a520eb82e157c0e5137c0f14928a155fe768b0cc111a1447bf2913803f"
-      "denseIndexChain 2f3f498cf1039ef66fc3323757e30f33aed212039c8d54cb51335470a4cfab18"
-      "radixBigIntReleased ac8b2883678afc1d93dd4f23db40ba21d72ab294ffe112300396cd8331af51d9"
-      "radixBigIntSaved 9d6c98f52ae3a6d6e25c9a190a9fef58c4575bb45dc6206c386c8c783b6dbed1"
-      "radixBigIntLoaded adb48e5ee796928c9e789860c9c0fca72b6883ec8ace4b5a40ef78eae1fb9a75"
-      "radixBigIntString b93093564b3f3af6f31225e8ee41ba5fbc858e18dd793ca52b87da1f3b484fe0"
-      "radixBigIntComputed bfa324c84d1278dba4eef9aa54d8a38b288d8160fc6eb22e17ab5f5f8c1f99f7"
-      "decimalBigIntReleased f572b6ce1760bdda19f8c9bcaab6043bf9aecb62aca33c6bedf702429d81013d"
-      "decimalBigIntSaved 4ffb288368bcc26312f52a0387b0ee49327abc27279d902b1ea49d8a0a713199"
-      "decimalBigIntSecond cf024a9f32b6cc1a7774107154d9c40c0c700f12225c92f28a98c0e746c35840"
-      "decimalBigIntLoaded eb43913617979c03f7a2ae3394c7a93e833625b6a7d0cd78d018b90697506f1b"
-      "decimalBigIntNegative 447b85cdff1f2d012161929777762175355283f7e339bdbdc8d24741fe7052ea"
-      "canonicalStringReleased 54ce66cbdf8d8962681af9bd3eacf21bfb258aef66c803a2d098184e011583b8"
-      "canonicalStringSaved 31ec0d6b6ea32c80b0b36f3644f7a3b2940d98cc04c8fbdd5e0cd7202e37a161"
-      "canonicalStringLookalike e880b2767d14f1325c77a108a7fe0f99ab3e39e61ba2db91ad0b3c10c4a9f9eb"
-      "canonicalStringLoaded d2fa699f558eaefa16321428cb916d5a7b78541cf1d16e172312089119e28902"
-      "primitiveMixedAddEarly 279cdc8aa5e952c8eebf022dccf3492862a718a7ccfe1868cb5e8e0941739f43"
-      "primitiveMixedAddRetained 9277b49a81538116e6e68b8631d22ee87ffd2cf4bb9611e3a905dc1a9bee2a23"
-      "primitiveMixedAddOpaque 30b26142ccb7ef04e7a43e9da55131639bac2fd2b66c641dbe4475203eb1e8fe"
-      "primitiveMixedStaticEarly ef3be2df7a0b7d21048156332dbfea4156ae716a2f9ba6280e35a855477b23d6"
-      "primitiveMixedStaticRetained ee20ce6b82c2abe74ca91b3da8640924ff165f3ef2ca7466416521dc5f8020e8"
-      "primitiveMixedStaticOpaque d5494416f08808ff7cd4ab6fe3bc59e4a13e544f1f853ab042500588a6e90799"
-      "primitiveUShrEarly b6707f913a7adb73b19c23001c64461b1b32b837060af34b0623305fce69a37a"
-      "primitiveUShrRetained 063e0330b399b9f596651c6bf895629bf12471a82f11ea9b1909a5cf4e758d20"
-      "primitiveUShrOpaque d43613d400fcf41ca0b00ffa2673f6d32052827fd53d4ddb03e780a1dc95bc53"
-      "primitiveMixedModOpaque 26cee5f5791cf093ccb87f32195188d4d7db500a2f1ded5e5ab7c8fd6d04b97a"
-      "primitiveMixedModRetained 8d20b9e09e8a1e7ed6cd7b13a94efdbefc9f2fb5c83bfdf239358f7999c4654c"
-      "primitiveMixedModEarly e9691f03829b6a13b0c5c7ebafa1c6f1178b7c0cbf282cd1dffc88c0e1601931"
-      "primitiveMixedDivEarly dda864dd95688fe8e9d137c765aa573efe376db4bf16a7a29bb94a26ae30d4b6"
-      "primitiveMixedDivRetained da1ed960e38cdabbfb6dcb53f7500296d5eff6825ac3ec18a6cf64b434f1b8c4"
-      "primitiveMixedDivOpaque bb9b6277e0f251adf9a786894c4e5a0b84e04d6bf867bfb06c639d316baa94d5"
-      "primitiveMixedMulEarly 7403df6e44566a6ff8f0d26d644f0d583f493f8cecdc78681851349e7c2c3849"
-      "primitiveMixedMulRetained 5e855810ff011d17f96f35b97cd6e5e34f6124671e49012fdac6c3194a8ddd22"
-      "primitiveMixedMulOpaque 898dd89965e9785b044791d6e693f01d83fab359405b96bac2f3a5c86c6a675f"
-      "primitiveMixedSubEarly 58c83fac64c817cd634dc603024f0c0dc7d33b3552e0f6fa03b34441e7705745"
-      "primitiveMixedSubRetained ebc894848c37d18b829e16231c5281ad96526b9d76eec0c4da09f221dddf8242"
-      "primitiveMixedSubOpaque 192d76fa4ee14b19564e0f3642ca95a71ed500730789d69c2744cc2811c8f90a"
-      "primitivePlusEarly 8c223906ec365dd8ab5a06b8168b17a93cdf81c42afa5803fa82fc24d18afaaa"
-      "primitivePlusRetained 75e3e72fa61e33182913ec9022bbc84f138f9070cce3712753ebe1e99742398b"
-      "primitivePlusOpaque 2dacd3acb40ee8863d417f927b47db976dce0253a6adf5a0eb8b06778573928b"
-      "objectFrameStringBigIntSaved aec68c23e5f9bf8bfa9e5ab52c5ede7b1b8c9822da89811035d45d1ac3a6369e"
-      "objectFrameStringBigIntPaths 2dc79c09d7cbc6a9d8e5d065665b77ff0eb33085c3c4fd9955a5e54ddb8168ff"
-      "objectFrameStringBigIntTemplate cb31d3c6a5118ab6b13b36d6808ea45026d20cac641034055c7f28c0df0c3ea5"
-      "objectFrameStringBigIntOpaqueAdd 835de91a4f59b61a11fc748a7913ba7494eef65bd9308f3adda8474f868dddcf"
-      "objectFrameStringBigIntOpaqueTemplate 88f98df0ce48c181f8721038543339eac0c07a5b46684c19fcc61e576d541250"
-      "objectFrameStringBigIntObject ad31a100dc70a5e182d7fe01bdf6fd37874e991a03d6fa8d03e47e7dcbcbe7cf"
-      "objectFrameStringBigIntMixed 93be77d12ea361ed413761a2c919cb9d5e1d9e0dd569cb5ba5a5650558a7f88b"
-      "objectFrameStringBigIntRetained de5ad600d8d125470e50e0ae2c8ea40c0d88f5ccdd6ce90f1de9f7c9e6e6af32"
-      "objectFrameBigIntMixedSaved 551ddbb520f3943021ea0f9d62fa00da544d9197541b2c7af5d93c36f84706f2"
-      "objectFrameBigIntMixedPrimitives 426ff5237d803c81f50895ad55ed76bf8e3957978287a63cdd3ebfbd96ff47df"
-      "objectFrameBigIntMixedPaths 07be46f1898b3bd6770b745f89986f527c85048de407fc2d6877e70fd031669f"
-      "objectFrameBigIntMixedNumbers c7e7c59c2a1f4521246d45c2f6ba6d1443de77f694d34bd785ba894634778087"
-      "objectFrameBigIntMixedOpaque 006c8c7c8446a11d6ee37cd656110cc133ff8303434ca70f1a8e5bfd7d3581b9"
-      "objectFrameBigIntMixedObject 60e510407c187de4856933b7d5888d569ace5184c727eae852686442cd298282"
-      "objectFrameBigIntMixedRetained bce40177f3c45573538dcf5f570ca89c820cf733f36eb63c3884b9234f9da000"
-      "objectFrameBigIntMixedStrings d0b6f0b99362df38d9c93e787520153c9daee6c204037b16f7c04130c42b8b3b"
-      "objectFrameLooseEqualityBigInt d39859d4356e8e61f4d67b9ad30e5ea6df547430738747bff84b97d7ab4fc5c5"
-      "objectFrameBigIntEqualityMixed 8cdd5b79d1a3b8c0502152f839fc2ba1f6bad98736de66a36be67f516e5b5667"
-      "objectFrameBigIntRelationalMixed b8efef815d87e1deec7728aed6d0efb24c4d19fb12e74653625e1aa4315872b6"
-      "objectFrameBigIntUnaryMixed 7869f7391dc47cf015cc661fe66ab7762e91bbdc18455aa04dfdb681c68de820"
-      "objectFrameBigIntBinaryMixed 60842a13c6a7a7364b1d3af8651ff50a2624e69863826daa3dbb3be5b27ba9a3"
-      "objectFrameBigIntStaticMixed a9dae7f7353425dee72b437a3ae7e6f44c7a8559480381679a2ee2466c8d1983"
-      "objectFrameBigIntShiftMixed 6061e3812db39af626f1ff685133c92c3d7f00f5cc2fd0a95beac18c217fb67e"
-      "objectFrameBigIntDivModMixed 80682cde55e777b9e6b233311457b8abdad92ec3fed87b6f77b50752b6268232"
-      "objectFrameBigIntPowMixed 826b4e604c15a2e1437856e0b2e7c9183916efba6556cd5a65cb105f9774a1c1"
+      "denseLengthChanged 1e78b3b9807649f47a64219b19fd901c7fd3e02c92bf5045945edf6a6ee1d1e6"
+      "denseLengthIndexed 4c3c2e02a61b47826cf710db4c6c8db697ce51f68c2d2c613add016962377c1c"
+      "denseIndexSaved 8079e162d26f322849875baadb33c1bdb2eb96ae0e71d4556efa36bfa10b7ffc"
+      "denseIndexLoaded b39f30b6bd61526fc624ac8e8c2b154d92b88aa5abf284dd753b060ecb8ade3a"
+      "denseIndexPaths 7e6967e5788ecfb93e86c39a23da9066084147836a9c24a0a714f5186a18c83a"
+      "denseIndexStringOffset c0df7840d662042de1d6d7303ae4a24e896a4ba988979b080312c96181c0faeb"
+      "denseIndexChain 36147bc7c02a94f30077e3af3b4ab41bb117d3080951eb704997afc250c48332"
+      "radixBigIntReleased 97e1f7e347f64d37d20671f08e5b81be7294557464528edfeb8beb67e974d7f7"
+      "radixBigIntSaved e7c7753b23f82e5cd24eeaf0e213c166ba1c0202f53180a274702480c1ea4370"
+      "radixBigIntLoaded 5edea408be7cd912c643ad285bb4e92049fc0008535399436b8c7a4aba18926b"
+      "radixBigIntString 72166baa7515a0c1586913b240e15b19d0995c8047d1b2d6fcf9036ce8a36172"
+      "radixBigIntComputed 3c98ea19db55e09fd116befca52ad159521d7c46e5a6cfc18a44935392d95051"
+      "decimalBigIntReleased 914279663a7bc5e6287ce35cda705f0bb77ca7d22cca1ce55a43ab1f48c225be"
+      "decimalBigIntSaved 50e976dcfe248e24f2b0df3b9ea14ee72ba93de3c50a975f7b8d268adcba1aab"
+      "decimalBigIntSecond b49d40863cd7a70a06c461a01191075846abcda76d5dcf89a57d9edec8b67b30"
+      "decimalBigIntLoaded a16025cf0989ac816c72e1c9dc4c2ddec4dadaa389cd3534b73ebecd643e7d6a"
+      "decimalBigIntNegative 0d9838a9606e12f668a56a97673d3381c6ca83d22a893337b9158a4ccc9afd78"
+      "canonicalStringReleased 24e22951addc7eb5216762324681c87e1b3769a7f9c420b78fd3a2713d109286"
+      "canonicalStringSaved 4733c444cdf812643b140317e78ab082e667f1ea798f1225e4766eb5e455a5c2"
+      "canonicalStringLookalike 251bc9aa4ed08015532045c04cfefcf8ecf58dd9d2380fc68bf73ce3100a3234"
+      "canonicalStringLoaded 8ee79dc39e35973d6a745ad00f533cfefc1292131c8ec8c8fdc98b0c09fe2230"
+      "primitiveMixedAddEarly fe25b7a99e32b3ce5c6509779c227c72a03925414a060ef3382735f353f2f038"
+      "primitiveMixedAddRetained 89c4002320aa174921bc9cc64b5315fc6368a3c037574414abd4bfabecf52e46"
+      "primitiveMixedAddOpaque a41e97b69d6dc2cdb44682b9dd376f577983a1d79d0208736199646d7689017f"
+      "primitiveMixedStaticEarly 7e83a0d3796792b7b773a61337bf8b6a1b6de47c6a67946ed2dab1a3caad69d6"
+      "primitiveMixedStaticRetained 65b3a4defa77686a34062fd0afddfde4ec0c93bb1169d5b41ea93e453283fe5c"
+      "primitiveMixedStaticOpaque 551d5fddaa481986e811432530bad60f2f5f8947a510fb103c9f003ad913ae22"
+      "primitiveUShrEarly afb11ce0d3a043dda6e6a150c33c2850de81f77269f8a7e519b6da8b4e291063"
+      "primitiveUShrRetained 1138c74617b2497738b48d1cb980fa5cfa56aa2b9ffa100d0e318989014ff0bf"
+      "primitiveUShrOpaque c4ebfb2bb1e31be64214d53da3ffa89b10d362d084471981a6a2491f8f305aae"
+      "primitiveMixedModOpaque a3ed23568ed66f6f1975ede1e7175a8fadf0454fb32ca79273a4785833f6cecd"
+      "primitiveMixedModRetained 7b9399eabda22f9067c5b178bf2ef6051c32604e98d77a407d9e57eadc4f6ec7"
+      "primitiveMixedModEarly 3819c8237d30be90232ab71288c553a5662f66231f9d0939c1b20212bb752cf7"
+      "primitiveMixedDivEarly e39cf16b5597d88cea3d89ec61baa8807a0bfa34616c7ddec72e905a09ed7c57"
+      "primitiveMixedDivRetained 5b6048cca0395f437c99bbdfcc51634700149658b24d104ac094ff51512d093f"
+      "primitiveMixedDivOpaque 429af3d520aaf67bdb16f78260a32ab61f354c75750aaf75b0731e3f41dadb16"
+      "primitiveMixedMulEarly dae55b8bbc2882f08286ab4b44166491ef05a57a60748ce7a9e235e055fea62c"
+      "primitiveMixedMulRetained 0c2db9da890fa70d87e1a6cb3c872b5fbefedb4135b78a65cc9c5284b3d17933"
+      "primitiveMixedMulOpaque 2dc20f97857966611bfc4f0e58dbe72b6c92adfaab04cacca7c69ae10dc8b6a7"
+      "primitiveMixedSubEarly 29a6d5a4a64bfebbd6df2c925df3cd2d7e31695a2e3374c4ebf27a158d21b937"
+      "primitiveMixedSubRetained e9239bbdcdef56973b2600ef1e1fdb3af3633ed68648712bfb1cbc8cc17477df"
+      "primitiveMixedSubOpaque 5e671465270d8463afca298605711d61a7226ddf17cdfbb73b1020551abffb81"
+      "primitivePlusEarly 0fb234080a5880d0e70dc249dcf1869f84a109a7abb8e37351352d9b0351f245"
+      "primitivePlusRetained 6664a92269834150087224c4baf22d3a9ecba6f48a382c3a50749a16da8110b8"
+      "primitivePlusOpaque d1eb05647230b75b09975d3c6cfc4c9208517ba4ffd5c0f2a35f8f2696486e5a"
+      "objectFrameStringBigIntSaved 1a2e7c0a1d804774b0b15821ead2780151793b5918012672851be9e951d0a643"
+      "objectFrameStringBigIntPaths 2f6a573189564b54d00efe2fb1afea57eab74ccfc50a17ce380a644acf5dec93"
+      "objectFrameStringBigIntTemplate 8152fe7cabe9273f204b3633509dc864cd963802cbc94ac488c13ee5f7f1e01d"
+      "objectFrameStringBigIntOpaqueAdd 988ba7f5c919a7180ef0a6e46ca1c1fcc82d07815a4262982b888134b960795d"
+      "objectFrameStringBigIntOpaqueTemplate 2aa2a84199c6d7fed02a84a21a7fc2aba8b8ee685244e1679a6fcd582678d2d3"
+      "objectFrameStringBigIntObject 3d812b5dd00d72d0b950e2c4441d4065d97f70b37c47094175ad7b269ffb47fe"
+      "objectFrameStringBigIntMixed c3691179849e139b98c55136d5687fccc8a4b1730864643891a54975668df002"
+      "objectFrameStringBigIntRetained ed73af10f5a8c04372701a3e4f9f0782fcde5146f8135fad8f6cb3a1ea1aabc9"
+      "objectFrameBigIntMixedSaved 1fdd344a6e0e72da4279670fa28bbc2bf01d227176cbf67eea1a406437a922fc"
+      "objectFrameBigIntMixedPrimitives 42b39c5caaff02c34a30b8ea0cd6232790e9468b2fe26f6ef356f323c58dd3f9"
+      "objectFrameBigIntMixedPaths 98a4e6d61422325a3cd0483c7db32381f998b71185345927ee39957798491e75"
+      "objectFrameBigIntMixedNumbers 689caa156e121e5e5b010b43b76e2d6accc9ea50326c0ccc2f1d7d07c0abbc6c"
+      "objectFrameBigIntMixedOpaque 679980f4705d49587e08cf035757f00ac40a967ce47102f184526ca2beb07765"
+      "objectFrameBigIntMixedObject fe967af83bf43781bca1ed9acf1167af97af95e365420fe49ed0035ec4b7a6f2"
+      "objectFrameBigIntMixedRetained e54918b880a33bf0b1b8590756abacf2ff97b5f728a63e59b5aac5f98781c919"
+      "objectFrameBigIntMixedStrings 867a839a1d93289d794c717586421bffe4df5e940476b24273d6b8e5be2ad084"
+      "objectFrameLooseEqualityBigInt 9b12443c29cecfadbd38c6510e4e19c52c1b7dd1175244627f79064b13bd533e"
+      "objectFrameBigIntEqualityMixed a25b4876302f65466ca10f08322c8d569cbdf3ef52599089f8541d61258d77e9"
+      "objectFrameBigIntRelationalMixed 4cef5bd507efbf6846fd5a51603f3837b6653fa1e00fd15905d8f2f06a9cc2ed"
+      "objectFrameBigIntUnaryMixed d8d998eb9b7942aede14b87d3ced8bac62defc5a6c995e3e5e7923c01c210356"
+      "objectFrameBigIntBinaryMixed 4475cd2c7b523fa002af90325ad4e93b54a869aac109e6a892af6771b528296f"
+      "objectFrameBigIntStaticMixed 05624d5cfeeecca9f3c778f70e896bfa6f7a4afb987495ce40ccbf013fba12c0"
+      "objectFrameBigIntShiftMixed b2cf97831f8a1418cb99a90ddb673f9b1bd2c31bb6c4a8cec78546b04021e552"
+      "objectFrameBigIntDivModMixed c57d6600f4b0265c68ae63fdd7144b7000414e09ab05d6eff0237ccd97841744"
+      "objectFrameBigIntPowMixed 62f6b50fc5fb2588c6e0d4bb98e051e5737cb5cba28df1a93cc36cc427277054"
 )
     string(REPLACE " " ";" _source_fields "${_source_pair}")
     list(GET _source_fields 0 _source_name)

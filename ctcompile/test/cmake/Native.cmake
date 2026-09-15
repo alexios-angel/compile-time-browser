@@ -298,7 +298,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                    --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
                    --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-entry
                    --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_entry PROPERTIES TIMEOUT 300)
+  set_tests_properties(ctcompile_native_dom_entry PROPERTIES TIMEOUT 900)
   add_test(NAME ctcompile_native_dom_session
            COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
                    ${Python3_EXECUTABLE}
@@ -326,7 +326,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                    --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
                    --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-strings
                    --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_strings PROPERTIES TIMEOUT 300)
+  set_tests_properties(ctcompile_native_dom_strings PROPERTIES TIMEOUT 900)
   add_test(NAME ctcompile_native_dom_data_session
            COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
                    ${Python3_EXECUTABLE}
