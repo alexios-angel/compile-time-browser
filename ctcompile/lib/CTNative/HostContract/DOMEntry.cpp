@@ -9,11 +9,32 @@
 #include "llvm/ADT/ScopeExit.h"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace ctcompile::ctnative {
 
 DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & contract,
                                    unsigned maxSteps) {
+    // THE CENSUS FIRST, AND IT IS CHARGED. The fingerprint below prints the
+    // whole module, which is work proportional to its size, and it used to run
+    // before the first charged step - so maxSteps bounded the structural walk
+    // and nothing else, and a zero budget still paid for a full print. This is
+    // normalizeDOMURI's rule: one step per operation plus one per operand,
+    // refused as exhausted if it does not fit, and the same cost reserved
+    // again for the fingerprint's own pass over the module. workSteps carries
+    // both, so steps() is still the exact budget that reproduces the proof.
+    const auto scanned = module.walk([&](mlir::Operation * operation) {
+        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
+        if (cost > maxSteps - workSteps) { return mlir::WalkResult::interrupt(); }
+        workSteps += static_cast<unsigned>(cost);
+        return mlir::WalkResult::advance();
+    });
+    if (scanned.wasInterrupted() || workSteps > maxSteps - workSteps) {
+        budgetExhausted = true;
+        refusal = "DOM entry analysis work budget exhausted";
+        return;
+    }
+    workSteps *= 2;
     if (hostContractFingerprint(module) != contract.moduleSha256) {
         refusal = "host contract module fingerprint mismatch";
         return;
