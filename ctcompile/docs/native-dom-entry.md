@@ -103,7 +103,7 @@ Only a checked inert declaration or the proved initialization above may be omitt
 Skipped source, additional initialization effects, calls to the entry from JavaScript,
 mutable entry bindings, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, loops and unstructured control flow refuse. Current operations are
-strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
+strict element identity, Boolean negation, Number/Boolean/String/undefined constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
@@ -169,7 +169,7 @@ Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
 observation. Every operation in both arms is checked, including nested arms;
 values must dominate their uses and frame bookkeeping stays in the entry block.
-Joins carry Booleans, definite Strings, or owning `std::optional<std::string>` for
+Joins carry Numbers, Booleans, definite Strings, or owning `std::optional<std::string>` for
 String/null alternatives. Incompatible alternatives and borrowed or callable
 joins refuse. Strings widen to optionals at the existing region boundary, while
 source effects remain inside their selected arm. Work uses the existing host
@@ -246,18 +246,17 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **249** copied-value and Boolean
-observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
-across both providers,
-optimization policies and printing layouts. It checks copied optional strings,
-invalid handles before effects, document domains, name bytes and casing, and
-**336** source refusals for unsupported coercion, control flow, handles and retention,
-**44** provenance/depth refusals, **24** method provenance checks, **74** capture
-provenance/storage/budget checks and four
-work-budget/fingerprint controls. Helper
-cases preserve argument evaluation order, saved String values, repeated calls and
-nested name construction. These clients link DOM/Core only and reject Script symbols
-or generic nullable value helpers in the generated code.
+The `ctcompile_native_dom_strings` CTest compares **625** copied-value, Boolean
+and numeric-prefix observations with Node and the ctbrowser VM, then executes
+eight GCC/Clang clients across both providers, optimization policies and printing
+layouts. It checks copied optional Strings, saved numeric/text results after DOM
+mutation and destruction, invalid handles before effects, document domains, name
+bytes and casing. **908** source refusals cover unsupported coercion, control flow,
+handles, retention and builtin misuse, alongside identity, capture, branch,
+completion, fingerprint and work-budget controls. The **132 numeric observations**
+cover 22 input strings/null across six source shapes, including canonical comparison
+and repeated Number calls. These clients link DOM/Core only and reject Script/AOT
+symbols or generic nullable value helpers in generated code.
 
 ## Owned synchronous sessions
 

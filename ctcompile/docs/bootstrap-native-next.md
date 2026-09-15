@@ -2,24 +2,23 @@
 
 ## Current boundary, 2026-09-15
 
-Latest recovery **c44b267b / 7e81c072 / c2500d4e** proves held Number-zero
-induction starts and shares the existing Number text conversion and strict URI
-decoder through public Core. The VM uses aliases/adapters; standalone Core clients
-link without Script. Complete **604/604 CTests / 176/176 lit PASS**;
-**582 affected test262 files** have identical before/after outcomes. See
-[HANDOFF](HANDOFF.md) for measurements and inherited numeric oracle limitations.
+Latest native slice **a8f486c5 / 6482553f** proves held Number-one induction
+steps and the DOM numeric prefix `Number(element.getAttribute("data-bs-config")).toString()`.
+An explicit Number identity premise and complete source census authorize direct
+Core calls with `double`, owning Strings and preserved saved-attribute comparisons.
+Complete **604/604 CTests / 176/176 lit PASS**;
+DOM Strings **625 Node/VM observations / eight binaries / 908 source refusals**.
+See [HANDOFF](HANDOFF.md) for measured gates and numeric oracle limitations.
 
 Fresh Bootstrap remains **19/574 native**, DOM Data **7/7**, Button **4/86**.
-Original M/F/H.getDataAttribute still refuses under both providers/policies and
-retains all 24 nine-slot register blocks, with its handler at ^bb12. The next
-bounded native slice is `Number(element.getAttribute("data-bs-config")).toString()`:
-prove Number/Number.prototype identity, complete source provenance, nullable input
-conversion and owning String output through Core. Then prove original M's complete
-prefix/try/catch effects, URI/JSON failure continuations, unobserved catch payload
-and mixed-result ownership inside the fingerprinted DOMSource transaction. JSON
-needs a shared RAII core; full H/dataset, Bootstrap initialization/inheritance,
-retained config/callback ownership and the application driver remain unfinished.
-No full-bundle admission gain is claimed.
+Original M/F/H.getDataAttribute still refuses with explicit Number identity under
+both providers/policies. Its 24 nine-slot register blocks and original handler at
+^bb12 remain intact. Next prove provider-authorized URI/JSON failure continuations,
+the unobserved catch payload, complete guarded CFG and mixed-result ownership
+inside the fingerprinted DOMSource transaction. The public URI decoder exists;
+JSON needs a shared RAII core lifted from Script. Full H/dataset, Bootstrap
+initialization/inheritance, retained config/callbacks and the application driver
+remain unfinished. No full-bundle admission gain is claimed.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,

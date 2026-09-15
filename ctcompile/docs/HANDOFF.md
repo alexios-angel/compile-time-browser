@@ -40,19 +40,28 @@ generic nullable value helpers. Stable formatting passes **835 C++ / 101 Python 
 33 web**; the pinned formatter's **nine-file / 26-diagnostic** baseline is
 byte-identical. All **1,450 source hashes** are frozen for the full gate.
 
-**Full validation is running**, not yet claimed: locked default remote build and
-CTest, followed by frozen-hash checks and fresh unchanged Bootstrap/Data/Button/
-original-M measurements. Logs and scripts: `/tmp/ctcompile-number-prefix/`;
-`full-gate.sh`, `full.log`, `full-last-test.log`, `inputs.json`, `collect.sh` and
-`measure.py`. Finish that gate before choosing another plan item.
+Complete **647-step default build / 604/604 CTests in
+1427.82s / 176/176 lit in 954.80s PASS**.
+All **1,450 frozen source hashes** match local, devbox and committed inputs;
+**113 submodule hashes** also match the devbox. Fresh Bootstrap remains
+**19/574 native / 0 of 43 globals**, both policies, with no skips or prunes;
+DOM Data **7/7**; Button **4/86**, with **22 Node observations** and its existing
+VM inheritance failure. Button/Data reports and all **1,123 escape baseline rows**
+are byte-identical to the previous gate. Original M/F/H still refuses in all four
+provider/policy combinations even with explicit Number identity; all **24 nine-slot
+register blocks** and the handler at **^bb12** remain preserved. No full-bundle
+admission gain is claimed. Full WPT/test262 were not remeasured, and browser/runtime
+sources and expectations were unchanged. Logs, measured JSON, exact hashes and
+continuation review: `/tmp/ctcompile-number-prefix/`.
 
 **Next boundary:** original M still needs complete guarded-CFG/try/catch effects,
 provider-authorized URI/JSON calls, unobserved error-payload proof and mixed-result
 ownership. Keep the handler at its original installation site and preserve
 pre-try failures. JSON needs a shared plain RAII core extracted from Script;
 full H/dataset, Bootstrap initialization/inheritance, retained config/callbacks
-and the application driver remain unfinished. Shared numeric Core retains the
-VM's known edge-case limitations; no arbitrary-string ECMAScript equivalence
+and the application driver remain unfinished. See
+`/tmp/ctcompile-number-prefix/next-boundary-review.md` for exact seams. Shared
+numeric Core retains the VM's known edge-case limitations; no arbitrary-string ECMAScript equivalence
 or full-bundle admission gain is claimed.
 
 ## Shared Number/URI Core and proved-zero induction, 2026-09-15 UTC
