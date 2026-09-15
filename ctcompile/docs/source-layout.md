@@ -13,7 +13,7 @@ where fixtures and shared build helpers belong.
 | Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument/callee facts, conditional effect summaries and queries, heap flow and annotation pass |
 | Host contracts | `lib/CTNative/HostContract/` | Fingerprinted closed-source manifests, fresh allocation identity, own-data slot flow, bounded proof reports and entry-prefix specialization |
 | Private provider state | `lib/CTNative/HostContract/ProviderState.*`, `ProviderObjects.*`, `ProviderPaths.h` and `PrefixMutations.cpp` | Transactional Maps, live object identities/scalar fields, allocation/call provenance and bounded normal-return path summaries |
-| Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation, PDLL scalar replacements and native region splicing |
+| Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation, scalar constant replacement patterns and native region splicing |
 | Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
 | Reachability | `lib/CTNative/Reachability/` | Bounded graph proof and transactional removal of private helpers |
 | Supercompilation | `lib/CTNative/Supercompilation/` | Transactional process graphs, recursive promises, finite-shape embedding, scalar child generalization and budget control |

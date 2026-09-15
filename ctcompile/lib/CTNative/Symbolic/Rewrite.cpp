@@ -3,7 +3,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Parser/Parser.h"
 #include "mlir/Rewrite/PatternApplicator.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -12,10 +11,8 @@
 
 namespace ctcompile::ctnative::symbolic {
 namespace {
-#include "SymbolicPrecompute.h.inc"
-
 // The analysis proves the value; this only adapts its literal to the result
-// representation. Operation construction and replacement live in PDLL.
+// representation.
 mlir::Attribute literal(mlir::Operation * op, const Analysis & analysis) {
     const auto known = analysis.get(op->getResult(0)).literal;
     if (!known) { return {}; }
@@ -34,8 +31,27 @@ mlir::Attribute literal(mlir::Operation * op, const Analysis & analysis) {
     return known;
 }
 
+// One root becomes one constant of the root's own result type. `Attr` is the
+// attribute class the constant's builder wants: `arith.constant` takes a
+// TypedAttr, and literal() only ever hands an integer result an IntegerAttr.
+template <typename Root, typename Constant, typename Attr = mlir::Attribute>
+struct Precompute : mlir::OpRewritePattern<Root> {
+    Precompute(mlir::MLIRContext * context, const Analysis & analysis)
+        : mlir::OpRewritePattern<Root>(context), analysis(analysis) {}
+    const Analysis & analysis;
+
+    mlir::LogicalResult matchAndRewrite(Root root,
+                                        mlir::PatternRewriter & rewriter) const override {
+        const mlir::Attribute value = literal(root, analysis);
+        if (!value) { return mlir::failure(); }
+        rewriter.replaceOpWithNewOp<Constant>(root, root->getResult(0).getType(),
+                                              llvm::cast<Attr>(value));
+        return mlir::success();
+    }
+};
+
 // Moving a selected region and remapping its yield is control-flow surgery,
-// which stays native rather than hiding it behind a PDLL rewrite callback.
+// which stays a hand rewrite rather than a pattern.
 bool select(mlir::scf::IfOp branch, bool take) {
     auto & selected = take ? branch.getThenRegion() : branch.getElseRegion();
     if (selected.empty()) {
@@ -60,29 +76,29 @@ bool select(mlir::scf::IfOp branch, bool take) {
 } // namespace
 
 Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, Budget & budget) {
+    // The patterns capture this invocation's analysis by reference; the
+    // frozen set and applicator are destroyed before it goes out of scope.
+    // Truthiness returns i1 and arith.trunci an integer, so those two become
+    // arith constants; the boxed CTJS results become ctjs.constant.
     mlir::RewritePatternSet patterns(module.getContext());
-    populateGeneratedPDLLPatterns(patterns);
-    // These callbacks belong to this invocation. The frozen patterns and
-    // applicator are destroyed before analysis goes out of scope.
-    patterns.getPDLPatterns().registerConstraintFunction(
-        "HasSymbolicLiteral", [&analysis](mlir::PatternRewriter &, mlir::Operation * op) {
-            return mlir::success(static_cast<bool>(literal(op, analysis)));
-        });
-    patterns.getPDLPatterns().registerRewriteFunction(
-        "SymbolicLiteral", [&analysis](mlir::PatternRewriter &, mlir::Operation * op) {
-            return literal(op, analysis);
-        });
+    patterns.add<Precompute<ctjs::BinaryOp, ctjs::ConstantOp>,
+                 Precompute<ctjs::BinaryStaticOp, ctjs::ConstantOp>,
+                 Precompute<ctjs::UnaryOp, ctjs::ConstantOp>,
+                 Precompute<ctjs::CompareOp, ctjs::ConstantOp>,
+                 Precompute<ctjs::TruthyOp, mlir::arith::ConstantOp, mlir::TypedAttr>,
+                 Precompute<mlir::arith::TruncIOp, mlir::arith::ConstantOp, mlir::TypedAttr>>(
+        module.getContext(), analysis);
     mlir::FrozenRewritePatternSet frozen(std::move(patterns));
     mlir::PatternApplicator applicator(frozen);
     applicator.applyDefaultCostModel();
 
-    // Derive the scalar candidate set from PDLL, including candidates without
-    // a proved literal. This preserves one budget step per original candidate
-    // without a second C++ inventory of the pattern roots.
+    // Derive the scalar candidate set from the patterns' root kinds, including
+    // candidates without a proved literal. This preserves one budget step per
+    // original candidate without a second inventory of the roots.
     llvm::SmallDenseSet<mlir::OperationName, 8> roots;
     applicator.walkAllPatterns([&](const mlir::Pattern & pattern) {
         const auto root = pattern.getRootKind();
-        assert(root && "symbolic PDLL patterns must have named roots");
+        assert(root && "symbolic patterns must have named roots");
         roots.insert(*root);
     });
     llvm::SmallVector<mlir::Operation *> candidates;

@@ -24,7 +24,6 @@ separate homes.
 | `Packaging/` | Application bundles, manifests, program images and page fixtures |
 | `Comparison/` | HTML and CSS comparison |
 | `Core/` | Declarative inventories and specification citations |
-| `PDLL/` | Declarative pattern guards |
 | `Support/` | Shared source embedding, extraction and compilation scripts |
 | `cmake/` | CTest registration, included in the root directory scope |
 

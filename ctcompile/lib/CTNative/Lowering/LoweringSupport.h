@@ -20,12 +20,6 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
-// mlir-pdll's output CALLS mlir::parseSourceString: a declarative pattern in
-// this release is PDL text the generated constructor parses, not generated
-// code. Without this header the .inc fails with "no member named
-// 'parseSourceString'", which reads like a bad pattern and is a missing
-// include.
-#include "mlir/Parser/Parser.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 

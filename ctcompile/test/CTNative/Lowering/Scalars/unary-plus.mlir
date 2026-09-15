@@ -1,22 +1,19 @@
-// THE FIRST PDLL PATTERN OVER OUR OWN DIALECT, AS IR.
+// THE UNARY-PLUS PATTERN, AS IR.
 //
-// `+x` on a value admission has proved a number is `x`, and that rule lives in
-// lib/CTNative/Lowering/UnaryPlusIsIdentity.pdll rather than in replace()'s
-// switch. What is asserted here is the pair of things a declarative rule can
-// get wrong and a build cannot:
+// `+x` on a value admission has proved a number is `x`, and that rule is the
+// UnaryPlusIsIdentity pattern in lib/CTNative/Lowering/LoweringSupport.cpp
+// rather than an arm of replace()'s switch. What is asserted here is the pair
+// of things a pattern can get wrong and a build cannot:
 //
 //   IT FIRES. `ctjs.unary plus` is gone and its operand flows straight into
 //   the addition - pinned with CHECK-NEXT, so there is nothing between the
-//   two constants and the add for it to have become. PDL reports nothing on a
-//   non-match, so if the pattern stopped matching the pass would abort in
+//   two constants and the add for it to have become. A driver reports nothing
+//   on a non-match, so if the pattern stopped matching the pass would abort in
 //   replace()'s Plus arm rather than miscompile; a test that only proved it
 //   does not crash would prove nothing about the rewrite.
 //
 //   IT DISCRIMINATES. `ctjs.unary neg` in the second function is UNTOUCHED.
-//   That is the assertion the whole native-constraint argument rests on: the
-//   PDLL way of writing this test - `op<ctjs.unary> {kind =
-//   attr<"#ctjs.unary_kind<plus>">}` - compiles with exit 0 and DROPS the kind
-//   constraint, and a pattern that had done so would replace `-2` with `2` and
+//   A pattern that had lost its kind test would replace `-2` with `2` and
 //   emit no `unary_minus` at all. If this file ever stops showing
 //   `unary_minus`, the constraint has gone silent.
 //
