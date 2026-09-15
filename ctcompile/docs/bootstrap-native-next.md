@@ -176,16 +176,15 @@ complete factory/global initialization and H/F/M source graph. The expanded gate
 passes **341 Node/VM observations / eight native binaries / 508 source refusals /
 241 capture controls**; complete **602/602 CTests and 176/176 lit pass**. Full Bootstrap
 remains **19/574 native**, DOM Data **7/7**, and Button **4/86**.
-For `F('config')`, a no-match fold must prove standard String replacement and
-RegExp replacement/execution/property lookup, plus absence of source mutation or
-reentry. The current DOM manifest supplies none of those intrinsic identities, and DOM
-admission separately rejects initial intrinsics. Specialization must run before
-helper expansion and prove that the replacement callback is never invoked; otherwise
-that callback escapes and its complete source census still requires an invocation.
-Extending the generic intrinsic-name parser alone cannot authorize the fold.
-The original regex helper remains a source refusal in the gate. `M` still consumes
-the live optional attribute value: preserve its normalization source instead of
-replacing it with browser helper code.
+**ab7bf2a6** proves the verbatim vendor `F('config')` body in isolated native DOM
+actions. The provider fixes the initial String/RegExp prototype chains and reserved
+literal factory; exact local calls supply a common constant String, and the checked
+no-match path never invokes its exclusively used callback. Matching/live inputs,
+differing helper arguments, other patterns/flags and mutation still refuse. The
+captured H/F graph and full factory/global initialization remain separate boundaries;
+this action probe does not admit the full Bootstrap bundle. Original M still needs
+live optional-value normalization, branches, Number/toString, URI decoding, JSON
+and exceptions. See [HANDOFF](HANDOFF.md) for measured gates.
 
 The compiler still refuses dataset operations. Bootstrap's original
 `getDataAttributes` (vendor lines **253–261**) needs `Object.keys`, filtering, a

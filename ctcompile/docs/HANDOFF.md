@@ -6,6 +6,55 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original Bootstrap F no-match proof and exact remainders, 2026-09-15 UTC
+
+Continued the completed **9f45be18 / 823b71b8** table thread from this handoff
+and the **04:15 AGENT-SYNC** journal. Both histories and unmerged branches were
+checked; the September 7 WIP is already an ancestor, and the tree was clean with
+no interrupted source or gate. Three agents supplied source tests, an independent
+escape slice and proof review; root integrated and gated the changes.
+
+**3fe9da9e** extends charged bounded Number facts to exact remainders. The original
+SSA value retains signed zero; zero divisors, coercion, overflow, opaque joins,
+retained children and stale evidence remain checked. Measured **341 dense-length
+rows / 176 live states / 13,232 retention cutoffs**, **zero escape violations /
+precision 40/172**.
+
+**ab7bf2a6** compiles the verbatim vendor `F("config")` body, including its original
+replacement callback, in isolated DOM action probes. Exact local calls supplying
+one common constant String can bind a helper formal before expansion; checked
+local cells preserve imported parameter storage. A fresh ASCII-range RegExp with
+no match returns that String without invoking its exclusively used callback.
+The isolated DOM provider explicitly supplies standard Object/String/RegExp
+prototype chains and the reserved literal factory. Complete residual source reproof
+rejects mutation and reentry; callback creator/body/census, factory/call identity
+and work remain checked. Generated C++ contains ordinary Strings and direct DOM
+calls, with no RegExp, callback storage or Script dependency. Matching/live inputs,
+differing helper arguments, other patterns/flags and escaped identities refuse.
+
+Final focused **4/4 CTests in 68.53s PASS**: **365 Node/VM observations / eight
+GCC-Clang binaries / 588 source refusals / 44 provenance-depth / 24 method /
+241 capture controls / 31 replacement provenance-budget controls**. Stable
+formatting passes **829 C++ / 100 Python / 33 web**; required pinned formatting
+matches the unchanged **nine-file / 26-diagnostic** baseline. All changed C++ files
+pass both formatters. The NUL regression checks an attribute value: a NUL in an
+attribute name correctly throws in the real DOM.
+
+The complete default build and **602-test CTest gate are running** at four jobs
+against **1,443 frozen inputs**. No final full-suite result is claimed yet.
+Recovery: `/tmp/ctcompile-dom-regexp/full.sh`, `full.log`, `inputs.json` and focused
+logs. Source is committed; no browser/runtime or WPT/test262 expectations changed.
+The preceding full-bundle measurement remains **19/574 native / 0 of 43 globals**,
+DOM Data **7/7**, Button **4/86**; fresh full-gate measurements are pending.
+
+**Exact next boundary:** compose the original factory/global/H/F/M graph. The new
+F proof covers exact local calls with one constant argument; Bootstrap's captured
+method graph and complete initialization still need proof, including differing
+names at distinct calls. Original `M` at vendor line **230** consumes live optional
+attribute values and needs branches, Number/toString, URI decoding, JSON and
+exceptions. Dataset iteration, inherited receivers and retained config/callback
+ownership follow. Full native Bootstrap and the application driver remain unfinished.
+
 ## Returned DOM callable tables and exact quotients, 2026-09-15 UTC
 
 Resumed the interrupted **03:31 / 03:37 DOM table and division** thread from the
