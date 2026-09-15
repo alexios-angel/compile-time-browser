@@ -2,6 +2,21 @@
 
 ## Current boundary, 2026-09-15
 
+**c2b4d209** now recovers ordinary-call exception continuations through the existing
+InvokeOp while retaining exact operands, pre-call state and original guarded
+prefix. The URI source regression retains its unused semantic payload; this
+structural step grants no host identity or native admission. **71d7af0c** also
+proves bounded positive Number strides. Complete **606/606 CTests / 176/176 lit
+PASS**; Bootstrap remains **19/574**, DOM Data **7/7**, Button **4/86**. See
+[HANDOFF](HANDOFF.md) for source hashes, measured gates and the resumed thread.
+
+The next URI consumer must prove every removed protected check and catch-payload
+use before private recovery. Then independently reprove explicit URI identity,
+original receiver/argument and both owning String continuations before publishing
+or emitting the Core optional decoder. The existing InvokeOp can represent the
+final String continuation; this is a proposed next step, not landed emission.
+The detailed review is `/tmp/ctcompile-uri-resume/uri-design-review.md`.
+
 The shared JSON prerequisite is now **c9c2e37b**: `ctbrowser/core/json.hpp`
 provides `parse_json(string_view)` and ordinary owning JSON data, without Script.
 Complete **606/606 CTests / 176/176 lit PASS**; Core-only GCC/Clang

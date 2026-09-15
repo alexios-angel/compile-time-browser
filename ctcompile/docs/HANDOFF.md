@@ -40,11 +40,18 @@ Stable formatting passes **839 C++ / 101 Python / 33 web**; the pinned formatter
 **nine-file / 26-diagnostic** baseline is byte-identical. All **1,453 frozen
 source hashes** match the devbox, working tree and committed source.
 
-**Full validation in progress:** the complete default build passed; the
-**606-test CTest gate** is running at `/tmp/ctcompile-uri-resume/full.log`.
-No complete-suite result or fresh Bootstrap census is claimed yet. Sources are
-committed; finish the full gate, collect measurements with `collect.sh`, then run
-`measure.py` in that evidence directory and update this section.
+Complete **606/606 CTests in 1443.93s / 176/176 lit in
+959.07s PASS**, after the complete default build. All **1,453
+frozen source hashes** and **113 submodule hashes** match the devbox; source also
+matches the committed working tree. Fresh Bootstrap remains **19/574 native /
+0 of 43 globals** under both policies, with no skips/prunes; DOM Data **7/7**;
+Button **4/86**, with **22 Node observations** and its existing VM inheritance
+failure. Button/Data reports and all **1,123 escape baseline rows** are unchanged.
+DOM Strings remains **625 Node/VM observations / eight native binaries / 908 source
+refusals**. Original M still refuses all four provider/policy combinations,
+preserving **24 nine-slot blocks** and handler **^bb12**. No full-bundle admission
+gain is claimed. Full WPT/test262 were not remeasured; browser/runtime sources and
+expectations were unchanged. Evidence and replay scripts: `/tmp/ctcompile-uri-resume/`.
 
 **Exact next boundary:** integrate the preserved ordinary call into the private,
 fingerprinted DOMSource transaction only after proving explicit URI identity,
