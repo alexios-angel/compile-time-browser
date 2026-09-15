@@ -219,6 +219,58 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y] | a:[x,y]",
                     .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
                     .exit = "y -> {y}; y -> {y}"});
+    const std::string makeStride = "  %unit = ctjs.binary add %one, %one\n";
+    const std::string stride = replace(computedUnit, makeUnit, makeStride);
+    rows.push_back({.what = "structured induction accepts an exact computed positive stride",
+                    .body = stride,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    const std::string carriedStride = replace(carriedUnit, makeUnit, makeStride);
+    rows.push_back({.what = "positive strides survive reordered structured backedge transport",
+                    .body = replace(carriedStride, "  ctjs.append %y to %a\n",
+                                    "  ctjs.append %y to %a\n  ctjs.append %y to %a\n"),
+                    .arrays = "a:[x,y,y]",
+                    .reads = "a[0]=x; a[2]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back(
+        {.what = "each structured predecessor keeps its own positive stride",
+         .body = replace(alternateUnit, "ctjs.unary plus %one", "ctjs.binary add %one, %one"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[0]=x; a[1]=y",
+         .exit = "x -> {x}; y -> {y}"});
+    rows.push_back({.what = "structured positive strides retain read-time length after shrink",
+                    .body = replace(savedUnit, "%seed = ctjs.create_array [%one]",
+                                    "%seed = ctjs.create_array [%one, %one]"),
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    const std::string overshoot = replace(stride, "ctjs.binary add %one, %one",
+                                          "ctjs.constant #ctjs.number<4613937818241073152>");
+    rows.push_back({.what = "a structured overshoot preserves its exact final Number after growth",
+                    .body = replace(overshoot, "  ctjs.return %result",
+                                    "  ctjs.append %zero to %finalArray\n"
+                                    "  ctjs.append %zero to %finalArray\n"
+                                    "  %after = ctjs.get_property %finalArray[%finalIndex]\n"
+                                    "  ctjs.return %after"),
+                    .arrays = "a:[x,y,zero,zero]",
+                    .reads = "a[0]=x; a[3]=zero",
+                    .exit = "zero -> {}"});
+    const std::string maxStride = replace(computedUnit, "ctjs.unary plus %one",
+                                          "ctjs.constant #ctjs.number<4751297606873776128>");
+    rows.push_back({.what = "structured induction preserves the maximum exact stride at exit",
+                    .body = replace(maxStride, "  ctjs.return %result",
+                                    "  %slot = ctjs.binary sub %finalIndex, %unit\n"
+                                    "  %after = ctjs.get_property %finalArray[%slot]\n"
+                                    "  ctjs.return %after"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back(
+        {.what = "structured zero-trip induction does not apply its maximum stride",
+         .body = replace(replace(maxStride, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+         .arrays = "a:[]",
+         .exit = "zero -> {}"});
     rows.push_back(
         {.what = "a zero-trip structured loop returns its initial scalar",
          .body = replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
@@ -295,6 +347,19 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    "ctjs.set_property %seed[%name], %zero", "ctjs.append %one to %seed"));
     reject("a structured carried step must remain unchanged on its backedge",
            replace(carriedUnit, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+    reject("a carried positive stride cannot change to another positive Number",
+           replace(carriedStride, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("a structured stride outside the exact bounded range is unproved",
+           replace(maxStride, "4751297606873776128", "4751297606875873280"));
+    reject("structured stride arithmetic cannot borrow an overflowing bounded result",
+           replace(replace(maxStride, "  %finalIndex,",
+                           "  %overflow = ctjs.binary_static add %unit, %one\n  %finalIndex,"),
+                   "add %i, %unit", "add %i, %overflow"));
+    reject("a structured overshoot does not become an own element after exit",
+           replace(overshoot, "  ctjs.return %result",
+                   "  %after = ctjs.get_property %finalArray[%finalIndex]\n"
+                   "  ctjs.return %after"),
+           ArrayContentsFailure::MissingElement);
     reject("a structured swapped step cannot reuse its first iteration's Number one",
            replace(carriedUnit, "%base, %step, %read, %d :", "%base, %step, %d, %read :"));
     reject("a structured repeated step producer needs a separate invariant proof",
@@ -370,6 +435,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    rows.push_back({.what = "positive strides also support invariant direct-array loops",
+                    .body = prefix + makeStride +
+                            replace(directLoop, "add %i, %one", "add %i, %unit") +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
     rows.push_back({.what = "direct structured arrays retain preceding own overwrites",
                     .body = prefix + "  ctjs.set_property %a[%one], %x\n" + directLoop +
                             "  ctjs.return %result\n",

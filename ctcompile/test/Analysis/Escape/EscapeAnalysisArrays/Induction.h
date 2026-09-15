@@ -200,6 +200,76 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,two,three] | a:[one,two,three]",
          .reads = "a[0]=one; a[1]=two; a[2]=three; a[0]=one; a[1]=two; a[2]=three",
          .exit = "added -> {}; added -> {}"});
+    const std::string stride = replace(original, "add %i, %one", "add %i, %two");
+    run({.what = "positive strides replay only visited own indices and may overshoot length",
+         .body = stride,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "a stride equal to length reaches the exact exit bound",
+         .body = replace(original, "add %i, %one", "add %i, %three"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one",
+         .exit = "added -> {}"});
+    run({.what = "computed positive Number strides retain their exact arithmetic result",
+         .body = replace(computedUnit, "binary sub %two, %one", "binary sub %two, %zero"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "a saved positive stride survives its source array shrinking",
+         .body = replace(replace(savedUnit, "%seed = ctjs.create_array [%one]",
+                                 "%seed = ctjs.create_array [%one, %one]"),
+                         "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %one"),
+         .arrays = "a:[one,two,three]; seed:[one]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    const std::string carriedStride =
+        replace(carriedUnit, "binary sub %two, %one", "binary sub %three, %one");
+    run({.what = "positive strides remain invariant across CFG header and body transport",
+         .body = carriedStride,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "different positive predecessor strides retain separate visited indices",
+         .body = replace(alternateUnit, "binary sub %two, %one", "binary sub %three, %one"),
+         .arrays = "a:[one,two,three] | a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three; a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}; added -> {}"});
+    const std::string computedStrideChild =
+        replace(replace(computedUnitChild, "binary sub %two, %one", "binary sub %three, %one"),
+                "[%one, %x]", "[%one, %two, %x]");
+    run({.what = "a nonunit stride retains the identity of its final returned child",
+         .body = computedStrideChild,
+         .arrays = "a:[one,two,x]",
+         .reads = "a[0]=one; a[2]=x",
+         .exit = "x -> {x}"});
+    run({.what = "skipped children are confined when no result retains their array",
+         .body = replace(savedChild, "add %i, %one", "add %i, %two"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one",
+         .exit = "one -> {}"},
+        "x");
+    run({.what = "the overshoot index survives transport and later array growth exactly",
+         .body = replace(replace(stride, "^exit(%sum :", "^exit(%index :"), "  ctjs.return %result",
+                         "  ctjs.append %zero to %a\n  ctjs.append %zero to %a\n"
+                         "  %after = ctjs.get_property %a[%result]\n  ctjs.return %after"),
+         .arrays = "a:[one,two,three,zero,zero]",
+         .reads = "a[0]=one; a[2]=three; a[4]=zero",
+         .exit = "zero -> {}"});
+    const std::string maxStride = "  %max = ctjs.constant #ctjs.number<4751297606873776128>\n" +
+                                  replace(original, "add %i, %one", "add %i, %max");
+    run({.what = "the maximum bounded stride remains an exact Number at loop exit",
+         .body =
+             replace(replace(maxStride, "^exit(%sum :", "^exit(%index :"), "  ctjs.return %result",
+                     "  %slot = ctjs.binary sub %result, %max\n"
+                     "  %after = ctjs.get_property %a[%slot]\n  ctjs.return %after"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[0]=one",
+         .exit = "one -> {}"});
+    run({.what = "a zero-trip loop never applies even the maximum bounded stride",
+         .body = replace(maxStride, "[%one, %two, %three]", "[]"),
+         .arrays = "a:[]",
+         .exit = "zero -> {}"});
     run({.what = "unrelated registers swap simultaneously on each backedge",
          .body = prefix + "  cf.br ^header(%a, %zero, %one, %two : !ctjs.value, !ctjs.value, "
                           "!ctjs.value, !ctjs.value)\n"
@@ -242,12 +312,8 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     }
     reject("a computed start leaves every indexed read subject to the original own bound",
            replace(computed, "%base[%i]", "%base[%three]"), ArrayContentsFailure::MissingElement);
-    reject("a computed two step cannot borrow a Number-one certificate",
-           replace(computedUnit, "binary sub %two, %one", "binary sub %two, %zero"));
-    reject("a saved nonunit length cannot borrow its source array's later unit length",
-           replace(replace(savedUnit, "%seed = ctjs.create_array [%one]",
-                           "%seed = ctjs.create_array [%one, %one]"),
-                   "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %one"));
+    reject("a computed zero stride cannot borrow a previous positive Number fact",
+           replace(computedUnit, "binary sub %two, %one", "binary sub %two, %two"));
     for (const std::string constant :
          {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>"}) {
         reject("held coercible or fractional values cannot supply a Number-one step",
@@ -269,6 +335,28 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(computedUnit, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="));
     reject("an untaken predecessor must independently supply a Number-one step",
            replace(alternateUnit, "^entry(%one :", "^entry(%zero :"));
+    reject("a positive carried stride cannot change even to another positive Number",
+           replace(carriedStride, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("positive strides do not certify their final overshoot as an own element",
+           replace(replace(stride, "^exit(%sum :", "^exit(%index :"), "  ctjs.return %result",
+                   "  %after = ctjs.get_property %a[%result]\n  ctjs.return %after"),
+           ArrayContentsFailure::MissingElement);
+    reject("nonunit induction still checks every visited offset against the own array",
+           replace(stride, "  %read = ctjs.get_property %base[%i]",
+                   "  %offset = ctjs.binary_static add %i, %one\n"
+                   "  %read = ctjs.get_property %base[%offset]"),
+           ArrayContentsFailure::MissingElement);
+    for (const std::string constant :
+         {"#ctjs.number<4751297606875873280>", "#ctjs.number<4845873199050653696>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>"}) {
+        reject("out-of-range and nonfinite strides cannot supply bounded Number induction",
+               replace(maxStride, "#ctjs.number<4751297606873776128>", constant));
+    }
+    reject("a stride computation that exceeds the bounded range supplies no wrapped fact",
+           replace(replace(maxStride, "  cf.br ^header",
+                           "  %overflow = ctjs.binary_static add %max, %one\n  cf.br ^header"),
+                   "add %i, %max", "add %i, %overflow"));
     reject("inclusive guards do not prove an own index",
            replace(original, "compare lt", "compare le"));
     reject("inverted guards do not borrow strict induction",
@@ -280,8 +368,6 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(original, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     reject("a zero step is not a finite induction",
            replace(original, "add %i, %one", "add %i, %zero"));
-    reject("a nonunit step needs a separate proof",
-           replace(original, "add %i, %one", "add %i, %two"));
     reject("a fractional step is not integer induction",
            replace(replace(original, "  %step =",
                            "  %half = ctjs.constant "
@@ -355,11 +441,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    "^header(%base, %step, %p"),
            ArrayContentsFailure::UnknownIndex);
     unsigned liveStates = 0;
-    for (const std::string & source : {computedChild, computedUnitChild}) {
+    for (const std::string & source : {computedChild, computedUnitChild, computedStrideChild}) {
+        const bool nonunit = source == computedStrideChild;
         contents_row live{.what = "live induction facts override stale solver and forged markers",
                           .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
-                          .arrays = "a:[one,x]",
-                          .reads = "a[0]=one; a[1]=x",
+                          .arrays = nonunit ? "a:[one,two,x]" : "a:[one,x]",
+                          .reads = nonunit ? "a[0]=one; a[2]=x" : "a[0]=one; a[1]=x",
                           .exit = "zero -> {}"};
         if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
                 std::string{kPrologue} + live.body + "}\n", &context)) {
@@ -375,7 +462,9 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
             function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
             producer->setAttr("ctnative.array_index",
-                              builder.getI64IntegerAttr(source == computedChild ? 0 : 1));
+                              builder.getI64IntegerAttr(source == computedChild ? 0
+                                                        : nonunit               ? 2
+                                                                                : 1));
             mlir::DataFlowSolver stale;
             stale.load<mlir::dataflow::DeadCodeAnalysis>();
             stale.load<mlir::dataflow::SparseConstantPropagation>();
@@ -384,7 +473,8 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                 fail(row{.what = live.what, .body = live.body, .expected = ""},
                      "the induction stale solver did not converge");
             }
-            for (mlir::Value rhs : {one, zero, one}) {
+            const mlir::Value invalid = source == computedChild ? zero : producer.getLhs();
+            for (mlir::Value rhs : {one, invalid, one}) {
                 producer->setOperand(1, rhs);
                 const bool complete = rhs == one;
                 live.failure = complete ? ArrayContentsFailure::None
@@ -410,23 +500,30 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     std::string many = "%one";
     for (unsigned i = 1; i < 32; ++i) { many += ", %one"; }
     const std::string longLoop = replace(original, "%one, %two, %three", many);
-    if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + longLoop + "}\n", &context)) {
-        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
-        const auto complete = computeArrayContents(function);
-        const auto partial = computeArrayContents(function, 128);
-        if (!complete.complete || complete.reads.size() != 32 || partial.complete ||
-            partial.failure != ArrayContentsFailure::WorkLimit || partial.work != 128 ||
-            !partial.arrays.empty() || !partial.reads.empty() || !partial.writes.empty() ||
-            !partial.exits.empty()) {
-            fail(row{.what = "finite induction still obeys the unchanged work budget",
-                     .body = longLoop,
-                     .expected = ""},
-                 "a long loop lost exact reads or published an incomplete prefix");
+    std::size_t unitWork = 0;
+    for (const std::string & source :
+         {longLoop, replace(longLoop, "add %i, %one", "add %i, %two")}) {
+        if (auto module = mlir::parseSourceString<mlir::ModuleOp>(
+                std::string{kPrologue} + source + "}\n", &context)) {
+            ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+            const auto complete = computeArrayContents(function);
+            const auto partial = computeArrayContents(function, 128);
+            const bool unit = source == longLoop;
+            if (unit) { unitWork = complete.work; }
+            if (!complete.complete || complete.reads.size() != (unit ? 32U : 16U) ||
+                (!unit && complete.work >= unitWork) || partial.complete ||
+                partial.failure != ArrayContentsFailure::WorkLimit || partial.work != 128 ||
+                !partial.arrays.empty() || !partial.reads.empty() || !partial.writes.empty() ||
+                !partial.exits.empty()) {
+                fail(row{.what = "finite strides charge visited iterations and obey work limits",
+                         .body = source,
+                         .expected = ""},
+                     "a long loop lost exact reads, bounded replay or prefix isolation");
+            }
+        } else {
+            fail(row{.what = "finite induction work budget", .body = source, .expected = ""},
+                 "the long induction fixture did not parse");
         }
-    } else {
-        fail(row{.what = "finite induction work budget", .body = longLoop, .expected = ""},
-             "the long induction fixture did not parse");
     }
     std::printf("array induction: %u rows, %u live states, %zu retention budget cutoffs\n", rows,
                 liveStates, budgets);

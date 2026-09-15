@@ -933,6 +933,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         mlir::Value array;
         mlir::Operation * site;
         std::size_t length;
+        std::size_t finalIndex;
     };
     struct State {
         // Imported successors forward every raw register, including unused
@@ -1054,7 +1055,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
         }
-        // A held unit step must survive every backedge unchanged. Read a body
+        // A held positive step must survive every backedge unchanged. Read a body
         // formal through its actual header operand before the body has executed.
         mlir::Value increment = step.getRhs();
         if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
@@ -1064,7 +1065,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             const mlir::Value next = backedge[argument.getArgNumber()];
             if (next != increment && fromHeader(next) != increment) { return unsupported; }
         }
-        if (boundedNumber(increment) != 1) {
+        auto stride = boundedNumber(increment);
+        if (!stride) {
             // Repeated producers need their own invariant proof; a prior
             // iteration's saved fact cannot certify a header/body computation.
             auto * definition = increment.getDefiningOp();
@@ -1072,11 +1074,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 (definition->getBlock() == header || definition->getBlock() == body)) {
                 return unsupported;
             }
-            const ContentsValue unit = held(increment);
-            if ((unit.integerNumber ? unit.integerNumber : boundedNumber(unit.origin())) != 1) {
-                return unsupported;
-            }
+            const ContentsValue value = held(increment);
+            stride = value.integerNumber ? value.integerNumber : boundedNumber(value.origin());
         }
+        if (!stride || *stride == 0) { return unsupported; }
         // Initialization may be a saved empty length or an exact arithmetic
         // result. Check both the original input and its transported snapshot;
         // neither source spelling nor a different path's Number supplies zero.
@@ -1113,7 +1114,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         if (found == state.arrays.end() || found->second.size() > 4294967295ULL) {
             return unsupported;
         }
-        state.loop = CountedLoop{header, body, index, array, found->first, found->second.size()};
+        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+        const std::size_t size = found->second.size();
+        // The last body index is a multiple of the invariant positive stride.
+        // Bound its final update before addition; overshooting length is valid,
+        // but every replayed Number must stay in the exact bounded range.
+        const std::size_t last = size == 0 ? 0 : (size - 1) / *stride * *stride;
+        if (size != 0 && *stride > 4294967295ULL - last) { return unsupported; }
+        const std::size_t finalIndex = size == 0 ? 0 : last + *stride;
+        state.loop = CountedLoop{header, body, index, array, found->first, size, finalIndex};
         return ArrayContentsFailure::None;
     };
     const auto cfgCountedLoop = [&](mlir::cf::CondBranchOp branch, mlir::cf::BranchOp latch) {
@@ -1150,7 +1159,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         const auto number =
             index.integerNumber ? index.integerNumber : boundedNumber(index.origin());
         const mlir::Value base = origin(loop.array);
-        if (!number || *number > loop.length || !base || base.getDefiningOp() != loop.site) {
+        if (!number || *number > loop.finalIndex || !base || base.getDefiningOp() != loop.site) {
             return std::nullopt;
         }
         return *number < loop.length;
