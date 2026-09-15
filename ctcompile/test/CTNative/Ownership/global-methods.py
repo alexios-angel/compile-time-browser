@@ -323,9 +323,13 @@ def refusal_sources():
         "dynamic": prefix + "var key = 'slot'; host[key] = make();" + suffix,
         "unknown": prefix + "host.slot = make(); inspect(host);" + suffix,
         "prototype": prefix + "host.slot = make(); host.__proto__ = {};" + suffix,
-        "captured_map": (
-            Path(__file__).resolve().parent.parent / "Exports/boundary.js"
-        ).read_text(),
+        "captured_map": "".join(
+            line
+            for line in (Path(__file__).resolve().parent.parent / "Exports/boundary.js")
+            .read_text()
+            .splitlines(True)
+            if not line.startswith("/* beautify ignore:")
+        ),
     }
 
 

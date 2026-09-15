@@ -19,7 +19,14 @@ spec = importlib.util.spec_from_file_location("methods", DRIVERS.with_name("glob
 methods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(methods)
 owned, boundary, host = methods.owned, methods.boundary, methods.host
-SOURCE = (DRIVERS.parent.parent / "Exports/boundary.js").read_text()
+# The exports fixture is string-template data: every derived source and its
+# pinned hash anchor on its exact bytes, so the beautifier is told to leave it
+# alone and the two marker lines are dropped here.
+SOURCE = "".join(
+    line
+    for line in (DRIVERS.parent.parent / "Exports/boundary.js").read_text().splitlines(True)
+    if not line.startswith("/* beautify ignore:")
+)
 SHARED = SOURCE.replace(
     "get() { return state.size; }",
     "get() { return state.size; }, set() { state.set('x', 1); return state.size; }",

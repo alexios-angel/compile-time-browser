@@ -249,8 +249,8 @@ def check_umd_preparation(args, compilers, nm):
             "var host = {};",
             "var host = {}; var tracePre = 0; var traceKind = typeof host === 'object' ? 1 : 0;",
         )
-        .replace("function (factory)", "function (unused, factory)")
-        .replace("})(function ()", "})((tracePre = 1, this), function ()")
+        .replace("function(factory)", "function(unused, factory)")
+        .replace("})(function()", "})((tracePre = 1, this), function()")
     )
     js, ir, functions = boundary.prepare(args, "umd-safe-preparation", source.removesuffix("\n"))
     if functions != 4 or js.read_text() != source or "tracePre = 1" not in source:

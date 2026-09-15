@@ -1,14 +1,14 @@
+/* beautify ignore:start */
 // Four imported functions. The entire startup prefix is understood, but
 // publication still needs a native owner and a live proof of future callees.
 var host = {};
-(function (factory) {
+(function(factory) {
     host.slot = factory();
-})(function () {
+})(function() {
     const state = new Map();
     return {
-        get() {
-            return state.size;
-        }
+        get() { return state.size; }
     };
 });
 var trace = host.slot.get();
+/* beautify ignore:end */
