@@ -11,6 +11,7 @@ from CTNative.harness import run
 READ = "const t = element.getAttribute('data-bs-config');"
 GUARD = "if ('string' != typeof t) return t;"
 DECODE = "try { return decodeURIComponent(t); } catch (ignored) { return t; }"
+HELPER = "function decode(t) { " + GUARD + DECODE + " } "
 CASES = {
     "nullable_uri_original": READ + GUARD + DECODE,
     "nullable_uri_reverse": READ + "if (typeof t != 'string') return t;" + DECODE,
@@ -24,6 +25,13 @@ CASES = {
     "nullable_uri_assignment": READ
     + GUARD
     + "let saved = 'before'; try { saved = t; saved = decodeURIComponent(t); } catch (ignored) { return saved; } return saved;",
+    # Original M shape: the guard and the handler live in a local helper.
+    "nullable_uri_helper": HELPER + "return decode(element.getAttribute('data-bs-config'));",
+    "nullable_uri_helper_saved": READ + HELPER + "return decode(t);",
+    "nullable_uri_helper_arrow": "const decode = t => { "
+    + GUARD
+    + DECODE
+    + " }; return decode(element.getAttribute('data-bs-config'));",
 }
 VALUES = (
     (None, None),
@@ -90,7 +98,7 @@ def prepare(args):
     return [
         (name, ir, dict(contract, initial_intrinsics=["decodeURIComponent"]))
         for name, source, count in SOURCES
-        for ir, contract in [dom.prepare(args, name, source, count)]
+        for ir, contract in [dom.prepare(args, name, source, count, entry_name=name)]
     ]
 
 
@@ -198,6 +206,15 @@ REFUSALS = {
     "nullable_uri_payload_read": READ
     + GUARD
     + DECODE.replace("return t;", "return ignored.message;"),
+    "nullable_uri_helper_payload": HELPER.replace("return t; }", "return ignored; }")
+    + "return decode(element.getAttribute('data-bs-config'));",
+    "nullable_uri_helper_unguarded": "function decode(t) { "
+    + DECODE
+    + " } return decode(element.getAttribute('data-bs-config'));",
+    "nullable_uri_helper_branch_call": READ
+    + "if (t === null) return t; "
+    + HELPER
+    + "return decode(t);",
 }
 
 
@@ -206,7 +223,9 @@ def refusal_checks(args, prepared):
         (name, ir, dict(contract, initial_intrinsics=["decodeURIComponent"]))
         for name, body in REFUSALS.items()
         for ir, contract in [
-            dom.prepare(args, name, f"function invalid(element) {{ {body} }}\n", 1)
+            dom.prepare(
+                args, name, f"function invalid(element) {{ {body} }}\n", 1, entry_name="invalid"
+            )
         ]
     ]
     _, original, contract = next(row for row in prepared if row[0] == "nullable_uri_original")
