@@ -31,9 +31,9 @@ shared immutable-leaf queries remain unchanged, and the private result still nee
 the complete DOM reproof. Generated code uses ordinary borrowed element handles
 and owning optional Strings; no runtime callable or cell storage is introduced.
 
-Final focused **2/2 DOM String/host CTests in 39.40s PASS**, after the escape and
+Final focused **2/2 DOM String/host CTests in 39.27s PASS**, after the escape and
 host focus passed. Strings: **213 Node/VM observations / eight GCC-Clang binaries /
-304 source refusals / 42 provenance-depth refusals / 24 method checks / 53 capture
+304 source refusals / 43 provenance-depth refusals / 24 method checks / 53 capture
 provenance-storage-budget checks / four existing budget-fingerprint controls**.
 Both original optional-return refusal sources are preserved byte-for-byte and now
 execute. Additional controls cover initial-cell storage, assignment-before-call,
@@ -41,10 +41,16 @@ independent callers and argument/DOM write order. The larger oracle exposed a
 test-only sort-by-line versus sort-by-global-name mismatch; the names now govern
 sorting. No interpreter semantics or expectations were changed.
 
+**e81304b4** also checks composed depth after substitution. A mixed nested/captured
+64-helper witness first failed against **18f4519b** because the old compiler emitted
+it; the corrected compiler refuses it. Its three-step rebuild and the final focus
+above pass. The intermediate full test run was deliberately interrupted at 43
+completed tests and is not a complete-suite result.
+
 Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned
 formatting matches the existing **nine-file / 26-diagnostic** baseline. The final
-source is committed and **1,443 input hashes** are frozen. The complete **274-step default build passed**; the **602-test CTest gate**
-is running and its final result is pending. Recovery scripts, focused
+source is committed and **1,443 input hashes** are frozen. The final complete default
+build and **602-test CTest gate** are running; their final result is pending. Recovery scripts, focused
 logs and evidence are retained in `/tmp/ctcompile-dom-graphs/`.
 
 **Exact next boundary:** forwarded upvalues and helpers that create nested closures

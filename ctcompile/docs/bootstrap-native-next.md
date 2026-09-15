@@ -149,8 +149,8 @@ methods: **173 Node/VM observations / eight GCC-Clang binaries / 45 capture
 provenance-budget controls**. It reuses the shared cell/closure proof and checks
 assignment-before-read/call, then substitutes each invocation independently.
 **18f4519b** composes local captured callable/holder graphs under the unchanged
-leaf rules: **213 Node/VM observations / eight GCC-Clang binaries / 304 source
-refusals / 42 provenance-depth / 24 method / 53 capture controls**. Consumers
+leaf rules, with composed depth bounded by **e81304b4**: **213 Node/VM observations / eight GCC-Clang binaries / 304 source
+refusals / 43 provenance-depth / 24 method / 53 capture controls**. Consumers
 expand before cells and callable holders are retired; the complete DOM proof still
 gates publication. The original two optional-return sources execute unchanged.
 Forwarded upvalues, capturing helpers that create nested closures and captured host

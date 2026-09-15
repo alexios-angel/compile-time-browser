@@ -158,7 +158,7 @@ across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
 **304** source refusals for unsupported coercion, control flow, handles and retention,
-**42** provenance/depth refusals, **24** method provenance checks, **53** capture
+**43** provenance/depth refusals, **24** method provenance checks, **53** capture
 provenance/storage/budget checks and four
 work-budget/fingerprint controls. Helper
 cases preserve argument evaluation order, saved String values, repeated calls and
