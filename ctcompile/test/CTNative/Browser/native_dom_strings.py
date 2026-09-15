@@ -34,7 +34,22 @@ WIDE = r"""function readWideName(element) {
   return element.getAttribute('\ud800');
 }
 """
-SOURCES = (("read", READ, 1), ("saved", SAVED, 2), ("names", NAMES, 1), ("wide", WIDE, 1))
+# Keep the original refusal sources byte-for-byte when admitting their graphs.
+CAPTURE_RETURNS = {
+    "capture_callable": "function invalid(element) { function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke(); }\n",
+    "capture_holder": "function invalid(element) { const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke(); }\n",
+}
+CAPTURE_SOURCE = "".join(
+    f"const {name} = (() => {{\n{source}return invalid;\n}})();\n"
+    for name, source in CAPTURE_RETURNS.items()
+)
+SOURCES = (
+    ("read", READ, 1),
+    ("saved", SAVED, 2),
+    ("names", NAMES, 1),
+    ("wide", WIDE, 1),
+    *((name, source, 1) for name, source in CAPTURE_RETURNS.items()),
+)
 BOOLEAN_CASES = {
     "boolean": ("return !element.getAttribute('x');", "1100"),
     "truthy": ("return !!element.getAttribute('x');", "0011"),
@@ -119,6 +134,61 @@ HELPER_CASES = {
   }
   return observe(element, 'x') === null;""",
         "1000",
+    ),
+    "helper_capture_callable": (
+        """function read(target) { return target.getAttribute('x'); }
+  function invoke() { return read(element); }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_callable_alias": (
+        """const read = target => target.getAttribute('x');
+  const alias = read;
+  function invoke() { return alias(element); }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_callable_callers": (
+        """function read(target, key) { return target.getAttribute(key); }
+  function first(target) { return read(target, 'x'); }
+  function second(target) { return read(target, 'missing'); }
+  return first(element) === second(element);""",
+        "1000",
+    ),
+    "helper_capture_callable_order": (
+        r"""const saved = element.getAttribute('x');
+  function compare(target) { return saved === target.getAttribute('x'); }
+  function invoke() { return compare(element); }
+  element.setAttribute('x', 'a\0b'); return invoke();""",
+        "0010",
+    ),
+    "helper_capture_holder": (
+        """const helpers = {read(target) { return target.getAttribute('x'); }};
+  function invoke() { return helpers.read(element); }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_holder_alias": (
+        """const helpers = {read(target) { return target.getAttribute('x'); }};
+  const alias = helpers;
+  function invoke() { return alias.read(element); }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_holder_extracted": (
+        """const helpers = {read(target) { return target.getAttribute('x'); }};
+  function invoke() { const read = helpers.read; return read(element); }
+  return invoke() === null;""",
+        "1000",
+    ),
+    "helper_capture_holder_order": (
+        r"""const helpers = {change(target, saved) {
+    target.setAttribute('x', 'a\0b');
+    return saved === target.getAttribute('x');
+  }};
+  function invoke(saved) { return helpers.change(element, saved); }
+  return invoke(element.getAttribute('x'));""",
+        "0010",
     ),
     "helper_read": (
         """function read(target, key) { return target.getAttribute(key); }
@@ -258,6 +328,8 @@ BOOLEAN_OBSERVATIONS = "\n".join(
 BOOLEAN_CHECKS = {
     "helper_capture_saved": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_capture_repeated": 'assert(doc.read().attribute_value(node, state) == "after");',
+    "helper_capture_callable_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
+    "helper_capture_holder_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
     "helper_nested": 'assert(doc.read().attribute_value(node, atoms.intern("data-config")) == "value");',
     "helper_object_order": r'assert(doc.read().attribute_value(node, state) == std::string_view("a\0b", 3));',
@@ -277,14 +349,15 @@ const names = [];
 assert.equal(readNames({getAttribute(name) { names.push(name); return name; }}), 'a\0b');
 assert.deepEqual(names, ['bad name', '', 'a\0b']);
 assert.equal(readWideName({getAttribute(name) { return name; }}), '\ud800');
-for (const entry of [readAttribute, savedAttribute]) {
+for (const entry of [readAttribute, savedAttribute, capture_callable, capture_holder]) {
+  const key = entry === capture_callable || entry === capture_holder ? 'x' : 'DATA-State';
   for (const expected of [null, '', 'a\0b', '\u00e9']) {
     let value = expected;
     const calls = [];
     const element = {
       getAttribute(name) {
         calls.push('get:' + name);
-        return name === 'DATA-State' ? value : null;
+        return name === key ? value : null;
       },
       setAttribute(name, text) {
         calls.push('set:' + name + ':' + text);
@@ -297,11 +370,11 @@ for (const entry of [readAttribute, savedAttribute]) {
     };
     const result = entry(element, element);
     assert.equal(result, expected);
-    assert.deepEqual(calls, entry === readAttribute ? ['get:DATA-State'] : [
+    assert.deepEqual(calls, entry !== savedAttribute ? ['get:' + key] : [
       'get:DATA-State', 'get:data-missing', 'set:DATA-State:after',
       'get:DATA-State', 'remove:DATA-State'
     ]);
-    assert.equal(value, entry === readAttribute ? expected : null);
+    assert.equal(value, entry !== savedAttribute ? expected : null);
     value = 'later';
     assert.equal(result, expected);
     const bytes = result === null ? null : Buffer.from(result, 'utf8');
@@ -332,8 +405,9 @@ static void observe(const std::optional<std::string> & value) {
     std::cout << '\n';
 }
 
-static void check_values(auto invoke, document & doc, element_ref element, bool saved) {
-    const auto state = doc.atoms().intern("data-state");
+static void check_values(auto invoke, document & doc, element_ref element, bool saved,
+                         std::string_view name = "data-state") {
+    const auto state = doc.atoms().intern(name);
     const std::array<std::optional<std::string>, 4> values{
         std::nullopt, std::string{}, std::string{"a\0b", 3}, std::string{"\xc3\xa9"}};
     doc.log_writes(true);
@@ -547,9 +621,19 @@ HELPER_REFUSALS = {
     "capture_unknown_effect": "const key = 'x'; function read() { return element.getAttribute(key); } sideEffect(); return read();",
     "capture_closure_escape": "function read() { return element.getAttribute('x'); } read(); return read;",
     "capture_borrowed_return": "function read() { element.getAttribute('x'); return element; } return read();",
-    "capture_callable": "function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke();",
     "capture_forwarded": "function invoke() { function read() { return element.getAttribute('x'); } return read(); } return invoke();",
-    "capture_holder": "const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } return invoke();",
+    "capture_callable_reassigned": "let read = target => target.getAttribute('x'); function invoke() { return read(element); } read = target => target.getAttribute('y'); return invoke();",
+    "capture_callable_reassigned_later": "let read = target => target.getAttribute('x'); function invoke() { return read(element); } const saved = invoke(); read = target => target.getAttribute('y'); return saved;",
+    "capture_callable_escape": "function read(target) { return target.getAttribute('x'); } function invoke() { read(element); return read; } return invoke();",
+    "capture_callable_metadata": "function read(target) { return target.getAttribute('x'); } function invoke() { read(element); return read.name; } return invoke();",
+    "capture_callable_recursive": "function read(target) { return invoke(target); } function invoke(target) { target.getAttribute('x'); return read(target); } return invoke(element);",
+    "capture_callable_early_call": "function invoke() { return read(element); } const saved = invoke(); var read = target => target.getAttribute('x'); return saved;",
+    "capture_holder_reassigned": "let helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } helpers = {read(target) { return target.getAttribute('y'); }}; return invoke();",
+    "capture_holder_late_overwrite": "const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers.read(element); } const saved = invoke(); helpers.read = target => target.getAttribute('y'); return saved;",
+    "capture_holder_escape": "const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { helpers.read(element); return helpers; } return invoke();",
+    "capture_holder_this": "const helpers = {read(target) { target.getAttribute('x'); return this; }}; function invoke() { return helpers.read(element); } return invoke();",
+    "capture_holder_early_call": "function invoke() { return helpers.read(element); } const saved = invoke(); var helpers = {read(target) { return target.getAttribute('x'); }}; return saved;",
+    "capture_holder_dynamic_key": "const helpers = {read(target) { return target.getAttribute('x'); }}; function invoke() { return helpers[element.getAttribute('key')](element); } return invoke();",
     "helper_this": "function read() { return this.getAttribute('x'); } return read();",
     "helper_new_target": "function read(target) { target.getAttribute('x'); return new.target; } return read(element);",
     "helper_recursive": "function read(target) { return read(target); } return read(element);",
@@ -720,10 +804,35 @@ def helper_provenance_refusals(args, ir, contract):
     diagnostic = dom.lower(args, deep_ir, deep_contract, "helper-depth", success=False)
     if "error: native DOM source: DOM helper call tree is recursive or too deep" not in diagnostic:
         raise RuntimeError(f"helper depth: wrong refusal\n{diagnostic}")
-    return len(variants) * 4 + 1
+    # Flat sibling helpers capture the previous callable. Their iterative
+    # expansion must retain the same depth limit as nested helper bodies.
+    graph = "function graph0(target) { return target.getAttribute('x') === null; }\n"
+    graph += "".join(
+        f"function graph{depth}(target) {{ return graph{depth - 1}(target); }}\n"
+        for depth in range(1, 64)
+    )
+    graph += "return graph63(element);"
+    graph_ir, graph_contract = dom.prepare(
+        args,
+        "capture-graph-depth",
+        f"function capture_graph_depth(element) {{ {graph} }}\n",
+        1,
+        entry_name="capture_graph_depth",
+    )
+    diagnostic = dom.lower(
+        args,
+        graph_ir,
+        graph_contract,
+        "capture-graph-depth",
+        max_steps=10000000,
+        success=False,
+    )
+    if "error: native DOM source: DOM helper call tree is recursive or too deep" not in diagnostic:
+        raise RuntimeError(f"capture graph depth: wrong refusal\n{diagnostic}")
+    return len(variants) * 4 + 2
 
 
-def capture_provenance_refusals(args, ir, contract):
+def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
     original = ir.read_text()
     closure = "ctjs.create_closure %arg2[2] this %3 captures %2"
     load = "ctjs.load_upvalue %arg2[0]"
@@ -790,7 +899,37 @@ def capture_provenance_refusals(args, ir, contract):
     diagnostic = dom.lower(args, ir, contract, "capture-budget", max_steps=128, success=False)
     if "budget exhausted" not in diagnostic:
         raise RuntimeError(f"capture query: missing work-budget refusal\n{diagnostic}")
-    return len(variants) * 4 + 1
+    graph = graph_ir.read_text()
+    cell = "    %3 = ctjs.create_cell %2\n"
+    store = "    ctjs.cell_set %3, %5\n"
+    after_call = "    %11 = ctjs.constant #ctjs.null\n"
+    if any(graph.count(anchor) != 1 for anchor in (cell, store, after_call)):
+        raise RuntimeError("captured callable storage anchors changed")
+    initial = graph.replace(cell, "").replace(store, "    %3 = ctjs.create_cell %5\n")
+    late = graph.replace(store, "").replace(after_call, store + after_call)
+    for name, text, reason in (
+        ("initial-cell", initial, None),
+        ("uninitialized-call", late, "DOM helper capture assignment does not precede its call"),
+    ):
+        mutated = args.work / f"capture-storage-{name}.mlir"
+        mutated.write_text(text)
+        checked = dict(graph_contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                label = f"capture-storage-{name}-{provider}-{optimize}"
+                result = dom.lower(
+                    args,
+                    mutated,
+                    dict(checked, provider=provider),
+                    label,
+                    optimize=optimize,
+                    success=reason is None,
+                )
+                if reason is None:
+                    emitted(args, result, label)
+                elif f"error: native DOM source: {reason}" not in result:
+                    raise RuntimeError(f"capture storage {name}: wrong refusal\n{result}")
+    return len(variants) * 4 + 9
 
 
 def method_provenance_checks(args, ir, contract):
@@ -874,6 +1013,7 @@ def main():
         + SAVED
         + NAMES
         + WIDE
+        + CAPTURE_SOURCE
         + ORACLE
         + boolean_oracle
         + "\n"
@@ -883,7 +1023,7 @@ def main():
         )
     )
     expected = run([args.node, str(oracle)]).stdout
-    if expected != "null\n0:\n3:610062\n2:c3a9\n" * 2 + "".join(
+    if expected != "null\n0:\n3:610062\n2:c3a9\n" * (2 + len(CAPTURE_RETURNS)) + "".join(
         value + "\n" for value in boolean_values
     ):
         raise RuntimeError("source optional String observations were not completed")
@@ -892,10 +1032,11 @@ def main():
         READ
         + SAVED
         + WIDE
+        + CAPTURE_SOURCE
         + """
 function makeElement(value) {
   return {
-    getAttribute(name) { return name === 'DATA-State' ? value : null; },
+    getAttribute(name) { return name === 'DATA-State' || name === 'x' ? value : null; },
     setAttribute(name, text) { value = text; },
     removeAttribute(name) { value = null; }
   };
@@ -903,7 +1044,7 @@ function makeElement(value) {
 """
         + "\n".join(
             f"var observation{i * 4 + j} = {entry}(makeElement({value}), makeElement('other'));"
-            for i, entry in enumerate(("readAttribute", "savedAttribute"))
+            for i, entry in enumerate(("readAttribute", "savedAttribute", *CAPTURE_RETURNS))
             for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
         )
     )
@@ -913,14 +1054,14 @@ function makeElement(value) {
     reference = run([args.reference, str(observed)]).stdout
     encoded = [f"booleanObservation{i:03}={value}\n" for i, value in enumerate(boolean_values)]
     encoded.append('nameBytes="%ED%A0%80"\n')
-    for index, line in enumerate(expected.splitlines()[:8]):
+    for index, line in enumerate(expected.splitlines()[: 4 * (2 + len(CAPTURE_RETURNS))]):
         value = (
             "null"
             if line == "null"
             else '"' + quote_from_bytes(bytes.fromhex(line.split(":")[1])) + '"'
         )
         encoded.append(f"observation{index}={value}\n")
-    if reference != "".join(encoded):
+    if reference != "".join(sorted(encoded, key=lambda line: line.partition("=")[0])):
         raise RuntimeError(f"VM optional String observations disagree with Node: {reference}")
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -929,7 +1070,13 @@ function makeElement(value) {
         (
             name,
             *dom.prepare(
-                args, name, source, count, entry_name=name if name in HELPER_CASES else None
+                args,
+                name,
+                source,
+                count,
+                entry_name=(
+                    "invalid" if name in CAPTURE_RETURNS else name if name in HELPER_CASES else None
+                ),
             ),
         )
         for name, source, count in SOURCES + BOOLEAN_SOURCES
@@ -991,6 +1138,12 @@ function makeElement(value) {
                     checks = FREE_SAVED_CHECKS if saved else FREE_READ_CHECKS
                     target = entry
                     client = FREE_RUN
+                if name in CAPTURE_RETURNS:
+                    checks = "" if owned else "assert(!invoke(foreign, element));"
+                    client = client.replace(
+                        "check_values(invoke, doc, element, @SAVED@)",
+                        'check_values(invoke, doc, element, false, "x")',
+                    )
                 call = (
                     f"return {target}(first, second);"
                     if saved
@@ -1063,12 +1216,17 @@ function makeElement(value) {
     _, capture_ir, capture_contract = next(
         row for row in prepared if row[0] == "helper_capture_key"
     )
-    capture_checks = capture_provenance_refusals(args, capture_ir, capture_contract)
+    _, graph_ir, graph_contract = next(
+        row for row in prepared if row[0] == "helper_capture_callable"
+    )
+    capture_checks = capture_provenance_checks(
+        args, capture_ir, capture_contract, graph_ir, graph_contract
+    )
     print(
-        f"native DOM Strings: {9 + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
+        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {len(REFUSALS) * 4} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
-        f"{capture_checks} capture provenance/budget refusals"
+        f"{capture_checks} capture provenance/budget checks"
     )
 
 

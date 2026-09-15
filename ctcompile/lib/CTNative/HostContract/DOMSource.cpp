@@ -24,6 +24,7 @@ struct DOMSource {
         mlir::Value value() { return write ? write.getValue() : cell.getInitial(); }
     };
     llvm::DenseMap<mlir::Value, Capture> cells;
+    llvm::DenseMap<mlir::Operation *, unsigned> callDepth;
 
     bool refuse(llvm::StringRef message) {
         if (reason.empty()) { reason = message.str(); }
@@ -47,6 +48,20 @@ struct DOMSource {
     static bool undefined(mlir::Value value) {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+    }
+
+    bool captureStorage(mlir::OpOperand & use) {
+        if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner())) {
+            auto found = cells.find(cell.getResult());
+            return use.getOperandNumber() == 0 && found != cells.end() &&
+                   found->second.value() == use.get();
+        }
+        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner())) {
+            auto found = cells.find(write.getCell());
+            return use.getOperandNumber() == 1 && found != cells.end() &&
+                   found->second.write == write;
+        }
+        return false;
     }
 
     bool resolveCell(ctjs::CreateCellOp cell) {
@@ -238,119 +253,173 @@ struct DOMSource {
         for (ctjs::CreateCellOp cell : localCells) {
             if (!resolveCell(cell)) { return false; }
         }
-        llvm::DenseSet<mlir::Operation *> methods;
-        for (ctjs::CreateObjectOp object : objects) {
-            if (!resolveMethods(object, methods)) { return false; }
-        }
-        for (ctjs::CreateClosureOp closure : closures) {
-            auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
-            if (!target) { return refuse("DOM helper closure target is missing"); }
-            if (closure.getUpvalues().size() != target.getUpvalueCount()) {
-                return refuse("DOM helper capture count disagrees with its source target");
-            }
-            llvm::SmallVector<Capture> captures;
-            if (!closure.getUpvalues().empty()) {
-                if (!chargeCaptureQuery()) { return false; }
-                if (immutableClosureTarget(closure, closure->getParentOfType<mlir::ModuleOp>()) !=
-                    target) {
-                    return refuse("DOM helper requires an immutable local leaf capture");
-                }
-                for (mlir::Value capture : closure.getUpvalues()) {
+        llvm::DenseSet<mlir::Operation *> methods, resolvedObjects;
+        // ponytail: bounded rescans of local capture dependencies; index the
+        // worklist if large helper graphs exhaust the existing work budget.
+        while (!closures.empty() || !localCells.empty() ||
+               resolvedObjects.size() != objects.size()) {
+            if (!step()) { return false; }
+            bool progress = false;
+            for (ctjs::CreateCellOp & cell : localCells) {
+                if (!cell) { continue; }
+                bool held = false;
+                for (mlir::Operation * use : cell.getResult().getUsers()) {
                     if (!step()) { return false; }
-                    const auto found = cells.find(capture);
-                    if (found == cells.end()) {
-                        return refuse("DOM helper capture lacks a proved local cell");
-                    }
-                    captures.push_back(found->second);
+                    held |= llvm::isa<ctjs::CreateClosureOp>(use);
                 }
+                if (held) { continue; }
+                auto capture = cells.lookup(cell.getResult());
+                if (capture.write) { capture.write.erase(); }
+                while (!cell.getResult().use_empty()) {
+                    if (!step()) { return false; }
+                    auto root = llvm::dyn_cast<ctjs::RootOp>(*cell.getResult().getUsers().begin());
+                    if (!root) { return refuse("DOM helper capture cell has an unexpanded use"); }
+                    root.erase();
+                }
+                cells.erase(cell.getResult());
+                cell.erase();
+                cell = {};
+                progress = true;
             }
-            struct Call {
-                mlir::Operation * operation;
-                mlir::ValueRange arguments;
-            };
-            llvm::SmallVector<Call> calls;
-            llvm::SmallVector<ctjs::RootOp> roots;
-            for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            for (ctjs::CreateObjectOp object : objects) {
                 if (!step()) { return false; }
-                if (auto root = llvm::dyn_cast<ctjs::RootOp>(use.getOwner())) {
-                    roots.push_back(root);
-                } else {
-                    auto * operation = use.getOwner();
-                    mlir::ValueRange arguments;
-                    if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-                        call && use.getOperandNumber() == 0 &&
-                        (undefined(call.getReceiver()) || methods.contains(operation))) {
-                        arguments = call.getArgs();
-                    } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-                               direct && use.getOperandNumber() == 2 &&
-                               direct.getCallee() == target.getSymName() &&
-                               (undefined(direct.getReceiver()) || methods.contains(operation)) &&
-                               undefined(direct.getNewTarget())) {
-                        arguments = direct.getArgs();
-                    } else {
-                        return refuse(
-                            "DOM helper callable escapes or its call shape is unsupported");
+                if (resolvedObjects.contains(object)) { continue; }
+                bool held = false;
+                for (mlir::OpOperand & use : object.getResult().getUses()) {
+                    if (!step()) { return false; }
+                    held |= captureStorage(use);
+                }
+                if (held) { continue; }
+                if (!resolveMethods(object, methods)) { return false; }
+                resolvedObjects.insert(object);
+                progress = true;
+            }
+            for (ctjs::CreateClosureOp & closure : closures) {
+                if (!closure) { continue; }
+                bool held = false;
+                for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                    if (!step()) { return false; }
+                    auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                    auto object = store ? store.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                                        : ctjs::CreateObjectOp{};
+                    held |= captureStorage(use) ||
+                            (object && use.getOperandNumber() == 2 && object->getBlock() == &block);
+                }
+                if (held) { continue; }
+                auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
+                if (!target) { return refuse("DOM helper closure target is missing"); }
+                if (closure.getUpvalues().size() != target.getUpvalueCount()) {
+                    return refuse("DOM helper capture count disagrees with its source target");
+                }
+                llvm::SmallVector<Capture> captures;
+                if (!closure.getUpvalues().empty()) {
+                    if (!chargeCaptureQuery()) { return false; }
+                    if (immutableClosureTarget(
+                            closure, closure->getParentOfType<mlir::ModuleOp>()) != target) {
+                        return refuse("DOM helper requires an immutable local leaf capture");
                     }
-                    if (operation->getBlock() != &block || !closure->isBeforeInBlock(operation) ||
-                        arguments.size() + ctjs::implicit_arguments !=
-                            target.getBody().front().getNumArguments()) {
-                        return refuse("DOM helper call has unsupported arity or source order");
-                    }
-                    for (const Capture & capture : captures) {
+                    for (mlir::Value capture : closure.getUpvalues()) {
                         if (!step()) { return false; }
-                        if (capture.write && !capture.write->isBeforeInBlock(operation)) {
+                        const auto found = cells.find(capture);
+                        if (found == cells.end()) {
+                            return refuse("DOM helper capture lacks a proved local cell");
+                        }
+                        captures.push_back(found->second);
+                    }
+                }
+                struct Call {
+                    mlir::Operation * operation;
+                    mlir::ValueRange arguments;
+                };
+                llvm::SmallVector<Call> calls;
+                llvm::SmallVector<ctjs::RootOp> roots;
+                for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                    if (!step()) { return false; }
+                    if (auto root = llvm::dyn_cast<ctjs::RootOp>(use.getOwner())) {
+                        roots.push_back(root);
+                    } else {
+                        auto * operation = use.getOwner();
+                        mlir::ValueRange arguments;
+                        if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                            call && use.getOperandNumber() == 0 &&
+                            (undefined(call.getReceiver()) || methods.contains(operation))) {
+                            arguments = call.getArgs();
+                        } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                                   direct && use.getOperandNumber() == 2 &&
+                                   direct.getCallee() == target.getSymName() &&
+                                   (undefined(direct.getReceiver()) ||
+                                    methods.contains(operation)) &&
+                                   undefined(direct.getNewTarget())) {
+                            arguments = direct.getArgs();
+                        } else {
                             return refuse(
-                                "DOM helper capture assignment does not precede its call");
+                                "DOM helper callable escapes or its call shape is unsupported");
+                        }
+                        if (operation->getBlock() != &block ||
+                            !closure->isBeforeInBlock(operation) ||
+                            arguments.size() + ctjs::implicit_arguments !=
+                                target.getBody().front().getNumArguments()) {
+                            return refuse("DOM helper call has unsupported arity or source order");
+                        }
+                        for (const Capture & capture : captures) {
+                            if (!step()) { return false; }
+                            if (capture.write && !capture.write->isBeforeInBlock(operation)) {
+                                return refuse(
+                                    "DOM helper capture assignment does not precede its call");
+                            }
+                        }
+                        if (depth + callDepth.lookup(operation) >= 63) {
+                            return refuse("DOM helper call tree is recursive or too deep");
+                        }
+                        calls.push_back({operation, arguments});
+                    }
+                }
+                if (calls.empty()) { return refuse("DOM helper has no source invocation"); }
+                if (!expand(target, depth + 1)) { return false; }
+                for (const Call & call : calls) {
+                    mlir::IRMapping mapping;
+                    auto & body = target.getBody().front();
+                    for (auto [formal, actual] :
+                         llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments),
+                                   call.arguments)) {
+                        mapping.map(formal, actual);
+                    }
+                    mlir::OpBuilder at(call.operation);
+                    for (mlir::Operation & operation : body) {
+                        if (!step()) { return false; }
+                        if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
+                                operation)) {
+                            continue;
+                        }
+                        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+                            // Read the checked cell at this invocation, never bind a
+                            // shared helper body to its first caller's SSA values.
+                            mapping.map(load.getResult(),
+                                        captures[static_cast<unsigned>(load.getIndex())].value());
+                        } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                            call.operation->getResult(0).replaceAllUsesWith(
+                                mapping.lookup(result.getValue()));
+                        } else {
+                            auto * cloned = at.clone(operation, mapping);
+                            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
+                                callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
+                                                    callDepth.lookup(&operation);
+                            }
+                            ++operationCount;
                         }
                     }
-                    calls.push_back({operation, arguments});
+                    methods.erase(call.operation);
+                    callDepth.erase(call.operation);
+                    call.operation->erase();
                 }
+                for (ctjs::RootOp root : roots) { root.erase(); }
+                closure.erase();
+                closure = {};
+                progress = true;
             }
-            if (calls.empty()) { return refuse("DOM helper has no source invocation"); }
-            if (!expand(target, depth + 1)) { return false; }
-            for (const Call & call : calls) {
-                mlir::IRMapping mapping;
-                auto & body = target.getBody().front();
-                for (auto [formal, actual] :
-                     llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments),
-                               call.arguments)) {
-                    mapping.map(formal, actual);
-                }
-                mlir::OpBuilder at(call.operation);
-                for (mlir::Operation & operation : body) {
-                    if (!step()) { return false; }
-                    if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
-                        continue;
-                    }
-                    if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                        // Read the checked cell at this invocation, never bind a
-                        // shared helper body to its first caller's SSA values.
-                        mapping.map(load.getResult(),
-                                    captures[static_cast<unsigned>(load.getIndex())].value());
-                    } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                        call.operation->getResult(0).replaceAllUsesWith(
-                            mapping.lookup(result.getValue()));
-                    } else {
-                        at.clone(operation, mapping);
-                        ++operationCount;
-                    }
-                }
-                call.operation->erase();
-            }
-            for (ctjs::RootOp root : roots) { root.erase(); }
-            closure.erase();
-        }
-        for (ctjs::CreateCellOp cell : localCells) {
-            auto capture = cells.lookup(cell.getResult());
-            if (capture.write) { capture.write.erase(); }
-            while (!cell.getResult().use_empty()) {
-                if (!step()) { return false; }
-                auto root = llvm::dyn_cast<ctjs::RootOp>(*cell.getResult().getUsers().begin());
-                if (!root) { return refuse("DOM helper capture cell has an unexpanded use"); }
-                root.erase();
-            }
-            cells.erase(cell.getResult());
-            cell.erase();
+            llvm::erase_if(closures, [](auto closure) { return !closure; });
+            llvm::erase_if(localCells, [](auto cell) { return !cell; });
+            if (!progress) { return refuse("DOM helper capture graph is cyclic or escapes"); }
         }
         for (ctjs::CreateObjectOp object : objects) {
             while (!object.getResult().use_empty()) {
