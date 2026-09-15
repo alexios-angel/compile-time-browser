@@ -36,10 +36,16 @@ against the source closure and rejects forged creator/callee/new-target evidence
 Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned formatting
 matches the unchanged **nine-file / 26-diagnostic** baseline.
 
-The complete default build and **602-case CTest** gate are running against **1,443
-frozen inputs**. Do not treat them as complete yet. Recovery scripts, source hashes
-and focused logs are in `/tmp/ctcompile-dom-factory/`; `full.sh` and `full.log` identify
-the active full run. Compiler/test changes are committed and frozen.
+Complete **273-step default build / 602/602 CTests in 1435.17s /
+176/176 lit in 968.99s PASS**. All **1,443 frozen hashes** match devbox, local files
+and committed source. Recovery scripts, full/focused logs, generated C++ and
+`measured.json` are in `/tmp/ctcompile-dom-factory/`.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, with no
+skipped or pruned functions. Original DOM Data remains **7/7**; Button remains
+**4/86**, with **22 Node observations** and the existing VM inheritance failure.
+Button/Data reports and all **1,123 escape baseline rows** are byte-identical to
+the prior gate. Full WPT/test262 were not remeasured.
 
 **Exact next boundary:** original Bootstrap's complete factory/global/H/F/M graph is
 still unproved. The new factory slice returns one entry, not Bootstrap's method table
@@ -49,6 +55,9 @@ expansion. The manifest parser currently permits only Map, Array and the class-d
 intrinsic; DOM admission rejects all `initialIntrinsics`, and partial evaluation
 rejects String property reads outside its evaluated heap. `M` at line **230** needs
 live optional-value branches, Number/toString, URI decoding, JSON and exceptions.
+A Node-only witness preserving original F confirms that replacement overrides change
+its no-match result and exec/global accessors are still observed; see
+`/tmp/ctcompile-dom-factory/f-intrinsic-oracle.js` and `next-boundary.md`.
 Dataset iteration, inherited receivers and retained config/callback ownership follow.
 Full native Bootstrap and the application driver remain unfinished. No browser/runtime
 files or WPT/test262 expectations changed; no bundle admission gain is claimed.
