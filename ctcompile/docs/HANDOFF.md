@@ -38,11 +38,16 @@ forged creator evidence, extra wrapper parameters and observable setup refuse.
 Stable formatting passes **829 C++ / 100 Python / 33 web**. The required pinned
 formatter still reports the unchanged **nine-file / 26-diagnostic** baseline.
 
-The complete default devbox build and **602-test CTest gate are running** against
-**1,443 frozen source hashes**, with four CTest jobs. Do not infer a complete-gate
-pass from the focused results. Recovery: `/tmp/ctcompile-host-resume/full.sh`,
-`full.log`, `inputs.json` and the focused logs. No browser/runtime files or
-WPT/test262 expectations changed; no fresh full-bundle admission gain is claimed.
+The complete **275-step default build passed**. Of the **601 non-lit CTests**,
+**600 passed**; DOM entry still correctly refuses its source but an old assertion
+expects the word `wrapper` instead of the new initialization diagnostic. The only
+uncommitted change updates two assertions in `native_dom.py` to the exact new
+messages; their sources and refusal requirements are unchanged. The **176-case lit
+group is running**, followed by the queued complete DOM entry rerun. The full run
+uses **1,443 frozen source hashes** and four CTest jobs. Recovery:
+`/tmp/ctcompile-host-resume/full.sh`, `full.log`, `inputs.json`, `rerun.sh` and
+`rerun.log`. No browser/runtime files or WPT/test262 expectations changed; no fresh
+full-bundle admission gain is claimed.
 
 **Exact next boundary:** original Bootstrap factory/global initialization and the
 complete H/F/M graph still need proof. Wrapper calls and global reads are refused.
