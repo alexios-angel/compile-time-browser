@@ -2,16 +2,20 @@
 
 ## Current boundary, 2026-09-15
 
-Latest slice **61e47459** extends verbatim vendor `F` to differing constant
-attribute names and forwarded local parameters: **377 Node/VM observations /
-eight native binaries**, final focused **2/2 CTests PASS**. Complete **275-step
-build / 602/602 CTests / 176/176 lit PASS**; see [HANDOFF](HANDOFF.md) for measurements.
-Fresh full-bundle coverage remains **19/574 native**, DOM Data **7/7**, Button **4/86**;
-this slice makes no full-bundle admission gain claim.
-Captured F still refuses: its sibling caller obtains the function through a cell,
-and eager child expansion precedes capture-derived invocation facts. Compose
-those facts through the existing complete source proof, then address live M
-normalization and the full factory/global/H/F/M initialization graph.
+Latest slice **ea183285** composes captured original F with distinct names, multiple
+consumers and forwarded calls. Original H `setDataAttribute`/`removeDataAttribute`
+now compile through the same proof, including a factory-exported entry table;
+template concatenation uses the existing String lowering only for two proved
+Strings. Final focused **4/4 CTests PASS**: **401 Node/VM observations / eight
+native binaries / 700 source refusals / 101 replacement controls**. The complete
+build and **602-test CTest gate are running**; see [HANDOFF](HANDOFF.md).
+The prior full-bundle measurement remains **19/574 native**, DOM Data **7/7**,
+Button **4/86**; no new bundle measurement or admission gain is claimed yet.
+
+Next is original H `getDataAttribute` calling live M: optional-value branches,
+Number/toString, URI decoding, JSON and exceptions. Full H also needs dataset
+enumeration and callbacks. Full Bootstrap initialization, inherited receivers,
+retained config/callback ownership and the application driver remain unfinished.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,
@@ -145,8 +149,8 @@ no nullable-to-String coercion.
 Bootstrap's original `getDataAttribute` (vendor line **263**) computes its name
 through `F` and feeds the optional result to `M`. Exact local constant calls to
 verbatim F now prove its replacement callback is never invoked, including distinct
-names. The captured H/F call graph still needs invocation facts before helper
-expansion. `M` still requires source branches, `Number`, `toString`, `typeof`, URI
+names. Captured H/F calls now compose for the original set/remove methods.
+`M` still requires source branches, `Number`, `toString`, `typeof`, URI
 decoding, JSON parsing and exceptions. Preserve these source operations when
 composing `_mergeConfigObj`'s actual `H.getDataAttribute(e, "config")` call.
 The exported entry still declares every explicit parameter as an element; local

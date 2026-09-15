@@ -6,6 +6,58 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured Bootstrap F/H calls and unsigned shifts, 2026-09-15 UTC
+
+Continued the completed **bf45be87 / 61e47459** thread from this handoff and
+AGENT-SYNC's **05:37** journal. Both histories and unmerged branches were checked;
+the September 7 WIP is already an ancestor, and the shared tree was clean. No
+interrupted source or gate remained. Three agents supplied source tests, the
+independent escape change and proof review; root completed the test draft after
+two agents reached service limits.
+
+**9c2c8b1d** proves bounded exact Number unsigned shifts in the charged array
+contents analysis. Both operands must already be integral Numbers in the uint32
+range; the count is masked to five bits. The original result retains its value
+identity, including conversion of negative zero to positive zero. Snapshots,
+transport, retained children, opaque branches, stale metadata and work cutoffs
+remain checked. The old static-Add-only expectation now includes UShr without
+changing its source. No native bitwise admission is claimed.
+
+**ea183285** defers uncaptured helper expansion until all capture holders
+retire and expose the complete invocation census. Binding then precedes expansion;
+the existing leaf, identity, order, depth, budget and full-function checks remain.
+Captured original F accepts distinct constant names, multiple consumers and
+forwarding chains. Original H `setDataAttribute`/`removeDataAttribute` also compile,
+including a factory-returned entry table: their template concatenation reuses the
+existing owning String lowering after both operands are independently proved
+Strings. No RegExp, callback storage or Script dependency reaches native output.
+Matching/live inputs, mutation, early calls, escaped identities, unused helpers
+and non-String template operands remain refused.
+
+Final focused **4/4 CTests in 77.99s PASS**: **401 Node/VM observations / eight
+GCC-Clang binaries / 700 source refusals / 44 provenance-depth / 24 method /
+241 capture / 101 replacement controls**. Dense arrays: **384 rows / 191 live
+states / 14,586 retention cutoffs**, zero escape violations, precision **40/172**.
+Stable formatting passes **829 C++ / 100 Python / 33 web**. Required pinned
+formatting matches the unchanged **nine-file / 26-diagnostic** baseline; all
+changed C++ files pass both formatters.
+
+The complete default build and **602-test CTest gate are running** with four test
+jobs against **1,443 frozen input hashes**. No final full-suite result is claimed
+yet. Recovery scripts, focused logs and the live `full.log` are in
+`/tmp/ctcompile-captured-f/`. The previous full-bundle measurements were **19/574
+native**, DOM Data **7/7**, Button **4/86**; these are not a new measurement.
+
+**Exact next boundary:** original H `getDataAttribute` feeds a live optional String
+to original M (vendor line **230**). M still needs source branches, Number/toString,
+URI decoding, JSON and exceptions; its current single-block DOM proof refuses
+before normalization. Full H includes dataset enumeration and callbacks. Complete
+Bootstrap initialization, inherited receivers and retained config/callback ownership
+still require proof. F with its own captures remains separate. The original H
+String-only slice does not admit the full H object or full Bootstrap bundle.
+Full native Bootstrap and the application driver remain unfinished. No browser/
+runtime or WPT/test262 expectation files changed; full WPT/test262 were not rerun.
+
 ## Distinct String inputs for original Bootstrap F, 2026-09-15 UTC
 
 Continued the completed **3adca7a8 / ab7bf2a6** thread from this handoff and

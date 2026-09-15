@@ -158,8 +158,17 @@ One unique local helper may supply the String when all its exact ordinary calls
 pass a bounded set of constant Strings. The proof follows these sets through local
 helper parameters and checks every possible input; the result keeps its original
 receiver value at each invocation. A live input invalidates the whole parameter.
-Matching strings, captured callable aliases, other patterns/flags and prototype
-mutations still refuse.
+An uncaptured helper held by immutable captured cells waits until every consumer
+has expanded and every invocation is visible before binding these inputs. This
+admits captured F with distinct names and forwarded call chains; F with captures
+of its own remains outside this specialization. Matching strings, other patterns/
+flags and prototype mutations still refuse.
+
+Template concatenation also reuses ordinary owning String addition when both
+operands are proved Strings. Original Bootstrap H `setDataAttribute` and
+`removeDataAttribute` compose with captured F, including a factory-exported entry
+table. Nullable values, objects, Numbers and Booleans do not gain implicit template
+conversion. H's live M normalization and dataset enumeration remain unproved.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private
