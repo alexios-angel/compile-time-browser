@@ -153,9 +153,13 @@ leaf rules, with composed depth bounded by **e81304b4**: **213 Node/VM observati
 refusals / 43 provenance-depth / 24 method / 53 capture controls**. Consumers
 expand before cells and callable holders are retired; the complete DOM proof still
 gates publication. The original two optional-return sources execute unchanged.
-Forwarded upvalues, capturing helpers that create nested closures and captured host
-entries remain beyond this proof. Original Bootstrap still needs its outer H/F/M
-source initialization and identities.
+**122715d8** additionally expands nested capturing helpers and proves forwarded
+immutable slots at each invocation: **249 Node/VM observations / eight GCC-Clang
+binaries / 336 source refusals / 44 provenance-depth / 24 method / 74 capture controls**.
+The original forwarded optional-return source executes unchanged. Shared leaf queries
+remain unchanged; mixed slots and composed depth receive the private DOM proof.
+Captured host entries remain beyond this proof. Original Bootstrap still needs its
+outer H/F/M source initialization and identities.
 For `F('config')`, a no-match fold must prove standard String replacement and
 RegExp replacement/execution/property lookup, plus absence of source mutation or
 reentry. The current DOM manifest supplies none of those intrinsic identities.

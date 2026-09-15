@@ -77,8 +77,12 @@ Captured local callable/holder graphs use this same leaf proof. Consumers expand
 before their cells and holders are retired, exposing callable identities for the
 next checked expansion. Cycles and chains reaching 64 frames refuse; every rescan
 and cloned invocation is charged. The original optional-return callable and holder
-sources execute unchanged. Forwarded upvalues, helpers that themselves create
-closures while capturing, and captured host entries remain refused.
+sources execute unchanged. Nested helpers expand before the shared leaf query.
+Forwarded slots have a private DOM proof of the original creator, enclosing slot,
+complete local cell uses and immutable target. Symbolic enclosing loads are inserted
+at each call, so forwarding preserves invocation-specific values and assignment
+order. Mixed local/forwarded slots and multiple enclosing levels use the same proof.
+Captured host entries and observable outer initialization remain refused.
 
 Only its checked, inert function-declaration wrapper may otherwise be omitted. Skipped
 source, additional initialization effects, calls to the entry from JavaScript,
@@ -152,13 +156,13 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **213** copied-value and Boolean
+The `ctcompile_native_dom_strings` CTest compares **249** copied-value and Boolean
 observations with Node and the ctbrowser VM, then executes eight GCC/Clang clients
 across both providers,
 optimization policies and printing layouts. It checks copied optional strings,
 invalid handles before effects, document domains, name bytes and casing, and
-**304** source refusals for unsupported coercion, control flow, handles and retention,
-**43** provenance/depth refusals, **24** method provenance checks, **53** capture
+**336** source refusals for unsupported coercion, control flow, handles and retention,
+**44** provenance/depth refusals, **24** method provenance checks, **74** capture
 provenance/storage/budget checks and four
 work-budget/fingerprint controls. Helper
 cases preserve argument evaluation order, saved String values, repeated calls and

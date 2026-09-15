@@ -6,6 +6,52 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested DOM captures and negated-zero evidence, 2026-09-15 UTC
+
+Continued completed **dd220913 / e81304b4**, found in this handoff and the
+**01:25 AGENT-SYNC** journal. Both histories and unmerged branches were checked;
+the tree was clean and September 7 WIP was already an ancestor. No interrupted
+source or gate remained. Three agents supplied tests, an independent escape slice
+and proof review; root completed the frozen test draft after its service limit.
+
+**bf8377e7** carries bounded exact zero through Unary Neg at the producer, replacing
+the old length-write-only exception. Saved/reloaded/forwarded zero can supply a
+present own index, subtraction offset or non-growing length. Original signed values,
+coercion refusals and charged proof replay remain intact. Focused arrays and escape
+fixture pass: **243 dense-length rows / 95 live states / 8,363 budget cutoffs**,
+**zero escape violations / precision 40/172**.
+
+**122715d8** expands nested helpers before applying the unchanged shared leaf
+capture query. A private DOM proof checks forwarded slots against the original
+creator census and enclosing upvalue count, then inserts symbolic enclosing loads
+at each invocation. Mixed local/forwarded slots, local cell uses and store-before-call
+order are checked separately. Mutable captures, escaped identities, malformed source,
+recursion and 64-frame chains still refuse. Complete DOM reproof gates publication;
+output uses ordinary borrowed element handles and owning optional Strings.
+
+Final focused **2/2 DOM String/host CTests in 45.76s PASS**: **249 Node/VM
+observations / eight GCC-Clang binaries / 336 source refusals / 44 provenance-depth /
+24 method / 74 capture provenance-budget checks**, plus four existing
+budget/fingerprint controls. The original forwarded optional-return refusal source
+is preserved byte-for-byte and now executes. The first mixed-slot run exposed a
+signed/unsigned comparison of the -1 local sentinel; the final run includes its fix.
+Stable formatting passes **829 C++ / 100 Python / 33 web**; required pinned formatting
+is byte-identical to the existing **nine-file / 26-diagnostic** baseline.
+
+**Complete gate running:** `CT_TEST_JOBS=4 tools/remote-build.sh`, with **1,443 frozen
+input hashes**. Focused source hashes match local and devbox. Recovery scripts/logs
+live in `/tmp/ctcompile-dom-forwarded/`; `full.sh` collects the final CTest log and
+verifies remote inputs. A completed full gate is not yet claimed.
+
+**Exact next boundary:** the exported entry still must be uncaptured and its wrapper
+inert. Prove original Bootstrap's outer H/F/M initialization and callable identities;
+then the trusted String/RegExp replacement/execution/property lookup for
+`F("config")` (vendor line 243). `M` (line 230) still consumes live optional attributes
+through branches, Number/toString, URI decoding, JSON and exceptions. Dataset
+iteration, inherited receivers and retained config/callback ownership follow.
+Full native Bootstrap and the application driver remain unfinished. No browser/runtime
+files or WPT/test262 expectations changed; no full-bundle admission gain is claimed.
+
 ## Captured callable/holder graphs and unary Plus evidence, 2026-09-15 UTC
 
 Continued the completed **331d8a52 / d1c1ab96** thread from this handoff and
