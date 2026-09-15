@@ -748,11 +748,15 @@ def main():
             "function invalid(element) { const query = element.matches; return query('.btn'); }",
             "DOM",
         ),
-        ("invoked-entry", ACTION + "toggle({});\n", "wrapper"),
+        (
+            "invoked-entry",
+            ACTION + "toggle({});\n",
+            "DOM entry initialization contains an observable source operation",
+        ),
         (
             "replaced-undefined",
             EXPLICIT_FORCES.replace("explicitForces(", "undefined("),
-            "wrapper",
+            "DOM entry initialization has an unknown or repeated export",
         ),
         (
             "unknown-global-force",
