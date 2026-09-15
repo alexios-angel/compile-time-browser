@@ -14,7 +14,7 @@ bool recovery::run() {
     if (!inspect()) { return false; }
     tail normal, caught;
     if (!collect(normal, push.getBody(), true, false) ||
-        !collect(caught, push.getHandler(), false, true)) {
+        !collect(caught, push.getHandler(), false, true) || !partition(normal, caught)) {
         return false;
     }
     if (throws == 0 && invocations.empty()) {
@@ -51,15 +51,23 @@ bool recovery::run() {
         handler.eraseArgument(index);
     }
     if (!normalizeIndexSwitches(guarded) || !trimUnusedIfResults(guarded)) { return false; }
+    auto * installation = push->getBlock();
     push.erase();
-    builder.setInsertionPointToEnd(&function.getBody().front());
+    builder.setInsertionPointToEnd(installation);
     ctjs::FrameExitOp::create(builder, guarded->getLoc(), frame.getResult());
     ctjs::ReturnOp::create(builder, guarded->getLoc(), guarded->getResult(0));
     llvm::SmallVector<mlir::Block *> old;
-    for (mlir::Block & block : llvm::drop_begin(function.getBody())) { old.push_back(&block); }
+    for (mlir::Block & block : function.getBody()) {
+        if (!prefix.contains(&block)) { old.push_back(&block); }
+    }
     for (mlir::Block * block : old) { block->dropAllReferences(); }
     for (mlir::Block * block : old) { block->erase(); }
-    function->removeAttr("ctjs.not_structured");
+    if (function.getBody().hasOneBlock()) {
+        function->removeAttr("ctjs.not_structured");
+    } else if (!function->hasAttr("ctjs.not_structured")) {
+        function->setAttr("ctjs.not_structured",
+                          builder.getStringAttr("native exception prefix remains unstructured"));
+    }
     return true;
 }
 
@@ -90,8 +98,13 @@ ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, u
     scratch->getBody().takeBody(original);
     // run() only changed this diagnostic attribute. The returned snapshot
     // must retain the original attributes as well as the original body.
+    auto structured = (*scratch)->getAttr("ctjs.not_structured");
     (*scratch)->setAttrs(function->getAttrs());
-    function->removeAttr("ctjs.not_structured");
+    if (structured) {
+        function->setAttr("ctjs.not_structured", structured);
+    } else {
+        function->removeAttr("ctjs.not_structured");
+    }
     return {true, {}, std::move(scratch), maxSteps - attempt.remaining};
 }
 

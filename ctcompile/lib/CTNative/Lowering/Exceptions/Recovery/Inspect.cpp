@@ -1,4 +1,4 @@
-// recovery - inspection: the one-entry-handler shape the preserved importer
+// recovery - inspection: the one-handler shape the preserved importer
 // CFG must have, and what a checked invocation must look like to be represented.
 //
 // One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
@@ -34,11 +34,11 @@ bool recovery::inspect() {
         }
     }
     if (pushes != 1 || landings != 1 || frames != 1 ||
-        push->getBlock() != &function.getBody().front() || frame->getBlock() != push->getBlock() ||
+        frame->getBlock() != &function.getBody().front() ||
         push.getHandler() != landing->getBlock() || push.getBody() == push.getHandler() ||
         !landing.getPad().use_empty()) {
         return reject(
-            "native exception recovery needs one entry handler and dedicated catch landing");
+            "native exception recovery needs one handler, entry frame and dedicated catch landing");
     }
     width = push.getBody()->getNumArguments();
     if (width == 0 || push.getHandler()->getNumArguments() != width ||
@@ -57,6 +57,64 @@ bool recovery::inspect() {
             return reject("native catch landing is reachable without throwing");
         }
     }
+    return true;
+}
+
+bool recovery::partition(const tail & normal, const tail & caught) {
+    // Stop at the original installation site. Nothing before it belongs to
+    // the catch, including early returns and fallible Number/property calls.
+    tail preceding;
+    llvm::SmallVector<mlir::Block *> pending{&function.getBody().front()};
+    while (!pending.empty()) {
+        if (!spend()) { return false; }
+        auto * block = pending.pop_back_val();
+        if (block->getParent() != &function.getBody() || normal.active.contains(block) ||
+            caught.active.contains(block)) {
+            return reject("native exception prefix bypasses its handler installation");
+        }
+        if (!prefix.insert(block).second) { continue; }
+        if (block != &function.getBody().front() && block->getNumArguments() != width) {
+            return reject("native exception prefix lost its complete register vector");
+        }
+        preceding.blocks.push_back(block);
+        for (mlir::Operation & operation : *block) {
+            if (!spend()) { return false; }
+            if (llvm::isa<ctjs::PopHandlerOp, ctjs::CatchLandOp>(operation)) {
+                return reject("native exception prefix changes handler state");
+            }
+        }
+        if (block == push->getBlock()) { continue; }
+        auto * term = block->getTerminator();
+        if (llvm::isa<ctjs::ReturnOp, ctjs::ThrowOp>(term)) { continue; }
+        if (!llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp,
+                       ctjs::CheckOp>(term)) {
+            return reject("native exception prefix has an unsupported control-flow exit");
+        }
+        auto branch = llvm::cast<mlir::BranchOpInterface>(term);
+        for (auto [index, successor] : llvm::enumerate(term->getSuccessors())) {
+            auto operands = branch.getSuccessorOperands(static_cast<unsigned>(index));
+            if (!spend(uint64_t(1) + operands.size())) { return false; }
+            if (operands.getProducedOperandCount() != 0 ||
+                operands.size() != successor->getNumArguments()) {
+                return reject("native exception prefix lost its complete edge register vector");
+            }
+            for (auto [value, argument] :
+                 llvm::zip(operands.getForwardedOperands(), successor->getArguments())) {
+                if (value.getType() != argument.getType()) {
+                    return reject("native exception prefix has mismatched edge register types");
+                }
+            }
+            preceding.edges[block].push_back(successor);
+            pending.push_back(successor);
+        }
+    }
+    if (!prefix.contains(push->getBlock()) || !acyclic(preceding)) {
+        return reject("native exception handler is not reached by an acyclic prefix");
+    }
+    // The prefix and both tails exhaust every successor reachable from entry,
+    // including check unwinds. Remaining blocks are unreachable, such as the
+    // importer's pop/return epilogue after an unconditional return or throw.
+    // They stay in the original snapshot but need no executable clone.
     return true;
 }
 

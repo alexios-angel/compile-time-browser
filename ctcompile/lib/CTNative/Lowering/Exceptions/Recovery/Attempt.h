@@ -47,7 +47,7 @@ namespace ctcompile::ctnative::lowering_detail {
 // has no successor. A throw-only block therefore supplies its current vector
 // through its block arguments; the installation edge supplies no throw state.
 //
-// Work on a disposable function clone. Prove one entry handler, its dedicated
+// Work on a disposable function clone. Prove one handler, its dedicated
 // landing, balanced continuation edges and acyclic tails. Clone normal and catch
 // tails separately, including any shared continuation. Checks become normal
 // edges only under the caller's subsequent native nonthrowing admission. Every
@@ -73,6 +73,7 @@ struct recovery {
     llvm::DenseSet<mlir::Operation *> boundTargets;
     llvm::DenseSet<mlir::Operation *> boundCalls;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> boundCallers;
+    llvm::DenseSet<mlir::Block *> prefix;
 
     recovery(ctjs::FuncOp function, unsigned maxSteps, ExceptionRecoveryMode mode)
         : function(function), module(function->getParentOfType<mlir::ModuleOp>()),
@@ -99,6 +100,7 @@ struct recovery {
 
     // Defined in Inspect.cpp.
     bool inspect();
+    bool partition(const tail & normal, const tail & caught);
     bool inspectInvocation(ctjs::CheckOp check);
 
     // Defined in Bindings.cpp.
@@ -132,6 +134,7 @@ struct recovery {
 
     // Defined in Tails.cpp.
     bool collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch);
+    bool acyclic(tail & plan);
     bool cloneTail(const tail & plan, mlir::Region & destination, bool isCatch);
 
     // Defined in Structure.cpp.

@@ -76,5 +76,6 @@ var normal = guarded(false);
                               "!ctnative.num<i32>");
     testSelectedActuals(context);
     testEffects(context);
+    testGuardedTail(context);
     return failures == 0 ? 0 : 1;
 }

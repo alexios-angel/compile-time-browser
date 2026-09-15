@@ -386,7 +386,6 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             if (!handlers) { return; }
             auto recovery = recoverPrimitiveExceptionRegion(fn, exceptionMaxSteps);
             if (recovery.recovered) {
-                fn->removeAttr("ctjs.not_structured");
                 exceptionOriginals.emplace_back(fn, std::move(recovery.original));
             } else if (!recovery.refusal.empty()) {
                 fn->setAttr("ctnative.exception_refusal",
@@ -740,6 +739,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             fn.getBody().takeBody(original->getBody());
             if (auto marker = (*original)->getAttr("ctjs.not_structured")) {
                 fn->setAttr("ctjs.not_structured", marker);
+            } else {
+                fn->removeAttr("ctjs.not_structured");
             }
         }
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {

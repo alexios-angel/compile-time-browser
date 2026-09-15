@@ -1,4 +1,6 @@
 #include "Tests.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Transforms/Passes.h"
 
 namespace ctcompile::test::exception_recovery {
 
@@ -599,6 +601,246 @@ void testEffects(mlir::MLIRContext & context) {
         check(!refused.recovered && refused.refusal.find("nonthrowing") != std::string::npos &&
                   printed(candidate) == changed && countChecks(candidate) == checks,
               "live status/continuation effect mutation preserves all original edges");
+    }
+}
+
+constexpr llvm::StringLiteral guardedTailFixture = R"mlir(
+module {
+  ctjs.func @guarded$tail(%r: !ctjs.value, %nt: !ctjs.value,
+                         %c: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32, ctjs.not_structured = "preserved"} {
+    %frame = ctjs.frame_enter 2
+    %zero = ctjs.constant #ctjs.number<0>
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %earlyCondition = ctjs.truthy %flag
+    cf.cond_br %earlyCondition, ^early(%zero, %one : !ctjs.value, !ctjs.value),
+      ^prepare(%zero, %one : !ctjs.value, !ctjs.value)
+  ^early(%earlyState: !ctjs.value, %earlyPayload: !ctjs.value):
+    ctjs.frame_exit %frame
+    ctjs.return %earlyState
+  ^prepare(%saved: !ctjs.value, %scratch: !ctjs.value):
+    %prefix = ctjs.load_global "preTry"
+    ctjs.check ^install(%saved, %prefix : !ctjs.value, !ctjs.value)
+      caught ^uncaught(%saved, %scratch : !ctjs.value, !ctjs.value)
+  ^uncaught(%uncaughtState: !ctjs.value, %uncaughtPayload: !ctjs.value):
+    ctjs.throw %uncaughtPayload
+  ^install(%mark: !ctjs.value, %value: !ctjs.value):
+    %condition = ctjs.truthy %value
+    ctjs.push_handler ^body(%mark, %value : !ctjs.value, !ctjs.value)
+      catch ^handler(%mark, %value : !ctjs.value, !ctjs.value)
+  ^body(%state: !ctjs.value, %payload: !ctjs.value):
+    cf.cond_br %condition, ^throw(%state, %payload : !ctjs.value, !ctjs.value),
+      ^normal(%state, %payload : !ctjs.value, !ctjs.value)
+  ^throw(%throwState: !ctjs.value, %throwPayload: !ctjs.value):
+    ctjs.throw %throwPayload
+  ^normal(%normalState: !ctjs.value, %normalPayload: !ctjs.value):
+    ctjs.pop_handler
+    ctjs.frame_exit %frame
+    ctjs.return %normalState
+  ^handler(%before: !ctjs.value, %oldScratch: !ctjs.value):
+    %pad, %thrown = ctjs.catch_land
+    %same = ctjs.compare strict_eq %before, %oldScratch
+    %caught = ctjs.compare strict_eq %same, %thrown
+    ctjs.frame_exit %frame
+    ctjs.return %caught
+  }
+}
+)mlir";
+
+// The prefix is printed independently of the function's diagnostic attributes.
+// Its block order, SSA uses and both status successors must survive adoption.
+std::string guardedPrefix(ctjs::FuncOp function) {
+    std::string text;
+    llvm::raw_string_ostream into(text);
+    for (auto & block : function.getBody()) {
+        for (auto & operation : block) {
+            if (llvm::isa<ctjs::PushHandlerOp, ctjs::TryOp>(operation)) { return text; }
+            operation.print(into);
+            into << '\n';
+        }
+    }
+    return text;
+}
+
+void testGuardedTail(mlir::MLIRContext & context) {
+    for (auto mode :
+         {ExceptionRecoveryMode::ExplicitThrows, ExceptionRecoveryMode::CheckedInvocations,
+          ExceptionRecoveryMode::EffectCheckedInvocations}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(guardedTailFixture, &context);
+        if (!check(static_cast<bool>(module), "guarded-tail fixture parses")) { return; }
+        auto function = guarded(*module);
+        const auto before = printed(*module);
+        const auto prefix = guardedPrefix(function);
+        mlir::OwningOpRef<ctjs::FuncOp> detached(llvm::cast<ctjs::FuncOp>(function->clone()));
+        const auto snapshot = printed(*detached);
+        auto result = recoverPrimitiveExceptionRegion(function, 100000, mode);
+        if (!check(result.recovered, "non-entry handler recovers its guarded tail")) {
+            llvm::errs() << result.refusal << '\n';
+            return;
+        }
+        check(mlir::succeeded(mlir::verify(*module)), "guarded-tail completion verifies");
+        check(result.original && printed(*result.original) == snapshot,
+              "adoption retains the complete source function and diagnostic in its snapshot");
+        check(guardedPrefix(function) == prefix,
+              "early return, fallible prefix, status edges and uncaught throw remain verbatim");
+        check(function.getBody().getBlocks().size() == 5,
+              "only collected normal and catch tail blocks are erased");
+        check(function->getAttrOfType<mlir::StringAttr>("ctjs.not_structured") ==
+                  mlir::StringAttr::get(&context, "preserved"),
+              "partial recovery retains the original unstructured-prefix diagnostic");
+        ctjs::TryOp attempt;
+        ctjs::CheckOp status;
+        ctjs::LoadGlobalOp load;
+        unsigned throws = 0;
+        function.walk([&](ctjs::TryOp found) { attempt = found; });
+        function.walk([&](ctjs::CheckOp found) { status = found; });
+        function.walk([&](ctjs::LoadGlobalOp found) { load = found; });
+        function.walk([&](ctjs::ThrowOp thrown) {
+            ++throws;
+            check(thrown->getParentRegion() == &function.getBody(),
+                  "pre-try throw remains outside both recovered regions");
+        });
+        if (!check(attempt && status && load && throws == 1 && countChecks(function) == 1,
+                   "guarded-tail recovery retains the sole prefix failure edge")) {
+            return;
+        }
+        check(attempt->getBlock() == &function.getBody().back() &&
+                  attempt->getBlock() != &function.getBody().front() &&
+                  status.getCont() == attempt->getBlock() &&
+                  llvm::isa<ctjs::ThrowOp>(status.getHandler()->getTerminator()) &&
+                  load->getParentRegion() == &function.getBody(),
+              "try stays at its original installation site after the pre-try check");
+        auto returned = llvm::dyn_cast<ctjs::ReturnOp>(attempt->getBlock()->getTerminator());
+        check(returned && returned.getValue() == attempt.getResult() &&
+                  llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()),
+              "the recovered tail exits its frame and returns at the installation site");
+        check(attempt.getCatchBody().front().getNumArguments() == 3,
+              "catch keeps payload and both live saved register slots");
+        const auto complete = result.steps;
+        restore(function, result);
+        check(printed(*module) == before, "guarded-tail rollback restores the complete source");
+        for (unsigned budget = 0; budget < complete; ++budget) {
+            auto limited = recoverPrimitiveExceptionRegion(function, budget, mode);
+            if (!check(!limited.recovered &&
+                           limited.refusal.find("budget exhausted") != std::string::npos &&
+                           printed(*module) == before,
+                       "every incomplete prefix/tail budget preserves source and status edges")) {
+                llvm::errs() << "budget " << budget << ": " << limited.refusal << '\n';
+                return;
+            }
+        }
+        auto exact = recoverPrimitiveExceptionRegion(function, complete, mode);
+        if (!check(exact.recovered && exact.steps == complete,
+                   "the complete prefix/tail budget succeeds exactly")) {
+            return;
+        }
+        restore(function, exact);
+        check(printed(*module) == before, "exact-budget tail recovery rolls back verbatim");
+        llvm::outs() << "guarded tail: " << complete
+                     << " steps, all incomplete budgets preserve prefix and suffix, mode="
+                     << static_cast<unsigned>(mode) << '\n';
+    }
+    {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(guardedTailFixture, &context);
+        if (!module) { return; }
+        auto function = guarded(*module);
+        function->removeAttr("ctjs.not_structured");
+        const auto before = printed(*module);
+        auto result = recoverPrimitiveExceptionRegion(function);
+        if (!check(result.recovered && function->hasAttr("ctjs.not_structured"),
+                   "partial recovery records a missing unstructured-prefix diagnostic")) {
+            return;
+        }
+        restore(function, result);
+        check(printed(*module) == before, "rollback removes only the synthesized diagnostic");
+    }
+    {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(guardedTailFixture, &context);
+        if (!module) { return; }
+        auto function = guarded(*module);
+        function->removeAttr("ctjs.not_structured");
+        const auto source = printed(function);
+        mlir::PassManager passes(&context);
+        passes.addPass(ctnative::createCTNativeLowerToEmitC());
+        if (!check(mlir::succeeded(passes.run(*module)), "partial native recovery can refuse")) {
+            return;
+        }
+        check(function->hasAttr("ctnative.not_native"), "an unproved prefix remains non-native");
+        function.walk([](mlir::Operation * operation) {
+            ctnative::removeAttrsWithPrefix(operation, "ctnative.");
+        });
+        check(printed(function) == source,
+              "native admission rollback restores a source without a diagnostic marker");
+    }
+    for (unsigned mutation = 0; mutation != 11; ++mutation) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(guardedTailFixture, &context);
+        if (!module) { return; }
+        auto function = guarded(*module);
+        auto prior = recoverPrimitiveExceptionRegion(function);
+        if (!check(prior.recovered, "tail mutation first proves the unchanged source")) { return; }
+        restore(function, prior);
+        ctjs::PushHandlerOp push;
+        ctjs::CheckOp status;
+        ctjs::PopHandlerOp pop;
+        ctjs::FrameEnterOp frame;
+        function.walk([&](ctjs::PushHandlerOp found) { push = found; });
+        function.walk([&](ctjs::CheckOp found) { status = found; });
+        function.walk([&](ctjs::PopHandlerOp found) { pop = found; });
+        function.walk([&](ctjs::FrameEnterOp found) { frame = found; });
+        auto entry = llvm::cast<mlir::cf::CondBranchOp>(function.getBody().front().getTerminator());
+        auto body = llvm::cast<mlir::cf::CondBranchOp>(push.getBody()->getTerminator());
+        mlir::OpBuilder at(status);
+        if (mutation == 0) {
+            status->setSuccessor(status->getBlock(), 0);
+        } else if (mutation == 1) {
+            entry->setSuccessor(push.getBody(), 0);
+        } else if (mutation == 2) {
+            body->setSuccessor(status->getBlock(), 0);
+        } else if (mutation == 3) {
+            ctjs::PopHandlerOp::create(at, status.getLoc());
+        } else if (mutation == 4) {
+            at.setInsertionPoint(pop);
+            ctjs::PopHandlerOp::create(at, pop.getLoc());
+        } else if (mutation == 5) {
+            push->setOperand(2, function.getBody().front().getArgument(0));
+        } else if (mutation == 6) {
+            frame->setAttr("reg_count", at.getI32IntegerAttr(3));
+        } else if (mutation == 7) {
+            status.getContOperandsMutable().erase(0);
+        } else if (mutation == 8) {
+            auto * unreachable = new mlir::Block;
+            function.getBody().push_back(unreachable);
+            unreachable->addArgument(ctjs::ValueType::get(&context), push.getLoc());
+            unreachable->addArgument(ctjs::ValueType::get(&context), push.getLoc());
+            at.setInsertionPointToEnd(unreachable);
+            ctjs::ReturnOp::create(at, push.getLoc(), unreachable->getArgument(0));
+        } else if (mutation == 9) {
+            body->setSuccessor(push.getBody(), 0);
+        } else {
+            status->setOperand(0, frame.getResult());
+        }
+        function->setAttr("ctnative.completions_proved", at.getUnitAttr());
+        const auto changed = printed(*module);
+        for (auto mode :
+             {ExceptionRecoveryMode::ExplicitThrows, ExceptionRecoveryMode::CheckedInvocations,
+              ExceptionRecoveryMode::EffectCheckedInvocations}) {
+            auto refused = recoverPrimitiveExceptionRegion(function, 100000, mode);
+            if (mutation == 8) {
+                if (!check(refused.recovered && mlir::succeeded(mlir::verify(*module)),
+                           "a source block proved unreachable needs no executable clone")) {
+                    return;
+                }
+                restore(function, refused);
+                check(printed(*module) == changed,
+                      "unreachable source remains in the complete rollback snapshot");
+                continue;
+            }
+            if (!check(!refused.recovered && !refused.refusal.empty() &&
+                           printed(*module) == changed,
+                       "malformed prefix, suffix or register vectors refuse atomically")) {
+                llvm::errs() << "mutation " << mutation << ": " << refused.refusal << '\n';
+            }
+        }
     }
 }
 

@@ -56,5 +56,6 @@ std::string nestedSource(llvm::StringRef source, unsigned depth, bool payload);
 void testTransitive(mlir::MLIRContext & context, llvm::StringRef source);
 void testSelectedActuals(mlir::MLIRContext & context);
 void testEffects(mlir::MLIRContext & context);
+void testGuardedTail(mlir::MLIRContext & context);
 
 } // namespace ctcompile::test::exception_recovery

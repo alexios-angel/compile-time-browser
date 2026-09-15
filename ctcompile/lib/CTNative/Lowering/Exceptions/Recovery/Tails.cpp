@@ -15,8 +15,9 @@ bool recovery::collect(tail & result, mlir::Block * start, bool initiallyActive,
     while (!pending.empty()) {
         if (!spend()) { return false; }
         auto [block, active] = pending.pop_back_val();
-        if (block == &function.getBody().front() || block->getParent() != &function.getBody() ||
-            block->getNumArguments() != width || (!isCatch && block == push.getHandler())) {
+        if (block == &function.getBody().front() || block == push->getBlock() ||
+            block->getParent() != &function.getBody() || block->getNumArguments() != width ||
+            (!isCatch && block == push.getHandler())) {
             return reject("native exception tail leaves its preserved register CFG");
         }
         auto [known, inserted] = result.active.try_emplace(block, active);
@@ -89,17 +90,21 @@ bool recovery::collect(tail & result, mlir::Block * start, bool initiallyActive,
             pending.emplace_back(successor, active);
         }
     }
+    return acyclic(result);
+}
+
+bool recovery::acyclic(tail & plan) {
     // Kahn's algorithm rejects cycles without recursion or speculative
     // unrolling; shared normal/catch continuations remain ordinary DAGs.
     llvm::DenseMap<mlir::Block *, unsigned> incoming;
-    for (mlir::Block * block : result.blocks) {
-        for (mlir::Block * successor : result.edges[block]) {
+    for (mlir::Block * block : plan.blocks) {
+        for (mlir::Block * successor : plan.edges[block]) {
             if (!spend()) { return false; }
             ++incoming[successor];
         }
     }
     llvm::SmallVector<mlir::Block *> ready;
-    for (mlir::Block * block : result.blocks) {
+    for (mlir::Block * block : plan.blocks) {
         if (incoming.lookup(block) == 0) { ready.push_back(block); }
     }
     unsigned visited = 0;
@@ -107,11 +112,12 @@ bool recovery::collect(tail & result, mlir::Block * start, bool initiallyActive,
         if (!spend()) { return false; }
         auto * block = ready.pop_back_val();
         ++visited;
-        for (mlir::Block * successor : result.edges[block]) {
+        for (mlir::Block * successor : plan.edges[block]) {
+            if (!spend()) { return false; }
             if (--incoming[successor] == 0) { ready.push_back(successor); }
         }
     }
-    return visited == result.blocks.size() ||
+    return visited == plan.blocks.size() ||
            reject("native exception recovery does not support loops");
 }
 
@@ -268,7 +274,7 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
             if (!spend()) { return false; }
             auto value = mapping.lookupOrDefault(source);
             if (value == source && source.getParentBlock()->getParent() == &function.getBody() &&
-                source.getParentBlock() != &function.getBody().front()) {
+                !prefix.contains(source.getParentBlock())) {
                 return reject("native exception tail captures an unmapped register definition");
             }
             pending.operation->setOperand(static_cast<unsigned>(index), value);

@@ -37,9 +37,12 @@ enum class ExceptionRecoveryMode {
 // CheckedInvocations also needs the invocation effect/carrier and call-component
 // consumers before adoption. Its snapshot retains all non-call checks too;
 // structural success does not discharge any of those status edges.
-// EffectCheckedInvocations discharges them from the current source graph, not
+// EffectCheckedInvocations discharges recovered tail checks from the source graph, not
 // inferred result types or persisted attributes. Unsupported effects and work
 // exhaustion leave the original function untouched, including all checks.
+// An acyclic prefix stays outside the recovered try at its original installation
+// site, including its checks and early exits. A remaining multi-block prefix keeps
+// ctjs.not_structured until a separate proof can structure/admit the whole function.
 ExceptionRecoveryResult recoverPrimitiveExceptionRegion(
     ctjs::FuncOp function, unsigned maxSteps = 100000,
     ExceptionRecoveryMode mode = ExceptionRecoveryMode::ExplicitThrows);
