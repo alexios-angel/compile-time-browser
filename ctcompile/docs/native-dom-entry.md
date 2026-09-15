@@ -102,7 +102,7 @@ emission; generated C++ still calls the public DOM library directly.
 Only a checked inert declaration or the proved initialization above may be omitted.
 Skipped source, additional initialization effects, calls to the entry from JavaScript,
 mutable entry bindings, borrowed returns, handle retention, prototype or method writes,
-unknown receivers, and nested control flow refuse. Current operations are
+unknown receivers, loops and unstructured control flow refuse. Current operations are
 strict element identity, Boolean negation, Boolean/String/undefined constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
@@ -134,8 +134,20 @@ and truthiness: both a missing attribute and an empty attribute are false. These
 Boolean observations can drive existing DOM force arguments. Concatenation accepts
 two definite Strings and uses ordinary `std::string` addition; optional Strings
 are not implicitly coerced into names or values. Loose equality, global `Boolean`
-calls, numeric conversion, branches and property storage still refuse. No generic
+calls, numeric conversion and property storage still refuse. No generic
 nullable carrier is emitted.
+
+Direct entries with inert declaration wrappers may use structured `if`/`else`
+branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
+observation. Every operation in both arms is checked, including nested arms;
+values must dominate their uses and frame bookkeeping stays in the entry block.
+Joins carry Booleans, definite Strings, or owning `std::optional<std::string>` for
+String/null alternatives. Incompatible alternatives and borrowed or callable
+joins refuse. Strings widen to optionals at the existing region boundary, while
+source effects remain inside their selected arm. Work uses the existing host
+budget, and nesting reaching 64 branches refuses. Helper bodies remain
+straight-line: early returns, helper control flow, loops and exceptions need
+separate source and lifetime proofs before original Bootstrap M can compile.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified

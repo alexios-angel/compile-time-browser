@@ -2,21 +2,21 @@
 
 ## Current boundary, 2026-09-15
 
-Latest slice **ea183285** composes captured original F with distinct names, multiple
-consumers and forwarded calls. Original H `setDataAttribute`/`removeDataAttribute`
-now compile through the same proof, including a factory-exported entry table;
-template concatenation uses the existing String lowering only for two proved
-Strings. Final focused **4/4 CTests PASS**: **401 Node/VM observations / eight
-native binaries / 700 source refusals / 101 replacement controls**. Complete
-**274-step build / 602/602 CTests / 176/176 lit PASS**; see
-[HANDOFF](HANDOFF.md) for timings and frozen-source verification.
-Fresh full-bundle coverage remains **19/574 native**, DOM Data **7/7**, Button
-**4/86**; this slice makes no full-bundle admission gain claim.
+Latest slice **781a9a46** proves structured direct-entry DOM branches and owning
+optional String joins. Both arms retain complete source proof; effects stay inside
+the selected branch. Focused **4/4 CTests PASS**: **437 Node/VM observations / eight
+native binaries / 724 source refusals / 11 branch depth-budget controls**. Full
+**310-step build PASS**; the **602-test CTest gate is running**. See
+[HANDOFF](HANDOFF.md) for the frozen inputs and final gate status.
 
-Next is original H `getDataAttribute` calling live M: optional-value branches,
-Number/toString, URI decoding, JSON and exceptions. Full H also needs dataset
-enumeration and callbacks. Full Bootstrap initialization, inherited receivers,
-retained config/callback ownership and the application driver remain unfinished.
+Original H `getDataAttribute` still reaches multi-block original M. A fresh probe
+refuses that helper under both providers/policies. Next is complete helper and
+early-return proof, then Number/toString, URI decoding, JSON and catch fallback.
+The preceding **ea183285** captured F/H set/remove slice remains admitted. Direct
+entry branches do not yet extend to initialized entries that require expansion
+of a branch-bearing helper. Full H dataset iteration, Bootstrap initialization,
+inherited receivers, retained config/callback ownership and the application driver
+remain unfinished. No full-bundle admission gain is claimed.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,

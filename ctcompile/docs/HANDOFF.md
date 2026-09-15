@@ -6,6 +6,54 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Structured DOM branches and signed shifts, 2026-09-15 UTC
+
+Resumed the interrupted **06:23 DOM branch / signed-shift** thread from the
+AGENT-SYNC journal and two dirty escape files, explicitly abandoned at **06:23:46**.
+Both commit histories and unmerged branches were checked; the September 7 WIP is
+already an ancestor. Three agents recovered the escape draft, started source tests
+and reviewed the DOM seam; root completed tests/review after two service limits.
+
+**76ba883c** extends charged exact Number shift facts to signed right shifts with
+a nonnegative int32 left input and bounded uint32 count. The count is masked to
+five bits and the original SSA result keeps its identity, including negative-zero
+conversion. Transport, retained children, high-bit refusals, source mutations and
+budget cutoffs are checked. The existing static-producer expectation now includes
+Shr without changing its source. Dense arrays measure **420 rows / 211 live states /
+16,011 retention cutoffs**, zero escape violations, precision **40/172**.
+
+**781a9a46** proves bounded structured `if`/`else` in direct DOM entries. Both arms
+require complete operation/operand proof, dominating values and scoped frame state.
+Scalar joins preserve Boolean/String types; String/null alternatives use ordinary
+owning `std::optional<std::string>`. Existing SCF emission and scalar boundary
+conversion keep effects in the chosen arm. Missing/empty String truthiness stays
+correct. Borrowed/callable joins, mixed unsupported scalars, loops, early-return CFG
+and helper control flow remain refused; nesting reaching 64 branches refuses.
+No Script, GC, callable table or generic nullable String carrier reaches output.
+
+Focused **4/4 CTests in 86.39s PASS**: **437 Node/VM observations / eight GCC-Clang
+binaries / 724 source refusals / 44 provenance-depth / 24 method / 241 capture /
+101 replacement / 11 branch depth-budget controls**. Stable formatting passes
+**829 C++ / 100 Python / 33 web**. Required pinned formatting matches the unchanged
+**nine-file / 26-diagnostic** baseline; changed C++ passes both formatters.
+
+Full **310-step default build PASS**; the standard **602-test CTest gate is running**
+against **1,443 frozen inputs**. No complete-suite result is claimed yet. Recovery:
+`/tmp/ctcompile-dom-branches-resume/full.sh`, `full.log`, source manifests and focused
+logs. An earlier incremental gate reused one stale test object after a source edit
+between rsync and compilation; all changed C++ inputs were refreshed after that
+gate, then rebuilt and frozen before the passing focused run.
+
+**Exact next boundary:** a fresh verbatim M/F/H.getDataAttribute probe still refuses
+`DOM helper requires complete source functions and an uncaptured wrapper` under
+both providers/policies. Original M has multi-block early returns and exceptions;
+helper source/control-flow/return proof is next, then Number/toString, URI decoding,
+JSON and catch fallback. Direct entry branches do not admit initialized/captured
+entries that require branch-bearing helper expansion. Full H dataset iteration,
+complete Bootstrap initialization, inherited receivers, retained config/callback
+ownership and the application driver remain unfinished. No browser/runtime or
+WPT/test262 expectation files changed; whole WPT/test262 were not remeasured.
+
 ## Captured Bootstrap F/H calls and unsigned shifts, 2026-09-15 UTC
 
 Continued the completed **bf45be87 / 61e47459** thread from this handoff and
