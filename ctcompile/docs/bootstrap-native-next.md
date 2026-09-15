@@ -2,59 +2,39 @@
 
 ## Current boundary, 2026-09-15
 
-**c2b4d209** now recovers ordinary-call exception continuations through the existing
-InvokeOp while retaining exact operands, pre-call state and original guarded
-prefix. The URI source regression retains its unused semantic payload; this
-structural step grants no host identity or native admission. **71d7af0c** also
-proves bounded positive Number strides. Complete **606/606 CTests / 176/176 lit
-PASS**; Bootstrap remains **19/574**, DOM Data **7/7**, Button **4/86**. See
-[HANDOFF](HANDOFF.md) for source hashes, measured gates and the resumed thread.
+**bb7ba402** compiles the saved nullable attribute guard from original M followed
+by one `decodeURIComponent` try/catch. The exact saved value narrows only inside
+its proved String arm; null/empty String, later DOM mutation and the caught
+pre-call snapshot remain intact. Native output uses `std::optional<std::string>`
+and the public Core decoder. DOM Strings measures **745 Node/VM observations /
+eight GCC-Clang binaries / 1,048 source refusals**. **9517ff21** removes an
+unnecessary IR clone from report-free fingerprinting, measured at **15.56% less
+pass time / 4.45% less command time** on Bootstrap IR. This is not a full-program
+transcompilation measurement. [HANDOFF](HANDOFF.md) records current gates.
 
-The next URI consumer must prove every removed protected check and catch-payload
-use before private recovery. Then independently reprove explicit URI identity,
-original receiver/argument and both owning String continuations before publishing
-or emitting the Core optional decoder. The existing InvokeOp can represent the
-final String continuation; this is a proposed next step, not landed emission.
-The detailed review is `/tmp/ctcompile-uri-resume/uri-design-review.md`.
+The next bounded compiler slice is **helper/exception composition**. The selected
+entry may call a helper whose body owns the handler; current lowering chooses
+either URI normalization or helper expansion, based on the selected entry's
+handler. Compose the existing private transformations without erasing source
+calls, changing argument/capture/receiver order or bypassing either complete
+proof. Preserve original handler registers, unused catch payload checks, status
+edges and rollback for every insufficient budget. The direct nullable URI entry
+is now a working control for this next helper case.
 
-The shared JSON prerequisite is now **c9c2e37b**: `ctbrowser/core/json.hpp`
-provides `parse_json(string_view)` and ordinary owning JSON data, without Script.
-Complete **606/606 CTests / 176/176 lit PASS**; Core-only GCC/Clang
-clients and GCC ASan/UBSan pass, and all **165 JSON test262 outcomes/causes** plus
-**13 saved-interpreter scenarios** are unchanged. Existing parser Unicode/numeric/
-depth limitations remain; no new native Bootstrap admission is claimed.
+Original `H.getDataAttribute -> M` then needs explicit JSON/parse identity,
+the original lookup before URI argument evaluation, two sequential failure
+continuations and mixed primitive/JSON ownership. Both failures return the
+original input. **c9c2e37b** already provides the shared public Core JSON parser
+and owning tree; use it rather than implementing another parser or calling Script.
+Its existing numeric/Unicode/depth limits remain those of the VM oracle.
 
-The next bounded compiler slice is a proved String-only `decodeURIComponent`
-try/catch with an unobserved catch payload. Preserve the original handler vectors,
-source order and failure assignment state inside DOMSource's private transaction.
-Keep empty decode distinct from failure and C++ allocation failure distinct from
-URIError. Explicit URI authority must not imply Number authority. Original M also
-needs nullable `typeof` narrowing, complete prefix proof, JSON/parse identity,
-sequential fallible calls and mixed-result ownership. Its JSON receiver/property
-lookup happens before URI argument evaluation; catch returns original input.
-Detailed seams and 29 Node-only source observations:
-`/tmp/ctcompile-json-core/uri-boundary-review.md`.
+The last complete Bootstrap measurement remains **19/574 native / 0 of 43 globals**,
+DOM Data **7/7**, Button **4/86**, with 22 Node observations and its separately
+recorded VM inheritance failure. Fresh full validation is running; no full-bundle
+admission gain is claimed. Full H/dataset, initialization/inheritance, retained
+config/callbacks and the application driver remain unfinished.
 
-Latest native slice **a8f486c5 / 6482553f** proves held Number-one induction
-steps and the DOM numeric prefix `Number(element.getAttribute("data-bs-config")).toString()`.
-An explicit Number identity premise and complete source census authorize direct
-Core calls with `double`, owning Strings and preserved saved-attribute comparisons.
-Complete **604/604 CTests / 176/176 lit PASS**;
-DOM Strings **625 Node/VM observations / eight binaries / 908 source refusals**.
-See [HANDOFF](HANDOFF.md) for measured gates and numeric oracle limitations.
-
-Fresh Bootstrap remains **19/574 native**, DOM Data **7/7**, Button **4/86**.
-Original M/F/H.getDataAttribute still refuses with explicit Number identity under
-both providers/policies. Its 24 nine-slot register blocks and original handler at
-^bb12 remain intact. Next prove provider-authorized URI/JSON failure continuations,
-the unobserved catch payload, complete guarded CFG and mixed-result ownership
-inside the fingerprinted DOMSource transaction. The public URI decoder exists;
-**c9c2e37b** now shares the existing JSON grammar through public Core with an
-owning tree; the Script parse/rawJSON adapter preserves all 165 measured JSON
-test262 outcomes. JSON identity, failure continuation and result ownership still
-need compiler proof. Full H/dataset, Bootstrap
-initialization/inheritance, retained config/callbacks and the application driver
-remain unfinished. No full-bundle admission gain is claimed.
+The earlier milestones below are historical context, not alternative next steps.
 
 **f017e1ea / dcd213d3 / 1772fc4f / 523e631d** compile the pinned original
 Bootstrap Data probe with three direct DOM inputs: **3,218 bytes, 7/7 functions,

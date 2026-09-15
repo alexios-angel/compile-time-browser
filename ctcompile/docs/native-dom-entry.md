@@ -133,8 +133,9 @@ or another optional String. `!` and `!!` preserve the difference between presenc
 and truthiness: both a missing attribute and an empty attribute are false. These
 Boolean observations can drive existing DOM force arguments. Concatenation accepts
 two definite Strings and uses ordinary `std::string` addition; optional Strings
-are not implicitly coerced into names or values. Loose equality, global `Boolean`
-calls, implicit numeric conversion and property storage still refuse. No generic
+are not implicitly coerced into names or values. Loose equality between two independently proved Strings is supported;
+coercive loose equality, global `Boolean` calls, implicit numeric conversion and
+property storage still refuse. No generic
 nullable carrier is emitted.
 
 DOM manifests may additionally supply `"initial_intrinsics": ["Number"]`.
@@ -200,7 +201,27 @@ malformed URI selects the original catch continuation. C++ allocation exceptions
 propagate normally and cannot select the JavaScript catch. No error object, Script
 value, VM context or new decoder implementation appears in native output.
 
-Original M still needs nullable `typeof` refinement, its full prefix, JSON identity
+The saved nullable attribute guard is also supported:
+
+```javascript
+function decodeSavedAttribute(element) {
+  const t = element.getAttribute('data-bs-config');
+  if ('string' != typeof t) return t;
+  try { return decodeURIComponent(t); }
+  catch (ignored) { return t; }
+}
+```
+
+`typeof` returns `"object"` for null and `"string"` for a present empty String.
+Equality with those literals, either operand order, strict or String-only loose
+equality, and Boolean negation retain the exact saved-value predicate. Only the
+selected branch gains String uses; no fact narrows the producer, a sibling read,
+or a use after the branches rejoin. The emitter copies the optional's String
+inside that branch, retaining independent ownership for catch and later return.
+Both arms must pass the complete source proof. Refused or incomplete proofs
+publish no partial refinements; supplied attributes never grant authority.
+
+Original M still needs helper/exception composition, its full prefix, JSON identity
 and evaluation order, two fallible calls and mixed-result ownership. The shared
 Core JSON parser alone grants no native admission.
 

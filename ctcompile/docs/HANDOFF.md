@@ -6,6 +6,65 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved nullable URI guards and fingerprinting, 2026-09-15 UTC
+
+Resumed the interrupted **6caa728b** full-validation thread, found in this
+handoff and AGENT-SYNC. **16b1660d** records its recovered 605 non-lit and
+177 lit passes without inventing the disconnected wrapper's missing exit status.
+Both histories/unmerged branches were checked; September 7 WIP was already an
+ancestor. Three agents reviewed the nullable proof, strict/API quality and repo
+complexity/Boost opportunities; root recovered their service-limited drafts,
+integrated the changes and ran the gates. No browser/runtime edits.
+
+**b13382ec** separates the complete DOM entry proof from manifest parsing and
+fingerprinting. **9517ff21** avoids cloning report-free IR during fingerprinting;
+report-bearing input retains clone/clear behavior. Every freshness check remains,
+with complete hashing and no cache. Legacy-hash equivalence, nested reports,
+source nonmutation and changed-source fingerprints have a regression.
+
+**bb7ba402** compiles the original M guard `if ('string' != typeof t) return t`
+on a saved `getAttribute` result before one URI try/catch. The producer remains
+`std::optional<std::string>`. A complete branch proof records the exact dominated
+String uses, and emission copies its value only inside the selected arm. Null,
+empty String, an independent reread, aliases, later DOM mutation and the original
+catch snapshot remain distinct. Loose equality is accepted only for two proved
+Strings; String-only branch/Invoke results use ordinary owning Strings. No Script,
+AOT, generic nullable carrier, handle table or new decoder is emitted.
+
+Focused **3/3 CTests in 131.04s PASS**. DOM Strings now covers **745 Node/VM
+observations / eight GCC-Clang binaries / 1,048 source refusals**; the nullable
+slice adds **80 observations / 52 refusals**. Both providers, policies and layouts
+pass, including result lifetime after document destruction and every incomplete
+host-proof budget. A positive-arm source exposed an unreachable importer epilogue
+that rejoins a live return; its dead branch is now accepted while every source
+operation/effect remains censused. Stable formatting passes **844 C++ / 104 Python /
+33 web**; the required pinned formatter's **nine-file / 26-diagnostic** baseline
+is byte-identical.
+
+Timing uses unchanged Bootstrap IR, saved baseline/candidate tools, warm-up and
+11 alternating pairs on the devbox. Fingerprint command median: **159.20 →
+152.11 ms (4.45%)**; instrumented pass: **60.4 → 51.0 ms (15.56%)**. Output and
+fingerprints match exactly. Tiny URI lowering measured **8.263 → 8.579 ms**,
+so there is no measured general transcompilation speedup. The CLI clears supplied
+reports before fingerprinting; its decorated-input timing does not measure the
+clone fallback. See [the quality review](native-quality-review-2026-09-15.md).
+
+**Full validation is running** on the committed source under the devbox lock.
+Frozen input has **1,462 non-Markdown source files**; the durable remote log and
+exit marker are `/tmp/ctcompile-nullable-uri/full.log` and `full.exit`.
+No new complete-suite result or Bootstrap admission gain is claimed yet.
+
+**Exact next boundary:** compose the existing helper expansion and URI recovery
+inside the fingerprinted DOMSource transaction. The current driver chooses one
+based only on a handler in the selected entry; a handler inside M reaches helper
+expansion instead. Preserve the original call-site actual/capture/receiver proof,
+handler vectors, checked status edges and all-budget rollback; reprove the complete
+result before publication. Then original M needs JSON/parse identity and original
+lookup order, sequential URI/JSON failure continuations, and mixed primitive/JSON
+ownership. JSON lookup precedes decoding; either failure returns the saved input.
+Full H, initialization/inheritance, retained config/callbacks and the native
+application driver remain open. Evidence: `/tmp/ctcompile-nullable-uri/`.
+
 ## Native URI String completions and nonnegative starts, 2026-09-15 UTC
 
 Continued the exact URI consumer recorded by **d24c3bb2** in this handoff and
