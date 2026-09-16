@@ -565,7 +565,34 @@ constexpr string_grammar string_grammars[] = {
             out += (out.empty() ? "" : " ") + word;
             continue;
         }
-        if (t.type != token_type::dimension || resolution) { return std::nullopt; }
+        if (resolution) { return std::nullopt; }
+        // A MATH FUNCTION IS A `<resolution>` TOO, and image-resolution is the
+        // property css/css-values puts every resolution-typed calc() through
+        // (numeric-testcommon.js picks it for `type:'resolution'`), so the
+        // whole of the function's block is one component here.
+        if (t.type == token_type::function) {
+            const std::size_t first = k;
+            int depth = 0;
+            for (; k < found.significant.size(); ++k) {
+                const token_type type = ts.tokens[found.significant[k]].type;
+                if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+                if (type == token_type::close_paren && --depth == 0) { break; }
+            }
+            if (k == found.significant.size()) { return std::nullopt; }
+            const std::string_view text = run_text(
+                ts, std::span<const std::size_t>{found.significant}.subspan(first, k - first + 1));
+            if (text.empty() || !may_have_math(text)) { return std::nullopt; }
+            const math_answer answer = evaluate_math(text, length_context{});
+            if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
+            if (answer.outcome == math_outcome::resolved &&
+                (answer.value.is_number || answer.value.type != numeric_type::resolution)) {
+                return std::nullopt;
+            }
+            resolution = true;
+            out += (out.empty() ? "" : " ") + simplify_math(text);
+            continue;
+        }
+        if (t.type != token_type::dimension) { return std::nullopt; }
         const std::string_view unit = ts.unit_of(t);
         if (!ascii_iequals_any(unit, {"dpi", "dpcm", "dppx", "x"})) { return std::nullopt; }
         resolution = true;
@@ -595,24 +622,33 @@ constexpr string_grammar string_grammars[] = {
     }
     static constexpr property_syntax any_length{"", k::length, "", "", false, false};
     std::string out{"rect("};
-    std::size_t side = 0;
+    std::size_t sides = 0;
+    std::size_t commas = 0;
+    bool want_side = true;
     for (std::size_t k = 1; k + 1 < at.size(); ++k) {
         const css_token & t = ts.tokens[at[k]];
-        if (side % 2 == 1) {
-            if (t.type != token_type::comma) { return std::nullopt; }
-            ++side;
+        if (t.type == token_type::comma) {
+            if (want_side) { return std::nullopt; }
+            ++commas;
+            want_side = true;
             continue;
         }
+        // THE SEPARATORS ARE UNIFORM. `rect(10px, 20px, 30px, 40px)` is CSS
+        // Masking 1's `[ <length> | auto ]#{4}` and `rect(0 0 0 0)` is CSS 2.1's
+        // comma-less form that every engine still takes; `rect(10px 20px, 30px
+        // 40px)` is neither, and css-masking/parsing/clip-invalid says so.
+        if (!want_side && commas != 0) { return std::nullopt; }
         std::string one;
         if (t.type == token_type::ident && ascii_iequals(ts.text_of(t), "auto")) {
             one = "auto";
         } else if (!match_typed(ts, t, any_length, one)) {
             return std::nullopt;
         }
-        out += (side == 0 ? "" : ", ") + one;
-        ++side;
+        out += (sides == 0 ? "" : ", ") + one;
+        ++sides;
+        want_side = false;
     }
-    if (side != 7) { return std::nullopt; }
+    if (want_side || sides != 4 || (commas != 0 && commas != 3)) { return std::nullopt; }
     return out + ")";
 }
 

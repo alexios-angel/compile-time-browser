@@ -419,7 +419,9 @@ void test_module_longhands() {
     ok("image-resolution", "snap from-image 0dppx", "snap from-image 0dppx");
     bad("image-resolution", "3dpi snap from-image");
     ok("clip", "rect(10px, -20px, auto, auto)", "rect(10px, -20px, auto, auto)");
+    ok("clip", "rect(0 0 0 0)", "rect(0px, 0px, 0px, 0px)");
     bad("clip", "rect(10px 20px, 30px 40px)");
+    bad("clip", "rect(10px, 20px, 30px)");
 }
 
 } // namespace
