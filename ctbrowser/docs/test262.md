@@ -1148,3 +1148,78 @@ provably native: agent E's compiler gave every object-literal method an own
 `__home` property (a closure -> literal edge the escape analysis refuses).
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
+
+## Measured at `273773cd` — 2026-09-16, rounds two and three merged
+
+`docs/plans/wpt-next.md` §3 (round two: A animations, G properties, L
+layout, C cascade, merged by session 13 as `c5c660cb`..`e29e197f`) and §5
+(round three: B typed-array kinds, U URL, D parser, F forms/range, merged
+by session 14 as `cb2cdcdf`), then the fixes the merged gate demanded
+(`d626b2d6`..`273773cd`). Same run as the `docs/wpt.md` row of this SHA:
+devbox, `tools/check/test262-baseline.sh`, 4 workers, 10 s, 2 GB. The
+before column is `9c70aaa0`, the previous row; the rows shown are
+`language`, `annexB` and every `built-ins` area that moved by five or more
+files.
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+| `language` | 23,726 | 21402 | **21,766** | +364 | 1,938 | 0/1/0 | 21 |
+| `annexB` | 1,086 | 378 | **469** | +91 | 574 | 1/0/0 | 42 |
+| `built-ins/Object` | 3,411 | 3300 | **3,321** | +21 | 88 | 0/0/0 | 2 |
+| `built-ins/Array` | 3,082 | 2800 | **2,825** | +25 | 240 | 0/1/0 | 16 |
+| `built-ins/TypedArray` | 1,446 | 752 | **1,267** | +515 | 172 | 0/0/0 | 7 |
+| `built-ins/String` | 1,223 | 1156 | **1,168** | +12 | 52 | 0/0/0 | 3 |
+| `built-ins/TypedArrayConstructors` | 738 | 280 | **569** | +289 | 93 | 0/0/0 | 76 |
+| `built-ins/Iterator` | 654 | 608 | **649** | +41 | 4 | 0/0/0 | 1 |
+| `built-ins/DataView` | 561 | 438 | **516** | +78 | 5 | 0/0/0 | 40 |
+| `built-ins/Function` | 509 | 438 | **467** | +29 | 29 | 0/0/0 | 13 |
+| `built-ins/ArrayBuffer` | 221 | 190 | **204** | +14 | 4 | 0/0/0 | 13 |
+| `built-ins/Map` | 204 | 190 | **198** | +8 | 5 | 0/0/0 | 1 |
+| `built-ins/JSON` | 165 | 137 | **146** | +9 | 17 | 0/0/0 | 2 |
+| `built-ins/WeakMap` | 141 | 135 | **140** | +5 | 0 | 0/0/0 | 1 |
+| `built-ins/BigInt` | 77 | 34 | **63** | +29 | 13 | 0/0/0 | 1 |
+| `built-ins/GeneratorPrototype` | 61 | 47 | **61** | +14 | 0 | 0/0/0 | 0 |
+| `built-ins/parseInt` | 55 | 39 | **55** | +16 | 0 | 0/0/0 | 0 |
+| `built-ins/AsyncGeneratorPrototype` | 48 | 23 | **40** | +17 | 8 | 0/0/0 | 0 |
+| `built-ins/FinalizationRegistry` | 47 | 0 | **46** | +46 | 0 | 0/0/0 | 1 |
+| `built-ins/encodeURI` | 31 | 23 | **30** | +7 | 1 | 0/0/0 | 0 |
+| `built-ins/encodeURIComponent` | 31 | 23 | **30** | +7 | 1 | 0/0/0 | 0 |
+| `built-ins/WeakRef` | 29 | 0 | **28** | +28 | 0 | 0/0/0 | 1 |
+| `built-ins/ArrayIteratorPrototype` | 27 | 15 | **22** | +7 | 5 | 0/0/0 | 0 |
+| `built-ins/AsyncGeneratorFunction` | 23 | 8 | **20** | +12 | 1 | 0/0/0 | 2 |
+| `built-ins/GeneratorFunction` | 23 | 8 | **19** | +11 | 2 | 0/0/0 | 2 |
+| `built-ins/AsyncFunction` | 18 | 9 | **16** | +7 | 1 | 0/0/0 | 1 |
+| `built-ins/isFinite` | 15 | 6 | **15** | +9 | 0 | 0/0/0 | 0 |
+| `built-ins/isNaN` | 15 | 6 | **15** | +9 | 0 | 0/0/0 | 0 |
+| `built-ins/MapIteratorPrototype` | 11 | 1 | **10** | +9 | 1 | 0/0/0 | 0 |
+| `built-ins/SetIteratorPrototype` | 11 | 1 | **10** | +9 | 1 | 0/0/0 | 0 |
+| **total** | **48,624** | 36,962 | **38,730** | | 9,055 | 4/2/0 | 833 |
+
+**38,730 of 48,624 (79.7%); of the 47,791 that ran, 81.0%** - from 36,962
+(76.0%) at `9c70aaa0`: **+1,818 FAIL -> PASS, 50 PASS -> FAIL**. Of the
+gain, 1,048 is round three alone (`e29e197f` -> `273773cd`: 37,682 ->
+38,730, and NOT ONE file lost between those two) - agent B's `BigInt64Array`,
+`BigUint64Array` and `Float16Array` (`TypedArray` 826 -> 1,267,
+`TypedArrayConstructors` 303 -> 569, `BigInt` 34 -> 63), and session 13's
+VM rows: `Function` 452 -> 467 (`new (f.bind(o, 1))(2)`), `language`
+21,563 -> 21,766 (the block-level static TDZ, the 19.1 refusal for a plain
+assignment to NaN/Infinity/undefined, ToNumeric of an object operand for the
+bitwise operators and ++/--, two lone surrogates that meet are one code
+point, encodeURI's URIError).
+
+**The 50 lost against `9c70aaa0` are all session 12/13's, read at the time:**
+30 `annexB/language/function-code` "An initialized binding is not created
+prior to evaluation" (Annex B.3.2's `if`/`switch`/`for` function
+declarations: `09798323` made a block's function declaration block-local and
+`07637be0` withheld the var binding when an enclosing block declares the
+name lexically - the `*-skip-early-err-*` files want the var binding created
+and left uninitialised, which the compiler does not distinguish from "not
+created"); 4 negative-parse files the parser accepts; 2 `JSON/stringify`
+through a revoked proxy; `S10.4.3-1-17/20-s` (`typeof this` under a direct
+eval in strict code); and 12 singles. None of them moved in this session.
+
+**Still the biggest holes, in files:** `Temporal` 4,603; `RegExp` 924 (469
+`property-escapes/generated`, the `v` flag 85, ~175 early errors the regexp
+pass does not raise); `language` 1,938; `annexB` 574; `Array` 240;
+`TypedArray` 172 + `TypedArrayConstructors` 93 (a subclass instance is not a
+typed array, `ta.buffer === ta.buffer` is false, `$262.detachArrayBuffer`
+throws); `Proxy` 101; `Object` 88.
