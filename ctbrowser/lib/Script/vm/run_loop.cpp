@@ -612,6 +612,20 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 const std::size_t arg_base = base + in.a + 1;
                 if (callee.is_kind(heap_kind::native)) {
                     auto * nat = static_cast<native_object *>(callee.as_heap());
+                    // A HEAP PAST ITS THRESHOLD COLLECTS HERE TOO. A loop whose
+                    // only calls are natives - `nodeList[j]` through a native
+                    // proxy trap, 250 million times - never reaches invoke's
+                    // safepoint and grew to the 4 GB cap (std::bad_alloc,
+                    // dom/nodes/NodeList-static-length-getter-tampered-*).
+                    // Not a stress point: the ABI's stress pins count
+                    // collections at invoke and the tick only.
+                    if (!gc_stress_ && live_objects_ >= collect_threshold_) [[unlikely]] {
+                        // The callee may exist only here (a trap made it) and the
+                        // receiver is a C++ local until the call.
+                        const rooted keep_callee{*this, callee};
+                        const rooted keep_receiver{*this, receiver};
+                        (void)collect_if_due();
+                    }
                     // COPIED, not spanned into the register stack. A native may call
                     // back into script - an event listener dispatching another
                     // event - and that grows registers_, which would leave a span

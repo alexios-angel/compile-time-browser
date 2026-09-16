@@ -102,6 +102,12 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         const rooted_values keep_args{*this, copy};
         const rooted keep_callee{*this, callable};
         const rooted keep_this{*this, this_value};
+        // Everything is rooted now, so a heap past its threshold may collect
+        // before the native runs - the same rule as the interpreter's native
+        // call site (run_loop.cpp), and not a stress point for the same reason.
+        if (!gc_stress_ && live_objects_ >= collect_threshold_) [[unlikely]] {
+            (void)collect_if_due();
+        }
         const value saved = current_this_;
         current_this_ = this_value;
         note_transition_into_cxx(*this);
