@@ -62,11 +62,14 @@ void test_define_validates() {
              "NotSupportedError;NotSupportedError;true;undefined;true");
 }
 
-// THE NAME RULE IS "valid element local name", not the old
-// PotentialCustomElementName: anything the HTML tokenizer would read back as a
-// tag name is a name, so punctuation a page could not use before is legal now,
-// and only the characters that would END a tag name - and an ASCII capital -
-// are refused. whatwg/html#7991, measured by
+// THE NAME RULE IS "valid element local name" WITH AN ASCII LOWER ALPHA IN
+// FRONT, not the old PotentialCustomElementName: after the first character,
+// anything the HTML tokenizer would read back as a tag name is a name, so
+// punctuation a page could not use before is legal now and only the characters
+// that would END a tag name - and an ASCII capital - are refused. The FIRST
+// character is still [a-z] alone, which is why `_-element` and an accented
+// first letter are not names however valid a local name they are.
+// whatwg/html#7991, measured by
 // custom-elements/registries/valid-custom-element-names.html.
 void test_define_takes_the_modern_name_rule() {
     CHECK_EQ(said("<html><body><script>"
@@ -84,7 +87,8 @@ void test_define_takes_the_modern_name_rule() {
                   "alert(define('-element'));"
                   "alert(define('.-element'));"
                   "</script></body></html>"),
-             "ok;ok;ok;ok;ok;SyntaxError;SyntaxError;SyntaxError;SyntaxError;SyntaxError");
+             "ok;ok;SyntaxError;SyntaxError;ok;SyntaxError;SyntaxError;SyntaxError;SyntaxError;"
+             "SyntaxError");
 }
 
 // A parsed element is upgraded by define(), connectedCallback has run before
