@@ -186,6 +186,9 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
               "multiple invocations publish no partial source evidence");
     }
     if (name == "ordinary assignment" && inspected.proved()) {
+        const auto none = inspectSingleInvocationRegion(function, 100000, 0);
+        check(!none.proved() && none.chain.empty() && printed(function) == original,
+              "a zero call limit refuses even one checked invocation");
         for (unsigned budget = 0; budget < inspected.steps; ++budget) {
             const auto limited = inspectSingleInvocationRegion(function, budget);
             if (!check(!limited.proved() && !limited.push && !limited.landing && !limited.frame &&
@@ -492,8 +495,205 @@ function guarded(element) {
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
 }
 
+// Original M's protected body: JSON.parse is looked up first, then
+// decodeURIComponent runs, then parse consumes its result. Both calls become
+// nested invokes on one success path; either failure reaches the same catch.
+void testDOMJSONChain(mlir::MLIRContext & context) {
+    using ctnative::lowering_detail::inspectSingleInvocationRegion;
+    using ctnative::lowering_detail::normalizeDOMURI;
+    auto module = import(context, R"js(
+function guarded(text) {
+    try { return JSON.parse(decodeURIComponent(text)); }
+    catch (ignored) { return text; }
+}
+)js",
+                         false);
+    if (!module) { return; }
+    auto function = guarded(*module);
+    const auto original = printed(*module);
+    const unsigned checks = countChecks(function);
+    const auto single = inspectSingleInvocationRegion(function);
+    auto chain = inspectSingleInvocationRegion(function, 100000, 2);
+    if (!check(!single.proved() && single.refusal.find("one checked call") != std::string::npos &&
+                   chain.proved() && chain.chain.size() == 2 &&
+                   chain.call == chain.chain[0].first && chain.check == chain.chain[0].second &&
+                   chain.chain[1].second.getCont() != chain.chain[0].second.getCont() &&
+                   printed(*module) == original,
+               "a two-call chain is published only when requested and in source order")) {
+        return;
+    }
+    for (unsigned budget = 0; budget < chain.steps; ++budget) {
+        const auto limited = inspectSingleInvocationRegion(function, budget, 2);
+        if (!check(!limited.proved() && !limited.push && !limited.landing && !limited.frame &&
+                       !limited.check && limited.chain.empty() && limited.steps <= budget &&
+                       limited.prefix.empty() && limited.normal.empty() && limited.caught.empty() &&
+                       limited.refusal.find("budget exhausted") != std::string::npos &&
+                       printed(*module) == original,
+                   "every incomplete chain inspection budget publishes no partial evidence")) {
+            break;
+        }
+    }
+    const auto exact = inspectSingleInvocationRegion(function, chain.steps, 2);
+    check(exact.proved() && exact.chain == chain.chain && exact.steps == chain.steps,
+          "the exact chain inspection budget preserves source order");
+    auto conditional = import(context, R"js(
+function guarded(text) {
+    try {
+        if (text) { return JSON.parse(decodeURIComponent(text)); }
+        return text;
+    } catch (ignored) { return text; }
+}
+)js",
+                              false);
+    if (!conditional) { return; }
+    const auto branched = inspectSingleInvocationRegion(guarded(*conditional), 100000, 2);
+    check(!branched.proved() && branched.chain.empty() &&
+              branched.refusal.find("one success path") != std::string::npos,
+          "a conditional bypass cannot publish a straight-line invocation chain");
+    ctnative::HostContract contract;
+    contract.provider = ctnative::HostContract::Provider::ctbrowserDOM;
+    contract.entry = function.getSymName().str();
+    contract.initialIntrinsics = {"decodeURIComponent"};
+    contract.moduleSha256 = ctnative::hostContractFingerprint(*module);
+    {
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+        auto error = normalizeDOMURI(*candidate, contract);
+        check(error && printed(*candidate) == original,
+              "without the initial JSON binding the chain refuses and the source survives");
+        llvm::consumeError(std::move(error));
+    }
+    contract.initialIntrinsics = {"decodeURIComponent", "JSON"};
+    mlir::OwningOpRef<mlir::ModuleOp> normalized(module->clone());
+    if (auto error = normalizeDOMURI(*normalized, contract)) {
+        check(false, "JSON.parse(decodeURIComponent(text)) normalizes as a nested chain");
+        llvm::errs() << llvm::toString(std::move(error)) << '\n';
+        return;
+    }
+    check(mlir::succeeded(mlir::verify(*normalized)), "normalized JSON chain verifies");
+    ctjs::InvokeOp outer, nested;
+    unsigned invocations = 0;
+    normalized->walk([&](ctjs::InvokeOp invocation) {
+        ++invocations;
+        auto & caught = invocation.getUnwindBody().front();
+        auto failure = llvm::cast<ctjs::InvokeYieldOp>(caught.getTerminator());
+        check(caught.getNumArguments() == 1 && caught.getArgument(0).use_empty() &&
+                  failure.getValues().front() ==
+                      guarded(*normalized).getBody().front().getArgument(ctjs::implicit_arguments),
+              "every chained catch returns the original input without observing its payload");
+        if (invocation->getParentOfType<ctjs::InvokeOp>()) {
+            nested = invocation;
+        } else {
+            outer = invocation;
+        }
+    });
+    if (!check(invocations == 2 && outer && nested && countChecks(guarded(*normalized)) == 0 &&
+                   printed(*module) == original,
+               "the parse invoke nests inside the decode success continuation")) {
+        return;
+    }
+    auto decode = llvm::cast<ctjs::CallOp>(outer.getBody().front().front());
+    auto parse = llvm::cast<ctjs::CallOp>(nested.getBody().front().front());
+    auto decoder = decode.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+    auto member = parse.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+    auto json =
+        member ? member.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+    check(decoder && decoder.getName() == "decodeURIComponent" && member && json &&
+              json.getName() == "JSON" && ctjs::constantKey(member.getKey()) == "parse" &&
+              member->getBlock() == outer->getBlock() && member->isBeforeInBlock(outer) &&
+              parse.getReceiver() == json.getResult() && parse.getArgs().size() == 1 &&
+              parse.getArgs().front() == outer.getNormalBody().front().getArgument(0) &&
+              nested->getParentRegion() == &outer.getNormalBody(),
+          "the original JSON.parse lookup precedes decoding and only decode success runs parse");
+
+    const auto attempt = [&](unsigned budget) {
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+        auto error = normalizeDOMURI(*candidate, contract, budget);
+        if (!error) { return true; }
+        const auto reason = llvm::toString(std::move(error));
+        check(reason.find("budget exhausted") != std::string::npos &&
+                  printed(*candidate) == original && countChecks(guarded(*candidate)) == checks,
+              "incomplete JSON normalization preserves both calls and every original check");
+        return false;
+    };
+    unsigned lower = 0, upper = 100000;
+    while (lower < upper) {
+        const unsigned middle = lower + (upper - lower) / 2;
+        if (attempt(middle)) {
+            upper = middle;
+        } else {
+            lower = middle + 1;
+        }
+    }
+    check(attempt(lower), "the first complete JSON normalization budget succeeds");
+    for (unsigned budget = 0; budget < lower; ++budget) {
+        if (!check(!attempt(budget), "every smaller JSON normalization budget refuses")) { break; }
+    }
+    for (unsigned index = 0; index != 3; ++index) {
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+        auto source = inspectSingleInvocationRegion(guarded(*candidate), 100000, 2);
+        if (index != 2) {
+            auto [call, checked] = source.chain[index];
+            checked->setOperand(static_cast<unsigned>(checked.getContOperands().size()),
+                                call->getResult(0));
+        } else {
+            guarded(*candidate).walk([&](ctjs::GetPropertyOp read) {
+                read->setOperand(
+                    0, guarded(*candidate).getBody().front().getArgument(ctjs::implicit_arguments));
+            });
+        }
+        auto changed = contract;
+        changed.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+        const auto before = printed(*candidate);
+        auto error = normalizeDOMURI(*candidate, changed);
+        if (!check(static_cast<bool>(error),
+                   "a changed invocation snapshot or JSON origin refuses")) {
+            continue;
+        }
+        check(llvm::toString(std::move(error)).find(index == 2 ? "nonthrowing" : "invocation") !=
+                      std::string::npos &&
+                  printed(*candidate) == before && countChecks(guarded(*candidate)) == checks,
+              "a failed chain proof retains the exact mutated source and all checks");
+    }
+
+    auto assigned = import(context, R"js(
+function guarded(text) {
+    var saved = "before";
+    try { return JSON.parse(saved = decodeURIComponent(text)); }
+    catch (ignored) { return saved; }
+}
+)js",
+                           false);
+    if (!assigned) { return; }
+    auto savedContract = contract;
+    savedContract.moduleSha256 = ctnative::hostContractFingerprint(*assigned);
+    if (auto error = normalizeDOMURI(*assigned, savedContract)) {
+        check(false, "a saved assignment between chained calls normalizes");
+        llvm::errs() << llvm::toString(std::move(error)) << '\n';
+        return;
+    }
+    assigned->walk([&](ctjs::InvokeOp invocation) {
+        if (invocation->getParentOfType<ctjs::InvokeOp>()) {
+            nested = invocation;
+        } else {
+            outer = invocation;
+        }
+    });
+    auto decodeFailure =
+        llvm::cast<ctjs::InvokeYieldOp>(outer.getUnwindBody().front().getTerminator());
+    auto parseFailure =
+        llvm::cast<ctjs::InvokeYieldOp>(nested.getUnwindBody().front().getTerminator());
+    auto before = decodeFailure.getValues().front().getDefiningOp<ctjs::ConstantOp>();
+    auto string = before ? llvm::dyn_cast<ctjs::StringAttr>(before.getValue()) : ctjs::StringAttr{};
+    check(mlir::succeeded(mlir::verify(*assigned)) && string && string.getValue() == "before" &&
+              parseFailure.getValues().front() == outer.getNormalBody().front().getArgument(0),
+          "each failure captures its own complete pre-call register state");
+    llvm::outs() << "DOM JSON normalization: " << lower
+                 << " steps, every incomplete budget preserves " << checks << " checks\n";
+}
+
 void testOrdinaryCompletionTypes(mlir::MLIRContext & context) {
     testDOMURITransaction(context);
+    testDOMJSONChain(context);
     auto module = import(context, R"js(
 function guarded(text) {
     if (text === "skip") { return "prefix"; }

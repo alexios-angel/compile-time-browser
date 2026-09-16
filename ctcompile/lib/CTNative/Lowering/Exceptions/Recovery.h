@@ -7,6 +7,7 @@
 #include "llvm/Support/Error.h"
 
 #include <string>
+#include <utility>
 
 namespace ctcompile::ctnative {
 struct HostContract;
@@ -38,8 +39,11 @@ struct ExceptionInvocationSource {
     ctjs::PushHandlerOp push;
     ctjs::CatchLandOp landing;
     ctjs::FrameEnterOp frame;
+    // The first checked call. `chain` lists every checked call in source
+    // order along one normal continuation, starting with this one.
     mlir::Operation * call = nullptr;
     ctjs::CheckOp check;
+    llvm::SmallVector<std::pair<mlir::Operation *, ctjs::CheckOp>> chain;
     // Reachable source block censuses, not execution order. Normal and caught
     // may share a continuation. Unreachable source still needs separate proof.
     llvm::SmallVector<mlir::Block *> prefix, normal, caught;
@@ -48,8 +52,12 @@ struct ExceptionInvocationSource {
     [[nodiscard]] bool proved() const { return call != nullptr; }
 };
 
+// `maxCalls` above one accepts a chain of checked calls on one normal
+// continuation, each reached only through the previous call's success edge.
+// Zero admits no invocation source.
 ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function,
-                                                        unsigned maxSteps = 100000);
+                                                        unsigned maxSteps = 100000,
+                                                        unsigned maxCalls = 1);
 
 enum class ExceptionRecoveryMode {
     ExplicitThrows,
