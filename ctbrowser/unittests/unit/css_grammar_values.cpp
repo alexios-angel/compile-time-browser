@@ -412,6 +412,10 @@ void test_module_longhands() {
     bad("offset-anchor", "left 10% top");
     ok("offset-position", "10px 20%", "10px 20%");
     ok("background-blend-mode", "luminosity", "luminosity");
+    // One paren short as written; the tokenizer closes it, so it is a value.
+    CHECK(check_declaration("scale", "calc(sin(pi * sibling-index())").valid);
+    CHECK(check_declaration("rotate", "calc(min(90deg, 1.58rad) * 1.5").valid);
+    bad("grid-auto-columns", "[] 1px []");
     ok("background-position", "calc(2px + 3px) calc(4px + 5px)", "calc(5px) calc(9px)");
     ok("background-position", "calc(6px + 21%) calc(7em + 22%)", "calc(21% + 6px) calc(22% + 7em)");
     bad("background-blend-mode", "normal luminosity");

@@ -153,6 +153,18 @@ value_check check_declaration(std::string_view property, std::string_view value,
     std::string normalized = normalize_value_tokens(ts, text, &bad_url);
     if (bad_url) { return {}; }
     normalized.append(static_cast<std::size_t>(found.unclosed), ')');
+    // A BLOCK EOF CLOSED IS CLOSED (CSS Syntax 3 §consume a component value):
+    // the tokenizer closes it, `verbatim` and `normalized` above write the
+    // closers out, and everything below that reads the AUTHOR'S text has to see
+    // them too. `scale: calc(sin(pi * sibling-index())` is one paren short as
+    // written and a perfectly good value once tokenized, and sin-cos-tan-computed
+    // and minmax-angle-computed are seventeen assertions of exactly that shape.
+    std::string closed;
+    if (found.unclosed > 0) {
+        closed = std::string{text};
+        closed.append(static_cast<std::size_t>(found.unclosed), ')');
+        text = closed;
+    }
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.

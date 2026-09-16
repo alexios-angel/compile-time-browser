@@ -419,6 +419,11 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     cursor c{ts, significant(ts), 0};
     if (c.done()) { return std::nullopt; }
     if (!auto_sizes && c.at.size() == 1 && c.is_ident("none")) { return "none"; }
+    if (auto_sizes) {
+        for (const std::size_t i : c.at) {
+            if (ts.tokens[i].type == token_type::open_square) { return std::nullopt; }
+        }
+    }
     std::string out;
     bool any = false;
     bool saw_auto = false;
@@ -426,6 +431,9 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
         !any || !c.done()) {
         return std::nullopt;
     }
+    // `grid-auto-columns` is `<track-size>+`, with no line names in it at all -
+    // not even the empty `[]`, which writes nothing and so cannot be caught in
+    // the output (`[] 1px []`, grid-auto-columns-invalid).
     if (auto_sizes && out.find('[') != std::string::npos) { return std::nullopt; }
     // An <auto-track-list> takes fixed sizes only beside its auto repeat.
     if (saw_auto) {
