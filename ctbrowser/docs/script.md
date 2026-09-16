@@ -453,7 +453,8 @@ change the native backend sees as a divergence until it follows.
   nothing of that name exists yet (`predeclare_locals` hoists it; a classic
   script lists the names in `hoisted_vars`) and WRITTEN when the declaration
   is evaluated (`compile_function_decl` copies the block binding through
-  `annex_b_functions`). Only a PARAMETER or a LEXICAL declaration stops
+  `annex_b_decls`, which lists DECLARATIONS rather than names - two blocks
+  may declare one name and only one of them be applicable). Only a PARAMETER or a LEXICAL declaration stops
   both; a `var` or another function declaration of the name means the
   binding is already there and the write still happens, and `arguments` is
   never given one. The shadow walk (`each_block_function`) counts every
