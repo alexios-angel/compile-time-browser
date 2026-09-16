@@ -181,10 +181,10 @@ int main() {
     js_expect("(function(){ try { Reflect.get(1, 'x'); return 'no'; } catch (e) { return "
               "e.constructor.name; } })()",
               "TypeError");
-    // WeakRef and FinalizationRegistry (collections/weak.cpp) are written
-    // but not installed - ctcompile's escape-cycle test pins their absence -
-    // so nothing here asserts on them.
-    js_expect("typeof WeakRef", "undefined");
+    // WeakRef and FinalizationRegistry (collections/weak.cpp): installed
+    // since ctcompile retired its absence pin; a target is held strongly.
+    js_expect("typeof WeakRef + ',' + typeof FinalizationRegistry", "function,function");
+    js_expect("(function(){ var o = {}; return new WeakRef(o).deref() === o; })()", "true");
     js_expect(
         "(function(){ var log = []; var s = new DisposableStack();"
         "s.use({ [Symbol.dispose]() { log.push('a'); } }); s.defer(() => log.push('b'));"
