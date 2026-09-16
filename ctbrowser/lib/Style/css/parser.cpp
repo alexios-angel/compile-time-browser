@@ -801,8 +801,7 @@ private:
     // keyframe preludes' tokens with each keyframe's `{...}` as a nested block:
     // walked here rather than re-tokenised. A block whose selector list has a
     // token the grammar refuses is dropped, and only that block.
-    void record_keyframes(std::span<const component_value> prelude,
-                          const component_value & block) {
+    void record_keyframes(std::span<const component_value> prelude, const component_value & block) {
         keyframes_block made;
         made.condition = condition_;
         for (const component_value & v : prelude) {
