@@ -82,6 +82,10 @@ struct token {
     // else reads them.
     std::string public_id;
     std::string system_id;
+    // Whether the declaration HAD a system identifier - `""` is one, and the
+    // quirks table reads "system identifier missing" and "present but
+    // empty" differently (13.2.6.4.1).
+    bool system_id_present = false;
     bool self_closing = false;
     bool force_quirks = false;
 
@@ -126,6 +130,10 @@ public:
     // VIEWBOX="...">` gives `VIEWBOX` here where the spec gives `viewBox`. A
     // case-insensitive normalisation pass would close it if it ever matters.
     void set_preserve_case(bool preserve) noexcept { preserve_case_ = preserve; }
+    // `<![CDATA[` is a CDATA section only when the adjusted current node is
+    // not an HTML element (13.2.5.42) - which includes an SVG <title>, where
+    // case is NOT preserved because its children are HTML.
+    void set_cdata_allowed(bool allowed) noexcept { cdata_allowed_ = allowed; }
 
     [[nodiscard]] bool at_end() const noexcept { return at_ >= input_.size(); }
 
@@ -145,75 +153,65 @@ public:
     [[nodiscard]] token next();
 
 private:
-    // next() without the source-span bookkeeping, which it wraps. Split so the
-    // states can recurse (an empty text run asks for the next token) without
-    // each recursion widening the span it eventually reports.
+    // next() without the source-span bookkeeping, which it wraps.
     [[nodiscard]] token next_token();
 
-    // One input character onto a text run, with the input stream's newline
-    // normalisation: CR LF and CR are both LF.
-    void append_text(std::string & data);
-    // Whether the byte at `at` starts something the truncated view cuts off.
-    [[nodiscard]] bool cut_at(std::size_t at) const;
-    [[nodiscard]] char peek(std::size_t ahead = 0) const;
+    // The byte at `at_ + ahead`, or NUL past the end. `eof()` is the end of the
+    // VIEW; whether that is the end of the stream is `truncated_`'s business,
+    // and a state that runs into it while truncated calls `starve()`.
+    [[nodiscard]] char peek(std::size_t ahead = 0) const noexcept;
+    [[nodiscard]] bool eof(std::size_t ahead = 0) const noexcept {
+        return at_ + ahead >= input_.size();
+    }
     [[nodiscard]] bool looking_at(std::string_view what) const;
-    [[nodiscard]] static bool is_alpha(char c);
+    [[nodiscard]] bool looking_at_ci(std::string_view what) const;
+    [[nodiscard]] static bool is_alpha(char c) noexcept;
+    [[nodiscard]] static bool is_alnum(char c) noexcept;
+    [[nodiscard]] static bool is_space(char c) noexcept;
+    // One input character onto a text run, with the input stream's newline
+    // normalisation (CR LF and CR are both LF) and, outside the data state,
+    // NUL as U+FFFD.
+    void append_text(std::string & data);
+    // The text-run states stop short of anything a truncated view cuts: a
+    // `<` or `&` whose continuation has not arrived, a CR whose LF may follow.
+    [[nodiscard]] bool cut_at(std::size_t at) const;
+    // A character token from a run - or, when it is empty, the next token.
+    [[nodiscard]] token text_or_next(token & run);
 
-    // --- data state -------------------------------------------------------
+    // --- the states, 13.2.5 ------------------------------------------------
 
-    [[nodiscard]] token in_data();
+    [[nodiscard]] token data_state();
+    [[nodiscard]] token rcdata_or_rawtext_state(bool decode_references);
+    [[nodiscard]] token script_data_state();
+    [[nodiscard]] token plaintext_state();
 
-    // A run of text up to the next markup, with character references decoded.
-    [[nodiscard]] token characters();
+    // `<` in a text state: the tag, the end tag, the markup declaration, the
+    // bogus comment - or nothing, when it was just a `<`.
+    [[nodiscard]] token tag_open_state();
+    [[nodiscard]] token end_tag_open_state();
+    [[nodiscard]] token tag_name_state(token & out);
+    [[nodiscard]] token attributes(token & out, bool preserve_case);
+    void attribute_value(std::string & out, char quote);
+    // `</name` in RCDATA, RAWTEXT and script data: the end tag when `name` is
+    // the appropriate one and something that ends a tag follows, else text.
+    [[nodiscard]] bool appropriate_end_tag_ahead(std::size_t & after) const;
 
-    [[nodiscard]] token rest_as_text();
-
-    // RCDATA/RAWTEXT/script: everything up to the matching close tag is text.
-    // This is why `<script>if (a<b) ...</script>` does not become a <b> element.
-    [[nodiscard]] token in_text_until_close(bool decode_entities);
-
-    // --- tags -------------------------------------------------------------
-
-    [[nodiscard]] token tag_open();
-
-    // `preserve_case` is passed rather than read from the member because the
-    // root <svg>'s own attributes have to survive, and at that moment the tree
-    // builder has not entered foreign content yet. See tag_open.
-    void read_attributes(token & out, bool preserve_case);
-
-    [[nodiscard]] std::string read_attribute_value();
-
-    // --- comments and doctype ---------------------------------------------
-
-    [[nodiscard]] token comment();
-
-    // `<!` or `<?` followed by something that is not a comment or doctype. The
-    // spec turns these into comments rather than dropping them, so a stray
-    // processing instruction does not swallow the rest of the document.
-    [[nodiscard]] token bogus_comment();
-
+    [[nodiscard]] token markup_declaration_open_state();
+    [[nodiscard]] token comment_state();
+    [[nodiscard]] token bogus_comment_state();
+    [[nodiscard]] token cdata_section_state();
+    [[nodiscard]] token doctype_state();
     // `<?target data?>` as a processing instruction token, or the bogus
-    // comment above when the target is not one. See the definition.
-    [[nodiscard]] token processing_instruction();
+    // comment when the target is not one. See the definition.
+    [[nodiscard]] token processing_instruction_state();
 
-    // `<![CDATA[ ... ]]>` as one text run, undecoded. Foreign content only -
-    // in HTML the same bytes are a bogus comment.
-    [[nodiscard]] token cdata();
+    // --- character references, 13.2.5.72-80 ---------------------------------
 
-    [[nodiscard]] token doctype();
-
-    // --- character references ---------------------------------------------
-
-    // Returns the decoded text, or the literal "&..." when it does not decode.
-    // The spec is precise about when a reference decodes, and getting it wrong
-    // mangles URLs: `?a=1&copy=2` must NOT become `?a=1©=2`, which is exactly
-    // why the in-attribute rule below exists.
-    [[nodiscard]] std::string decode_reference(bool in_attribute);
-
-    // Code points the spec replaces rather than emitting: surrogates and out of
-    // range become U+FFFD, and NUL does too.
-    [[nodiscard]] static char32_t sanitise(std::uint32_t code);
-
+    // Decodes the reference at `at_` (a `&`) into `out`, or appends the
+    // literal text the specification says to flush. `in_attribute` is the
+    // rule that keeps `?a=1&copy=2` a query string.
+    void character_reference(std::string & out, bool in_attribute);
+    [[nodiscard]] static char32_t numeric_reference_code(std::uint32_t code);
     [[nodiscard]] static std::string encode_utf8(char32_t code);
 
     // Read past the end of a truncated view: the token being built needs more
@@ -225,8 +223,14 @@ private:
     std::string_view input_;
     std::size_t at_ = 0;
     content_model model_ = content_model::data;
+    // The "appropriate end tag": the name of the last start tag emitted, which
+    // is what ends RCDATA, RAWTEXT and script data.
     std::string close_tag_;
+    // Where the script data escaped states are, across text runs: 0 script
+    // data, 1 escaped, 2 double escaped.
+    int script_escape_ = 0;
     bool preserve_case_ = false;
+    bool cdata_allowed_ = false;
     bool truncated_ = false;
     bool starved_ = false;
 };

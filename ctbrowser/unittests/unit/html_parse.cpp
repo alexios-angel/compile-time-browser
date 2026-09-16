@@ -296,11 +296,14 @@ void test_raw_text_elements() {
     // The reason the tokenizer has content models at all: inside <script>, a
     // `<` is text. A parser that tokenizes markup here turns `a<b` into an
     // element and silently truncates the script.
-    expect_tree("<script>if (a<b) { }</script>", R"(html(head(script("if (a<b) { }"))))",
+    // A <body> follows even when nothing went in it: EOF in "in head" ends
+    // up in "after head", which makes one (13.2.6.4.6).
+    expect_tree("<script>if (a<b) { }</script>", R"(html(head(script("if (a<b) { }")) body))",
                 "<script> contents are text, not markup");
     expect_tree("<style>p::after { content: '<' }</style>",
-                R"(html(head(style("p::after { content: '<' }"))))", "and so are <style> contents");
-    expect_tree("<title>a &amp; b</title>", R"(html(head(title("a & b"))))",
+                R"(html(head(style("p::after { content: '<' }")) body))",
+                "and so are <style> contents");
+    expect_tree("<title>a &amp; b</title>", R"(html(head(title("a & b")) body))",
                 "<title> is RCDATA: entities decode, markup does not");
     expect_tree("<textarea><b>not bold</b></textarea>",
                 R"(html(head body(textarea("<b>not bold</b>"))))",
@@ -313,8 +316,12 @@ void test_character_references() {
     expect_tree("<p>a &amp; b</p>", R"(html(head body(p("a & b"))))", "named references decode");
     expect_tree("<p>&#65;&#x42;</p>", R"(html(head body(p("AB"))))", "numeric references decode");
     expect_tree("<p>&copy;</p>", "html(head body(p(\"©\")))", "and so do non-ASCII ones");
-    expect_tree("<p>&notareal;</p>", R"(html(head body(p("&notareal;"))))",
-                "an unknown reference stays literal");
+    // The longest legacy prefix decodes even without its semicolon - `not`
+    // here - which is what every browser does with `&notit;` (13.2.5.73).
+    expect_tree("<p>&notareal;</p>", "html(head body(p(\"\u00acareal;\")))",
+                "an unknown reference decodes its longest legacy prefix");
+    expect_tree("<p>&xyzzy;</p>", R"(html(head body(p("&xyzzy;"))))",
+                "and one with no such prefix stays literal");
     expect_tree("<p>a & b</p>", R"(html(head body(p("a & b"))))", "a bare ampersand is text");
     // The rule that keeps query strings intact. `&copy=` inside an attribute
     // must NOT become a copyright sign, or every URL with a `copy` parameter

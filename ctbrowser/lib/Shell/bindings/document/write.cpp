@@ -214,6 +214,9 @@ void dom_bindings::prepare_parser_script(node_id script) {
 // script-created parser queues that task here.
 void dom_bindings::parser_finished(bool initial) {
     mutated();
+    if (auto * doc = document_object(); doc != nullptr && cx_ != nullptr) {
+        doc->set("compatMode", cx_->string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
+    }
     set_ready_state("interactive");
     // Steps 4-6: the async scripts are fetched by now, then the deferred ones
     // in the order they were seen, each before DOMContentLoaded.
@@ -270,10 +273,16 @@ void dom_bindings::document_open(context & cx) {
     // and its window goes. The standalone EventTargets a page made are not the
     // document's and keep theirs.
     std::erase_if(listeners_, [](const listener & held) { return held.on != listen_on::object; });
+    // A handler lives in the wrapper's `__on<name>` slot (events/dispatch.cpp:
+    // the assigned value, the compiled content attribute and its source); a
+    // present null there is "assigned null", which also deactivates the
+    // markup's handler - exactly what erasing means.
     const auto erase_handlers = [](script::object_object * object) {
         if (object == nullptr) { return; }
         for (auto & [name, held] : object->props) {
-            if (name.starts_with("on") && held.is_callable()) { held = value::null(); }
+            if (name.starts_with("__on") || (name.starts_with("on") && held.is_callable())) {
+                held = value::null();
+            }
         }
     };
     for (auto & [key, wrapper] : wrappers_) { erase_handlers(wrapper); }
@@ -297,8 +306,10 @@ void dom_bindings::document_open(context & cx) {
             }
         }
     }
-    doc_->set_quirks(true); // no doctype yet: the new document starts in quirks mode
-    if (auto * doc = document_object()) { doc->set("compatMode", cx.string("BackCompat")); }
+    // Step 12: no-quirks mode - and the parser decides again from what is
+    // written: a doctype keeps it, anything else first puts it in quirks.
+    doc_->set_quirks(false);
+    if (auto * doc = document_object()) { doc->set("compatMode", cx.string("CSS1Compat")); }
     // Steps 13-16: "loading", and a new, script-created parser whose insertion
     // point is the end of its (empty) input stream.
     set_ready_state("loading");
@@ -351,6 +362,9 @@ void dom_bindings::document_close(context & cx) {
     // is not one, and close() on it during the load is a no-op.
     if (parser_ == nullptr || !parser_script_created_ || parser_->finished()) { return; }
     parser_->close();
+    if (auto * doc = document_object()) {
+        doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
+    }
     mutated();
     if (parser_->finished()) { parser_finished(false); }
 }

@@ -31,13 +31,22 @@ struct parse_result {
     return out;
 }
 
-// Parse into a fresh scratch document and return the body holding the fragment.
-// Unlike document parsing, leading metadata and whitespace belong to the result.
-// ponytail: body context only; table/select/raw-text contexts need a context-aware
-// fragment entry when those callers are supported.
-[[nodiscard]] inline node_id parse_html_body_fragment(document & doc, std::string_view source) {
+// THE FRAGMENT PARSING ALGORITHM (HTML 13.2.9) into a fresh scratch document:
+// `context` is the tag name of the element the markup is being set on - which
+// is what makes `<td>` inside a `<tr>` a cell, and `<b>` inside a `<title>` or
+// `<script>` text - and the parsed nodes are the children of the returned
+// node, to be moved under the real element. The context element itself is
+// not in the scratch tree.
+[[nodiscard]] inline node_id parse_html_fragment(document & doc, std::string_view source,
+                                                 std::string_view context) {
     html::tree_builder builder{doc, doc.atoms()};
-    return builder.parse_body_fragment(source);
+    return builder.parse_fragment(source, context);
+}
+
+// The fragment above with a <body> context: what every innerHTML on an
+// ordinary element gets.
+[[nodiscard]] inline node_id parse_html_body_fragment(document & doc, std::string_view source) {
+    return parse_html_fragment(doc, source, "body");
 }
 
 } // namespace ctbrowser
