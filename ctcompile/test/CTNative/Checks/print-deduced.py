@@ -59,7 +59,18 @@ CARRIERS = [
     ),
 ]
 SITE = re.compile(r"ctcompile: [A-Za-z_0-9]+ @ [^\"\n]*\.js:[0-9]+:[0-9]+")
-FLAGS = ["-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror", "-pedantic", "-Wconversion"]
+# The runtime header every native program includes lives in ctcompile/include.
+RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
+FLAGS = [
+    "-std=c++23",
+    RUNTIME_INCLUDE,
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-pedantic",
+    "-Wconversion",
+]
 
 
 def normalise(lines):

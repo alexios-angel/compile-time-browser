@@ -221,7 +221,7 @@ def main():
                     )
                 ):
                     raise RuntimeError("DOM Data retained an escaping source/table/callable")
-                if ("using map_storage = std::map" in cpp) != (variant != "snapshot"):
+                if ("#define CTNATIVE_ORDERED_MAPS" in cpp) != (variant == "snapshot"):
                     raise RuntimeError("wrong storage for the source snapshot behavior")
                 if cpp.index("atom_table atoms_") > cpp.index("document document_"):
                     raise RuntimeError("document outlives atoms")

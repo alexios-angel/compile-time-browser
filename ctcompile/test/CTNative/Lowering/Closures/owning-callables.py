@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
 
 
 def main():
@@ -54,7 +54,6 @@ def main():
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
             assert "std::function<js_num(js_num)>" in cpp, cpp
-            assert "#include <functional>" in cpp, cpp
             if fixture == "fallback":
                 assert "std::tuple<js_num>" in cpp and "std::make_tuple(" in cpp, cpp
                 assert "std::get<0>" in cpp, cpp
@@ -96,6 +95,7 @@ def main():
                     [
                         compiler,
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -125,6 +125,7 @@ def main():
             [
                 compilers[1],
                 "-std=c++23",
+                RUNTIME_INCLUDE,
                 "-O1",
                 "-g",
                 "-Wall",

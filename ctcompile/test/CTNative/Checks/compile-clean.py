@@ -28,7 +28,18 @@ DEFINITION = re.compile(
     r"|^(class|struct) [A-Za-z_][A-Za-z_0-9]* \{$"
     r"|^static [A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]* = "
 )
-FLAGS = ["-std=c++23", "-O2", "-pedantic", "-Wall", "-Wextra", "-Werror", "-Wconversion"]
+# The runtime header every native program includes lives in ctcompile/include.
+RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
+FLAGS = [
+    "-std=c++23",
+    RUNTIME_INCLUDE,
+    "-O2",
+    "-pedantic",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-Wconversion",
+]
 
 
 def main():

@@ -44,8 +44,6 @@ mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
     }
     globals.insert(name);
     const auto storage = globalStorageType(name);
-    needsNullableString |= isNullableStringCarrier(storage);
-    needsNullable = true;
     return ec::GetGlobalOp::create(b, where, ec::LValueType::get(storage),
                                    mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
 }
@@ -61,7 +59,6 @@ mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, ml
 
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
     if (isBooleanStringCarrier(value.getType())) {
-        needsBooleanString = true;
         return callWithConstValueOperands(builder, where,
                                           mlir::TypeRange{mlir::IntegerType::get(context, 1)},
                                           builder.getStringAttr("ctnative::boolean_string_truthy"),

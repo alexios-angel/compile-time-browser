@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
@@ -183,6 +183,7 @@ def main():
     ]
     flags = [
         "-std=c++23",
+        RUNTIME_INCLUDE,
         "-Wall",
         "-Wextra",
         "-Werror",

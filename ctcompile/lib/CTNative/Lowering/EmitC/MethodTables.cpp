@@ -83,18 +83,16 @@ bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
 
 std::string lowering::callableTypeSpelling(mlir::Type type) {
     switch (carrierOf(type)) {
-    case carrier::nullable: needsNullable = true; return kNullableType.str();
+    case carrier::nullable: return kNullableType.str();
     case carrier::number: return "js_num";
     case carrier::boolean: return "bool";
-    case carrier::string: needsString = true; return "std::string";
-    case carrier::nullableString: needsNullableString = true; return kNullableStringType.str();
+    case carrier::string: return "std::string";
+    case carrier::nullableString: return kNullableStringType.str();
     case carrier::objectValue: needsObjectValue = true; return kObjectValueType.str();
     case carrier::objectIdentity: needsObjectIdentity = true; return kObjectIdentityType.str();
     case carrier::domElement: needsDOM = true; return kDOMElementType.str();
     case carrier::map: {
-        needsMap = true;
         const auto map = llvm::cast<MapType>(type);
-        needsString |= mapNeedsString(map);
         needsObjectValue |= mapNeedsObjectValues(map);
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
     }
@@ -220,7 +218,6 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
             sessionMaps.push_back({"ctnative::method_" + cIdentifier(site), mapName, borrowed, {}});
             sessionAllocations[allocation] = index;
             sessionAllocations[object] = index;
-            if (!domDataSession.empty()) { needsMap = true; }
             llvm::SmallVector<mlir::Value> aliases{allocation.getResult()};
             for (const auto & method : table.methods) {
                 auto closure = method.closure;

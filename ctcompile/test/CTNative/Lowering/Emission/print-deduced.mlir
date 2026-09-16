@@ -57,7 +57,7 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 
 // --- the C++: auto where marked, a pin after each, the type everywhere else -
 //
-// CPP: #include <cmath>
+// CPP: #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // CPP-NEXT: #include <type_traits>
 // CPP-NEXT: #ifndef CTCOMPILE_NO_TYPE_PINS
 // CPP-NEXT: #define CTCOMPILE_PIN(name, site, ...) static_assert(std::is_same_v<decltype(name), __VA_ARGS__>, "ctcompile: " #name " @ " site)

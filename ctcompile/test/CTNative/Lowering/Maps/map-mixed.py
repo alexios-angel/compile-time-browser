@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import find_compilers
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers
 
 spec = importlib.util.spec_from_file_location(
     "representation", Path(__file__).with_name("map-representation.py")
@@ -158,6 +158,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
                 [
                     compiler,
                     "-std=c++23",
+                    RUNTIME_INCLUDE,
                     "-O2",
                     "-Wall",
                     "-Wextra",
@@ -253,6 +254,7 @@ def main():
                     [
                         compiler,
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -273,6 +275,7 @@ def main():
                     [
                         compilers[1],
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O1",
                         "-g",
                         "-fno-omit-frame-pointer",

@@ -67,11 +67,13 @@ Every admitted `Array.from(map.keys())` or `Array.from(map.values())` selects
 the insertion-ordered vector representation for every Map in that native
 module. This conservative choice
 is made before deforestation, so eliminating a temporary snapshot does not
-turn a positional projection into sorted-key traversal. Deforestation requires
-the exact ordered-storage and snapshot helper definitions as well as the
-common helper contract. The ordered representation exposes the same `find`
-interface, with linear lookup; the associative representation has logarithmic
-lookup. No performance improvement is assumed for very small Maps.
+turn a positional projection into sorted-key traversal. Since 2026-09-15 every
+helper lives in `include/ctcompile/CTNative/Runtime/ctnative.hpp`, and the
+module states its choice as `#define CTNATIVE_ORDERED_MAPS 1` in front of the
+include; deforestation requires that define and the include, not helper text.
+The ordered representation exposes the same `find` interface, with linear
+lookup; the associative representation has logarithmic lookup. No performance
+improvement is assumed for very small Maps.
 
 String-to-number allocations use the shorter emitted names:
 

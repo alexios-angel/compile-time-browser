@@ -130,7 +130,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }
                 use.set(emptyString);
             } else if (isNullableStringCarrier(expected)) {
-                needsNullableString = true;
                 if (!emptyNullableString) {
                     emptyNullableString = ec::ConstantOp::create(
                         b, where, carrierType(context, carrier::nullableString),
@@ -268,7 +267,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (vectorIndexReads.contains(o)) {
-        needsNullable = true;
         const auto resultType = o->getResult(0).getType();
         // Only a proved Number drops absence. String snapshots use their own
         // vec_at overload and retain that overload's nullable String carrier.
@@ -400,8 +398,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             } else if (isIdentityCarrier(u.getOperand().getType())) {
                 swap(stringConstant(b, where, "object"));
             } else if (isNullableCarrier(u.getOperand().getType())) {
-                needsNullable = true;
-                needsString = true;
                 swap(callWithConstValueOperands(
                          b, where, mlir::TypeRange{carrierType(context, carrier::string)},
                          b.getStringAttr("ctnative::scalar_typeof"),
@@ -438,7 +434,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         }
         if (equality && (isNullableCarrier(left.getType()) || isNullableCarrier(right.getType()) ||
                          left.getType() != right.getType())) {
-            needsNullable = true;
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::scalar_equal"
                                                                  : "ctnative::scalar_strict_equal";
             swap(callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),

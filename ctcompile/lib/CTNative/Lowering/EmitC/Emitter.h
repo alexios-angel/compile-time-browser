@@ -70,18 +70,6 @@ struct lowering {
     std::string domDataEntry;
     mlir::Type tableType(MethodTableType type) const;
     std::string domDataDefinition() const;
-    bool needsDOMToggle = false;
-    bool needsDOMAttributes = false;
-    bool needsDOMAttributeRead = false;
-    bool needsDOMNumber = false;
-    bool needsDOMURI = false;
-    bool needsDOMJSON = false;
-    bool needsDOMAttributeToggle = false;
-    bool needsDOMAttributePresence = false;
-    bool needsDOMAttributeRemoval = false;
-    bool needsDOMContains = false;
-    bool needsDOMMatches = false;
-    bool needsDOMClosest = false;
     void censusDOM(const DOMEntryAnalysis & entry, bool ownedSession);
     bool replaceDOM(mlir::Operation * operation);
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
@@ -166,21 +154,13 @@ struct lowering {
     const receiverGroups * groups = nullptr;
     llvm::DenseSet<mlir::Value> receiverArgs;
     llvm::DenseMap<mlir::Value, mlir::Value> receiverLocal;
-    // Set by the first array lowered; the include and the helper preamble ride
-    // on it. An empty unit emits neither.
-    bool needsVector = false;
-    bool needsString = false;
-    bool needsNullableString = false;
-    bool needsBooleanString = false;
-    bool needsStringVector = false;
     llvm::DenseMap<mlir::Operation *, MapType> mapSchemas;
-    bool needsMap = false;
-    bool needsNullableMapKeys = false;
+    // THE RUNTIME IS ONE HEADER (Runtime/ctnative.hpp), so the only things a
+    // program still decides are its two defines - ordered Map storage and
+    // the DOM section - and whether it spells an identity_object at all.
     bool needsMapOrder = false;
     bool needsObjectIdentity = false;
     bool needsObjectValue = false;
-    bool needsNullable = false;
-    bool needsExceptions = false;
     struct exceptionStorage {
         mlir::Value result;
         llvm::SmallVector<mlir::Value> state;

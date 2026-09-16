@@ -172,12 +172,17 @@ def main():
         src = work / "unit.cpp"
         src.write_text(cpp)
         exe = str(work / "unit")
-        # NOTHING OF ctbrowser'S ON THIS LINE. No -I, no -l, no library: the
-        # whole point. Clean under the same flags as the Phase 63 gate: a
-        # warning here is a ctcompile bug, not something to suppress.
+        # NOTHING OF ctbrowser'S ON THIS LINE. No -I into the engine, no -l,
+        # no library: the whole point. The one -I is ctcompile/include, for
+        # the runtime header every native program includes, which names
+        # nothing of ctbrowser's unless the program defines CTNATIVE_DOM
+        # first - and the check above refuses a program that includes
+        # ctbrowser at all. Clean under the same flags as the Phase 63 gate:
+        # a warning here is a ctcompile bug, not something to suppress.
+        runtime_include = "-I" + str(Path(__file__).resolve().parents[3] / "include")
         compiled = run(
-            [args.cxx, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror", "-pedantic"]
-            + ["-Wconversion", "-ffp-contract=off", "-o", exe, str(src)]
+            [args.cxx, "-std=c++23", runtime_include, "-O2", "-Wall", "-Wextra", "-Werror"]
+            + ["-pedantic", "-Wconversion", "-ffp-contract=off", "-o", exe, str(src)]
         )
         if compiled.returncode != 0:
             fail(
