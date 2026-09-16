@@ -45,6 +45,7 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -226,47 +227,106 @@ struct shorthand_lists {
 
 // --- interpolation -------------------------------------------------------------
 
-std::string dom_bindings::interpolate_value(std::string_view property, std::string_view from,
-                                            std::string_view to, double p,
-                                            const style::css::length_context & ctx) {
-    // A COLOUR PAIR, CSS Color 4 §17: in sRGB, premultiplied by alpha, so a
-    // transparent endpoint contributes no hue. Extrapolation clamps to the
-    // gamut, as a computed colour does. The text goes back through the same
-    // `rgb()` parser the computed-style serialiser reads, which rounds.
-    const std::optional<color> a = paint::parse_color(from);
-    const std::optional<color> b = paint::parse_color(to);
-    if (a && b) {
-        const auto channel = [](std::uint8_t v) { return static_cast<double>(v) / 255.0; };
-        const double alpha_a = channel(a->alpha());
-        const double alpha_b = channel(b->alpha());
-        const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
-        const double alpha = std::clamp(lerp(alpha_a, alpha_b), 0.0, 1.0);
-        const auto mixed = [&](std::uint8_t x, std::uint8_t y) {
-            const double premultiplied = lerp(channel(x) * alpha_a, channel(y) * alpha_b);
-            const double v = alpha == 0 ? 0 : premultiplied / alpha;
-            return std::clamp(v, 0.0, 1.0) * 255.0;
-        };
-        const auto number = [](double v) {
-            char buffer[32];
-            const auto [end, ec] =
-                std::to_chars(buffer, buffer + sizeof buffer, v, std::chars_format::fixed, 4);
-            return ec == std::errc{} ? std::string{buffer, end} : std::string{"0"};
-        };
-        return "rgba(" + number(mixed(a->red(), b->red())) + ", " +
-               number(mixed(a->green(), b->green())) + ", " + number(mixed(a->blue(), b->blue())) +
-               ", " + number(alpha) + ")";
-    }
-    return style::interpolate_text(property, from, to, p, ctx);
-}
+namespace {
 
-bool dom_bindings::transitionable(std::string_view from, std::string_view to) {
-    if (paint::parse_color(from) && paint::parse_color(to)) { return true; }
+[[nodiscard]] bool numeric_pair(std::string_view from, std::string_view to) {
     style::css::length_context ctx;
     const style::css::math_answer a = style::css::evaluate_math(from, ctx);
     const style::css::math_answer b = style::css::evaluate_math(to, ctx);
     return a.outcome == style::css::math_outcome::resolved &&
            b.outcome == style::css::math_outcome::resolved && a.value.type == b.value.type &&
            a.value.is_number == b.value.is_number;
+}
+
+// One colour between two, CSS Color 4 §17: in sRGB, premultiplied by alpha, so
+// a transparent endpoint contributes no hue. Extrapolation clamps to the
+// gamut, as a computed colour does. The text goes back through the same
+// `rgb()` parser the computed-style serialiser reads, which rounds.
+[[nodiscard]] std::string lerp_color(const color & a, const color & b, double p) {
+    const auto channel = [](std::uint8_t v) { return static_cast<double>(v) / 255.0; };
+    const double alpha_a = channel(a.alpha());
+    const double alpha_b = channel(b.alpha());
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
+    const double alpha = std::clamp(lerp(alpha_a, alpha_b), 0.0, 1.0);
+    const auto mixed = [&](std::uint8_t x, std::uint8_t y) {
+        const double premultiplied = lerp(channel(x) * alpha_a, channel(y) * alpha_b);
+        const double v = alpha == 0 ? 0 : premultiplied / alpha;
+        return std::clamp(v, 0.0, 1.0) * 255.0;
+    };
+    const auto number = [](double v) {
+        char buffer[32];
+        const auto [end, ec] =
+            std::to_chars(buffer, buffer + sizeof buffer, v, std::chars_format::fixed, 4);
+        return ec == std::errc{} ? std::string{buffer, end} : std::string{"0"};
+    };
+    return "rgba(" + number(mixed(a.red(), b.red())) + ", " + number(mixed(a.green(), b.green())) +
+           ", " + number(mixed(a.blue(), b.blue())) + ", " + number(alpha) + ")";
+}
+
+// CSS Values 4 §"combining values": two values interpolate when they are one
+// number, length or percentage each; two colours; or LISTS of the same shape -
+// comma-separated, then space-separated - whose items pair off as one of
+// those or as identical text (`inset`, `/`, `auto`). `border-width: 20px 40px`,
+// `box-shadow: red 2px 2px`, `background-size: 10px 20%` are all that. When the
+// pair does not, `interpolable` is false and the answer flips at the midpoint.
+[[nodiscard]] std::string interpolate_pair(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const style::css::length_context & ctx,
+                                           bool & interpolable) {
+    from = trim(from, html_whitespace);
+    to = trim(to, html_whitespace);
+    interpolable = true;
+    if (const auto a = paint::parse_color(from), b = paint::parse_color(to); a && b) {
+        return lerp_color(*a, *b, p);
+    }
+    if (numeric_pair(from, to)) { return style::interpolate_text(property, from, to, p, ctx); }
+    const std::vector<std::string_view> lists_a = split_top_level(from, ",");
+    const std::vector<std::string_view> lists_b = split_top_level(to, ",");
+    const auto discrete = [&] {
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    };
+    if (lists_a.size() != lists_b.size()) { return discrete(); }
+    std::string out;
+    for (std::size_t i = 0; i < lists_a.size(); ++i) {
+        const std::vector<std::string_view> items_a = split_top_level(lists_a[i], html_whitespace);
+        const std::vector<std::string_view> items_b = split_top_level(lists_b[i], html_whitespace);
+        if (items_a.size() != items_b.size() || items_a.empty()) { return discrete(); }
+        // A single item on each side is the pair itself, already refused above.
+        if (items_a.size() == 1 && lists_a.size() == 1) { return discrete(); }
+        if (i != 0) { out += ", "; }
+        for (std::size_t k = 0; k < items_a.size(); ++k) {
+            const std::string_view x = trim(items_a[k], html_whitespace);
+            const std::string_view y = trim(items_b[k], html_whitespace);
+            if (x.empty() && y.empty()) { continue; }
+            if (k != 0) { out += ' '; }
+            if (x == y) {
+                out += x;
+                continue;
+            }
+            bool item_ok = true;
+            const std::string piece = interpolate_pair(property, x, y, p, ctx, item_ok);
+            if (!item_ok) { return discrete(); }
+            out += piece;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+std::string dom_bindings::interpolate_value(std::string_view property, std::string_view from,
+                                            std::string_view to, double p,
+                                            const style::css::length_context & ctx) {
+    bool interpolable = true;
+    return interpolate_pair(property, from, to, p, ctx, interpolable);
+}
+
+bool dom_bindings::transitionable(std::string_view from, std::string_view to) {
+    bool interpolable = true;
+    style::css::length_context ctx;
+    (void)interpolate_pair("", from, to, 0.5, ctx, interpolable);
+    return interpolable;
 }
 
 // --- the records -----------------------------------------------------------------
@@ -423,8 +483,15 @@ void dom_bindings::update_css_transitions(
         if (after.inherited) { each(after.inherited->declarations); }
     }
     for (const std::string & p : properties) {
-        if (!ascii_iequals(p, "all") && !ascii_iequals(p, "none")) {
-            consider(p.starts_with("--") ? p : ascii_lower_copy(p));
+        if (ascii_iequals(p, "all") || ascii_iequals(p, "none")) { continue; }
+        const std::string name = p.starts_with("--") ? p : ascii_lower_copy(p);
+        // A SHORTHAND NAMES ITS LONGHANDS (CSS Transitions 1 §2.1): the
+        // cascade holds `border-width` as four, and each gets its transition.
+        const std::span<const std::string_view> longhands = style::css::longhands_of(name);
+        if (longhands.empty()) {
+            consider(name);
+        } else {
+            for (const std::string_view longhand : longhands) { consider(longhand); }
         }
     }
     for (const animation_record & a : animations_) {
@@ -439,10 +506,14 @@ void dom_bindings::update_css_transitions(
         // `all` (CSS Transitions 1 §2.1).
         std::size_t match = properties.size();
         for (std::size_t i = 0; i < properties.size(); ++i) {
-            if (ascii_iequals(properties[i], property) ||
-                (ascii_iequals(properties[i], "all") && covered_by_all(property))) {
-                match = i;
+            const std::string & item = properties[i];
+            bool names_it = ascii_iequals(item, property) ||
+                            (ascii_iequals(item, "all") && covered_by_all(property));
+            for (const std::string_view longhand :
+                 style::css::longhands_of(ascii_lower_copy(item))) {
+                if (longhand == property) { names_it = true; }
             }
+            if (names_it) { match = i; }
         }
         const bool matched = !none && (match < properties.size() ||
                                        (properties.empty() && covered_by_all(property)));

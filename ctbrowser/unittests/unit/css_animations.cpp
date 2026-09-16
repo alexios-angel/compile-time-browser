@@ -28,6 +28,8 @@ constexpr const char * stage =
     " to { opacity: 1 } }"
     "@keyframes paint { from { color: rgb(0, 0, 255); animation-timing-function: linear }"
     " to { color: rgba(255, 0, 0, 0.5) } }"
+    "@keyframes shadow { from { box-shadow: rgb(0, 0, 0) 0px 0px; animation-timing-function:"
+    " linear } to { box-shadow: rgb(0, 0, 0) 10px 20px } }"
     "</style>"
     "<div id=c style='position:relative;width:100px;height:100px'>"
     "<div id=t style='position:absolute;left:0px;width:10px;height:10px;opacity:1'></div></div>";
@@ -137,6 +139,10 @@ void test_a_css_animation_is_sampled_at_the_flush() {
     is("t.style.animationName = 'paint'; t.style.animationDuration = '100s';"
        " t.style.animationDelay = '-50s';",
        "getComputedStyle(t).color", "rgba(85, 0, 170, 0.75)");
+    // A list interpolates item by item when the shapes agree.
+    is("t.style.animationName = 'shadow'; t.style.animationDuration = '100s';"
+       " t.style.animationDelay = '-50s';",
+       "getComputedStyle(t).boxShadow", "rgb(0, 0, 0) 5px 10px");
     // The constructor is not callable.
     is("",
        "(function () { try { new CSSAnimation(); return 'no'; } catch (e) { return e.name; } })()",
@@ -171,6 +177,12 @@ void test_a_css_transition_starts_from_the_before_change_style() {
     is("t.style.color = 'rgb(0, 0, 255)'; getComputedStyle(t).color;"
        " t.style.transition = 'color 100s -50s linear'; t.style.color = 'rgb(255, 0, 0)';",
        "getComputedStyle(t).color", "rgb(128, 0, 128)");
+    // A shorthand names its longhands, each with a transition of its own.
+    is("t.style.padding = '10px 20px'; getComputedStyle(t).padding;"
+       " t.style.transition = 'padding 100s -50s linear'; t.style.padding = '30px 40px';",
+       "getComputedStyle(t).padding + ' ' + t.getAnimations().length + ' ' +"
+       " t.getAnimations()[0].transitionProperty",
+       "20px 30px 4 padding-top");
     // Setting the property back to the running transition's end does nothing;
     // setting it somewhere else replaces the transition from its current value.
     is(std::string{transitioned} + " var a = t.getAnimations()[0]; t.style.left = '100px';",
