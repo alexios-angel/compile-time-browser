@@ -1,0 +1,223 @@
+// The URL Standard's own conformance corpus, driven through shell/net/url.hpp
+// with no VM in between: url/resources/urltestdata.json (the parser and the
+// serialiser, ~900 inputs) and setters_tests.json (the §6.1 setter steps, ~280
+// cases) from the web-platform-tests checkout tools/wpt/fetch-wpt.sh makes at
+// ~/.cache/wpt. Read when present, like the html5lib fixtures; absent, the
+// hand-written cases below still run and the file passes.
+//
+// EVERY CASE PASSES at the WPT commit tools/wpt/fetch-wpt.sh pins (893 of 893
+// and 278 of 278, 2026-09-16), UTS #46 slice and all - so the file asserts the
+// total rather than a ratchet. A corpus bump that adds a mapping this engine
+// lacks is the moment to extend map_for_domain in url.cpp, not to lower this.
+
+#include <ctbrowser.hpp>
+#include <ctbrowser/core/json.hpp>
+
+#include "check.hpp"
+
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+#include <variant>
+
+using namespace ctbrowser;
+using namespace ctbrowser::shell;
+
+namespace {
+
+[[nodiscard]] std::filesystem::path corpus_dir() {
+    if (const char * home = std::getenv("HOME"); home != nullptr) {
+        return std::filesystem::path{home} / ".cache" / "wpt" / "url" / "resources";
+    }
+    return {};
+}
+
+[[nodiscard]] const json_value * member(const json_value & object, std::string_view key) {
+    const auto * fields = std::get_if<json_value::object>(&object.data);
+    if (fields == nullptr) { return nullptr; }
+    for (const json_value::member & m : *fields) {
+        if (m.key == key) { return &m.value; }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::string text_of(const json_value * v) {
+    const auto * s = v == nullptr ? nullptr : std::get_if<std::string>(&v->data);
+    return s == nullptr ? std::string{} : *s;
+}
+
+// --- urltestdata.json -------------------------------------------------------
+
+void test_the_parser_corpus() {
+    const std::string text = read_file(corpus_dir() / "urltestdata.json");
+    if (text.empty()) {
+        std::puts("url_wpt: no ~/.cache/wpt checkout; the parser corpus is skipped");
+        return;
+    }
+    const auto parsed = parse_json(text);
+    CHECK(parsed.has_value());
+    if (!parsed) { return; }
+    const auto * cases = std::get_if<json_value::array>(&parsed->data);
+    CHECK(cases != nullptr);
+    if (cases == nullptr) { return; }
+
+    int total = 0;
+    int passed = 0;
+    for (const json_value & c : *cases) {
+        if (std::holds_alternative<std::string>(c.data)) { continue; } // a comment
+        ++total;
+        const std::string input = text_of(member(c, "input"));
+        const json_value * base = member(c, "base");
+        const bool has_base = base != nullptr && std::holds_alternative<std::string>(base->data);
+        const std::optional<url_record> url =
+            has_base ? parse_url(input, text_of(base)) : parse_url(input);
+        const bool expect_failure = member(c, "failure") != nullptr;
+        bool ok = false;
+        if (expect_failure) {
+            ok = !url.has_value();
+        } else if (url) {
+            ok = url->serialize() == text_of(member(c, "href")) &&
+                 url->protocol() == text_of(member(c, "protocol")) &&
+                 url->username == text_of(member(c, "username")) &&
+                 url->password == text_of(member(c, "password")) &&
+                 url->host_and_port() == text_of(member(c, "host")) &&
+                 url->hostname() == text_of(member(c, "hostname")) &&
+                 url->port_text() == text_of(member(c, "port")) &&
+                 url->pathname() == text_of(member(c, "pathname")) &&
+                 url->search() == text_of(member(c, "search")) &&
+                 url->hash() == text_of(member(c, "hash"));
+            if (const json_value * origin = member(c, "origin"); ok && origin != nullptr) {
+                ok = url->origin() == text_of(origin);
+            }
+        }
+        if (ok) {
+            ++passed;
+        } else if (std::getenv("CTBROWSER_URL_VERBOSE") != nullptr) {
+            std::printf("  miss: <%s> against <%s> -> %s\n", input.c_str(),
+                        has_base ? text_of(base).c_str() : "(none)",
+                        url ? url->serialize().c_str() : "failure");
+        }
+    }
+    std::printf("url_wpt: urltestdata.json %d / %d\n", passed, total);
+    CHECK(total >= 800);
+    CHECK(passed == total);
+}
+
+// --- setters_tests.json ----------------------------------------------------------
+
+void test_the_setters_corpus() {
+    const std::string text = read_file(corpus_dir() / "setters_tests.json");
+    if (text.empty()) { return; }
+    const auto parsed = parse_json(text);
+    CHECK(parsed.has_value());
+    if (!parsed) { return; }
+    const auto * groups = std::get_if<json_value::object>(&parsed->data);
+    CHECK(groups != nullptr);
+    if (groups == nullptr) { return; }
+
+    static constexpr std::pair<std::string_view, url_part> parts[] = {
+        {"href", url_part::href},         {"protocol", url_part::protocol},
+        {"username", url_part::username}, {"password", url_part::password},
+        {"host", url_part::host},         {"hostname", url_part::hostname},
+        {"port", url_part::port},         {"pathname", url_part::pathname},
+        {"search", url_part::search},     {"hash", url_part::hash},
+    };
+    const auto part_named = [&](std::string_view name) -> std::optional<url_part> {
+        for (const auto & [known, part] : parts) {
+            if (known == name) { return part; }
+        }
+        return std::nullopt;
+    };
+    const auto read = [](const url_record & url, std::string_view name) -> std::string {
+        if (name == "href") { return url.serialize(); }
+        if (name == "protocol") { return url.protocol(); }
+        if (name == "username") { return url.username; }
+        if (name == "password") { return url.password; }
+        if (name == "host") { return url.host_and_port(); }
+        if (name == "hostname") { return url.hostname(); }
+        if (name == "port") { return url.port_text(); }
+        if (name == "pathname") { return url.pathname(); }
+        if (name == "search") { return url.search(); }
+        if (name == "hash") { return url.hash(); }
+        if (name == "origin") { return url.origin(); }
+        return "?";
+    };
+
+    int total = 0;
+    int passed = 0;
+    for (const json_value::member & group : *groups) {
+        const std::optional<url_part> part = part_named(group.key);
+        if (!part) { continue; } // "comment"
+        const auto * cases = std::get_if<json_value::array>(&group.value.data);
+        if (cases == nullptr) { continue; }
+        for (const json_value & c : *cases) {
+            ++total;
+            std::optional<url_record> url = parse_url(text_of(member(c, "href")));
+            if (!url) { continue; }
+            (void)set_url_part(*url, *part, text_of(member(c, "new_value")));
+            bool ok = true;
+            const json_value * expected = member(c, "expected");
+            const auto * fields =
+                expected == nullptr ? nullptr : std::get_if<json_value::object>(&expected->data);
+            if (fields == nullptr) { continue; }
+            for (const json_value::member & e : *fields) {
+                if (read(*url, e.key) != text_of(&e.value)) { ok = false; }
+            }
+            if (ok) {
+                ++passed;
+            } else if (std::getenv("CTBROWSER_URL_VERBOSE") != nullptr) {
+                std::printf("  miss: <%s>.%s = '%s' -> %s\n", text_of(member(c, "href")).c_str(),
+                            group.key.c_str(), text_of(member(c, "new_value")).c_str(),
+                            url->serialize().c_str());
+            }
+        }
+    }
+    std::printf("url_wpt: setters_tests.json %d / %d\n", passed, total);
+    CHECK(total >= 250);
+    CHECK(passed == total);
+}
+
+// --- the rows docs/plans/ada-url.md measured, now pinned ----------------------------
+
+void test_the_eight_rows_that_differed_from_a_browser() {
+    CHECK(resolve("http://example.com/", "http://example.com:80/a") == "http://example.com/a");
+    CHECK(resolve("http://example.com/", "https://example.com:443/a") == "https://example.com/a");
+    CHECK(resolve("http://example.com/", "http:\\\\example.com\\a") == "http://example.com/a");
+    CHECK(resolve("http://example.com/", "http://example.com/a\tb") == "http://example.com/ab");
+    CHECK(resolve("http://example.com/", "http://\xe6\x97\xa5\xe6\x9c\xac.jp/") ==
+          "http://xn--wgv71a.jp/");
+    CHECK(resolve("http://example.com/", "http://example.com") == "http://example.com/");
+    CHECK(resolve("http://example.com/", "http://example.com/a/%2e%2e/x") ==
+          "http://example.com/x");
+    CHECK(resolve("http://example.com/", "  http://example.com/a  ") == "http://example.com/a");
+}
+
+void test_form_urlencoded_round_trips() {
+    const form_pairs pairs = parse_form_urlencoded("a=b+c&d=%26&e&=f&&");
+    CHECK(pairs.size() == 4);
+    CHECK(pairs[0].first == "a" && pairs[0].second == "b c");
+    CHECK(pairs[1].first == "d" && pairs[1].second == "&");
+    CHECK(pairs[2].first == "e" && pairs[2].second.empty());
+    CHECK(pairs[3].first.empty() && pairs[3].second == "f");
+    CHECK(serialize_form_urlencoded(pairs) == "a=b+c&d=%26&e=&=f");
+    CHECK(parse_form_urlencoded(serialize_form_urlencoded(pairs)) == pairs);
+    CHECK(serialize_form_urlencoded({{"q", "+1 (555)"}}) == "q=%2B1+%28555%29");
+}
+
+void test_a_lone_surrogate_becomes_the_replacement_character() {
+    // WTF-8 for U+D800, as the VM spells a lone surrogate.
+    CHECK(to_usv_string("a\xed\xa0\x80z") == "a\xef\xbf\xbdz");
+    const std::optional<url_record> url = parse_url("http://h/\xed\xa0\x80");
+    CHECK(url && url->pathname() == "/%EF%BF%BD");
+}
+
+} // namespace
+
+int main() {
+    test_the_parser_corpus();
+    test_the_setters_corpus();
+    test_the_eight_rows_that_differed_from_a_browser();
+    test_form_urlencoded_round_trips();
+    test_a_lone_surrogate_becomes_the_replacement_character();
+    REPORT("url_wpt");
+}

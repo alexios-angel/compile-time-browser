@@ -1,22 +1,17 @@
 #include <ctbrowser/shell/net/url.hpp>
 
-// THE ONLY TRANSLATION UNIT THAT KNOWS BOOST.URL EXISTS. url.hpp declares three
-// plain structs and a handful of functions; everything RFC 3986 is in here,
-// which is what keeps 1.2 MB of headers off every consumer of the engine.
-#include <boost/url.hpp>
+// The WHATWG URL Standard (https://url.spec.whatwg.org/), section numbers as
+// of 2025 in the comments. Boost.URL, which used to be here, is gone: it parses
+// RFC 3986, which is not the specification a browser implements - see url.hpp.
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
 namespace ctbrowser::shell {
 
-namespace urls = boost::urls;
-
-// NOT Boost.URL's `pct_string_view`, which validates and throws on a stray `%`
-// - and a browser shows the image anyway. Ten lines with the engine's own
-// hex_value is the lenient answer.
 std::string percent_decode(std::string_view text) {
     std::string out;
     out.reserve(text.size());
@@ -35,166 +30,1234 @@ std::string percent_decode(std::string_view text) {
 
 namespace {
 
-// LENIENCY, AND IT HAS TO COME FIRST.
-//
-// Boost.URL is a strict RFC 3986 parser: `http://h/a b/c` and `http://h/<utf8>`
-// are both rejected outright with "leftover". A browser accepts them, and so did
-// both hand-rolled parsers this file replaces - so parsing strictly would hand
-// pages a stricter engine than they were written for and call it correctness.
-//
-// So the bytes RFC 3986 disallows get percent-encoded first, which is what a
-// browser does. `%` IS DELIBERATELY IN THE ALLOWED SET: without that, input a
-// page already encoded would be encoded again and `%20` would become `%2520`.
-// The cost is that a literal `%` not starting an escape survives as-is, which is
-// the same bet every browser makes.
-//
-// AND BEFORE THAT, THE URL STANDARD'S OWN TRIM (basic URL parser, steps 1-3):
-// leading and trailing C0 controls and spaces are removed, and every tab and
-// newline anywhere is - so `<a href=" page.html ">` and a URL a page assembled
-// across lines both parse as the page meant them to.
-[[nodiscard]] std::string pre_encode(std::string_view raw) {
-    static constexpr char hex[] = "0123456789ABCDEF";
-    while (!raw.empty() && static_cast<unsigned char>(raw.front()) <= 0x20) {
-        raw.remove_prefix(1);
-    }
-    while (!raw.empty() && static_cast<unsigned char>(raw.back()) <= 0x20) { raw.remove_suffix(1); }
+constexpr char32_t eof = 0xFFFFFFFFu;
+
+[[nodiscard]] constexpr bool is_alpha(char32_t c) noexcept {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+[[nodiscard]] constexpr bool is_digit(char32_t c) noexcept {
+    return c >= '0' && c <= '9';
+}
+[[nodiscard]] constexpr bool is_hex(char32_t c) noexcept {
+    return c < 0x80 && hex_value(static_cast<char>(c)) >= 0;
+}
+[[nodiscard]] constexpr char32_t lower(char32_t c) noexcept {
+    return c >= 'A' && c <= 'Z' ? c + 0x20 : c;
+}
+
+// --- code points in and out ---------------------------------------------------
+
+// The input as code points. A malformed byte decodes as itself (decode_utf8's
+// rule), so a Latin-1 attribute value still parses; a WTF-8 lone surrogate
+// comes through as its surrogate code point and is replaced where the
+// standard says (percent-encoding, the host).
+[[nodiscard]] std::u32string code_points(std::string_view utf8) {
+    std::u32string out;
+    out.reserve(utf8.size());
+    for (std::size_t at = 0; at < utf8.size();) { out.push_back(decode_utf8(utf8, at)); }
+    return out;
+}
+
+[[nodiscard]] constexpr bool is_surrogate(char32_t c) noexcept {
+    return c >= 0xD800 && c <= 0xDFFF;
+}
+
+void append_scalar(std::string & out, char32_t c) {
+    append_utf8(out, is_surrogate(c) || c > 0x10FFFF ? 0xFFFDu : c);
+}
+
+[[nodiscard]] std::string utf8_of(std::u32string_view text) {
     std::string out;
-    out.reserve(raw.size());
-    for (const char each : raw) {
-        const auto c = static_cast<unsigned char>(each);
-        if (c == '\t' || c == '\n' || c == '\r') { continue; }
-        // Printable ASCII minus the characters RFC 3986 excludes from a URI.
-        const bool allowed = c > 0x20 && c < 0x7F && c != '"' && c != '<' && c != '>' &&
-                             c != '\\' && c != '^' && c != '`' && c != '{' && c != '|' && c != '}';
-        if (allowed) {
-            out.push_back(each);
-        } else {
-            out.push_back('%');
-            out.push_back(hex[c >> 4U]);
-            out.push_back(hex[c & 0x0FU]);
-        }
+    for (const char32_t c : text) { append_scalar(out, c); }
+    return out;
+}
+
+// "UTF-8 decode without BOM": bytes to code points, every malformed sequence
+// U+FFFD. decode_utf8 hands back the lead byte and advances by one for those,
+// so a code point >= 0x80 that took one byte is the tell.
+[[nodiscard]] std::u32string decode_replacing(std::string_view bytes) {
+    std::u32string out;
+    for (std::size_t at = 0; at < bytes.size();) {
+        const std::size_t before = at;
+        char32_t c = decode_utf8(bytes, at);
+        if ((c >= 0x80 && at - before == 1) || is_surrogate(c) || c > 0x10FFFF) { c = 0xFFFDu; }
+        out.push_back(c);
     }
     return out;
 }
 
-// Parse, and normalize only where normalizing is safe.
-//
-// `normalize()` lowercases the scheme and host, canonicalises percent-encoding
-// and removes dot segments - all correct for a hierarchical URL. It is NOT
-// applied to a scheme with no authority, because the "path" of `data:` or
-// `blob:` is an opaque payload rather than a path, and rewriting it would
-// corrupt what a page stored there.
-[[nodiscard]] bool parse_into(std::string_view text, urls::url & into) {
-    // THE ENCODED STRING MUST OUTLIVE THE PARSE. `parse_uri_reference` hands
-    // back a url_VIEW, which does not own its characters - passing it the
-    // temporary from pre_encode() directly leaves the view dangling the moment
-    // the full expression ends, and the copy below then reads freed memory.
-    // It surfaced as a thrown "leftover" from perfectly valid input, which is
-    // exactly as confusing as it sounds. `urls::url` owns; `url_view` borrows.
-    const std::string encoded = pre_encode(text);
-    const auto parsed = urls::parse_uri_reference(encoded);
-    if (!parsed) { return false; }
-    into = *parsed;
-    if (into.has_authority()) { into.normalize(); }
+// --- §1.3 percent-encode sets --------------------------------------------------
+
+enum class encode_set {
+    c0,
+    fragment,
+    query,
+    special_query,
+    path,
+    userinfo,
+    component,
+    form
+};
+
+[[nodiscard]] constexpr bool in_set(char32_t c, encode_set set) noexcept {
+    if (c < 0x20 || c > 0x7E) { return true; } // the C0 control set, in every set
+    const auto any = [c](std::string_view chars) {
+        return chars.find(static_cast<char>(c)) != std::string_view::npos;
+    };
+    switch (set) {
+    case encode_set::c0: return false;
+    case encode_set::fragment: return any(" \"<>`");
+    case encode_set::query: return any(" \"#<>");
+    case encode_set::special_query: return any(" \"#<>'");
+    case encode_set::path: return any(" \"#<>?^`{}");
+    case encode_set::userinfo: return any(" \"#<>?^`{}/:;=@[\\]|");
+    case encode_set::component: return any(" \"#<>?^`{}/:;=@[\\]|$%&+,");
+    case encode_set::form: return any(" \"#<>?^`{}/:;=@[\\]|$%&+,!'()~");
+    }
+    return false;
+}
+
+void percent_encode(std::string & out, char32_t c, encode_set set) {
+    if (!in_set(c, set)) {
+        out.push_back(static_cast<char>(c));
+        return;
+    }
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string bytes;
+    append_scalar(bytes, c);
+    for (const char each : bytes) {
+        const auto b = static_cast<unsigned char>(each);
+        out.push_back('%');
+        out.push_back(hex[b >> 4U]);
+        out.push_back(hex[b & 0x0FU]);
+    }
+}
+
+[[nodiscard]] std::string percent_encode(std::u32string_view text, encode_set set) {
+    std::string out;
+    for (const char32_t c : text) { percent_encode(out, c, set); }
+    return out;
+}
+
+// --- §4.2 special schemes --------------------------------------------------------
+
+[[nodiscard]] std::optional<std::uint16_t> default_port(std::string_view scheme) noexcept {
+    if (scheme == "http" || scheme == "ws") { return 80; }
+    if (scheme == "https" || scheme == "wss") { return 443; }
+    if (scheme == "ftp") { return 21; }
+    return std::nullopt;
+}
+[[nodiscard]] bool special_scheme(std::string_view scheme) noexcept {
+    return scheme == "file" || default_port(scheme).has_value();
+}
+
+// --- §3.5 hosts --------------------------------------------------------------------
+
+[[nodiscard]] constexpr bool forbidden_host(char32_t c) noexcept {
+    return c == 0 || c == '\t' || c == '\n' || c == '\r' || c == ' ' || c == '#' || c == '/' ||
+           c == ':' || c == '<' || c == '>' || c == '?' || c == '@' || c == '[' || c == '\\' ||
+           c == ']' || c == '^' || c == '|';
+}
+[[nodiscard]] constexpr bool forbidden_domain(char32_t c) noexcept {
+    return forbidden_host(c) || c < 0x20 || c == '%' || c == 0x7F;
+}
+
+// §3.5 IPv4 number parser: (value, ok). `input` is one dotted part.
+[[nodiscard]] std::optional<std::uint64_t> ipv4_number(std::u32string_view input) {
+    if (input.empty()) { return std::nullopt; }
+    unsigned radix = 10;
+    if (input.size() >= 2 && input[0] == '0' && lower(input[1]) == 'x') {
+        input.remove_prefix(2);
+        radix = 16;
+    } else if (input.size() >= 2 && input[0] == '0') {
+        input.remove_prefix(1);
+        radix = 8;
+    }
+    if (input.empty()) { return 0; }
+    std::uint64_t value = 0;
+    for (const char32_t c : input) {
+        const int digit = c < 0x80 ? hex_value(static_cast<char>(c)) : -1;
+        if (digit < 0 || static_cast<unsigned>(digit) >= radix) { return std::nullopt; }
+        // Saturate rather than wrap: anything past 2^40 already fails every
+        // range check below, and a 200-digit part must not overflow into a
+        // small number that passes.
+        value = std::min<std::uint64_t>(value * radix + static_cast<unsigned>(digit),
+                                        std::uint64_t{1} << 40U);
+    }
+    return value;
+}
+
+[[nodiscard]] std::vector<std::u32string_view> split_dots(std::u32string_view input) {
+    std::vector<std::u32string_view> parts;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= input.size(); ++i) {
+        if (i == input.size() || input[i] == '.') {
+            parts.push_back(input.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    return parts;
+}
+
+// §3.5 "ends in a number checker".
+[[nodiscard]] bool ends_in_a_number(std::u32string_view input) {
+    std::vector<std::u32string_view> parts = split_dots(input);
+    if (parts.back().empty()) {
+        if (parts.size() == 1) { return false; }
+        parts.pop_back();
+    }
+    const std::u32string_view last = parts.back();
+    if (!last.empty() && std::all_of(last.begin(), last.end(), is_digit)) { return true; }
+    return ipv4_number(last).has_value();
+}
+
+// §3.5 IPv4 parser, to its serialisation.
+[[nodiscard]] std::optional<std::string> parse_ipv4(std::u32string_view input) {
+    std::vector<std::u32string_view> parts = split_dots(input);
+    if (parts.back().empty() && parts.size() > 1) { parts.pop_back(); }
+    if (parts.size() > 4) { return std::nullopt; }
+    std::vector<std::uint64_t> numbers;
+    for (const std::u32string_view part : parts) {
+        const std::optional<std::uint64_t> n = ipv4_number(part);
+        if (!n) { return std::nullopt; }
+        numbers.push_back(*n);
+    }
+    for (std::size_t i = 0; i + 1 < numbers.size(); ++i) {
+        if (numbers[i] > 255) { return std::nullopt; }
+    }
+    const std::uint64_t limit = std::uint64_t{1} << (8U * (5U - numbers.size()));
+    if (numbers.back() >= limit) { return std::nullopt; }
+    std::uint64_t ipv4 = numbers.back();
+    for (std::size_t i = 0; i + 1 < numbers.size(); ++i) { ipv4 += numbers[i] << (8U * (3U - i)); }
+    std::string out;
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        out += std::to_string((ipv4 >> static_cast<unsigned>(shift)) & 0xFFU);
+        if (shift != 0) { out += '.'; }
+    }
+    return out;
+}
+
+// §3.5 IPv6 parser, to its serialisation with the brackets.
+[[nodiscard]] std::optional<std::string> parse_ipv6(std::u32string_view input) {
+    std::uint16_t address[8] = {};
+    std::size_t piece = 0;
+    std::optional<std::size_t> compress;
+    std::size_t p = 0;
+    const auto at = [&](std::size_t i) { return i < input.size() ? input[i] : eof; };
+    if (at(p) == ':') {
+        if (at(p + 1) != ':') { return std::nullopt; }
+        p += 2;
+        ++piece;
+        compress = piece;
+    }
+    while (at(p) != eof) {
+        if (piece == 8) { return std::nullopt; }
+        if (at(p) == ':') {
+            if (compress) { return std::nullopt; }
+            ++p;
+            ++piece;
+            compress = piece;
+            continue;
+        }
+        std::uint32_t value = 0;
+        std::size_t length = 0;
+        while (length < 4 && is_hex(at(p))) {
+            value = value * 16 + static_cast<std::uint32_t>(hex_value(static_cast<char>(at(p))));
+            ++p;
+            ++length;
+        }
+        if (at(p) == '.') {
+            if (length == 0) { return std::nullopt; }
+            p -= length;
+            if (piece > 6) { return std::nullopt; }
+            std::size_t numbers_seen = 0;
+            while (at(p) != eof) {
+                std::optional<std::uint32_t> ipv4_piece;
+                if (numbers_seen > 0) {
+                    if (at(p) == '.' && numbers_seen < 4) {
+                        ++p;
+                    } else {
+                        return std::nullopt;
+                    }
+                }
+                if (!is_digit(at(p))) { return std::nullopt; }
+                while (is_digit(at(p))) {
+                    const std::uint32_t number = at(p) - '0';
+                    if (!ipv4_piece) {
+                        ipv4_piece = number;
+                    } else if (*ipv4_piece == 0) {
+                        return std::nullopt;
+                    } else {
+                        ipv4_piece = *ipv4_piece * 10 + number;
+                    }
+                    if (*ipv4_piece > 255) { return std::nullopt; }
+                    ++p;
+                }
+                address[piece] = static_cast<std::uint16_t>(address[piece] * 0x100 + *ipv4_piece);
+                ++numbers_seen;
+                if (numbers_seen == 2 || numbers_seen == 4) { ++piece; }
+            }
+            if (numbers_seen != 4) { return std::nullopt; }
+            break;
+        }
+        if (at(p) == ':') {
+            ++p;
+            if (at(p) == eof) { return std::nullopt; }
+        } else if (at(p) != eof) {
+            return std::nullopt;
+        }
+        address[piece] = static_cast<std::uint16_t>(value);
+        ++piece;
+    }
+    if (compress) {
+        std::size_t swaps = piece - *compress;
+        piece = 7;
+        while (piece != 0 && swaps > 0) {
+            std::swap(address[piece], address[*compress + swaps - 1]);
+            --piece;
+            --swaps;
+        }
+    } else if (piece != 8) {
+        return std::nullopt;
+    }
+    // §3.5 IPv6 serializer: the first longest run of two or more zero pieces
+    // becomes `::`.
+    std::size_t best_start = 8;
+    std::size_t best_length = 1;
+    for (std::size_t i = 0; i < 8;) {
+        if (address[i] != 0) {
+            ++i;
+            continue;
+        }
+        std::size_t j = i;
+        while (j < 8 && address[j] == 0) { ++j; }
+        if (j - i > best_length) {
+            best_start = i;
+            best_length = j - i;
+        }
+        i = j;
+    }
+    std::string out = "[";
+    bool ignore_zero = false;
+    for (std::size_t i = 0; i < 8; ++i) {
+        if (ignore_zero && address[i] == 0) { continue; }
+        ignore_zero = false;
+        if (best_start == i) {
+            out += i == 0 ? "::" : ":";
+            ignore_zero = true;
+            continue;
+        }
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string hex;
+        std::uint16_t v = address[i];
+        do {
+            hex.insert(hex.begin(), digits[v & 0xFU]);
+            v = static_cast<std::uint16_t>(v >> 4U);
+        } while (v != 0);
+        out += hex;
+        if (i != 7) { out += ':'; }
+    }
+    return out + "]";
+}
+
+// RFC 3492 punycode, the encoder only: what `xn--` labels are made of.
+[[nodiscard]] std::optional<std::string> punycode(std::u32string_view input) {
+    constexpr std::uint32_t base = 36, tmin = 1, tmax = 26, skew = 38, damp = 700;
+    const auto adapt = [](std::uint32_t delta, std::uint32_t points, bool first) {
+        delta = first ? delta / damp : delta / 2;
+        delta += delta / points;
+        std::uint32_t k = 0;
+        while (delta > ((base - tmin) * tmax) / 2) {
+            delta /= base - tmin;
+            k += base;
+        }
+        return k + (((base - tmin + 1) * delta) / (delta + skew));
+    };
+    const auto digit = [](std::uint32_t d) {
+        return static_cast<char>(d < 26 ? 'a' + d : '0' + (d - 26));
+    };
+    std::string out;
+    for (const char32_t c : input) {
+        if (c < 0x80) { out.push_back(static_cast<char>(c)); }
+    }
+    const std::uint32_t basic = static_cast<std::uint32_t>(out.size());
+    std::uint32_t handled = basic;
+    if (basic > 0) { out.push_back('-'); }
+    std::uint32_t n = 128, delta = 0, bias = 72;
+    while (handled < input.size()) {
+        char32_t m = 0x110000;
+        for (const char32_t c : input) {
+            if (c >= n && c < m) { m = c; }
+        }
+        if ((m - n) > (0xFFFFFFFFu - delta) / (handled + 1)) { return std::nullopt; }
+        delta += (m - n) * (handled + 1);
+        n = m;
+        for (const char32_t c : input) {
+            if (c < n && ++delta == 0) { return std::nullopt; }
+            if (c != n) { continue; }
+            std::uint32_t q = delta;
+            for (std::uint32_t k = base;; k += base) {
+                const std::uint32_t t = k <= bias ? tmin : (k >= bias + tmax ? tmax : k - bias);
+                if (q < t) { break; }
+                out.push_back(digit(t + (q - t) % (base - t)));
+                q = (q - t) / (base - t);
+            }
+            out.push_back(digit(q));
+            bias = adapt(delta, handled + 1, handled == basic);
+            delta = 0;
+            ++handled;
+        }
+        ++delta;
+        ++n;
+    }
+    return out;
+}
+
+// The slice of UTS #46 this engine does - see url.hpp for what it leaves out.
+// Appends the mapping of `c` to `out`; false for a disallowed code point.
+[[nodiscard]] bool map_for_domain(char32_t c, std::u32string & out) {
+    if (c < 0x80) {
+        out.push_back(lower(c));
+        return true;
+    }
+    // Ignored: soft hyphen, zero-width space, word joiner, BOM/ZWNBSP, the
+    // combining grapheme joiner and the variation selectors.
+    if (c == 0xAD || c == 0x200B || c == 0x2060 || c == 0xFEFF || c == 0x34F ||
+        (c >= 0x180B && c <= 0x180D) || (c >= 0xFE00 && c <= 0xFE0F)) {
+        return true;
+    }
+    if (is_surrogate(c) || c == 0xFFFD || (c >= 0xFDD0 && c <= 0xFDEF) ||
+        (c & 0xFFFEu) == 0xFFFEu || c > 0x10FFFF) {
+        return false;
+    }
+    // The spaces map to U+0020, which the domain then forbids: the standard's
+    // answer for `GOO goo.com` however the space is spelled.
+    if (c == 0xA0 || (c >= 0x2000 && c <= 0x200A) || c == 0x202F || c == 0x205F || c == 0x3000) {
+        out.push_back(' ');
+        return true;
+    }
+    if (c == 0x3002 || c == 0xFF0E || c == 0xFF61) { // the ideographic full stops
+        out.push_back('.');
+        return true;
+    }
+    if (c >= 0xFF01 && c <= 0xFF5E) { // full-width ASCII
+        out.push_back(lower(c - 0xFF01 + 0x21));
+        return true;
+    }
+    if ((c >= 0xC0 && c <= 0xDE) && c != 0xD7) { // Latin-1 capitals
+        out.push_back(c + 0x20);
+        return true;
+    }
+    if (c >= 0x1D400 && c <= 0x1D6A3) { // the mathematical Latin alphabets
+        out.push_back(static_cast<char32_t>('a' + (c - 0x1D400) % 26));
+        return true;
+    }
+    out.push_back(c);
+    return true;
+}
+
+// §3.3 "domain to ASCII", beStrict false.
+[[nodiscard]] std::optional<std::string> domain_to_ascii(std::u32string_view domain) {
+    std::u32string mapped;
+    for (const char32_t c : domain) {
+        if (!map_for_domain(c, mapped)) { return std::nullopt; }
+    }
+    std::string out;
+    for (const std::u32string_view label : split_dots(mapped)) {
+        const bool ascii =
+            std::all_of(label.begin(), label.end(), [](char32_t c) { return c < 0x80; });
+        if (ascii) {
+            for (const char32_t c : label) { out.push_back(static_cast<char>(c)); }
+        } else {
+            const std::optional<std::string> encoded = punycode(label);
+            if (!encoded) { return std::nullopt; }
+            out += "xn--" + *encoded;
+        }
+        out.push_back('.');
+    }
+    out.pop_back(); // the joining dot after the last label
+    if (out.empty()) { return std::nullopt; }
+    return out;
+}
+
+// §3.5 "host parser", to the serialised host.
+[[nodiscard]] std::optional<std::string> parse_host(std::u32string_view input, bool is_opaque) {
+    if (!input.empty() && input.front() == '[') {
+        if (input.back() != ']') { return std::nullopt; }
+        return parse_ipv6(input.substr(1, input.size() - 2));
+    }
+    if (is_opaque) {
+        if (std::any_of(input.begin(), input.end(), forbidden_host)) { return std::nullopt; }
+        return percent_encode(input, encode_set::c0);
+    }
+    const std::u32string domain = decode_replacing(percent_decode(utf8_of(input)));
+    const std::optional<std::string> ascii = domain_to_ascii(domain);
+    if (!ascii) { return std::nullopt; }
+    const std::u32string ascii_points = code_points(*ascii);
+    if (std::any_of(ascii_points.begin(), ascii_points.end(), forbidden_domain)) {
+        return std::nullopt;
+    }
+    if (ends_in_a_number(ascii_points)) { return parse_ipv4(ascii_points); }
+    return ascii;
+}
+
+// --- §4.4 the basic URL parser -------------------------------------------------------
+
+enum class state {
+    scheme_start,
+    scheme,
+    no_scheme,
+    special_relative_or_authority,
+    path_or_authority,
+    relative,
+    relative_slash,
+    special_authority_slashes,
+    special_authority_ignore_slashes,
+    authority,
+    host,
+    hostname,
+    port,
+    file,
+    file_slash,
+    file_host,
+    path_start,
+    path,
+    opaque_path,
+    query,
+    fragment,
+};
+
+[[nodiscard]] bool windows_drive_letter(std::u32string_view s) noexcept {
+    return s.size() == 2 && is_alpha(s[0]) && (s[1] == ':' || s[1] == '|');
+}
+[[nodiscard]] bool normalized_windows_drive_letter(std::string_view s) noexcept {
+    return s.size() == 2 && is_alpha(static_cast<unsigned char>(s[0])) && s[1] == ':';
+}
+[[nodiscard]] bool starts_with_windows_drive_letter(std::u32string_view s) noexcept {
+    return s.size() >= 2 && windows_drive_letter(s.substr(0, 2)) &&
+           (s.size() == 2 || s[2] == '/' || s[2] == '\\' || s[2] == '?' || s[2] == '#');
+}
+[[nodiscard]] bool single_dot(std::string_view s) noexcept {
+    return s == "." || ascii_iequals(s, "%2e");
+}
+[[nodiscard]] bool double_dot(std::string_view s) noexcept {
+    return s == ".." || ascii_iequals(s, ".%2e") || ascii_iequals(s, "%2e.") ||
+           ascii_iequals(s, "%2e%2e");
+}
+
+// §4.4 "shorten a URL's path".
+void shorten_path(url_record & url) {
+    if (url.scheme == "file" && url.path.size() == 1 &&
+        normalized_windows_drive_letter(url.path[0])) {
+        return;
+    }
+    if (!url.path.empty()) { url.path.pop_back(); }
+}
+
+// The state machine. `url` is fresh for a plain parse and the record being
+// written for a setter (`override` given); false is the standard's failure.
+[[nodiscard]] bool basic_parse(std::string_view raw, const url_record * base, url_record & url,
+                               std::optional<state> override) {
+    std::string cleaned;
+    if (!override) {
+        // Steps 1-2: leading and trailing C0 controls and spaces go.
+        while (!raw.empty() && static_cast<unsigned char>(raw.front()) <= 0x20) {
+            raw.remove_prefix(1);
+        }
+        while (!raw.empty() && static_cast<unsigned char>(raw.back()) <= 0x20) {
+            raw.remove_suffix(1);
+        }
+    }
+    // Step 3: tabs and newlines go from anywhere.
+    cleaned.reserve(raw.size());
+    for (const char c : raw) {
+        if (c != '\t' && c != '\n' && c != '\r') { cleaned.push_back(c); }
+    }
+    const std::u32string input = code_points(cleaned);
+    const auto n = static_cast<std::ptrdiff_t>(input.size());
+
+    state st = override.value_or(state::scheme_start);
+    std::u32string buffer;
+    bool at_sign_seen = false;
+    bool inside_brackets = false;
+    bool password_token_seen = false;
+    std::ptrdiff_t p = 0;
+
+    const auto remaining_starts_with = [&](std::u32string_view prefix) {
+        return p + 1 + static_cast<std::ptrdiff_t>(prefix.size()) <= n &&
+               std::u32string_view{input}.substr(static_cast<std::size_t>(p + 1), prefix.size()) ==
+                   prefix;
+    };
+    const auto from_pointer = [&]() {
+        return std::u32string_view{input}.substr(
+            static_cast<std::size_t>(std::max<std::ptrdiff_t>(p, 0)));
+    };
+
+    while (true) {
+        const char32_t c = p >= 0 && p < n ? input[static_cast<std::size_t>(p)] : eof;
+        const bool special = url.is_special();
+        switch (st) {
+        case state::scheme_start:
+            if (is_alpha(c)) {
+                buffer.push_back(lower(c));
+                st = state::scheme;
+            } else if (!override) {
+                st = state::no_scheme;
+                --p;
+            } else {
+                return false;
+            }
+            break;
+
+        case state::scheme:
+            if (is_alpha(c) || is_digit(c) || c == '+' || c == '-' || c == '.') {
+                buffer.push_back(lower(c));
+            } else if (c == ':') {
+                const std::string scheme = utf8_of(buffer);
+                if (override) {
+                    if (special_scheme(url.scheme) != special_scheme(scheme)) { return true; }
+                    if ((url.has_credentials() || url.port) && scheme == "file") { return true; }
+                    if (url.scheme == "file" && url.host && url.host->empty()) { return true; }
+                }
+                url.scheme = scheme;
+                if (override) {
+                    if (url.port && url.port == default_port(url.scheme)) { url.port.reset(); }
+                    return true;
+                }
+                buffer.clear();
+                if (url.scheme == "file") {
+                    st = state::file;
+                } else if (url.is_special() && base != nullptr && base->scheme == url.scheme) {
+                    st = state::special_relative_or_authority;
+                } else if (url.is_special()) {
+                    st = state::special_authority_slashes;
+                } else if (remaining_starts_with(U"/")) {
+                    st = state::path_or_authority;
+                    ++p;
+                } else {
+                    url.opaque_path = true;
+                    url.path = {std::string{}};
+                    st = state::opaque_path;
+                }
+            } else if (!override) {
+                buffer.clear();
+                st = state::no_scheme;
+                p = -1;
+            } else {
+                return false;
+            }
+            break;
+
+        case state::no_scheme:
+            if (base == nullptr || (base->opaque_path && c != '#')) { return false; }
+            if (base->opaque_path && c == '#') {
+                url.scheme = base->scheme;
+                url.path = base->path;
+                url.opaque_path = true;
+                url.query = base->query;
+                url.fragment = std::string{};
+                st = state::fragment;
+            } else if (base->scheme != "file") {
+                st = state::relative;
+                --p;
+            } else {
+                st = state::file;
+                --p;
+            }
+            break;
+
+        case state::special_relative_or_authority:
+            if (c == '/' && remaining_starts_with(U"/")) {
+                st = state::special_authority_ignore_slashes;
+                ++p;
+            } else {
+                st = state::relative;
+                --p;
+            }
+            break;
+
+        case state::path_or_authority:
+            if (c == '/') {
+                st = state::authority;
+            } else {
+                st = state::path;
+                --p;
+            }
+            break;
+
+        case state::relative:
+            url.scheme = base->scheme;
+            if (c == '/' || (url.is_special() && c == '\\')) {
+                st = state::relative_slash;
+            } else {
+                url.username = base->username;
+                url.password = base->password;
+                url.host = base->host;
+                url.port = base->port;
+                url.path = base->path;
+                url.opaque_path = base->opaque_path;
+                url.query = base->query;
+                if (c == '?') {
+                    url.query = std::string{};
+                    st = state::query;
+                } else if (c == '#') {
+                    url.fragment = std::string{};
+                    st = state::fragment;
+                } else if (c != eof) {
+                    url.query.reset();
+                    shorten_path(url);
+                    st = state::path;
+                    --p;
+                }
+            }
+            break;
+
+        case state::relative_slash:
+            if (url.is_special() && (c == '/' || c == '\\')) {
+                st = state::special_authority_ignore_slashes;
+            } else if (c == '/') {
+                st = state::authority;
+            } else {
+                url.username = base->username;
+                url.password = base->password;
+                url.host = base->host;
+                url.port = base->port;
+                st = state::path;
+                --p;
+            }
+            break;
+
+        case state::special_authority_slashes:
+            st = state::special_authority_ignore_slashes;
+            if (c == '/' && remaining_starts_with(U"/")) {
+                ++p;
+            } else {
+                --p;
+            }
+            break;
+
+        case state::special_authority_ignore_slashes:
+            if (c != '/' && c != '\\') {
+                st = state::authority;
+                --p;
+            }
+            break;
+
+        case state::authority:
+            if (c == '@') {
+                if (at_sign_seen) { buffer.insert(0, U"%40"); }
+                at_sign_seen = true;
+                for (const char32_t each : buffer) {
+                    if (each == ':' && !password_token_seen) {
+                        password_token_seen = true;
+                        continue;
+                    }
+                    percent_encode(password_token_seen ? url.password : url.username, each,
+                                   encode_set::userinfo);
+                }
+                buffer.clear();
+            } else if (c == eof || c == '/' || c == '?' || c == '#' || (special && c == '\\')) {
+                if (at_sign_seen && buffer.empty()) { return false; }
+                p -= static_cast<std::ptrdiff_t>(buffer.size()) + 1;
+                buffer.clear();
+                st = state::host;
+            } else {
+                buffer.push_back(c);
+            }
+            break;
+
+        case state::host:
+        case state::hostname:
+            if (override && url.scheme == "file") {
+                --p;
+                st = state::file_host;
+            } else if (c == ':' && !inside_brackets) {
+                if (buffer.empty()) { return false; }
+                if (override == state::hostname) { return true; }
+                const std::optional<std::string> host = parse_host(buffer, !special);
+                if (!host) { return false; }
+                url.host = *host;
+                buffer.clear();
+                st = state::port;
+            } else if (c == eof || c == '/' || c == '?' || c == '#' || (special && c == '\\')) {
+                --p;
+                if (special && buffer.empty()) { return false; }
+                if (override && buffer.empty() && (url.has_credentials() || url.port)) {
+                    return true;
+                }
+                const std::optional<std::string> host = parse_host(buffer, !special);
+                if (!host) { return false; }
+                url.host = *host;
+                buffer.clear();
+                st = state::path_start;
+                if (override) { return true; }
+            } else {
+                if (c == '[') { inside_brackets = true; }
+                if (c == ']') { inside_brackets = false; }
+                buffer.push_back(c);
+            }
+            break;
+
+        case state::port:
+            if (is_digit(c)) {
+                buffer.push_back(c);
+            } else if (c == eof || c == '/' || c == '?' || c == '#' || (special && c == '\\') ||
+                       override) {
+                if (!buffer.empty()) {
+                    std::uint32_t port = 0;
+                    for (const char32_t d : buffer) {
+                        port = std::min<std::uint32_t>(port * 10 + (d - '0'), 70000);
+                    }
+                    if (port > 65535) { return false; }
+                    const auto value = static_cast<std::uint16_t>(port);
+                    url.port = default_port(url.scheme) == value
+                                   ? std::nullopt
+                                   : std::optional<std::uint16_t>{value};
+                    buffer.clear();
+                }
+                if (override) { return true; }
+                st = state::path_start;
+                --p;
+            } else {
+                return false;
+            }
+            break;
+
+        case state::file:
+            url.scheme = "file";
+            url.host = std::string{};
+            if (c == '/' || c == '\\') {
+                st = state::file_slash;
+            } else if (base != nullptr && base->scheme == "file") {
+                url.host = base->host;
+                url.path = base->path;
+                url.opaque_path = base->opaque_path;
+                url.query = base->query;
+                if (c == '?') {
+                    url.query = std::string{};
+                    st = state::query;
+                } else if (c == '#') {
+                    url.fragment = std::string{};
+                    st = state::fragment;
+                } else if (c != eof) {
+                    url.query.reset();
+                    if (!starts_with_windows_drive_letter(from_pointer())) {
+                        shorten_path(url);
+                    } else {
+                        url.path.clear();
+                    }
+                    st = state::path;
+                    --p;
+                }
+            } else {
+                st = state::path;
+                --p;
+            }
+            break;
+
+        case state::file_slash:
+            if (c == '/' || c == '\\') {
+                st = state::file_host;
+            } else {
+                if (base != nullptr && base->scheme == "file") {
+                    url.host = base->host;
+                    if (!starts_with_windows_drive_letter(from_pointer()) && !base->path.empty() &&
+                        normalized_windows_drive_letter(base->path[0])) {
+                        url.path.push_back(base->path[0]);
+                    }
+                }
+                st = state::path;
+                --p;
+            }
+            break;
+
+        case state::file_host:
+            if (c == eof || c == '/' || c == '\\' || c == '?' || c == '#') {
+                --p;
+                if (!override && windows_drive_letter(buffer)) {
+                    st = state::path;
+                } else if (buffer.empty()) {
+                    url.host = std::string{};
+                    if (override) { return true; }
+                    st = state::path_start;
+                } else {
+                    std::optional<std::string> host = parse_host(buffer, !special);
+                    if (!host) { return false; }
+                    if (*host == "localhost") { host->clear(); }
+                    url.host = *host;
+                    if (override) { return true; }
+                    buffer.clear();
+                    st = state::path_start;
+                }
+            } else {
+                buffer.push_back(c);
+            }
+            break;
+
+        case state::path_start:
+            if (special) {
+                st = state::path;
+                if (c != '/' && c != '\\') { --p; }
+            } else if (!override && c == '?') {
+                url.query = std::string{};
+                st = state::query;
+            } else if (!override && c == '#') {
+                url.fragment = std::string{};
+                st = state::fragment;
+            } else if (c != eof) {
+                st = state::path;
+                if (c != '/') { --p; }
+            } else if (override && !url.host) {
+                url.path.emplace_back();
+            }
+            break;
+
+        case state::path: {
+            const bool slash = c == '/' || (special && c == '\\');
+            if (c == eof || slash || (!override && (c == '?' || c == '#'))) {
+                const std::string segment = utf8_of(buffer);
+                if (double_dot(segment)) {
+                    shorten_path(url);
+                    if (!slash) { url.path.emplace_back(); }
+                } else if (single_dot(segment) && !slash) {
+                    url.path.emplace_back();
+                } else if (!single_dot(segment)) {
+                    std::string kept = segment;
+                    if (url.scheme == "file" && url.path.empty() && windows_drive_letter(buffer)) {
+                        kept[1] = ':';
+                    }
+                    url.path.push_back(std::move(kept));
+                }
+                buffer.clear();
+                if (c == '?') {
+                    url.query = std::string{};
+                    st = state::query;
+                }
+                if (c == '#') {
+                    url.fragment = std::string{};
+                    st = state::fragment;
+                }
+            } else {
+                // Encoded into the buffer as code points so the dot-segment
+                // tests above see `%2e` spelled as the input spelled it.
+                std::string encoded;
+                percent_encode(encoded, c, encode_set::path);
+                for (const char each : encoded) {
+                    buffer.push_back(static_cast<unsigned char>(each));
+                }
+            }
+            break;
+        }
+
+        case state::opaque_path:
+            if (c == '?') {
+                url.query = std::string{};
+                st = state::query;
+            } else if (c == '#') {
+                url.fragment = std::string{};
+                st = state::fragment;
+            } else if (c == ' ') {
+                url.path[0] +=
+                    remaining_starts_with(U"?") || remaining_starts_with(U"#") ? "%20" : " ";
+            } else if (c != eof) {
+                percent_encode(url.path[0], c, encode_set::c0);
+            }
+            break;
+
+        case state::query:
+            if ((!override && c == '#') || c == eof) {
+                *url.query +=
+                    percent_encode(buffer, special ? encode_set::special_query : encode_set::query);
+                buffer.clear();
+                if (c == '#') {
+                    url.fragment = std::string{};
+                    st = state::fragment;
+                }
+            } else {
+                buffer.push_back(c);
+            }
+            break;
+
+        case state::fragment:
+            if (c != eof) { percent_encode(*url.fragment, c, encode_set::fragment); }
+            break;
+        }
+        if (p >= n) { break; }
+        ++p;
+    }
     return true;
 }
 
 } // namespace
 
-fetch_url parse_absolute(std::string_view url) {
-    fetch_url out;
-    urls::url parsed;
-    if (!parse_into(url, parsed)) { return out; }
+// --- url_record ------------------------------------------------------------------------
 
-    out.scheme = parsed.scheme();
-    // WITHOUT the brackets: this is the address a resolver and a socket want.
-    // location_parts keeps them, because that is what the DOM reports - see the
-    // note in url.hpp about why the two types differ here.
-    out.host = parsed.host_address();
-    out.port = parsed.has_port() ? std::string{parsed.port()} : std::string{};
-    if (out.port.empty()) { out.port = out.scheme == "https" ? "443" : "80"; }
+bool url_record::is_special() const noexcept {
+    return special_scheme(scheme);
+}
 
-    out.target = parsed.encoded_path();
-    if (out.target.empty()) { out.target = "/"; }
-    if (parsed.has_query()) {
-        out.target += "?";
-        out.target += parsed.encoded_query();
+bool url_record::cannot_have_credentials_or_port() const noexcept {
+    return !host || host->empty() || scheme == "file";
+}
+
+std::string url_record::host_and_port() const {
+    if (!host) { return {}; }
+    return port ? *host + ":" + std::to_string(*port) : *host;
+}
+
+std::string url_record::port_text() const {
+    return port ? std::to_string(*port) : std::string{};
+}
+
+std::string url_record::pathname() const {
+    if (opaque_path) { return path.empty() ? std::string{} : path[0]; }
+    std::string out;
+    for (const std::string & segment : path) {
+        out += '/';
+        out += segment;
     }
-    // The Host header's form: bracketed for IPv6, and carrying the port only
-    // when it is not the default. `parsed.host()` keeps the brackets that
-    // `host_address()` above strips.
-    out.authority = parsed.host();
-    const bool default_port =
-        (out.scheme == "http" && out.port == "80") || (out.scheme == "https" && out.port == "443");
-    if (!default_port) { out.authority += ":" + out.port; }
+    return out;
+}
 
-    // THE FRAGMENT IS NEVER APPENDED. It is client-side state; sending it leaks
-    // it to the server and is a specification violation besides.
+std::string url_record::search() const {
+    return query && !query->empty() ? "?" + *query : std::string{};
+}
 
+std::string url_record::hash() const {
+    return fragment && !fragment->empty() ? "#" + *fragment : std::string{};
+}
+
+std::string url_record::serialize(bool exclude_fragment) const {
+    std::string out = scheme + ":";
+    if (host) {
+        out += "//";
+        if (has_credentials()) {
+            out += username;
+            if (!password.empty()) { out += ":" + password; }
+            out += '@';
+        }
+        out += host_and_port();
+    } else if (!opaque_path && path.size() > 1 && path[0].empty()) {
+        // `web+demo:/.//not-a-host/`: without this a path starting `//` would
+        // read back as an authority.
+        out += "/.";
+    }
+    out += pathname();
+    if (query) { out += "?" + *query; }
+    if (!exclude_fragment && fragment) { out += "#" + *fragment; }
+    return out;
+}
+
+std::string url_record::origin() const {
+    if (scheme == "blob") {
+        // §4.7: the origin of the URL the path names, for http(s) only.
+        const std::optional<url_record> inner = parse_url(pathname());
+        if (inner && (inner->scheme == "http" || inner->scheme == "https")) {
+            return inner->origin();
+        }
+        return "null";
+    }
+    if (scheme == "ftp" || scheme == "http" || scheme == "https" || scheme == "ws" ||
+        scheme == "wss") {
+        return scheme + "://" + host_and_port();
+    }
+    return "null";
+}
+
+// --- parsing, setting, form-urlencoded -------------------------------------------------
+
+std::optional<url_record> parse_url(std::string_view input, const url_record * base) {
+    url_record url;
+    if (!basic_parse(input, base, url, std::nullopt)) { return std::nullopt; }
+    return url;
+}
+
+std::optional<url_record> parse_url(std::string_view input, std::string_view base) {
+    const std::optional<url_record> parsed_base = parse_url(base);
+    if (!parsed_base) { return std::nullopt; }
+    return parse_url(input, &*parsed_base);
+}
+
+bool set_url_part(url_record & url, url_part part, std::string_view value) {
+    const auto with_override = [&](std::string_view text, state override) {
+        // IN PLACE, as the standard has it: `host = "example.com:65536"` sets
+        // the host and THEN fails on the port, and the host stays set.
+        (void)basic_parse(text, nullptr, url, override);
+    };
+    switch (part) {
+    case url_part::href: {
+        std::optional<url_record> parsed = parse_url(value);
+        if (!parsed) { return false; }
+        url = std::move(*parsed);
+        return true;
+    }
+    case url_part::protocol:
+        with_override(std::string{value} + ":", state::scheme_start);
+        return true;
+    case url_part::username:
+        if (url.cannot_have_credentials_or_port()) { return true; }
+        url.username = percent_encode(code_points(value), encode_set::userinfo);
+        return true;
+    case url_part::password:
+        if (url.cannot_have_credentials_or_port()) { return true; }
+        url.password = percent_encode(code_points(value), encode_set::userinfo);
+        return true;
+    case url_part::host:
+        if (url.opaque_path) { return true; }
+        with_override(value, state::host);
+        return true;
+    case url_part::hostname:
+        if (url.opaque_path) { return true; }
+        with_override(value, state::hostname);
+        return true;
+    case url_part::port:
+        if (url.cannot_have_credentials_or_port()) { return true; }
+        if (value.empty()) {
+            url.port.reset();
+        } else {
+            with_override(value, state::port);
+        }
+        return true;
+    case url_part::pathname:
+        if (url.opaque_path) { return true; }
+        url.path.clear();
+        with_override(value, state::path_start);
+        return true;
+    case url_part::search:
+        if (value.empty()) {
+            url.query.reset();
+            return true;
+        }
+        if (value.front() == '?') { value.remove_prefix(1); }
+        url.query = std::string{};
+        with_override(value, state::query);
+        return true;
+    case url_part::hash:
+        if (value.empty()) {
+            url.fragment.reset();
+            return true;
+        }
+        if (value.front() == '#') { value.remove_prefix(1); }
+        url.fragment = std::string{};
+        with_override(value, state::fragment);
+        return true;
+    }
+    return true;
+}
+
+std::string to_usv_string(std::string_view text) {
+    return utf8_of(code_points(text));
+}
+
+form_pairs parse_form_urlencoded(std::string_view query) {
+    form_pairs out;
+    std::size_t start = 0;
+    while (start <= query.size()) {
+        std::size_t end = query.find('&', start);
+        if (end == std::string_view::npos) { end = query.size(); }
+        const std::string_view sequence = query.substr(start, end - start);
+        start = end + 1;
+        if (sequence.empty()) { continue; }
+        const std::size_t equals = sequence.find('=');
+        std::string name{sequence.substr(0, equals)};
+        std::string value{equals == std::string_view::npos ? std::string_view{}
+                                                           : sequence.substr(equals + 1)};
+        std::replace(name.begin(), name.end(), '+', ' ');
+        std::replace(value.begin(), value.end(), '+', ' ');
+        out.emplace_back(utf8_of(decode_replacing(percent_decode(name))),
+                         utf8_of(decode_replacing(percent_decode(value))));
+    }
+    return out;
+}
+
+std::string serialize_form_urlencoded(const form_pairs & pairs) {
+    // §5.2, the byte serializer: space is `+`, the form set is escaped.
+    const auto append = [](std::string & out, std::string_view text) {
+        for (const char32_t c : code_points(text)) {
+            if (c == ' ') {
+                out.push_back('+');
+            } else {
+                percent_encode(out, c, encode_set::form);
+            }
+        }
+    };
+    std::string out;
+    for (const auto & [name, value] : pairs) {
+        if (!out.empty()) { out.push_back('&'); }
+        append(out, name);
+        out.push_back('=');
+        append(out, value);
+    }
+    return out;
+}
+
+// --- the two consumers' views ---------------------------------------------------------------
+
+fetch_url parse_absolute(std::string_view text) {
+    fetch_url out;
+    const std::optional<url_record> url = parse_url(text);
     // ONLY http AND https ARE FETCHABLE. A `file:` or `blob:` URL arriving on
     // the socket path is a bug in the caller, and answering with a
     // plausible-looking struct would let it stay one.
-    out.valid = !out.host.empty() && (out.scheme == "http" || out.scheme == "https");
+    if (!url || (url->scheme != "http" && url->scheme != "https") || !url->host ||
+        url->host->empty()) {
+        return out;
+    }
+    out.scheme = url->scheme;
+    // WITHOUT the brackets: this is the address a resolver and a socket want.
+    // location_parts keeps them, because that is what the DOM reports - see
+    // the note in url.hpp about why the two types differ here.
+    out.host = *url->host;
+    if (out.host.size() > 2 && out.host.front() == '[') {
+        out.host = out.host.substr(1, out.host.size() - 2);
+    }
+    out.port = url->port ? std::to_string(*url->port) : (out.scheme == "https" ? "443" : "80");
+    out.target = url->pathname();
+    if (url->query) { out.target += "?" + *url->query; }
+    // THE FRAGMENT IS NEVER APPENDED. It is client-side state; sending it leaks
+    // it to the server and is a specification violation besides.
+    //
+    // The Host header's form: bracketed for IPv6, and carrying the port only
+    // when it is not the default - which is exactly the record's `host:port`,
+    // since the parser already dropped a default port.
+    out.authority = url->host_and_port();
+    out.valid = true;
     return out;
 }
 
 location_url location_parts(std::string_view href) {
     location_url out;
-    urls::url parsed;
     // NEVER FAILS. `location.*` has no channel for "unparseable", and a page
     // reading location.pathname mid-navigation wants an empty string rather than
     // an exception. Everything below is simply left empty.
-    if (!parse_into(href, parsed)) { return out; }
-
-    if (parsed.has_scheme()) { out.protocol = std::string{parsed.scheme()} + ":"; }
-    if (parsed.has_authority()) {
-        // WITH the brackets, so a page reassembling `hostname + ":" + port`
-        // produces a valid URL again rather than a broken IPv6 literal.
-        out.hostname = parsed.host();
-        if (parsed.has_port()) { out.port = parsed.port(); }
-        out.host = out.hostname;
-        if (!out.port.empty()) { out.host += ":" + out.port; }
-    }
-    out.pathname = parsed.encoded_path();
-    // A URL with an authority and no path still HAS one, and a page joining onto
-    // an empty pathname produces "//thing" instead of "/thing".
-    if (out.pathname.empty() && parsed.has_authority()) { out.pathname = "/"; }
-    if (parsed.has_query()) { out.search = "?" + std::string{parsed.encoded_query()}; }
-    if (parsed.has_fragment()) { out.hash = "#" + std::string{parsed.encoded_fragment()}; }
-
-    // AN ORIGIN IS A (scheme, host, port) TUPLE, and only the schemes that have
-    // one get one. `file:` and `data:` are opaque origins, which the DOM reports
-    // as the STRING "null" rather than as an absent property.
-    const bool tuple_origin =
-        !out.hostname.empty() && (out.protocol == "http:" || out.protocol == "https:" ||
-                                  out.protocol == "ws:" || out.protocol == "wss:");
-    out.origin = tuple_origin ? out.protocol + "//" + out.host : "null";
+    const std::optional<url_record> url = parse_url(href);
+    if (!url) { return out; }
+    out.href = url->serialize();
+    out.protocol = url->protocol();
+    out.username = url->username;
+    out.password = url->password;
+    out.host = url->host_and_port();
+    out.hostname = url->hostname();
+    out.port = url->port_text();
+    out.pathname = url->pathname();
+    out.search = url->search();
+    out.hash = url->hash();
+    out.origin = url->origin();
     return out;
 }
 
 std::string resolve(std::string_view base, std::string_view reference) {
-    // Both encoded strings held in named locals, for the lifetime reason in
-    // parse_into above: what comes back borrows from them.
-    const std::string encoded_base = pre_encode(base);
-    const std::string encoded_ref = pre_encode(reference);
-    const auto base_url = urls::parse_uri(encoded_base);
-    const auto ref_url = urls::parse_uri_reference(encoded_ref);
-    // LENIENT ON THE WAY OUT TOO. An unparseable base or reference gives back
-    // the reference as it arrived, which is the answer that loses the least -
-    // an empty string would discard information the caller still has a use for.
-    if (!base_url || !ref_url) { return std::string{reference}; }
-    urls::url out;
-    if (!urls::resolve(*base_url, *ref_url, out)) { return std::string{reference}; }
-    out.normalize();
-    return out.buffer();
+    const std::optional<url_record> resolved = parse_url(reference, base);
+    // LENIENT ON THE WAY OUT. An unparseable base or reference gives back the
+    // reference as it arrived, which is the answer that loses the least - an
+    // empty string would discard information the caller still has a use for.
+    return resolved ? resolved->serialize() : std::string{reference};
 }
 
-// NOT THROUGH BOOST.URL, and that is deliberate rather than an oversight. It
-// parses a data: URL happily, but everything interesting lives in the opaque
-// path - Boost hands back `image/png;base64,iVBOR...` as one string and the
-// splitting is still here. Worse, pre_encode() above would percent-encode the
-// payload's own `+` and `/` on the way in, which are base64 alphabet
-// characters: running a data URL through the lenient path would corrupt it.
+// NOT THROUGH THE URL PARSER, and that is deliberate rather than an oversight:
+// everything interesting lives in the opaque path, which the parser hands back
+// as one string - and it would percent-encode a raw byte in the payload where
+// RFC 2397 wants it decoded as written.
 bool is_data_url(std::string_view url) {
     constexpr std::string_view scheme = "data:";
     if (url.size() < scheme.size()) { return false; }
