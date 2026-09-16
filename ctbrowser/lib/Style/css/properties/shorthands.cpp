@@ -25,6 +25,7 @@ namespace {
 enum class shape : std::uint8_t {
     sides,  // 1-4 values: top, right, bottom, left, in `margin`'s way
     pair,   // 1-2 values: start/end, x/y or row/column; one sets both
+    place,  // `place-*`: an align value then a justify one, each of several words
     bar,    // `a || b || c`: each part goes to the longhand that takes it
     flex,   // Flexbox 1 §7.1.1's own defaults
     font,   // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
@@ -86,6 +87,9 @@ constexpr shorthand_syntax table[] = {
     {"inset-block", shape::pair, "inset-block-start inset-block-end", ""},
     {"overflow", shape::pair, "overflow-x overflow-y", ""},
     {"gap", shape::pair, "row-gap column-gap", ""},
+    {"place-content", shape::place, "align-content justify-content", ""},
+    {"place-items", shape::place, "align-items justify-items", ""},
+    {"place-self", shape::place, "align-self justify-self", ""},
     {"font", shape::font,
      "font-style font-variant font-weight font-stretch font-size line-height font-family", ""},
     {"background", shape::whole,
@@ -399,6 +403,12 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     switch (e.syntax->kind) {
     case shape::sides:
     case shape::pair: return split_positional(e, parts, out);
+    case shape::place: {
+        std::string align, justify;
+        if (!split_place(e.syntax->name, value, align, justify)) { return split::invalid; }
+        out = {std::move(align), std::move(justify)};
+        return split::ok;
+    }
     case shape::bar: return split_bar(e, parts, out);
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
@@ -472,7 +482,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::all:
     case shape::whole: return {};
     case shape::sides: return fold_sides(v);
-    case shape::pair: return v[0] == v[1] ? v[0] : join(v);
+    case shape::pair:
+    case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::bar: return fold_bar(e, v);
     case shape::flex: return join(v);
     case shape::font: return fold_font(v);

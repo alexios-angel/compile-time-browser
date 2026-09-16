@@ -921,7 +921,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         const bool image_property = property == "background-image" || property == "mask-image" ||
                                     property == "border-image-source" ||
                                     property == "list-style-image";
-        if (is_color_property(property) || image_property) {
+        const bool filter_property = property == "filter" || property == "backdrop-filter";
+        if (is_color_property(property) || image_property || filter_property) {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -941,6 +942,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             if (image_property) {
                 if (std::string computed = style::css::computed_image(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (filter_property) {
+                if (std::string computed = style::css::computed_filter(text, ctx);
                     !computed.empty()) {
                     return computed;
                 }

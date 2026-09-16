@@ -106,6 +106,16 @@ struct scan {
 // list is modelled, so the caller keeps the author's bytes. Defined in
 // image.cpp.
 [[nodiscard]] bool match_image_list(const token_stream & ts, const scan & found, std::string & out);
+// A `<filter-value-list>` for `filter` and `backdrop-filter`. Defined in
+// filter.cpp.
+[[nodiscard]] bool match_filter_list(const token_stream & ts, const scan & found,
+                                     std::string & out);
+// CSS Box Alignment 3's six longhands, and the split of a `place-*`
+// shorthand into its two. Defined in alignment.cpp.
+[[nodiscard]] bool match_alignment(std::string_view property, const token_stream & ts,
+                                   const scan & found, std::string & out);
+[[nodiscard]] bool split_place(std::string_view shorthand, std::string_view value,
+                               std::string & align, std::string & justify);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by

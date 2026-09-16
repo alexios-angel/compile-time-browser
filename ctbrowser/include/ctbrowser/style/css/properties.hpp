@@ -197,6 +197,9 @@ struct color_context {
 // gradient's colours computed, its lengths in pixels and its angles in
 // degrees, a `url()` as written. Empty for text with no image this models.
 [[nodiscard]] std::string computed_image(std::string_view specified, const color_context & ctx);
+// THE COMPUTED VALUE OF A `<filter-value-list>` (Filter Effects 1 §11): the
+// percentages as numbers, the lengths in pixels, a shadow's colour first.
+[[nodiscard]] std::string computed_filter(std::string_view specified, const color_context & ctx);
 // The same colour as sRGB, unclamped, for whoever paints it.
 struct srgb_color {
     float r = 0, g = 0, b = 0, a = 1;

@@ -237,6 +237,26 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // THE BOX ALIGNMENT LONGHANDS (alignment.cpp): `first baseline` is
+    // `baseline`, `center legacy` is `legacy center`, `safe` needs a position.
+    if (p->kind == k::freeform &&
+        (ascii_istarts_with(property, "align-") || ascii_istarts_with(property, "justify-"))) {
+        std::string serialized;
+        if (match_alignment(property, ts, found, serialized)) { return yes(std::move(serialized)); }
+        if (ascii_iequals_any(property, {"align-content", "justify-content", "align-items",
+                                         "justify-items", "align-self", "justify-self"})) {
+            return {};
+        }
+    }
+
+    // A `<filter-value-list>` (filter.cpp): `blur()` fills in its argument,
+    // `grayscale(300%)` is `grayscale(100%)`, `blur(-1px)` is refused.
+    if (p->kind == k::freeform && ascii_iequals_any(property, {"filter", "backdrop-filter"})) {
+        std::string serialized;
+        if (!match_filter_list(ts, found, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
     // `font-family` IS FREEFORM WITH ONE EXTRA RULE: its strings are the one
     // place CSSOM unquotes a string on the way back out. `'Lucida Grande'`
     // reads back as `Lucida Grande`, and serialize-values asks for it.
