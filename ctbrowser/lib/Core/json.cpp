@@ -13,6 +13,11 @@ struct json_reader {
     std::string_view text;
     std::size_t at = 0;
     bool ok = true;
+    // Nesting depth, bounded so a deeply nested `[[[[...]]]]` fails as a
+    // SyntaxError rather than recursing until the native stack overflows. Well
+    // past any real document; browsers reject around here too.
+    std::size_t depth = 0;
+    static constexpr std::size_t max_depth = 1000;
 
     // 25.5.1: JSON whitespace is these four characters and nothing else. A form
     // feed or a vertical tab is a SyntaxError, which is what
@@ -51,8 +56,15 @@ struct json_reader {
             return {};
         }
         const char c = text[at];
-        if (c == '{') { return parse_object(); }
-        if (c == '[') { return parse_array(); }
+        if (c == '{' || c == '[') {
+            if (++depth > max_depth) {
+                fail();
+                return {};
+            }
+            json_value nested = c == '{' ? parse_object() : parse_array();
+            --depth;
+            return nested;
+        }
         if (c == '"') {
             std::string s;
             if (!parse_string(s)) { return {}; }

@@ -141,5 +141,12 @@ int main() {
         CHECK(!parse_json(source));
     }
     CHECK(!parse_json(std::string_view{"null\0", 5}));
+    // Nesting past the depth cap is an error, not a native stack overflow
+    // (security review DOS-001): 2000 unterminated arrays would recurse
+    // parse -> parse_array -> parse until the stack ran out.
+    CHECK(!parse_json(std::string(2000, '[')));
+    CHECK(!parse_json(std::string(2000, '[') + std::string(2000, ']')));
+    // A document at the legal depth still parses.
+    CHECK(parse_json(std::string(500, '[') + std::string(500, ']')).has_value());
     REPORT("core_json");
 }
