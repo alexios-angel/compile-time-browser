@@ -246,6 +246,23 @@ void test_transforms() {
              std::string{"-210px -10px -10px"});
 }
 
+void test_shadows() {
+    ok("box-shadow", "-4px 4px 0 0 green", "green -4px 4px 0px 0px");
+    ok("box-shadow", "inset 1px -2px, -3px 4px red", "1px -2px inset, red -3px 4px");
+    ok("box-shadow", "green inset 4px -4px 0", "green 4px -4px 0px inset");
+    ok("box-shadow", "1px 1px calc(1em - 2px)", "1px 1px calc(1em - 2px)");
+    ok("text-shadow", "1px 2px 3px red", "red 1px 2px 3px");
+    bad("box-shadow", "-4px 4px red 0");
+    bad("box-shadow", "1px 1px -1px");
+    bad("box-shadow", "1px 2px 3px 4px 5px");
+    bad("box-shadow", "1px calc(2px + 2%)");
+    bad("box-shadow", "4px inset -4px");
+    bad("box-shadow", "red 1px 2px blue");
+    bad("box-shadow", "inset 4px -4px inset");
+    bad("text-shadow", "1px 2px inset");
+    bad("text-shadow", "1px 2px 3px 4px");
+}
+
 void test_filters() {
     ok("filter", "blur()", "blur()");
     ok("filter", "blur(0)", "blur(0px)");
@@ -292,6 +309,7 @@ int main() {
     test_grid();
     test_keyword_combinations();
     test_transforms();
+    test_shadows();
     test_filters();
     REPORT("css_grammar_values");
 }

@@ -135,6 +135,10 @@ struct scan {
 // Defined in transforms.cpp.
 [[nodiscard]] bool match_transform_property(std::string_view property, const token_stream & ts,
                                             const scan & found, std::string & out);
+// box-shadow and text-shadow. Defined in shadows.cpp; an empty `out` is an
+// invalid list.
+[[nodiscard]] bool match_shadow_list(std::string_view property, const token_stream & ts,
+                                     const scan & found, std::string & out);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by

@@ -249,6 +249,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // A SHADOW LIST (shadows.cpp): colour first, lengths, then `inset`.
+    if (p->kind == k::freeform && ascii_iequals_any(property, {"box-shadow", "text-shadow"})) {
+        std::string serialized;
+        if (match_shadow_list(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // THE INDIVIDUAL TRANSFORMS AND THE ORIGINS (transforms.cpp).
     if (p->kind == k::freeform &&
         ascii_iequals_any(property, {"rotate", "scale", "translate", "transform-origin"})) {
