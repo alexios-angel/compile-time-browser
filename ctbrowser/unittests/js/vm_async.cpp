@@ -502,6 +502,19 @@ void test_for_await() {
     expect_after_turn("var result = ''; Array.fromAsync(null).then(() => { result = 'no'; }, e => "
                       "{ result = e.name; });",
                       "TypeError");
+    // GetMethod: a present, non-callable @@iterator is a TypeError; a BigInt
+    // length is ToLength's TypeError; a thenable element that rejects rejects
+    // the whole thing (the await adopts it).
+    expect_after_turn("var result = ''; Array.fromAsync({[Symbol.iterator]: true}).then(() => {"
+                      " result = 'no'; }, e => { result = e.name; });",
+                      "TypeError");
+    expect_after_turn("var result = ''; Array.fromAsync({length: 1n, 0: 0}).then(() => {"
+                      " result = 'no'; }, e => { result = e.name; });",
+                      "TypeError");
+    expect_after_turn("var result = ''; Array.fromAsync({length: 1, 0: { then(_, rej) {"
+                      " rej(new RangeError('r')); } }}).then(() => { result = 'no'; }, e => {"
+                      " result = e.name; });",
+                      "RangeError");
     // A constructor as `this` takes the elements through defineProperty: a
     // non-configurable slot is a TypeError, not an endless loop (test262
     // this-constructor-with-unsettable-element ran the box out of memory).
