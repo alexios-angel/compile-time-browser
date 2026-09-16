@@ -375,18 +375,6 @@ constexpr property_syntax table[] = {
         std::vector<property_syntax> out(std::begin(table), std::end(table));
         const std::span<const property_syntax> more = module_properties();
         out.insert(out.end(), more.begin(), more.end());
-        // SORTED, BECAUSE THE TABLE'S ORDER IS `getComputedStyle`'s. CSSOM
-        // §computed-style-declaration says the indexed properties are the
-        // supported longhands "in lexicographical order", with the
-        // vendor-prefixed ones after the standard ones -
-        // cssom/getComputedStyle-property-order asserts exactly that, and the
-        // two halves of this table are each grouped by module instead.
-        std::ranges::sort(out, [](const property_syntax & a, const property_syntax & b) {
-            const bool a_prefixed = a.name.starts_with('-');
-            const bool b_prefixed = b.name.starts_with('-');
-            if (a_prefixed != b_prefixed) { return b_prefixed; }
-            return a.name < b.name;
-        });
         return out;
     }();
     return all;
