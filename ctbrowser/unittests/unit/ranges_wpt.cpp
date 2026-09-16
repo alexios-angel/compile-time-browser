@@ -174,6 +174,14 @@ void test_delete_extract_and_clone_contents() {
        " r.setStart(document.getElementById('p1').firstChild, 2);"
        " r.setEnd(document.getElementById('s').firstChild, 1); return r.toString(); })()",
        "cdEfghi");
+    // DOM Parsing's createContextualFragment: parsed as the start node's
+    // element's children, in a fragment of its document.
+    is("(function () { var r = document.createRange();"
+       " r.setStart(document.getElementById('p1').firstChild, 1);"
+       " var f = r.createContextualFragment('<b>x</b>y'); return f.nodeType + ',' +"
+       " f.childNodes.length + ',' + f.firstChild.tagName + ',' + f.lastChild.data + ','"
+       " + (f.ownerDocument === document); })()",
+       "11,2,B,y,true");
 }
 
 void test_insert_node_and_surround_contents() {

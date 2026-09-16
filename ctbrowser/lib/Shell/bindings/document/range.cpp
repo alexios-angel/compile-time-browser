@@ -863,6 +863,44 @@ void dom_bindings::install_range(context & cx) {
         if (is_text(e.node)) { out += substring(c, e.node, 0, e.offset); }
         return c.string(out);
     });
+    // DOM Parsing 3.3, `createContextualFragment(markup)`: the markup parsed
+    // as the children of an element like the range's start node's element -
+    // the node itself, its parent for text and comments, `body` for a
+    // document or fragment - handed back as a DocumentFragment.
+    // ponytail: the parse is innerHTML's, in body context; a `<tr>` in a
+    // table context loses its row the way innerHTML on a <div> would.
+    method("createContextualFragment",
+           [start_of, type_of, parent_of, call_on](context & c, std::span<value> a) {
+               script::object_object * self = self_object(c);
+               if (self == nullptr) { return value::undefined(); }
+               const std::string markup = arg_string(c, a, 0);
+               spot node = start_of(c, self).node;
+               while (!node.none() && !node.is_attr() && type_of(node) != type_element &&
+                      type_of(node) != type_document && type_of(node) != type_fragment) {
+                   node = parent_of(node);
+               }
+               if (node.none() || node.is_attr()) { return value::null(); }
+               const spot document_node{node.owner, node.owner->doc_->document_node()};
+               std::string tag = "body";
+               if (type_of(node) == type_element) {
+                   const auto txn = node.owner->doc_->read();
+                   tag = std::string{txn.local_name(node.id)};
+                   if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
+               }
+               const value scratch = call_on(c, document_node, "createElement", {c.string(tag)});
+               if (!scratch.is_object_like()) { return value::null(); }
+               c.store_property(scratch, "innerHTML", c.string(markup));
+               const value fragment = call_on(c, document_node, "createDocumentFragment", {});
+               while (true) {
+                   const value first = c.lookup_property(scratch, "firstChild");
+                   if (!first.is_object_like()) { break; }
+                   const value append = c.lookup_property(fragment, "appendChild");
+                   if (!append.is_callable()) { break; }
+                   (void)c.call(append, std::span<const value>{&first, 1}, fragment);
+                   if (c.throw_pending()) { break; }
+               }
+               return fragment;
+           });
     proto->define("@@toStringTag", cx.string("Range"), script::attr_configurable);
 
     // `new Range()`: collapsed at (document, 0) of the realm's document.
