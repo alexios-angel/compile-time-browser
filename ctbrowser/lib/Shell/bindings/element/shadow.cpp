@@ -46,10 +46,9 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
     // "named" nor "manual" is a TypeError from the CONVERSION - which is the
     // same rank of failure as a missing `mode` and comes before any
     // NotSupportedError the element could earn.
+    const value given_assignment = dict_member(cx, init, "slotAssignment");
     const std::string assignment =
-        init.is_object() && !cx.lookup_property(init, "slotAssignment").is_undefined()
-            ? cx.to_string(cx.lookup_property(init, "slotAssignment"))
-            : "named";
+        given_assignment.is_undefined() ? "named" : cx.to_string(given_assignment);
     if (assignment != "named" && assignment != "manual") {
         cx.throw_error("TypeError", "attachShadow: `slotAssignment` must be \"named\" or "
                                     "\"manual\"");
