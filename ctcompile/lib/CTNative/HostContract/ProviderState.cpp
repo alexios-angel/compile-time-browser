@@ -9,18 +9,12 @@
 namespace ctcompile::ctnative::host_detail {
 namespace {
 bool primitive(providerValue value) {
-    return value.kind == providerValue::Kind::primitive && value.id == 0 &&
-           llvm::isa_and_nonnull<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                                 ctjs::NumberAttr, ctjs::StringAttr>(value.literal);
+    return value.kind == providerValue::Kind::primitive && value.id == 0 && value.literal &&
+           ctjs::isPrimitiveAttr(value.literal);
 }
 
 bool keyIsKnown(providerValue value) {
     return primitive(value) || (value.kind == providerValue::Kind::object && !value.literal);
-}
-
-bool isNaN(uint64_t bits) {
-    return (bits & UINT64_C(0x7ff0000000000000)) == UINT64_C(0x7ff0000000000000) &&
-           (bits & UINT64_C(0x000fffffffffffff)) != 0;
 }
 
 bool sameKey(providerValue left, providerValue right, bool & same, providerState::Spend spend) {
@@ -34,10 +28,7 @@ bool sameKey(providerValue left, providerValue right, bool & same, providerState
         if (!b) {
             same = false;
         } else {
-            const uint64_t aBits = a.getBits(), bBits = b.getBits();
-            const uint64_t magnitude = UINT64_C(0x7fffffffffffffff);
-            same = aBits == bBits || ((aBits & magnitude) == 0 && (bBits & magnitude) == 0) ||
-                   (isNaN(aBits) && isNaN(bBits));
+            same = ctjs::sameValueZero(a.getDouble(), b.getDouble());
         }
     } else if (auto a = llvm::dyn_cast<ctjs::StringAttr>(left.literal)) {
         auto b = llvm::dyn_cast<ctjs::StringAttr>(right.literal);

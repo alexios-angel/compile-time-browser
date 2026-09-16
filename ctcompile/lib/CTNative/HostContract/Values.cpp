@@ -264,11 +264,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             if (!step()) { return {}; }
             if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(body)) {
                 auto constant = result.getValue().getDefiningOp<ctjs::ConstantOp>();
-                if (!constant ||
-                    !llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                               ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
-                    return {};
-                }
+                if (!constant || !ctjs::isPrimitiveAttr(constant.getValue())) { return {}; }
                 returned = true;
             } else if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
                                   ctjs::RootOp>(body)) {

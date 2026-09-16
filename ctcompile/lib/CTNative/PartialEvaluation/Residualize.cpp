@@ -12,10 +12,7 @@ std::optional<std::vector<unsigned>> reachable(const snapshot & state) {
     std::vector<unsigned> live;
     std::vector<unsigned char> colors(state.heap.size(), 0);
     std::function<bool(value)> visit = [&](value input) {
-        if (input.tag == value::kind::constant) {
-            return llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::NullAttr,
-                             ctjs::UndefinedAttr, ctjs::StringAttr>(input.constant);
-        }
+        if (input.tag == value::kind::constant) { return ctjs::isPrimitiveAttr(input.constant); }
         if (input.tag != value::kind::reference || input.node >= state.heap.size()) {
             return false;
         }

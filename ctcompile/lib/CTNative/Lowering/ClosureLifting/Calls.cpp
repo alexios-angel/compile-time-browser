@@ -61,7 +61,7 @@ mlir::ValueRange closureLifter::argsOfCallSite(mlir::Operation * user) {
 // census() calls this rather than repeating it.
 void closureLifter::indexAndNewTargets() {
     module.walk([&](ctjs::FuncOp fn) {
-        if (const std::optional<unsigned> index = functionIndexOf(fn)) {
+        if (const std::optional<unsigned> index = functionIndex(fn)) {
             byIndex.try_emplace(*index, fn);
         }
     });

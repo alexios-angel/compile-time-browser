@@ -3,19 +3,6 @@
 
 namespace ctcompile::ctnative {
 
-// create_closure names a bytecode index, not an MLIR symbol use. Private
-// visibility alone therefore does not establish that every call is visible.
-// Recheck these value uses before replacing a parameterized function's body.
-std::optional<unsigned> functionIndex(ctjs::FuncOp function) {
-    const llvm::StringRef name = function.getSymName();
-    const auto dollar = name.rfind('$');
-    unsigned index = 0;
-    if (dollar == llvm::StringRef::npos || name.substr(dollar + 1).getAsInteger(10, index)) {
-        return {};
-    }
-    return index;
-}
-
 bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
     if (!direct || use.getOperandNumber() != 2) { return false; }

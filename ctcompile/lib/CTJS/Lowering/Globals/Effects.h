@@ -16,7 +16,6 @@ enum class watched {
     compiler,      // a value that may be `Function`, which compiles source
 };
 
-std::optional<std::uint32_t> function_index_of(FuncOp function);
 bool names_global_object(llvm::StringRef name);
 bool names_eval(llvm::StringRef name);
 std::string describe(mlir::Operation * op);

@@ -9,16 +9,15 @@
 // effect, so it survives as `double v5;` set on every iteration and never
 // read. This pass removes exactly that, then whatever it left dead.
 //
-// ONE OF ITS TWO RULES IS DECLARATIVE. "A call whose single result nothing
-// reads is a statement" is a structural match on an operation and an attribute
-// on the same operation, which is the shape part 4 of the master plan sends to
-// PDLL - so it lives in PruneDeadStores.pdll and reaches this file as a
-// generated header. THE OTHER RULE DOES NOT GO THERE and the difference is the
-// point: erasing a write-only variable needs every USE of a value classified,
-// its users erased with it, and the whole thing run to a fixpoint. PDL matches
-// structure, not use lists, and it has no fixpoint of its own beyond the greedy
-// driver's - so that half stays C++ under the policy's "must inspect uses" and
-// "creates or splits blocks" carve-outs.
+// ITS SECOND RULE IS A PATTERN: "a call whose single result nothing reads is a
+// statement" is a structural match on one operation and an attribute on the
+// same operation, so it is an OpRewritePattern run by the greedy driver. It
+// was a PDLL file until 2026-09-15; every constraint and the rewrite were
+// already one-call C++ bodies, so the .pdll bought an mlir-pdll build step, a
+// PDL text parse at pass-run time and the bytecode interpreter for nothing a
+// ten-line struct does not say more plainly. Erasing a write-only variable
+// stays a hand loop because it needs every USE of a value classified, its
+// users erased with it, and a fixpoint of its own.
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,7 +28,6 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "mlir/Parser/Parser.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -39,61 +37,37 @@ namespace ctcompile::ctnative {
 #define GEN_PASS_DEF_CTNATIVEPRUNEDEADSTORES
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 
-// --- the PDLL pattern's native bodies -----------------------------------------
-//
-// NAMED FUNCTIONS, ONE CALL EACH FROM THE .pdll. The policy allows "native
-// constraint and rewrite bodies invoked from PDLL, each a single call into a
-// named function" and forbids anything longer inside the `[{ }]`, because a
-// pattern file is not clang-formatted, not covered by the warning flags and
-// not separately testable. These are those functions. They are NOT in the
-// anonymous namespace below: the generated header spells them by qualified
-// name.
-//
-// EVERY ONE TAKES THE REWRITER IT DOES NOT USE. mlir-pdll emits the wrapper as
-// `static LogicalResult FooPDLFn(PatternRewriter &rewriter, ...)` whether the
-// body wants the rewriter or not, and this project builds with -Wextra -Werror,
-// where an unused parameter is a build failure. Threading it through is the
-// cheapest way to keep the generated file compiling clean.
-namespace pdll {
-
-// EXACTLY ONE RESULT - which PDL cannot state. `emitc.call` and
-// `emitc.call_opaque` both declare `Variadic<EmitCType>` results in ODS, so a
-// PDLL result list does not pin the count: `op<emitc.call> -> (r: Type)`
-// compiles to a `!pdl.range<value>` handed to whatever the constraint declared,
-// with no diagnostic from mlir-pdll.
-mlir::LogicalResult hasExactlyOneResult(mlir::PatternRewriter &, mlir::Operation * o) {
-    return mlir::success(o->getNumResults() == 1);
-}
-
-// NOTHING READS IT. A use count is not operation structure, so PDL cannot ask.
-mlir::LogicalResult nothingReadsTheResult(mlir::PatternRewriter &, mlir::Operation * o) {
-    return mlir::success(o->getNumResults() == 1 && o->getResult(0).use_empty());
-}
-
-// AND THE PATTERN'S TERMINATION CONDITION. The rewrite neither replaces nor
-// erases its root, so without this the greedy driver would re-enqueue the
-// operation it just modified and match it again for ever.
-mlir::LogicalResult notAlreadyAStatement(mlir::PatternRewriter &, mlir::Operation * o) {
-    return mlir::success(!o->hasAttr("ctnative.statement"));
-}
-
-// THE REWRITE, THROUGH THE REWRITER rather than by a bare setAttr: an in-place
-// modification the driver is not told about is a modification it cannot
-// schedule around.
-void markAsStatement(mlir::PatternRewriter & rewriter, mlir::Operation * o) {
-    rewriter.modifyOpInPlace(
-        o, [&] { o->setAttr("ctnative.statement", mlir::UnitAttr::get(o->getContext())); });
-}
-
-} // namespace pdll
-
 namespace {
 
 namespace ec = mlir::emitc;
 
-// mlir-pdll's output, from PruneDeadStores.pdll. Generated into the BUILD tree
-// by add_mlir_pdll_library - Principle 9: never committed, never a source.
-#include "PruneDeadStores.h.inc"
+// A CALL WHOSE SINGLE RESULT NOTHING READS IS A STATEMENT: the attribute is
+// what the forked C++ emitter keys off to print `f(x);` instead of
+// `double v = f(x);`. The call itself is never erased - a call may do anything
+// - so the rewrite adds an attribute and stops. Refusing an operation that
+// already carries it is the termination condition, and it is load-bearing: the
+// rewrite neither replaces nor erases its root, so without it the greedy
+// driver would re-enqueue the operation it just modified and match it again
+// for ever. `emitc.call` and `emitc.call_opaque` both declare variadic
+// results, hence the explicit count.
+template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<Call> {
+    using mlir::OpRewritePattern<Call>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(Call call,
+                                        mlir::PatternRewriter & rewriter) const override {
+        mlir::Operation * o = call;
+        if (o->getNumResults() != 1 || !o->getResult(0).use_empty() ||
+            o->hasAttr("ctnative.statement")) {
+            return mlir::failure();
+        }
+        // THROUGH THE REWRITER rather than by a bare setAttr: an in-place
+        // modification the driver is not told about is one it cannot
+        // schedule around.
+        rewriter.modifyOpInPlace(
+            o, [&] { o->setAttr("ctnative.statement", mlir::UnitAttr::get(o->getContext())); });
+        return mlir::success();
+    }
+};
 
 // EmitC ops declare NO memory effects - they model C expressions, and a call
 // may do anything - so MLIR's generic "trivially dead" test refuses every one
@@ -120,7 +94,7 @@ bool isWriteOnly(ec::VariableOp var) {
 
 // WHAT THE PATTERN DRIVER ERASED WHILE IT WAS HERE.
 //
-// Hosting a PDL pattern means hosting a pattern DRIVER, and every greedy entry
+// Hosting a pattern means hosting a pattern DRIVER, and every greedy entry
 // point in this release "performs simple dead-code elimination before
 // attempting to match any of the provided patterns". No GreedyRewriteConfig
 // option turns that off. An `emitc.variable` nobody uses is memory-effect
@@ -197,22 +171,16 @@ struct CTNativePruneDeadStoresPass
         // tests are kept verbatim here. The emitter honours the attribute; the
         // call itself stays, because a call may do anything.
         //
-        // THE RULE ITSELF IS IN PruneDeadStores.pdll. What is left here is the
-        // driver and the counting, and both are things PDL does not do:
+        // THE DRIVER IS NOT A LA CARTE: the greedy one arrives with folding,
+        // constant CSE and AGGRESSIVE region simplification (block merging)
+        // all on by default - none of which this pass has ever done, and one
+        // of which (running upstream folding over this IR) has crashed
+        // before. Every one is turned off explicitly rather than inherited.
         //
-        //   THE DRIVER IS NOT A LA CARTE. A PDL pattern can only be run by a
-        //   pattern driver, and the greedy one arrives with folding, constant
-        //   CSE and AGGRESSIVE region simplification (block merging) all on by
-        //   default - none of which this pass has ever done, and one of which
-        //   (running upstream folding over this IR) has crashed before. Every
-        //   one is turned off explicitly rather than inherited.
-        //
-        //   THE DRIVER DOES NOT SAY HOW OFTEN A PATTERN FIRED. There is no
-        //   per-pattern hit count to read, and a native rewrite is registered
-        //   as a plain function pointer, so it cannot capture a counter. The
-        //   count the `report` option prints - which unused-call.mlir pins - is
-        //   therefore recovered from the IR: the marks that were not there
-        //   before are the marks this run made.
+        // THE DRIVER DOES NOT SAY HOW OFTEN A PATTERN FIRED, so the count the
+        // `report` option prints - which unused-call.mlir pins - is recovered
+        // from the IR: the marks that were not there before are the marks
+        // this run made.
         llvm::DenseSet<mlir::Operation *> markedBefore;
         root->walk([&](mlir::Operation * o) {
             if (o->hasAttr("ctnative.statement")) { markedBefore.insert(o); }
@@ -220,7 +188,8 @@ struct CTNativePruneDeadStoresPass
 
         driver_erasures erased;
         mlir::RewritePatternSet patterns(&getContext());
-        populateGeneratedPDLLPatterns(patterns);
+        patterns.add<UnreadCallIsAStatement<ec::CallOp>, UnreadCallIsAStatement<ec::CallOpaqueOp>>(
+            &getContext());
         mlir::GreedyRewriteConfig config;
         config.setRegionSimplificationLevel(mlir::GreedySimplifyRegionLevel::Disabled)
             .enableFolding(false)

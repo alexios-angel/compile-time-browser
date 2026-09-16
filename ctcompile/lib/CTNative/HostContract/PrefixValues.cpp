@@ -66,10 +66,7 @@ prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue 
     // undefined must stay distinct when advancing source observation guards.
     if (kind == ctjs::CompareKind::StrictEq && left.kind == prefixValue::Kind::primitive &&
         right.kind == prefixValue::Kind::primitive) {
-        auto supported = [](mlir::Attribute value) {
-            return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                             ctjs::NumberAttr, ctjs::StringAttr>(value);
-        };
+        auto supported = [](mlir::Attribute value) { return ctjs::isPrimitiveAttr(value); };
         if (!supported(left.literal) || !supported(right.literal)) { return {}; }
         bool equal = left.literal == right.literal;
         auto a = llvm::dyn_cast<ctjs::NumberAttr>(left.literal);

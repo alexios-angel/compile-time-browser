@@ -6,7 +6,7 @@
 // RUN: ctjs-opt %t/budget.mlir '--ctnative-precompute=max-steps=13' | FileCheck %s --check-prefix=BUDGET13
 // RUN: ctjs-opt %t/budget.mlir '--ctnative-precompute=max-steps=14' | FileCheck %s --check-prefix=BUDGET14
 
-// Every PDLL root fires, including the two integer representations. Constant
+// Every pattern root fires, including the two integer representations. Constant
 // construction must preserve exact bits and truncate integers to the result
 // width. Unused constants remain because this driver does not run generic DCE.
 // SCALARS: ctnative.precompute_summary = {branches = 0 : i64, budget_exhausted = false, expressions = 6 : i64,

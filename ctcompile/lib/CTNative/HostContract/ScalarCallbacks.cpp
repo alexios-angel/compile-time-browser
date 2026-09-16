@@ -284,10 +284,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                 }
                 callback.operations.push_back(&operation);
                 if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
-                    if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                                   ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
-                        return false;
-                    }
+                    if (!ctjs::isPrimitiveAttr(constant.getValue())) { return false; }
                     values[constant.getResult()] =
                         PrimitiveAlternatives::literal(constant.getValue()).categories();
                 } else if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {

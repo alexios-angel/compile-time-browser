@@ -294,8 +294,4 @@ StrType defaultStringType(MLIRContext * context) {
     return StrType::get(context, kDefaultStringEncoding);
 }
 
-bool isNativeType(Type type) {
-    return type && llvm::isa<CTNativeDialect>(&type.getDialect());
-}
-
 } // namespace ctcompile::ctnative

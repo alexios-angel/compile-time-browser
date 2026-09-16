@@ -170,9 +170,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         const auto primitiveKey = [](mlir::Value value, PrimitiveMapKeyEvidence evidence) {
             auto constant = value.getDefiningOp<ctjs::ConstantOp>();
             return evidence.tag.has_value() ||
-                   (constant &&
-                    llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
-                              ctjs::UndefinedAttr>(constant.getValue()));
+                   (constant && ctjs::isPrimitiveAttr(constant.getValue()));
         };
         if ((entryObject(left) && (entryObject(right) || primitiveKey(right, rightEvidence))) ||
             (entryObject(right) && primitiveKey(left, leftEvidence))) {
@@ -555,10 +553,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 continue;
             }
             if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
-                if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                               ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
-                    return false;
-                }
+                if (!ctjs::isPrimitiveAttr(constant.getValue())) { return false; }
                 primitives.insert(constant.getResult());
                 alternatives.try_emplace(constant.getResult(),
                                          PrimitiveAlternatives::literal(constant.getValue()));

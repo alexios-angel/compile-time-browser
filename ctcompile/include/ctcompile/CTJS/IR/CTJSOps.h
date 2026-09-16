@@ -11,6 +11,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/StringSwitch.h"
 
+#include <optional>
+
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSEnums.h"
@@ -29,6 +31,18 @@ inline constexpr unsigned arg_receiver = 0;
 inline constexpr unsigned arg_new_target = 1;
 inline constexpr unsigned arg_callee = 2;
 inline constexpr unsigned implicit_arguments = 3;
+
+// The function index the importer put after the last `$` of the symbol - the
+// only link between a `ctjs.create_closure`'s `$function` attribute and the
+// `ctjs.func` it names. Every tier reads it this way.
+inline std::optional<unsigned> functionIndex(FuncOp function) {
+    const llvm::StringRef name = function.getSymName();
+    const std::size_t dollar = name.rfind('$');
+    if (dollar == llvm::StringRef::npos) { return std::nullopt; }
+    unsigned index = 0;
+    if (name.substr(dollar + 1).getAsInteger(10, index)) { return std::nullopt; }
+    return index;
+}
 
 // The constant string a property key operand carries, or empty - for a
 // non-constant key, a constant that is not a string, and `""` alike.

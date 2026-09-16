@@ -20,12 +20,6 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
-// mlir-pdll's output CALLS mlir::parseSourceString: a declarative pattern in
-// this release is PDL text the generated constructor parses, not generated
-// code. Without this header the .inc fails with "no member named
-// 'parseSourceString'", which reads like a bad pattern and is a missing
-// include.
-#include "mlir/Parser/Parser.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -114,7 +108,6 @@ std::string siteOfFunction(ctjs::FuncOp fn);
 std::string cIdentifier(llvm::StringRef symbol);
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
-std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn);
 bool isScriptEntry(ctjs::FuncOp fn);
 // Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
 // $enclosing_this, which are operands and not attributes.

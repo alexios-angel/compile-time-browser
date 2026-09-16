@@ -1,6 +1,7 @@
 //===- NativeMap.cpp - standard identity and instance-use proofs ---------===//
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 
 #include "ClosedValueFlow.h"
 #include "NativeMap/Presence.h"
@@ -127,17 +128,6 @@ void connectPayloads(closedValueFlow & flow, mlir::ModuleOp module,
             if (!fresh) { changed |= unify(flow, at->second, value); }
         });
     }
-}
-
-bool erasedCapture(mlir::OpOperand & use) {
-    auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
-    if (!cell || use.getOperandNumber() != 0 || !cell->hasAttr("ctnative.unboxed")) {
-        return false;
-    }
-    return llvm::all_of(cell.getResult().getUses(), [](mlir::OpOperand & capture) {
-        return llvm::isa<ctjs::CreateClosureOp>(capture.getOwner()) &&
-               capture.getOperandNumber() >= 2 && capture.getOwner()->hasAttr("ctnative.lifted");
-    });
 }
 
 // A method value may only be called on the exact instance from which it was
@@ -336,8 +326,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             if (depth > 32) { return false; }
             if (savedReads.contains(value)) { return true; }
             if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
-                return llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr,
-                                 ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue());
+                return ctjs::isPrimitiveAttr(constant.getValue());
             }
             auto result = llvm::dyn_cast<mlir::OpResult>(value);
             auto branch =
@@ -372,8 +361,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             boolean |= llvm::isa<ctjs::BooleanAttr>(value);
             number |= llvm::isa<ctjs::NumberAttr>(value);
             string |= llvm::isa<ctjs::StringAttr>(value);
-            primitive &= llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr,
-                                   ctjs::NullAttr, ctjs::UndefinedAttr>(value);
+            primitive &= ctjs::isPrimitiveAttr(value);
         }
         // A conditional or saved value may supply every String/absent
         // alternative without a direct literal set. Such a family can need

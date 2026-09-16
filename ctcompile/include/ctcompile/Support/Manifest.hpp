@@ -48,10 +48,6 @@ struct manifest {
     std::string compiler_version;
     std::string engine;
     std::string entry;
-    // `vm` today. `hybrid` and `aot-only` are Phase 1's other two modes and
-    // there is no native code to run in either, so ctcompile refuses them
-    // rather than accepting a flag that changes nothing.
-    std::string mode = "vm";
     std::string font_directory;
 
     std::uint32_t bundle_format = 0;

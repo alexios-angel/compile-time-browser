@@ -5,10 +5,6 @@
 
 namespace ctcompile::ctnative {
 namespace {
-bool primitive(mlir::Attribute attr) {
-    return llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::NullAttr, ctjs::UndefinedAttr,
-                     ctjs::StringAttr>(attr);
-}
 bool bookkeeping(ctjs::LoadGlobalOp load) {
     return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
         return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
@@ -168,7 +164,7 @@ void BindingTimeAnalysis::Impl::seedArguments() {
                     break;
                 }
                 auto constant = call->getOperand(i).getDefiningOp<ctjs::ConstantOp>();
-                if (!constant || !primitive(constant.getValue()) ||
+                if (!constant || !ctjs::isPrimitiveAttr(constant.getValue()) ||
                     (common && common != constant.getValue())) {
                     matches = false;
                     break;

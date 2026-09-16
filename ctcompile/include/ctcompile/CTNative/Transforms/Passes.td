@@ -111,8 +111,7 @@ def CTNativePrecompute : Pass<"ctnative-precompute", "mlir::ModuleOp"> {
     Option<"report", "report", "bool", "false", "Report precomputed expressions and control">
   ];
   let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
-                          "::mlir::arith::ArithDialect", "::mlir::pdl::PDLDialect",
-                          "::mlir::pdl_interp::PDLInterpDialect"];
+                          "::mlir::arith::ArithDialect"];
 }
 
 def CTNativeSpecialize : Pass<"ctnative-specialize", "mlir::ModuleOp"> {
@@ -155,8 +154,7 @@ def CTNativeSupercompile : Pass<"ctnative-supercompile", "mlir::ModuleOp"> {
     Option<"report", "report", "bool", "false", "Report kernels, configurations, folds and whistles">
   ];
   let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
-                          "::mlir::arith::ArithDialect", "::mlir::pdl::PDLDialect",
-                          "::mlir::pdl_interp::PDLInterpDialect"];
+                          "::mlir::arith::ArithDialect"];
 }
 
 def CTNativeDeforest : Pass<"ctnative-deforest", "mlir::ModuleOp"> {
@@ -317,20 +315,12 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     Option<"census", "census", "bool", /*default=*/"false",
            "Emit, as a remark, why each method-bearing object literal is NOT a closed shape - one bucket per blocking use, and the objects a single bucket alone blocks">
   ];
-  // pdl AND pdl_interp ARE NOT AN EMITTED DIALECT, THEY ARE THE PATTERN'S
-  // RUNTIME. `+x` on a proved number is erased by UnaryPlusIsIdentity.pdll, and
-  // mlir-pdll does not compile a matcher: it emits PDL TEXT that MLIRParser
-  // parses when the pattern set is built, PDLToPDLInterp lowers, and a
-  // bytecode interpreter runs. Parsing that text needs both dialects loaded
-  // before the pass runs, which is what this list is for. The default
-  // precomputation pipeline also constructs CTJS and arith constants.
+  // The default precomputation pipeline also constructs CTJS and arith constants.
   let dependentDialects = [
     "::ctcompile::ctjs::CTJSDialect",
     "::ctcompile::ctnative::CTNativeDialect",
     "::mlir::arith::ArithDialect",
     "::mlir::emitc::EmitCDialect",
-    "::mlir::pdl::PDLDialect",
-    "::mlir::pdl_interp::PDLInterpDialect",
     "::mlir::scf::SCFDialect",
     "::mlir::ub::UBDialect"
   ];
@@ -394,16 +384,7 @@ def CTNativePruneDeadStores : Pass<"ctnative-prune-dead-stores"> {
     Option<"report", "report", "bool", /*default=*/"false",
            "Emit the exact prune counts as a remark (the release LLVM package compiles pass statistics out)">
   ];
-  // THE LAST TWO ARE THE PRICE OF THE PDLL PATTERN. PruneDeadStores.pdll is
-  // compiled to a C++ file that embeds the pattern as PDL *text* and parses it
-  // at run time, and the pattern set then lowers PDL to pdl_interp bytecode -
-  // so both dialects must be loaded in the context before the pass runs, or
-  // the parse fails on an unregistered dialect inside a pass body.
-  let dependentDialects = [
-    "::mlir::emitc::EmitCDialect",
-    "::mlir::pdl::PDLDialect",
-    "::mlir::pdl_interp::PDLInterpDialect"
-  ];
+  let dependentDialects = ["::mlir::emitc::EmitCDialect"];
 }
 
 #endif // CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD
