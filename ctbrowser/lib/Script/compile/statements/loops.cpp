@@ -267,7 +267,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
             }
             declaring_ = outer_declaring;
         } else if (is_shape) {
-            compile_pattern_binding(target.b, item, declares);
+            compile_pattern_binding(target.b, item, declares, true);
         } else if (!declares) {
             emit_write(target.text, item);
         } else if (const local * l = find_local_entry(fn(), target.text);
@@ -402,7 +402,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
             }
             declaring_ = outer_declaring;
         } else if (is_shape) {
-            compile_pattern_binding(target.b, item, declares);
+            compile_pattern_binding(target.b, item, declares, true);
         } else if (!declares) {
             emit_write(target.text, item);
         } else if (const local * l = find_local_entry(fn(), target.text);

@@ -792,9 +792,10 @@ public:
     //
     // At the top level there is nothing to declare: a declaration there is a
     // global, and emit_write reaches one by falling through to set_global.
-    void declare_pattern_names(std::int32_t pat);
+    void declare_pattern_names(std::int32_t pat, bool block_scoped = false);
 
-    void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring);
+    void compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring,
+                                 bool block_scoped = false);
 
     // Bind `pattern` to the value sitting in `src`. Every name it mentions
     // already exists by the time this runs - see compile_pattern_binding.

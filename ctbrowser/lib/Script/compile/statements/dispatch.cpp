@@ -163,7 +163,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 // free the pattern's own locals with it if they were
                 // allocated inside, leaving the next temporary to overwrite
                 // one. See declare_pattern_names.
-                declare_pattern_names(decl.b);
+                declare_pattern_names(decl.b, n.text != "var");
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
