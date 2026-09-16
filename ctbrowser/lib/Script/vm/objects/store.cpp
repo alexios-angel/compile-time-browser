@@ -42,7 +42,9 @@ void context::store_index(value target, value key, value v) {
         // object's valueOf can run script; a number, which is what every
         // pixel and matrix write is, stays on this path.
         if (arr->elements != element_kind::none) {
-            if (!v.is_number()) {
+            // A BIGINT KIND TAKES NO NUMBER AT ALL - ToBigInt(1) is the
+            // TypeError - so it goes the long way whatever the value is.
+            if (!v.is_number() || is_bigint_kind(arr->elements)) {
                 (void)typed_element_set(*this, *arr, static_cast<std::size_t>(i), v);
                 return;
             }
