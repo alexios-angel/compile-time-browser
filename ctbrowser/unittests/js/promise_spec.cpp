@@ -33,6 +33,25 @@ int main() {
                       "Promise.resolve().then(() => log.push(1)).then(() => log.push(2))"
                       ".then(() => log.push(3)).then(() => { result = log.join(''); });",
                       "123x");
+    // 27.7.5.3 Await: PromiseResolve(%Promise%, v) - a thenable that is not
+    // a promise is adopted through its `then`, on its own tick, so a thenable
+    // that rejects throws at the await, and one that resolves hands its
+    // value over; a plain object awaits to itself.
+    expect_after_turn("var result = ''; (async () => { try { await { then(_, reject) {"
+                      " reject(new RangeError('no')); } }; result = 'no throw'; }"
+                      " catch (e) { result = e.name; } })();",
+                      "RangeError");
+    expect_after_turn(
+        "var result = ''; (async () => { result = await { then(r) { r('v'); } }; })();", "v");
+    expect_after_turn("var result = ''; var o = { x: 1 }; (async () => { result = (await o) === o;"
+                      " })();",
+                      "true");
+    expect_after_turn(
+        "var result = ''; var log = [];"
+        "(async () => { await { then(r) { log.push('then'); r(); } }; log.push('after');"
+        " })(); Promise.resolve().then(() => log.push('a')).then(() => log.push('b'))"
+        ".then(() => 0).then(() => { result = log.join(); });",
+        "then,a,after,b");
     // Resolving a promise with itself is a TypeError rejection.
     expect_after_turn("var result = ''; var p = Promise.resolve().then(() => p);"
                       "p.catch(e => { result = e.constructor.name; });",

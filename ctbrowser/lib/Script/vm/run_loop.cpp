@@ -812,7 +812,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // A settled promise carries its value in `__value`; anything else
                 // awaits to itself. A REJECTED promise throws, which is what makes
                 // `try { await f() } catch` work.
-                const value awaited = reg(in.b);
+                const value awaited_raw = reg(in.b);
                 // EVERY AWAIT SUSPENDS THE FRAME (27.7.5.3 Await: PerformPromiseThen
                 // on a promise resolved with the value, so the continuation is
                 // a job even when the value is already settled - `await 1`
@@ -831,6 +831,26 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // callee just queued. Draining re-enters the VM, so the
                 // frame and its window are re-derived afterwards.
                 const bool top_level = vm_frame->closure == nullptr;
+                // 27.7.5.3 step 2, PromiseResolve(%Promise%, value): an object
+                // that is not a promise is resolved INTO one - which is where a
+                // thenable's `then` is called (NewPromiseResolveThenableJob), so
+                // `await { then(_, reject) { reject(e) } }` throws e. A promise
+                // is awaited as itself and a primitive keeps the fast path below.
+                if (awaited_raw.is_object_like() && pending_promise_factory_ && promise_settler_ &&
+                    !(awaited_raw.is_object() &&
+                      static_cast<object_object *>(awaited_raw.as_heap())->find("__settled") !=
+                          nullptr)) {
+                    // The object stays rooted through the register until the
+                    // wrapper is in it; the wrapper is rooted by the register
+                    // from then on, and resolving allocates the thenable job.
+                    const rooted keep{*this, awaited_raw};
+                    reg(in.b) = pending_promise_factory_(*this);
+                    promise_settler_(*this, reg(in.b), awaited_raw, false);
+                    if (failed_) { break; }
+                    vm_frame = &frames_.back();
+                    base = vm_frame->base;
+                }
+                const value awaited = reg(in.b);
                 if (top_level && is_pending_promise(awaited)) {
                     drain_microtasks();
                     if (failed_) { break; }
