@@ -49,13 +49,18 @@ bool context::private_element_present(value target, const std::string & key) {
     if (own_property(target, key, found)) { return true; }
     // A method or accessor: on the prototype chain, or up the constructor's
     // static chain for a static one - and then only with the brand.
+    // Capped like every other walk here (lookup_property's 64): the internal
+    // set_prototype and proto_link never refuse a cycle.
     bool declared = false;
-    for (value up = get_prototype(target); up.is_object_like() && !declared;
-         up = get_prototype(up)) {
+    int depth = 0;
+    for (value up = get_prototype(target); up.is_object_like() && !declared && depth < 64;
+         up = get_prototype(up), ++depth) {
         declared = own_property(up, key, found);
     }
     if (!declared && target.is_callable()) {
-        for (value up = target; up.is_kind(heap_kind::function) && !declared;) {
+        depth = 0;
+        for (value up = target; up.is_kind(heap_kind::function) && !declared && depth < 64;
+             ++depth) {
             up = static_cast<closure_object *>(up.as_heap())->proto_link;
             declared = up.is_callable() && own_property(up, key, found);
         }
@@ -68,7 +73,8 @@ bool context::private_element_present(value target, const std::string & key) {
 }
 
 value context::get_with_receiver(value base, const std::string & name, value receiver) {
-    for (value at = base; at.is_object_like();) {
+    int depth = 0;
+    for (value at = base; at.is_object_like() && depth < 64; ++depth) {
         if (at.is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(at.as_heap());
             const value trap = proxy_trap(at, "get");
