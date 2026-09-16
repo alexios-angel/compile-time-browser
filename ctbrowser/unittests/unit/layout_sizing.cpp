@@ -293,6 +293,34 @@ void test_flex_basis_content_and_calc_size() {
                 "max-content plus 12");
 }
 
+void test_a_column_items_keyword_basis_names_its_content_height() {
+    // Down a column the item is laid out first, and its fragment already
+    // honours its own `height` - so a keyword basis reads fragment::auto_height,
+    // the height the content came to. "hello" at 20px is one line of 25.
+    const std::string_view html = "<html><body><div id=c><div id=t>hello</div></div></body></html>";
+    const auto height_with = [&](std::string_view item) {
+        laid_out t;
+        t.run(html, std::string{reset}
+                        .append("#c { display: flex; flex-direction: column; height: 200px; "
+                                "     font-size: 20px } "
+                                "#t { height: 50px; flex-grow: 0; flex-shrink: 0; ")
+                        .append(item)
+                        .append(" }")
+                        .c_str());
+        const fragment * f = t.at("t");
+        return f != nullptr ? f->bounds.height : -1.0f;
+    };
+    expect_near(height_with("flex-basis: content"), 25, "content is the content height, not 50");
+    expect_near(height_with("flex-basis: calc-size(content, size * 7)"), 175, "...and over it");
+    expect_near(height_with("flex-basis: calc-size(auto, size * 1.6 + 23px)"), 103,
+                "auto is the 50px height");
+    expect_near(height_with("flex-basis: auto; height: calc-size(auto, size * 7)"), 175,
+                "a calc-size() height is applied once, by the item's own layout");
+    expect_near(height_with("flex-basis: calc-size(auto, size * 7); "
+                            "height: calc-size(auto, size * 3)"),
+                525, "...and the basis runs over that");
+}
+
 void test_flex_items_follow_the_box_model() {
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div><div id=b>b</div></div></body></html>",
@@ -343,6 +371,7 @@ int main() {
     test_calc_size_measures_size_in_the_box_sizing_box();
     test_calc_size_height_runs_over_the_content_height();
     test_flex_basis_content_and_calc_size();
+    test_a_column_items_keyword_basis_names_its_content_height();
     test_flex_items_follow_the_box_model();
     test_an_absolute_box_is_placed_against_a_relative_inline();
     REPORT("layout_sizing");

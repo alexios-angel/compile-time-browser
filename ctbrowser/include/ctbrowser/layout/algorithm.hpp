@@ -814,6 +814,7 @@ struct block_flow {
                                                    c.available_height, edges.vertical_inner()))
                 : cursor;
         out.bounds.height = clamp_used_height(b, c, edges, used, cursor);
+        out.auto_height = cursor;
         return out;
     }
 };

@@ -522,7 +522,11 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             it.placed = layout_box(
                 child, constraints{content_width, child_height, child.font_size, it.cross, true},
                 measure_text);
-            content_main = it.placed.bounds.height;
+            // THE CONTENT'S height, not the fragment's: the fragment already
+            // honours the item's own `height`, and a keyword basis names what
+            // the content came to on its own.
+            content_main =
+                it.placed.auto_height >= 0 ? it.placed.auto_height : it.placed.bounds.height;
             min_content_main = content_main;
         }
 
@@ -862,6 +866,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             ? std::max(0.0f, calc_over_content(b, b.height, block_extent, c.available_height,
                                                edges.vertical_inner()))
             : block_extent + edges.vertical_inner();
+    out.auto_height = block_extent + edges.vertical_inner();
     return out;
 }
 
