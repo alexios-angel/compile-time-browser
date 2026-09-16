@@ -2076,6 +2076,10 @@ private:
     // prototype, and the document's `createRange`.
     void install_range(context & cx);
     [[nodiscard]] value create_range(context & cx);
+    // The Selection API - bindings/selection.cpp. `Selection` the global,
+    // `getSelection()` on the window and on Document.prototype, and the one
+    // selection object they both answer with.
+    void install_selection(context & cx);
     // WRAPPERS THAT LEFT WITH THEIR NODE. `node_from` adopts by cloning into
     // the other document's slab and rebinding the page's wrapper to the copy;
     // the node here keeps its slot, and anything that finds it again by id -
