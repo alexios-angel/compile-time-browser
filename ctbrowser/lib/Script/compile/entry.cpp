@@ -42,9 +42,15 @@ void compiler_impl::compile_program() {
         // B.3.3 for a script: a block's function declaration is a global var
         // too (undefined until the block runs - compile_function_decl writes
         // it as a global at any depth of a classic script).
+        // Only the ones IN a block: a top-level function declaration is a
+        // global the declaration itself writes, and listing it here as well
+        // would show the native prover a var where it expects a function.
         if (!fn().is_strict) {
-            each_block_function(ast_.root,
-                                [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
+            for (const std::int32_t stmt : kids(root)) {
+                if (at(stmt).kind == vp::nk::func_decl) { continue; }
+                each_block_function(
+                    stmt, [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
+            }
         }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
