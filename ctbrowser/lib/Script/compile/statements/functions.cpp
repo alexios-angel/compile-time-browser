@@ -100,9 +100,17 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     // to an unresolvable name. Declared before its body compiles, so a
     // recursive call inside resolves to it. Its register survives the
     // statement because compile_stmt does not release a declaration's.
+    //
+    // A SCRIPT'S OWN TOP LEVEL is the one place the declaration IS the global
+    // (16.1.7 step 17). A block of a classic script is not that place: it was
+    // treated as one, so `{ function f() {} }` wrote the global at the
+    // declaration and there was no block binding at all - which B.3.3.2 needs
+    // to have, because the var write is a COPY of it and is skipped whenever
+    // a `let` of the same name shadows.
+    const bool script_scope = frames_.size() == 1 && !module_scope_;
+    const bool script_top_level = script_scope && fn().scope_marks.size() <= 1;
     bool block_local = false;
-    if (!(frames_.size() == 1 && !module_scope_) &&
-        find_local_in_current_scope(n.text) == nullptr) {
+    if (!script_top_level && find_local_in_current_scope(n.text) == nullptr) {
         const std::uint16_t r = declare_local(std::string{n.text});
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
@@ -134,19 +142,23 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     // module's helpers into one namespace - and, more visibly, make
     // `export function f() {}` unpublishable, because find_local would not
     // know the name.
-    if (frames_.size() == 1 && !module_scope_) {
+    if (script_top_level) {
         proto().emit(instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
     } else {
         emit_write(n.text, r);
-        // B.3.3.1 step 1.a.ii.3.a: when the declaration is evaluated, the
-        // block binding's value is copied to the function's var binding of
-        // the same name - the one predeclare_locals made, the first entry the
-        // frame has for the name (the block's own is the last).
+        // B.3.3.1 step 1.a.ii.3 / B.3.3.2 step 1.a.ii.3: when the declaration
+        // is evaluated, the block binding's value is copied to the var
+        // binding of the same name - a global in a classic script, otherwise
+        // the one predeclare_locals made, the first entry the frame has for
+        // the name (the block's own is the last).
         if (block_local && !fn().is_strict &&
             std::find(fn().annex_b_functions.begin(), fn().annex_b_functions.end(), n.text) !=
                 fn().annex_b_functions.end()) {
-            const auto it = fn().local_index.find(n.text);
-            if (it != fn().local_index.end() && it->second.size() >= 2) {
+            if (script_scope) {
+                proto().emit(
+                    instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
+            } else if (const auto it = fn().local_index.find(n.text);
+                       it != fn().local_index.end() && it->second.size() >= 2) {
                 const local & outer = fn().locals[it->second.front()];
                 proto().emit(instruction{outer.boxed ? op::cell_set : op::move, outer.reg, r});
             }

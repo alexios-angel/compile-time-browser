@@ -117,6 +117,31 @@ bool compiler_impl::is_captured(std::string_view name) const {
     return at != ticks.end() && *at < where.hi;
 }
 
+void compiler_impl::collect_lexical_names(std::span<const std::int32_t> stmts,
+                                          std::vector<std::string> & out) const {
+    for (const std::int32_t s : stmts) {
+        const vp::node & stmt = at(s);
+        if (stmt.kind == vp::nk::var_decl && stmt.text != "var") {
+            for (const std::int32_t d : kids(stmt)) {
+                if (at(d).b >= 0) {
+                    pattern_names(at(d).b, out);
+                } else {
+                    out.emplace_back(at(d).text);
+                }
+            }
+        } else if (stmt.kind == vp::nk::class_decl) {
+            out.emplace_back(stmt.text);
+        }
+    }
+}
+
+void compiler_impl::collect_function_names(std::span<const std::int32_t> stmts,
+                                           std::vector<std::string> & out) const {
+    for (const std::int32_t s : stmts) {
+        if (at(s).kind == vp::nk::func_decl) { out.emplace_back(at(s).text); }
+    }
+}
+
 void compiler_impl::collect_declared_names(std::int32_t body) {
     if (body < 0) { return; }
     const vp::node & n = at(body);
@@ -229,26 +254,42 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     };
     for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist_var); }
     // ANNEX B.3.3 (sloppy code only): a function declared in a nested block
-    // takes a var binding of this function as well, unless a parameter or a
-    // lexical declaration already has the name - which is what "already a
-    // local, and not one of the vars" means here, the parameters and the
-    // body's own let/const/class having been declared above.
+    // takes a var binding of this function as well - created at entry when
+    // nothing else of that name exists, and WRITTEN when the declaration is
+    // evaluated (B.3.3.1 steps 1.a.ii.2 and 1.a.ii.3, which are two separate
+    // things: with a `var` or another function declaration of the name the
+    // binding is already there, and the write still happens).
+    //
+    // It is refused only for a name a PARAMETER or a LEXICAL declaration of
+    // this body already binds - "replacing the declaration with a
+    // VariableStatement would produce an Early Error" - which is what "a
+    // local that is neither a var nor one of this body's own functions"
+    // means here, the parameters and the body's let/const/class having been
+    // declared above.
     if (!fn().is_strict) {
-        std::vector<std::string> lexical;
+        std::vector<std::string> var_scoped = vars;
         for (const std::int32_t stmt : kids(at(body))) {
-            each_block_function(
-                stmt,
-                [&](std::string name) {
-                    const bool fresh = find_local_entry(fn(), name) == nullptr;
-                    if (fresh) {
-                        hoist(name);
-                    } else if (std::find(vars.begin(), vars.end(), name) == vars.end()) {
-                        return;
-                    }
-                    fn().annex_b_functions.push_back(std::move(name));
-                },
-                lexical);
+            if (at(stmt).kind == vp::nk::func_decl) { var_scoped.emplace_back(at(stmt).text); }
         }
+        std::vector<std::string> lexical;
+        each_block_function(
+            body,
+            [&](std::string name) {
+                // NEVER `arguments`: the arguments object binding is not
+                // something a block's function may create or overwrite
+                // (B.3.3.1 step 1.a.ii.2, "and F is not `arguments`"), and
+                // hoisting a local of that name shadowed the object itself.
+                if (name == "arguments") { return; }
+                const bool fresh = find_local_entry(fn(), name) == nullptr;
+                if (fresh) {
+                    hoist(name);
+                } else if (std::find(var_scoped.begin(), var_scoped.end(), name) ==
+                           var_scoped.end()) {
+                    return;
+                }
+                fn().annex_b_functions.push_back(std::move(name));
+            },
+            lexical, true);
     }
 }
 

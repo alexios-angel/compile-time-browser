@@ -313,15 +313,32 @@ void compiler_impl::compile_if(const vp::node & n) {
     const std::size_t to_else = proto().emit(instruction{op::jump_if_false, cond});
     release_to(mark);
 
-    compile_stmt(n.b);
+    compile_clause(n.b);
     if (n.c >= 0) {
         const std::size_t to_end = proto().emit(instruction{op::jump});
         patch_here(to_else);
-        compile_stmt(n.c);
+        compile_clause(n.c);
         patch_here(to_end);
     } else {
         patch_here(to_else);
     }
+}
+
+// ANNEX B.3.4: `if (x) function f() {}` is `if (x) { function f() {} }` in
+// sloppy code - the declaration binds in a block of its own and only B.3.3's
+// var write is seen outside. Without the scope the binding WAS the enclosing
+// one, so a parameter named `f` was overwritten by a declaration that must
+// not touch it. Everywhere else an `if` clause declares nothing, so the extra
+// scope costs a push and a pop.
+void compiler_impl::compile_clause(std::int32_t stmt) {
+    if (stmt < 0) { return; }
+    if (at(stmt).kind != vp::nk::func_decl) {
+        compile_stmt(stmt);
+        return;
+    }
+    push_scope();
+    compile_stmt(stmt);
+    pop_scope();
 }
 
 void compiler_impl::compile_throw(const vp::node & n) {
