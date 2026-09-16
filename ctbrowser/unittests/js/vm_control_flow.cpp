@@ -376,6 +376,66 @@ void test_for_of() {
                   "TypeError");
 }
 
+// Nested for-of: the OUTER (or a middle) binding must survive an inner
+// for-of that runs to completion.
+void test_nested_for_of() {
+    // Plain outer binding read after an inner for-of.
+    expect_result("var out = ''; for (const a of [1, 2]) { for (const b of [3, 4]) {} out += a; }"
+                  "return out;",
+                  "12");
+    // Outer binding read INSIDE the inner loop body.
+    expect_result("var out = ''; for (const a of [1, 2]) { for (const b of [3, 4]) { out += a; } }"
+                  "return out;",
+                  "1122");
+    // Three levels: the MIDDLE binding read after the innermost loop.
+    expect_result("var out = ''; for (const a of [1]) { for (const b of [2, 3]) {"
+                  " for (const c of [4]) {} out += b; } } return out;",
+                  "23");
+    // Boxed (captured) outer binding: each iteration's closure sees its own
+    // value (String() keeps the join unambiguous - `+` on numbers would add).
+    expect_result("var fns = []; for (const a of [1, 2]) { for (const b of [3]) {}"
+                  " fns.push(() => a); } return fns[0]() + ',' + fns[1]();",
+                  "1,2");
+    // Boxed middle binding captured by a closure made in the innermost body.
+    expect_result("var fns = []; for (const a of [1]) { for (const b of [2, 3]) {"
+                  " for (const c of [4]) { fns.push(() => b); } } }"
+                  "return fns[0]() + ',' + fns[1]();",
+                  "2,3");
+}
+
+// A binding captured ONLY through an object shorthand `{ b }` - whose name is
+// text on the property node, not an ident child - must still be boxed. The
+// capture pre-pass (`tour`) missed the shorthand, so is_captured answered
+// false, no per-iteration cell was made, and resolve_upvalue's after-the-fact
+// boxing turned every direct read into a cell_get on a plain register:
+// undefined. This is what cost shadow-dom/attach-shadow-non-html-namespace.html
+// its 304 subtests (`attachShadow({ mode })` in a nested arrow, `${mode}` read
+// in a sibling template, all in a three-deep for-of).
+void test_shorthand_capture() {
+    // The reduced shape: read after a nested closure that captures via shorthand.
+    expect_result("var seen = []; for (const b of ['B1', 'B2']) {"
+                  " (function () { return { b }; }); seen.push(b); } return seen.join(',');",
+                  "B1,B2");
+    // The closure actually reads it back through the shorthand.
+    expect_result("var fns = []; for (const b of ['x', 'y']) { fns.push(() => ({ b }).b); }"
+                  "return fns[0]() + ',' + fns[1]();",
+                  "x,y");
+    // Transitive capture (two arrow levels) plus a direct template read, the
+    // WPT's own arrangement.
+    expect_result("var out = [];"
+                  "for (const a of ['A']) { for (const mode of ['o', 'c']) {"
+                  "  for (const n of ['p']) {"
+                  "    (() => { return () => ({ mode }); })(); out.push(`${a}-${mode}-${n}`);"
+                  "  } } }"
+                  "return out.join(',');",
+                  "A-o-p,A-c-p");
+    // A shorthand capture outside any loop still boxes the binding: `f` shares
+    // the cell, so it sees the write made after it was created.
+    expect_result("var r; { let v = 7; var f = function () { return ({ v }).v; };"
+                  " v = 9; r = f(); } return r;",
+                  "9");
+}
+
 void test_for_in() {
     expect_result("var keys = ''; for (const k in {a: 1, b: 2}) { keys += k; } return keys;", "ab");
     expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;",
@@ -510,6 +570,8 @@ int main() {
     test_nested_try();
     test_break_out_of_try();
     test_for_of();
+    test_nested_for_of();
+    test_shorthand_capture();
     test_for_in();
     test_switch();
     test_error_stacks();
