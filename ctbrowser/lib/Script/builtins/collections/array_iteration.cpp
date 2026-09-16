@@ -33,11 +33,21 @@ namespace ctbrowser::script::detail {
     // there, its [[Prototype]] is %Iterator.prototype% (so `@@iterator`, the
     // helpers and `Object.getPrototypeOf(Object.getPrototypeOf([].values()))`
     // are what the standard says), and two iterators of a kind share it.
-    // Made on first use and kept as a hidden global, because Iterator installs
-    // after the collections do. Each iterator used to carry its own two
-    // natives and a null prototype.
-    const std::string key = std::string{"__ctbrowser_iterator_proto:"} + tag;
-    value table = cx.global(key);
+    // Made on first use, because Iterator installs after the collections do,
+    // and kept under a PRIVATE key on Array.prototype (value.hpp: no source
+    // text can spell one and OwnPropertyKeys never reports one) - as a
+    // global it was an enumerable object on `window`, and the one global of
+    // a kind ctcompile's native convention has no form for. Each iterator
+    // used to carry its own two natives and a null prototype.
+    const std::string key = std::string{"@#IteratorPrototype:"} + tag;
+    object_object * home = nullptr; // null only once a page has deleted `Array`
+    if (const value array = cx.global("Array"); array.is_object_like()) {
+        if (const value proto = cx.lookup_property(array, "prototype"); proto.is_object()) {
+            home = static_cast<object_object *>(proto.as_heap());
+        }
+    }
+    const value * kept = home == nullptr ? nullptr : home->find(key);
+    value table = kept == nullptr ? value::undefined() : *kept;
     if (!table.is_object()) {
         object_object * made = new_table(cx);
         if (const value iterator = cx.global("Iterator"); iterator.is_object_like()) {
@@ -86,7 +96,7 @@ namespace ctbrowser::script::detail {
                 return value::object(out);
             });
         table = value::object(made);
-        cx.define_global(key, table);
+        if (home != nullptr) { home->define(key, table, attr_none); }
     }
     auto * it = static_cast<object_object *>(cx.make_object().as_heap());
     it->prototype = table;

@@ -127,6 +127,12 @@ void test_constructor_steps_its_iterable() {
                   " Object.prototype.toString.call(new Map().entries()), a[Symbol.iterator]() ==="
                   " a, [...a].join()].join('|');",
                   "true|true|false|Array Iterator|[object Map Iterator]|true|1");
+    // ...and the prototype is nobody's global: it lives under a private key on
+    // Array.prototype, so neither `window` nor Array.prototype enumerates it.
+    expect_result("[1].values(); new Map().keys(); return Object.keys(globalThis).concat("
+                  "Object.getOwnPropertyNames(Array.prototype)).filter(k => k.includes("
+                  "'Iterator')).length;",
+                  "0");
 }
 
 } // namespace

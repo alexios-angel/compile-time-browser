@@ -461,7 +461,8 @@ change the native backend sees as a divergence until it follows.
   instances inherit THAT (read after the parameters ran), an async function
   has no `prototype`. GeneratorValidate throws for a non-generator receiver.
   %ArrayIteratorPrototype% and its siblings are one shared prototype per
-  kind under %Iterator.prototype% (`list_iterator`).
+  kind under %Iterator.prototype% (`list_iterator`), kept under a private
+  key on Array.prototype - not a global, which `window` enumerated.
 * **`await` adopts a thenable** through PromiseResolve (a non-promise object
   is resolved into a promise, so `then` runs and its rejection throws at the
   await). Array.fromAsync's helper follows GetMethod/ToLength.
