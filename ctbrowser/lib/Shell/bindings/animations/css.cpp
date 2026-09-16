@@ -242,14 +242,17 @@ namespace {
 // a transparent endpoint contributes no hue. Extrapolation clamps to the
 // gamut, as a computed colour does. The text goes back through the same
 // `rgb()` parser the computed-style serialiser reads, which rounds.
-[[nodiscard]] std::string lerp_color(const color & a, const color & b, double p) {
-    const auto channel = [](std::uint8_t v) { return static_cast<double>(v) / 255.0; };
-    const double alpha_a = channel(a.alpha());
-    const double alpha_b = channel(b.alpha());
+[[nodiscard]] std::string lerp_color(const style::css::srgb_color & a,
+                                     const style::css::srgb_color & b, double p) {
+    // Through style's resolver rather than paint's: paint holds a channel in
+    // eight bits, and an alpha of 0.5 read back as 128/255 - which put the
+    // midpoint of blue and half-transparent red at 0.753 rather than 0.75.
+    const double alpha_a = a.a;
+    const double alpha_b = b.a;
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     const double alpha = std::clamp(lerp(alpha_a, alpha_b), 0.0, 1.0);
-    const auto mixed = [&](std::uint8_t x, std::uint8_t y) {
-        const double premultiplied = lerp(channel(x) * alpha_a, channel(y) * alpha_b);
+    const auto mixed = [&](float x, float y) {
+        const double premultiplied = lerp(x * alpha_a, y * alpha_b);
         const double v = alpha == 0 ? 0 : premultiplied / alpha;
         return std::clamp(v, 0.0, 1.0) * 255.0;
     };
@@ -259,8 +262,8 @@ namespace {
             std::to_chars(buffer, buffer + sizeof buffer, v, std::chars_format::fixed, 4);
         return ec == std::errc{} ? std::string{buffer, end} : std::string{"0"};
     };
-    return "rgba(" + number(mixed(a.red(), b.red())) + ", " + number(mixed(a.green(), b.green())) +
-           ", " + number(mixed(a.blue(), b.blue())) + ", " + number(alpha) + ")";
+    return "rgba(" + number(mixed(a.r, b.r)) + ", " + number(mixed(a.g, b.g)) + ", " +
+           number(mixed(a.b, b.b)) + ", " + number(alpha) + ")";
 }
 
 // CSS Values 4 §"combining values": two values interpolate when they are one
@@ -276,7 +279,8 @@ namespace {
     from = trim(from, html_whitespace);
     to = trim(to, html_whitespace);
     interpolable = true;
-    if (const auto a = paint::parse_color(from), b = paint::parse_color(to); a && b) {
+    if (const auto a = style::css::resolve_color(from, {}), b = style::css::resolve_color(to, {});
+        a && b) {
         return lerp_color(*a, *b, p);
     }
     if (numeric_pair(from, to)) { return style::interpolate_text(property, from, to, p, ctx); }
@@ -422,6 +426,7 @@ void dom_bindings::fire_animation_event(std::size_t index, std::string_view type
 
 void dom_bindings::update_css_animations(const read_txn & txn, const style::style_map & before,
                                          const style::style_map & after) {
+    ++restyle_generation_;
     if (cx_ == nullptr || selector_engine_ == nullptr) { return; }
     // WHO OWNS WHAT, once: a page in the interpolation harness holds hundreds
     // of elements and hundreds of live records, and asking "this element's

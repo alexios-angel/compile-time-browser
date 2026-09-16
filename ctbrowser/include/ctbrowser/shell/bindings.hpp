@@ -1247,9 +1247,16 @@ public:
     // computes to without touching the document, so a cached computed style
     // compares this beside the document version.
     [[nodiscard]] std::uint64_t style_stamp() const noexcept { return style_generation_; }
+    // Counts the browser's style resolutions (update_css_animations is called
+    // at the end of each): a registered property, a resized viewport, a media
+    // change - anything that moves a computed value without a document or
+    // CSSOM edit - has resolved by the time a read flushes, and this is what
+    // says so.
+    [[nodiscard]] std::uint64_t restyle_stamp() const noexcept { return restyle_generation_; }
 
 private:
     std::uint64_t style_generation_ = 0;
+    std::uint64_t restyle_generation_ = 0;
     [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
     [[nodiscard]] css_rule_record * receiver_rule(context & cx);
     // The media query list `this` is a view of - a sheet's or a media rule's.

@@ -4,21 +4,26 @@
 
 #include "internal.hpp"
 
+#include <utility>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
 
 bool dom_bindings::refresh_wrappers() {
     if (cx_ == nullptr) { return false; }
-    wrote_to_control_ = false;
-    for (auto & [packed, obj] : wrappers_) {
-        if (obj != nullptr) { refresh_element(*cx_, *obj, unpack(packed)); }
-    }
-    // The document's live properties too - this loop walks `wrappers_`, which
-    // the document object is not in, so activeElement and title would go stale
-    // the moment focus moved.
+    // NOT EVERY WRAPPER, EVERY FRAME. What refresh_element writes - tagName,
+    // nodeType, localName, ownerDocument - cannot change for a node, and the
+    // box metrics and reflected attributes are accessors; walking the whole
+    // table before each dispatch and layout was quadratic in a page that
+    // makes elements as it goes (the interpolation harness makes one per
+    // subtest). The two things that can be stale are the interface chain of
+    // a wrapper made before EventTarget existed, which is linked once, and
+    // the document's live properties - activeElement and title would go
+    // stale the moment focus moved.
+    ensure_dom_interfaces(*cx_);
     refresh_document();
-    return wrote_to_control_;
+    return std::exchange(wrote_to_control_, false);
 }
 
 // WHERE FOCUS IS, pushed in. The hook the bindings already hold is write-only:
