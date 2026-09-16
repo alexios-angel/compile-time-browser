@@ -398,7 +398,9 @@ public:
     // A RUNAWAY PAGE IS REFUSED, not left to exhaust the machine: a cap turns
     // std::bad_alloc into an ordinary fault with the JS stack attached. The
     // number is far above any real page - p5.js loading allocates a few hundred
-    // thousand - so reaching it means a loop that does not terminate.
+    // thousand - so reaching it means a loop that does not terminate. Counted
+    // SINCE THE LAST COLLECTION (collect() resets it): a loop that allocates
+    // through a safepoint is bounded by the collector, not by this.
     static constexpr std::size_t allocation_ceiling = 40'000'000;
 
     template <typename T, typename... Args> [[nodiscard]] T * allocate(Args &&... args) {
