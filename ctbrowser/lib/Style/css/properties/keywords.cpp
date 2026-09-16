@@ -295,6 +295,44 @@ constexpr or_grammar or_grammars[] = {
     return std::nullopt;
 }
 
+// The source text of a run of significant tokens, empty when any of it came
+// from the decoded-escape tail of the pool rather than the author's bytes.
+[[nodiscard]] std::string_view run_text(const token_stream & ts, std::span<const std::size_t> at) {
+    if (at.empty()) { return {}; }
+    const css_token & first = ts.tokens[at.front()];
+    const css_token & last = ts.tokens[at.back()];
+    if (first.text >= ts.source_length || last.text >= ts.source_length) { return {}; }
+    return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+}
+
+// A MATH FUNCTION'S WHOLE BLOCK AS ONE COMPONENT, typed. `nullopt` when the
+// cursor is not on a function, the block does not close, `calc/` calls it
+// malformed, or it resolves to something other than `want`; `k` is left on the
+// closing paren. It is what lets a property whose grammar is a list of
+// keywords and one number still take `calc()` in the number's place.
+[[nodiscard]] std::optional<std::string> math_component(const token_stream & ts, const scan & found,
+                                                        std::size_t & k, numeric_type want) {
+    if (ts.tokens[found.significant[k]].type != token_type::function) { return std::nullopt; }
+    const std::size_t first = k;
+    int depth = 0;
+    for (; k < found.significant.size(); ++k) {
+        const token_type type = ts.tokens[found.significant[k]].type;
+        if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+        if (type == token_type::close_paren && --depth == 0) { break; }
+    }
+    if (k == found.significant.size()) { return std::nullopt; }
+    const std::string_view text =
+        run_text(ts, std::span<const std::size_t>{found.significant}.subspan(first, k - first + 1));
+    if (text.empty() || !may_have_math(text)) { return std::nullopt; }
+    const math_answer answer = evaluate_math(text, length_context{});
+    if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
+    if (answer.outcome == math_outcome::resolved &&
+        (answer.value.is_number || answer.value.type != want)) {
+        return std::nullopt;
+    }
+    return simplify_math(text);
+}
+
 // `<custom-ident>` PROPERTIES: a word the property does not spell for itself.
 // `keywords` are that property's own words - they are NOT custom idents, so
 // `view-transition-class: foo none` is invalid - and `list` says whether more
@@ -429,18 +467,26 @@ constexpr string_grammar string_grammars[] = {
 [[nodiscard]] std::optional<std::string> offset_rotate(const token_stream & ts,
                                                        const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
-    if (at.empty() || at.size() > 2) { return std::nullopt; }
+    if (at.empty()) { return std::nullopt; }
     std::string keyword;
     std::string angle;
-    for (const std::size_t i : at) {
-        const css_token & t = ts.tokens[i];
+    for (std::size_t k = 0; k < at.size(); ++k) {
+        const css_token & t = ts.tokens[at[k]];
         if (t.type == token_type::ident) {
             const std::string word = ascii_lower_copy(ts.text_of(t));
             if (!keyword.empty() || (word != "auto" && word != "reverse")) { return std::nullopt; }
             keyword = word;
             continue;
         }
-        if (t.type != token_type::dimension || !angle.empty()) { return std::nullopt; }
+        if (!angle.empty()) { return std::nullopt; }
+        if (t.type == token_type::function) {
+            const std::optional<std::string> math =
+                math_component(ts, found, k, numeric_type::angle);
+            if (!math) { return std::nullopt; }
+            angle = *math;
+            continue;
+        }
+        if (t.type != token_type::dimension) { return std::nullopt; }
         const std::string_view unit = ts.unit_of(t);
         if (!ascii_iequals_any(unit, {"deg", "grad", "rad", "turn"})) { return std::nullopt; }
         angle = serialize_number(t.number) + ascii_lower_copy(unit);
@@ -449,16 +495,6 @@ constexpr string_grammar string_grammars[] = {
     if (keyword.empty()) { return angle; }
     if (angle.empty()) { return keyword; }
     return keyword + " " + angle;
-}
-
-// The source text of a run of significant tokens, empty when any of it came
-// from the decoded-escape tail of the pool rather than the author's bytes.
-[[nodiscard]] std::string_view run_text(const token_stream & ts, std::span<const std::size_t> at) {
-    if (at.empty()) { return {}; }
-    const css_token & first = ts.tokens[at.front()];
-    const css_token & last = ts.tokens[at.back()];
-    if (first.text >= ts.source_length || last.text >= ts.source_length) { return {}; }
-    return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
 // One `<length-percentage>`, literal or a math function, canonical.
@@ -571,25 +607,11 @@ constexpr string_grammar string_grammars[] = {
         // (numeric-testcommon.js picks it for `type:'resolution'`), so the
         // whole of the function's block is one component here.
         if (t.type == token_type::function) {
-            const std::size_t first = k;
-            int depth = 0;
-            for (; k < found.significant.size(); ++k) {
-                const token_type type = ts.tokens[found.significant[k]].type;
-                if (type == token_type::function || type == token_type::open_paren) { ++depth; }
-                if (type == token_type::close_paren && --depth == 0) { break; }
-            }
-            if (k == found.significant.size()) { return std::nullopt; }
-            const std::string_view text = run_text(
-                ts, std::span<const std::size_t>{found.significant}.subspan(first, k - first + 1));
-            if (text.empty() || !may_have_math(text)) { return std::nullopt; }
-            const math_answer answer = evaluate_math(text, length_context{});
-            if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
-            if (answer.outcome == math_outcome::resolved &&
-                (answer.value.is_number || answer.value.type != numeric_type::resolution)) {
-                return std::nullopt;
-            }
+            const std::optional<std::string> math =
+                math_component(ts, found, k, numeric_type::resolution);
+            if (!math) { return std::nullopt; }
             resolution = true;
-            out += (out.empty() ? "" : " ") + simplify_math(text);
+            out += (out.empty() ? "" : " ") + *math;
             continue;
         }
         if (t.type != token_type::dimension) { return std::nullopt; }

@@ -406,6 +406,8 @@ void test_module_longhands() {
 
     ok("offset-rotate", "0rad reverse", "reverse 0rad");
     bad("offset-rotate", "auto reverse");
+    ok("offset-rotate", "calc(90deg - 0.5turn)", "calc(-90deg)");
+    ok("image-resolution", "calc(100dpi + 20dpi)", "calc(120dpi)");
     ok("offset-anchor", "auto", "auto");
     bad("offset-anchor", "left 10% top");
     ok("offset-position", "10px 20%", "10px 20%");
