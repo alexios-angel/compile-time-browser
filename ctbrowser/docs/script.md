@@ -429,6 +429,62 @@ as receiver; accessors and object-literal methods have a home object; a
 deleted synthesised `name`/`length` stays deleted; `f.length` is
 ExpectedArgumentCount.
 
+### Session 12 (2026-09-16): what moved after the round-one merges
+
+All in `docs/test262.md`'s `9c70aaa0` and later rows; each is a JS-semantics
+change the native backend sees as a divergence until it follows.
+
+* **The temporal dead zone, statically.** `local::initialized_at` records
+  where a function body's own `let`/`const`/`class` is initialised (the
+  declarator's end - ctjs identifiers and declarators carry spans since
+  `3cb2ef9`), and `compile_ident` throws the ReferenceError of 9.1.1.1.6 for
+  a read of the same frame textually before it: `let x = x + 1`, `use(y);
+  const y = 1`, `new K(); class K {}`, `typeof` included. NOT decided: a
+  read from a nested function, or of a block-level `let` (declared at its
+  statement, not at block entry) - a runtime hole and a check on captured
+  reads would be an ABI change.
+* **A declaration's write is only its own.** `declaring_` covered every
+  initialiser expression and pattern default, so strict code assigning to an
+  undeclared name inside one made a global; a `not_declaring` guard clears
+  it for defaults, computed keys, member targets and every nested frame.
+* **Annex B.3.3.** A function declared in a nested block of a sloppy
+  function also has a var binding of the function, written when the
+  declaration is evaluated - unless a parameter or a lexical declaration of
+  an enclosing block has the name (`predeclare_locals` keeps
+  `annex_b_functions`; a classic script lists block-nested names in
+  `hoisted_vars`). `var x;` at a script's top level STILL writes undefined
+  (`statements/dispatch.cpp` says which native prover needs the write).
+* **%GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction%** exist
+  (`proto_kind::generator_function` etc.; `context::function_proto_kind`):
+  a `function*`'s [[Prototype]] and `.constructor` are its intrinsic, its
+  own `prototype` inherits %GeneratorPrototype% with no `constructor`, its
+  instances inherit THAT (read after the parameters ran), an async function
+  has no `prototype`. GeneratorValidate throws for a non-generator receiver.
+  %ArrayIteratorPrototype% and its siblings are one shared prototype per
+  kind under %Iterator.prototype% (`list_iterator`).
+* **`await` adopts a thenable** through PromiseResolve (a non-promise object
+  is resolved into a promise, so `then` runs and its rejection throws at the
+  await). Array.fromAsync's helper follows GetMethod/ToLength.
+* **Garbage collection.** The 40,000,000-object allocation ceiling counts
+  since the last collection, not for life; a heap past its threshold collects
+  at a native call site too (interpreter and `invoke`), not only at an
+  interpreted entry - neither is a stress point.
+* **Builtins:** `parseInt` per 19.2.5 (ToInt32 radix, [2, 36], the Unicode
+  spaces, base 10 exact); `isNaN`/`isFinite` through ToPrimitive; a Symbol
+  out of ToPrimitive is 7.1.4's TypeError; `BigInt.asIntN`/`asUintN`;
+  `match`/`matchAll`/`replace`/`replaceAll`/`search`/`split` ask their
+  argument before ToString(this); `bind` takes the target's [[Prototype]]
+  and keeps an infinite length; `Object.prototype.toString` asks IsArray
+  through a proxy; `JSON.stringify` reads its replacer list through Get,
+  unwraps String/Number objects, serialises a proxy; a proxy trap receives a
+  Symbol key as a Symbol (`context::key_value`); a sloppy function called
+  with a nullish receiver sees `globalThis` (10.2.1.2 step 5.a); `NaN`/
+  `Infinity`/`undefined` refuse a write; `Symbol().description` is undefined
+  (the symbol's reads go through Symbol.prototype's accessors); Map/Set
+  constructors step their iterable and close it on an abrupt completion;
+  `Function.prototype.toString` spans include `async` and exclude `static`;
+  `$262.detachArrayBuffer` is `ArrayBuffer.prototype.transfer`.
+
 ### Reading an unresolvable name throws (since 2026-09-12)
 
 A bare identifier that is neither a local, a global binding nor a property of
