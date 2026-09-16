@@ -141,7 +141,7 @@ struct positioner {
         if (b.width.is_intrinsic()) {
             width = intrinsic_border_width(b, outer, edges, measure, b.width);
         } else if (!b.width.is_auto()) {
-            width = std::max(0.0f, b.width.resolve(cb.width, b.font_size));
+            width = std::max(0.0f, border_box_size(b, b.width, cb.width, edges.horizontal_inner()));
         } else if (left.given && right.given) {
             width = std::max(0.0f, cb.width - left.value - right.value - edges.horizontal_margin());
         } else {

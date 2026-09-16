@@ -529,26 +529,33 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    min/max is NOT clamped, because clamping is something the used value
         //    goes through and there is no used value here.
         if (property == "width" || property == "height") {
+            // A calc-size() with no used size to report - no box - serialises
+            // as written: its computed value is the function (CSS Values 5
+            // §10.2), not a number this cannot make without laying out.
+            const auto as_computed = [&]() -> std::string {
+                const std::string_view given = trim(declared(property), html_whitespace);
+                if (ascii_istarts_with(given, "calc-size(")) { return std::string{given}; }
+                return computed_length(given);
+            };
             if (at.pseudo && at.has_box) {
                 const layout::length len = layout::parse_length(declared(property));
-                if (len.is_auto() || len.is_intrinsic()) {
-                    return computed_length(declared(property));
-                }
+                if (len.is_auto() || len.is_intrinsic()) { return as_computed(); }
                 return used_px_text(
                     len.resolve(property == "width" ? at.basis : at.basis_height, at.font_size));
             }
             if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) {
-                return computed_length(declared(property));
+                return as_computed();
             }
             const bool horizontal = property == "width";
             float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
+            // The fragment is the border box; under content-box the padding AND
+            // the border come off it, which is the same arithmetic layout's
+            // border_box_size did in the other direction.
             const bool border_box = ascii_iequals(declared("box-sizing"), "border-box");
             if (at.box != nullptr && !border_box) {
-                const layout::side_lengths & pad = at.box->padding;
-                used -= horizontal ? pad.left.resolve(at.basis, at.font_size) +
-                                         pad.right.resolve(at.basis, at.font_size)
-                                   : pad.top.resolve(at.basis, at.font_size) +
-                                         pad.bottom.resolve(at.basis, at.font_size);
+                const layout::constraints c{at.basis, at.basis_height, at.font_size};
+                const layout::resolved_edges e = layout::resolve_edges(*at.box, c);
+                used -= horizontal ? e.horizontal_inner() : e.vertical_inner();
             }
             return used_px_text(std::max(0.0f, used));
         }

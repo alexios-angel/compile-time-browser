@@ -66,6 +66,42 @@ struct resolved_edges {
 
 [[nodiscard]] resolved_edges resolve_edges(const box_node & b, const constraints & c);
 
+// A STATED SIZE AS A BORDER BOX. The author's number names the content box
+// unless `box-sizing: border-box`, so the padding and border on that axis are
+// added around it (CSS UI 3 §3.1); `inner` is the edges' horizontal_inner or
+// vertical_inner for the axis in question. Every site that turns a `width`,
+// `height`, `min-*`, `max-*` or `flex-basis` into pixels comes through here -
+// it is the one place the two box models meet, and before it existed every
+// stated size was read as the border box, which is right only on a page that
+// sets border-box on `*` as Bootstrap does.
+[[nodiscard]] inline float border_box_size(const box_node & b, const length & want, float basis,
+                                           float inner) {
+    return want.resolve(basis, b.font_size) + (b.border_box ? 0.0f : inner);
+}
+// THE MIDDLE TERM OF A fit-content CLAMP, as a content size: the argument of
+// `fit-content(<length-percentage>)`, which names the box-sizing box like the
+// author's width does, or `room` - the available space - for the bare keyword.
+[[nodiscard]] inline float fit_content_bound(const box_node & b, const length & want, float room,
+                                             float basis, float inner) {
+    if (want.u != unit::fit_content || want.fit_bound == unit::auto_) { return room; }
+    const float argument =
+        length{want.value, want.fit_bound, want.offset_px}.resolve(basis, b.font_size);
+    return std::max(0.0f, b.border_box ? argument - inner : argument);
+}
+// A CONTENT SIZE RUN THROUGH A calc-size() CALCULATION, answered as a border
+// box (CSS Values 5 §10.2). The keyword `size` is measured in the box-sizing
+// box - the same box the author's number would name - and so is the answer,
+// which is what makes `calc-size(auto, size * 2)` double the content box under
+// content-box and the border box under border-box. A plain keyword is the
+// identity calculation, so this is also how `width: max-content` becomes a
+// border box.
+[[nodiscard]] inline float calc_over_content(const box_node & b, const length & want, float content,
+                                             float basis, float inner) {
+    const float size = b.border_box ? content + inner : content;
+    const float sized = want.apply(size, basis, b.font_size);
+    return b.border_box ? sized : sized + inner;
+}
+
 // How wide a block-level box gets, and how much of that its content sees. The
 // measure function is for a `width`, `min-width` or `max-width` spelled as an
 // intrinsic sizing keyword, which only the box's content can answer.
@@ -141,24 +177,39 @@ struct resolved_edges {
 // Resolving it against zero instead COLLAPSES THE BOX - and Bootstrap's `.h-100`
 // is exactly that declaration, so a row of three cards came out zero-high and
 // everything below it drew straight through them.
+// A KEYWORD HEIGHT IS NOT ONE EITHER: the block axis has no intrinsic size to
+// name, so `height: max-content` behaves as `auto` (CSS Sizing 3 §5.1) and a
+// calc-size() over it runs over that automatic height once the content is
+// laid out - which is why its percentage children see no definite height, as
+// calc-size-height's last test asserts.
 [[nodiscard]] inline bool has_definite_height(const box_node & b, const constraints & c) {
-    if (b.height.is_auto()) { return false; }
+    if (b.height.is_auto() || b.height.is_intrinsic()) { return false; }
     return b.height.u != unit::percent || c.available_height > 0;
 }
 
-// Apply the block used-height constraints.
+// Apply the block used-height constraints. `auto_height` is the border box the
+// content came to, for a `min-height`/`max-height` spelled as a keyword or as a
+// calc-size() over one - those name the automatic height - and negative
+// before the content is laid out, when such a bound cannot be applied yet.
 [[nodiscard]] inline float clamp_used_height(const box_node & b, const constraints & c,
-                                             float value) {
-    const float min = b.min_height.is_auto()
-                          ? 0.0f
-                          : std::max(0.0f, b.min_height.resolve(c.available_height, b.font_size));
-    // A percentage maximum against an indefinite containing height is `none`,
-    // not zero (CSS 2.2 §10.7). Percentage minimums deliberately keep the
-    // zero basis below: their indefinite answer is zero.
-    const float max =
-        b.max_height.is_auto() || (b.max_height.u == unit::percent && c.available_height <= 0)
-            ? -1.0f
-            : std::max(0.0f, b.max_height.resolve(c.available_height, b.font_size));
+                                             const resolved_edges & e, float value,
+                                             float auto_height) {
+    const float inner = e.vertical_inner();
+    const auto bound = [&](const length & want, bool is_max) {
+        if (want.is_auto()) { return -1.0f; }
+        if (want.is_intrinsic()) {
+            if (auto_height < 0) { return -1.0f; }
+            return std::max(0.0f, calc_over_content(b, want, std::max(0.0f, auto_height - inner),
+                                                    c.available_height, inner));
+        }
+        // A percentage maximum against an indefinite containing height is
+        // `none`, not zero (CSS 2.2 §10.7). Percentage minimums deliberately
+        // keep the zero basis: their indefinite answer is zero.
+        if (is_max && want.u == unit::percent && c.available_height <= 0) { return -1.0f; }
+        return std::max(0.0f, border_box_size(b, want, c.available_height, inner));
+    };
+    const float min = std::max(0.0f, bound(b.min_height, false));
+    const float max = bound(b.max_height, true);
     // MAX FIRST, THEN MIN, so min wins when the two conflict - the same rule as
     // width and flex, and the one CSS Sizing specifies.
     return std::max(min, max < 0 ? value : std::min(value, max));
@@ -580,13 +631,14 @@ struct block_flow {
         // card with a header, a body and a footer is three of them.
         const float declared_height =
             has_definite_height(b, c)
-                ? std::max(0.0f, b.height.resolve(c.available_height, b.font_size))
+                ? std::max(0.0f,
+                           border_box_size(b, b.height, c.available_height, edges.vertical_inner()))
                 : -1.0f;
         // An auto height is clamped only after its content is known; a stated
         // one is known now and supplies the percentage basis for its children
         // at that used size.
         const float stated_height =
-            declared_height >= 0 ? clamp_used_height(b, c, declared_height) : -1.0f;
+            declared_height >= 0 ? clamp_used_height(b, c, edges, declared_height, -1.0f) : -1.0f;
         const float inner_height =
             stated_height >= 0 ? std::max(0.0f, stated_height - edges.vertical_inner()) : 0.0f;
 
@@ -751,7 +803,18 @@ struct block_flow {
         cursor += edges.pad_bottom + edges.border_bottom;
 
         out.bounds.width = outer_width;
-        out.bounds.height = clamp_used_height(b, c, stated_height >= 0 ? stated_height : cursor);
+        // A calc-size() over `auto` or a keyword runs over the height the
+        // content came to - `cursor` is that border box - and is then clamped
+        // like any other used height.
+        const float used =
+            stated_height >= 0 ? stated_height
+            : b.height.is_intrinsic()
+                ? std::max(0.0f, calc_over_content(b, b.height,
+                                                   std::max(0.0f, cursor - edges.vertical_inner()),
+                                                   c.available_height, edges.vertical_inner()))
+                : cursor;
+        out.bounds.height = clamp_used_height(b, c, edges, used, cursor);
+        out.auto_height = cursor;
         return out;
     }
 };

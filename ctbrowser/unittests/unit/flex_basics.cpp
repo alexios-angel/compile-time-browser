@@ -60,8 +60,10 @@ struct laid_out {
 };
 
 // The preamble every test shares: a body with no box of its own, so a number is
-// about flex rather than about the UA sheet.
-constexpr std::string_view reset = "body { margin: 0; padding: 0 } ";
+// about flex rather than about the UA sheet - and `box-sizing: border-box` on
+// `*`, as Bootstrap sets it, so that a stated size here is the border box the
+// grid arithmetic below was traced with.
+constexpr std::string_view reset = "body { margin: 0; padding: 0 } * { box-sizing: border-box } ";
 
 // --- 1. the box tree ------------------------------------------------------
 
@@ -722,10 +724,10 @@ void test_a_descendants_padding_counts_toward_the_item() {
 }
 
 void test_padding_is_inside_the_flex_base_size() {
-    // The engine's convention throughout is that a stated size is the BORDER box
-    // - `box-sizing: border-box`, which Bootstrap sets on `*`. An item's padding
+    // Under `box-sizing: border-box` - which Bootstrap sets on `*`, and the
+    // reset above does too - a stated size is the BORDER box. An item's padding
     // therefore comes out of its flex base size rather than adding to it, and
-    // its content is what is left.
+    // its content is what is left. (layout_sizing has the content-box twin.)
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div></div></body></html>",
           std::string{reset}
