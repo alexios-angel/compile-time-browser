@@ -98,7 +98,10 @@ repo_root=$(git rev-parse --show-toplevel)
 # the protect filter `--delete` removed it on the next sync, and the failure lands
 # nowhere near the cause: the build succeeds and then css-parity.py says
 # "playwright not installed" about a venv that was there a minute ago.
-rsync -az --delete \
+# Content can change to a version older than the last build when switching
+# worktrees. Give changed files fresh destination mtimes so Ninja rebuilds;
+# checksums leave identical files (and their mtimes) alone.
+rsync -az --checksum --no-times --delete \
   --exclude '.git/' \
   --exclude '.claude/' \
   --exclude 'build*/' \
