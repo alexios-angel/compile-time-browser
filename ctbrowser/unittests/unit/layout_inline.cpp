@@ -57,7 +57,8 @@ void test_a_block_with_only_text_still_honours_its_own_box() {
     fixture f;
     f.load("<html><body><div id=a>short</div></body></html>",
            "body { margin: 0; padding: 0 } "
-           "#a { height: 500px; width: 120px; padding: 10px; font-size: 10px }");
+           "#a { height: 500px; width: 120px; padding: 10px; font-size: 10px; "
+           "     box-sizing: border-box }");
     engine eng{monospace_measure()};
     const fragment out = eng.run(f.root, 400);
     const fragment * a = out.find(f.find_id("a"));

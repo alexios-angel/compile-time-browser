@@ -83,6 +83,13 @@ struct box_node {
     // rule. A non-zero minimum also participates in the narrow empty-block
     // margin-collapse exception.
     length min_height{}, max_height{};
+    // `box-sizing: border-box`: the author's width and height name the BORDER
+    // box. Under the initial `content-box` they name the content box and the
+    // padding and border are added around them (CSS UI 3 §3.1) - every stated
+    // size here was read as the border box regardless, which is only right on a
+    // page that sets border-box on `*`, as Bootstrap does. border_box_size
+    // (layout/algorithm.hpp) is where the two meet.
+    bool border_box = false;
     // Was the horizontal margin written as the WORD `auto`?
     //
     // It cannot be read off `margin.left.is_auto()`, and that is a trap rather than
@@ -323,6 +330,9 @@ public:
           border_spacing_(atoms.intern("border-spacing")),
           inset_sides_{atoms.intern("top"), atoms.intern("right"), atoms.intern("bottom"),
                        atoms.intern("left")},
+          inset_inline_{atoms.intern("inset-inline-start"), atoms.intern("inset-inline-end"),
+                        atoms.intern("inset-block-start"), atoms.intern("inset-block-end")},
+          box_sizing_(atoms.intern("box-sizing")),
           flex_{atoms.intern("flex-direction"),  atoms.intern("flex-wrap"),
                 atoms.intern("justify-content"), atoms.intern("align-items"),
                 atoms.intern("align-content"),   atoms.intern("align-self"),
@@ -483,11 +493,12 @@ private:
                 b.details_open = txn.has_attribute(parent, atoms_->intern("open"));
             }
             b.width = parse_length(prop(style, width_));
+            // A keyword height is kept as written: the block axis has no
+            // intrinsic size to name, so it behaves as `auto` (CSS Sizing 3
+            // §5.1) - has_definite_height says so - but a calc-size() over it
+            // still runs its calculation over that automatic height.
             b.height = parse_length(prop(style, height_));
-            // The block axis has no intrinsic size to name: a keyword height
-            // behaves as `auto` (CSS Sizing 3 §5.1), which is the content's
-            // height - the same thing.
-            if (b.height.is_intrinsic()) { b.height = length{}; }
+            b.border_box = trimmed(prop(style, box_sizing_)) == "border-box";
             // PRESENTATIONAL ATTRIBUTES. `<table width=400>` and `<td width=50>`
             // are how a great deal of existing HTML sizes a table, and they mean
             // the CSS property - at the bottom of the cascade, so a sheet still
@@ -527,6 +538,22 @@ private:
             b.blocks_margin_collapse =
                 scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
             b.inset = sides_of(style, inset_sides_);
+            // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
+            // `left` in a horizontal-tb, left-to-right document, which is the
+            // only writing mode here. The cascade keeps the logical longhand as
+            // its own declaration, so it is read as the physical one's fallback.
+            if (b.inset.left.is_auto()) {
+                b.inset.left = parse_length(prop(style, inset_inline_.top));
+            }
+            if (b.inset.right.is_auto()) {
+                b.inset.right = parse_length(prop(style, inset_inline_.right));
+            }
+            if (b.inset.top.is_auto()) {
+                b.inset.top = parse_length(prop(style, inset_inline_.bottom));
+            }
+            if (b.inset.bottom.is_auto()) {
+                b.inset.bottom = parse_length(prop(style, inset_inline_.left));
+            }
             const std::string_view transform = trimmed(prop(style, transform_));
             b.transformed = !transform.empty() && !ascii_iequals(transform, "none");
             b.translate = parse_translate(transform);
@@ -537,8 +564,6 @@ private:
             b.max_width = parse_length(prop(style, max_width_));
             b.min_height = parse_length(prop(style, min_height_));
             b.max_height = parse_length(prop(style, max_height_));
-            if (b.min_height.is_intrinsic()) { b.min_height = length{}; }
-            if (b.max_height.is_intrinsic()) { b.max_height = length{}; }
             b.flex = flex_of(style);
             b.margin_left_auto = trimmed(prop(style, margin_sides_.left)) == "auto";
             b.margin_right_auto = trimmed(prop(style, margin_sides_.right)) == "auto";
@@ -756,11 +781,9 @@ private:
         out.grow = grow >= 0 ? grow : 0.0f;
         out.shrink = shrink >= 0 ? shrink : 1.0f;
         const std::string_view basis = trimmed(prop(style, flex_.basis));
-        // `content` is out of scope for this rung and recorded as a known
-        // difference. Bootstrap never writes it; treating it as `auto` is the
-        // nearest honest answer, since both size the item from its content when
-        // no other size is given.
-        out.basis = basis == "content" ? length{} : parse_length(basis);
+        // `content` is the item's max-content size (Flexbox §7.2.3) - unlike
+        // `auto`, which defers to the item's `width` or `height` first.
+        out.basis = basis == "content" ? length{0, unit::max_content} : parse_length(basis);
         out.order = static_cast<int>(parse_flex_number(prop(style, flex_.order), 0));
         return out;
     }
@@ -887,6 +910,10 @@ private:
     atom list_style_type_;
     atom border_collapse_, border_spacing_;
     side_atoms inset_sides_;
+    // inset-inline-start, inset-inline-end, inset-block-start, inset-block-end -
+    // in the side_atoms slots top, right, bottom, left respectively.
+    side_atoms inset_inline_;
+    atom box_sizing_;
     flex_atoms flex_;
 };
 

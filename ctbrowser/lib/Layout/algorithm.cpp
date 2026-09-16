@@ -20,21 +20,32 @@ resolved_edges resolve_edges(const box_node & b, const constraints & c) {
 
 float intrinsic_border_width(const box_node & b, const constraints & c, const resolved_edges & e,
                              const measure_text_fn & measure, const length & want) {
-    const intrinsic_sizes wants = measure_box(b, c, measure);
+    const float inner = e.horizontal_inner();
+    const float room = std::max(0.0f, c.available_width - e.horizontal_margin() - inner);
     float content = 0;
-    switch (want.u) {
-    case unit::min_content: content = wants.min_content; break;
-    case unit::max_content: content = wants.max_content; break;
-    default: {
-        // fit-content: clamp(min-content, stretch, max-content), the same
-        // clamp shrink_to_fit_width makes for an inline-block.
-        const float room =
-            std::max(0.0f, c.available_width - e.horizontal_margin() - e.horizontal_inner());
-        content = std::max(wants.min_content, std::min(room, wants.max_content));
-        break;
+    if (want.u == unit::auto_ && !b.inline_level && !b.is_out_of_flow()) {
+        // `auto` AS A BASIS - `calc-size(auto, size * 2)` - is what auto means
+        // for this box's width: the available space for a block-level box, the
+        // rule outer_width_of applies to a plain `auto`; below, shrink-to-fit
+        // for an inline-level or out-of-flow one, which is fit-content.
+        content = room;
+    } else {
+        const intrinsic_sizes wants = measure_box(b, c, measure);
+        switch (want.u) {
+        case unit::min_content: content = wants.min_content; break;
+        case unit::max_content: content = wants.max_content; break;
+        default:
+            // fit-content: clamp(min-content, stretch, max-content), the same
+            // clamp shrink_to_fit_width makes for an inline-block - or the
+            // argument of fit-content(<length-percentage>) in place of stretch.
+            content = std::max(wants.min_content,
+                               std::min(fit_content_bound(b, want, room, c.available_width, inner),
+                                        wants.max_content));
+            break;
+        }
     }
-    }
-    return std::max(0.0f, content) + e.horizontal_inner();
+    return std::max(0.0f,
+                    calc_over_content(b, want, std::max(0.0f, content), c.available_width, inner));
 }
 
 std::optional<float> width_bound(const box_node & b, const constraints & c,
@@ -42,7 +53,7 @@ std::optional<float> width_bound(const box_node & b, const constraints & c,
                                  const length & want) {
     if (want.is_auto()) { return std::nullopt; }
     if (want.is_intrinsic()) { return intrinsic_border_width(b, c, e, measure, want); }
-    return want.resolve(c.available_width, b.font_size);
+    return border_box_size(b, want, c.available_width, e.horizontal_inner());
 }
 
 float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e,
@@ -53,10 +64,8 @@ float outer_width_of(const box_node & b, const constraints & c, const resolved_e
     // be right only for the items that never hit a constraint, which is the
     // subset for which it does nothing.
     if (c.forced_width >= 0) { return c.forced_width; }
-    const float unclamped = b.width.is_auto() ? c.available_width - e.horizontal_margin()
-                            : b.width.is_intrinsic()
-                                ? intrinsic_border_width(b, c, e, measure, b.width)
-                                : b.width.resolve(c.available_width, b.font_size);
+    const float unclamped =
+        width_bound(b, c, e, measure, b.width).value_or(c.available_width - e.horizontal_margin());
     // MAX FIRST, THEN MIN, because min wins: a box whose min-width exceeds its
     // max-width takes the min, which is what CSS 2.1 §10.4 says and the order
     // that produces it without a special case.
@@ -113,46 +122,41 @@ intrinsic_sizes measure_box(const box_node & b, const constraints & c,
 intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
                                 const measure_text_fn & measure) {
     const resolved_edges edges = resolve_edges(child, c);
-    intrinsic_sizes out = measure_box(child, c, measure);
-    out.min_content += edges.horizontal_inner();
-    out.max_content += edges.horizontal_inner();
-    // A STATED WIDTH IS THE CONTRIBUTION whatever the content wants, and it names
-    // the BORDER box like every other size here. A PERCENTAGE has no answer while
-    // the containing block's own width is the question being asked, so there the
-    // content size stands - which is also why `.row > * { max-width: 100% }` never
-    // reaches the clamp below.
+    const float inner = edges.horizontal_inner();
+    const intrinsic_sizes content = measure_box(child, c, measure);
+    intrinsic_sizes out{content.min_content + inner, content.max_content + inner};
+    // A STATED WIDTH IS THE CONTRIBUTION whatever the content wants, as a BORDER
+    // box like every other size here. A PERCENTAGE has no answer while the
+    // containing block's own width is the question being asked, so there the
+    // content size stands - which is also why `.row > * { max-width: 100% }`
+    // never reaches the clamp below.
     // A KEYWORD WIDTH IS ONE OF THE TWO SIZES BEING CONTRIBUTED: `width:
     // max-content` contributes its max-content size as both, `min-content` its
-    // min-content size as both, and `fit-content` contributes as `auto` does.
-    const auto keyword_size = [&](const length & want) -> std::optional<float> {
-        if (want.u == unit::min_content) { return out.min_content; }
-        if (want.u == unit::max_content) { return out.max_content; }
-        return std::nullopt;
-    };
-    if (child.width.is_intrinsic()) {
-        if (const auto stated = keyword_size(child.width)) {
-            out.min_content = *stated;
-            out.max_content = *stated;
+    // min-content size as both, and `fit-content` (or `auto` under a
+    // calc-size()) contributes as `auto` does - and the calculation, if there is
+    // one, runs over each of the two.
+    const auto sized = [&](const length & want) -> std::optional<intrinsic_sizes> {
+        if (want.is_intrinsic()) {
+            float lo = content.min_content;
+            float hi = content.max_content;
+            if (want.u == unit::min_content) { hi = lo; }
+            if (want.u == unit::max_content) { lo = hi; }
+            return intrinsic_sizes{calc_over_content(child, want, lo, c.available_width, inner),
+                                   calc_over_content(child, want, hi, c.available_width, inner)};
         }
-    } else if (!child.width.is_auto() && child.width.u != unit::percent) {
-        const float stated =
-            std::max(0.0f, child.width.resolve(c.available_width, child.font_size));
-        out.min_content = stated;
-        out.max_content = stated;
-    }
-    // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
-    const auto bound = [&](const length & want) -> std::optional<float> {
-        if (want.is_intrinsic()) { return keyword_size(want); }
         if (want.is_auto() || want.u == unit::percent) { return std::nullopt; }
-        return want.resolve(c.available_width, child.font_size);
+        const float stated = std::max(0.0f, border_box_size(child, want, c.available_width, inner));
+        return intrinsic_sizes{stated, stated};
     };
-    if (const auto hi = bound(child.max_width)) {
-        out.min_content = std::min(out.min_content, *hi);
-        out.max_content = std::min(out.max_content, *hi);
+    if (const auto stated = sized(child.width)) { out = *stated; }
+    // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
+    if (const auto hi = sized(child.max_width)) {
+        out.min_content = std::min(out.min_content, hi->min_content);
+        out.max_content = std::min(out.max_content, hi->max_content);
     }
-    if (const auto lo = bound(child.min_width)) {
-        out.min_content = std::max(out.min_content, *lo);
-        out.max_content = std::max(out.max_content, *lo);
+    if (const auto lo = sized(child.min_width)) {
+        out.min_content = std::max(out.min_content, lo->min_content);
+        out.max_content = std::max(out.max_content, lo->max_content);
     }
     out.min_content = std::max(0.0f, out.min_content) + edges.horizontal_margin();
     out.max_content = std::max(0.0f, out.max_content) + edges.horizontal_margin();
@@ -193,21 +197,20 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         fragment f;
         f.box = &b;
         f.source = b.source;
-        // A STATED SIZE IS THE BORDER BOX, exactly as it is for every other box
-        // here - only an INTRINSIC one is a content size that the padding and the
-        // border are added around.
+        // A STATED SIZE GOES THROUGH THE SAME BOX MODEL as every other box here
+        // (border_box_size); only an INTRINSIC one is always a content size that
+        // the padding and the border are added around.
         //
-        // Adding them to a stated width too made every `.form-control` 26px wider
-        // than Chrome's: Bootstrap sets `box-sizing: border-box` on `*`, so its
-        // `width: 100%` already contains the 24px of padding and the 2px of
-        // border, and this counted them a second time. The rest of the engine has
-        // treated a stated width as the border box since outer_width_of was
-        // written; this was the one place that disagreed.
-        f.bounds.width = b.width.is_auto() ? b.intrinsic_width + edges.horizontal_inner()
-                                           : b.width.resolve(c.available_width, b.font_size);
-        f.bounds.height = has_definite_height(b, c)
-                              ? b.height.resolve(c.available_height, b.font_size)
-                              : b.intrinsic_height + edges.vertical_inner();
+        // Adding them to a stated width unconditionally made every
+        // `.form-control` 26px wider than Chrome's: Bootstrap sets `box-sizing:
+        // border-box` on `*`, so its `width: 100%` already contains the 24px of
+        // padding and the 2px of border, and this counted them a second time.
+        f.bounds.width = width_bound(b, c, edges, measure, b.width)
+                             .value_or(b.intrinsic_width + edges.horizontal_inner());
+        f.bounds.height =
+            has_definite_height(b, c)
+                ? border_box_size(b, b.height, c.available_height, edges.vertical_inner())
+                : b.intrinsic_height + edges.vertical_inner();
         return f;
     }
     fragment out;
