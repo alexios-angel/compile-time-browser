@@ -243,6 +243,28 @@ def main():
     original, manifest_text = ir.read_text(), config.read_text()
     if original.count('ctjs.load_global "undefined"') != 1:
         raise RuntimeError("fixed undefined witness lost its source global read")
+    ignored_writes = {
+        "early-store": "undefined = 7; " + source,
+        "late-store": source + " undefined = 7;",
+        "inactive-store": source + " if (false) { undefined = 7; }",
+    }
+    observer = boundary.NODE.replace(
+        "typeof trace !== 'number' || !Number.isFinite(trace)", "trace !== undefined"
+    )
+    # The frontend erases these sloppy writes, but explicit source IR stores
+    # must still reject a contract that promises an unchanged host binding.
+    written = args.work / "fixed-undefined-raw-store.mlir"
+    text, count = re.subn(
+        r'^( +)(%[-\w.$]+) = ctjs\.load_global "undefined"[^\n]*',
+        lambda match: match[0] + f'\n{match[1]}ctjs.store_global "undefined", {match[2]}',
+        original,
+        count=1,
+        flags=re.M,
+    )
+    if count != 1:
+        raise RuntimeError("raw undefined store control lost its source load")
+    written.write_text(text)
+    written_config = contract(args, written, "fixed-undefined-raw-store", undefined=("undefined",))
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         label = f"fixed-undefined-{policy}"
         output = lower(args, ir, label, config, options=options)
@@ -261,21 +283,37 @@ def main():
         ):
             fresh = contract(args, ir, f"{label}-{name}", **declarations)
             refused(args, ir, f"{label}-{name}", fresh, options=options, reason=reason)
-        for name, changed_source in (
-            ("early-store", "undefined = 7; " + source),
-            ("late-store", source + " undefined = 7;"),
-            ("inactive-store", source + " if (false) { undefined = 7; }"),
-        ):
-            _, changed, _ = boundary.prepare(args, f"{label}-{name}", changed_source)
+        for name, changed_source in ignored_writes.items():
+            js, changed, count = boundary.prepare(args, f"{label}-{name}", changed_source)
+            if count != 1 or 'ctjs.store_global "undefined"' in changed.read_text():
+                raise RuntimeError(f"{label}-{name}: sloppy undefined assignment survived import")
+            expected = "trace=undefined\n"
+            if host.run([node, "-e", observer, str(js)]).stdout != expected:
+                raise RuntimeError(f"{label}-{name}: Node source oracle mismatch")
+            if host.run([str(reference), str(js)]).stdout != expected:
+                raise RuntimeError(f"{label}-{name}: interpreter source oracle mismatch")
             fresh = contract(args, changed, f"{label}-{name}", undefined=("undefined",))
-            refused(
-                args,
-                changed,
-                f"{label}-{name}",
-                fresh,
-                options=options,
-                reason="a fixed undefined host binding has a source write",
-            )
+            if name == "inactive-store":
+                # Its empty branch still exceeds the complete global-owner proof.
+                refused(
+                    args,
+                    changed,
+                    f"{label}-{name}",
+                    fresh,
+                    options=options,
+                    reason="an object literal that escapes",
+                )
+                continue
+            output = lower(args, changed, f"{label}-{name}", fresh, options=options)
+            standalone(args, output, f"{label}-{name}", expected, compilers, nm)
+        refused(
+            args,
+            written,
+            f"{label}-raw-store",
+            written_config,
+            options=options,
+            reason="a fixed undefined host binding has a source write",
+        )
         refused(
             args,
             ir,
@@ -387,7 +425,7 @@ def main():
             refused(args, rejected, "stale", config, reason="fingerprint mismatch")
             refused(args, output, "rewrite-rerun", config, reason="fingerprint mismatch")
     print(
-        f"native owned globals: {len(positives)} complete 1/1 programs; Node/interpreter and "
+        f"native owned globals: {len(positives) + len(ignored_writes) - 1} complete 1/1 programs; Node/interpreter and "
         "explicit/deduced GCC/Clang agree; owning lifetime sanitizers and "
         f"{len(refusals)} source refusals plus stale/forged/budget controls pass; "
         "fixed undefined preserves its exact tag and rejects missing/absent/written bindings, "

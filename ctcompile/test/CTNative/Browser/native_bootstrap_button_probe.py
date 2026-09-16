@@ -122,35 +122,18 @@ STATIC_EXPECTED = {
     "traceEventKey": "1",
     "traceName": "1",
 }
-STATIC_REFERENCE = STATIC_EXPECTED | {
-    name: "0"
-    for name in (
-        "traceDefault",
-        "traceDefaultType",
-        "traceGetInstance",
-        "traceDataKey",
-        "traceEventKey",
-    )
-}
 INHERITANCE = {
     "inherited-method": """class A { static m() { return 7; } }
 class D extends A {}
 var trace = typeof D.m === "function" ? 1 : 0;
 """,
-    # Explicit linkage isolates accessor lookup from missing constructor linkage.
+    # Explicit linkage also exercises accessor lookup with a derived receiver.
     "inherited-getter": """class A { static get k() { return this.n; } }
 class D extends A { static get n() { return 7; } }
 Object.setPrototypeOf(D, A);
 var trace = D.k === 7 ? 1 : 0;
 """,
 }
-REFERENCE_FAILURE = """uncaught TypeError: Object.entries called on null or undefined
-        at _typeCheckConfig (fn#66 +9)
-        at _getConfig (fn#70 +19)
-        at B (fn#67 +50)
-        at U (fn#77 +19)
-        at <script> (fn#0 +63)
-"""
 
 
 def source():
@@ -192,14 +175,14 @@ def source():
     return program, provenance
 
 
-def observe(args, name, program, expected, reference_expected):
+def observe(args, name, program, expected):
     js = args.work / f"{name}.js"
     js.write_text(program)
     node = run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(expected))])
     reference = run([args.reference, str(js)])
     for engine, result, values in (
         ("node", node, expected),
-        ("reference", reference, reference_expected),
+        ("reference", reference, expected),
     ):
         (args.work / f"{name}.{engine}.txt").write_text(result.stdout)
         (args.work / f"{name}.{engine}.log").write_text(result.stderr)
@@ -211,7 +194,7 @@ def observe(args, name, program, expected, reference_expected):
     return dict(
         program_sha256=hashlib.sha256(program.encode()).hexdigest(),
         node=expected,
-        reference=reference_expected,
+        reference=expected,
     )
 
 
@@ -226,46 +209,18 @@ def main():
     js = args.work / "bootstrap-button.js"
     js.write_text(program)
     (args.work / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-    node = run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(EXPECTED))])
-    expected = "".join(f"{name}={value}\n" for name, value in sorted(EXPECTED.items()))
-    (args.work / "node.txt").write_text(node.stdout)
-    if node.stdout != expected or node.stderr:
-        raise RuntimeError(
-            f"original Button Node observations changed:\n{node.stdout}{node.stderr}"
-        )
-    # No attempt/catch wrapper: retain the original constructor failure and do
-    # not use it as the native oracle for Node's completed lifecycle.
-    reference = run([args.reference, str(js)], success=False)
-    (args.work / "reference.txt").write_text(reference.stdout)
-    (args.work / "reference.log").write_text(reference.stderr)
-    if (
-        reference.returncode != 1
-        or reference.stdout
-        or reference.stderr != f"native reference: {js} threw: {REFERENCE_FAILURE}"
-    ):
-        raise RuntimeError(
-            "original Button interpreter boundary changed; remeasure the uncaught lifecycle:\n"
-            + reference.stdout
-            + reference.stderr
-        )
     observations = {
-        "lifecycle": dict(
-            node=EXPECTED,
-            reference_status=reference.returncode,
-            reference_stdout=reference.stdout,
-            reference_stderr=reference.stderr,
-        ),
+        "lifecycle": observe(args, "bootstrap-button", program, EXPECTED),
         "static": observe(
             args,
             "bootstrap-button-static",
             program[: program.index("var component = new bootstrap.Button(element);")]
             + STATIC_PROBE,
             STATIC_EXPECTED,
-            STATIC_REFERENCE,
         ),
     }
     for name, witness in INHERITANCE.items():
-        observations[name] = observe(args, name, witness, {"trace": "1"}, {"trace": "0"})
+        observations[name] = observe(args, name, witness, {"trace": "1"})
     raw = args.work / "bootstrap-button.raw.mlir"
     prepared = args.work / "bootstrap-button.prepared.mlir"
     imported = run(
@@ -334,9 +289,8 @@ def main():
         json.dumps(dict(provenance, observations=observations, policies=reports), indent=2) + "\n"
     )
     print(
-        f"Original Bootstrap Button: {len(EXPECTED)} Node lifecycle observations; "
-        "interpreter fails uncaught in _typeCheckConfig; "
-        "static inheritance discrepancies and native refusals retained"
+        f"Original Bootstrap Button: {len(EXPECTED)} Node/VM lifecycle observations agree; "
+        "static inheritance agrees; native refusals retained"
     )
 
 

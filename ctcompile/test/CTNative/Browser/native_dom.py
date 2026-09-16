@@ -664,6 +664,14 @@ def main():
         ("attributes", ATTRIBUTES, 1, ATTRIBUTE_CHECKS),
         ("attribute-noops", ATTRIBUTE_NOOPS, 1, ATTRIBUTE_NOOP_CHECKS),
         ("explicit-forces", EXPLICIT_FORCES, 1, EXPLICIT_FORCE_CHECKS),
+        (
+            "written-undefined",
+            EXPLICIT_FORCES.replace(
+                "  element.classList", "  undefined = true;\n  element.classList", 1
+            ),
+            1,
+            EXPLICIT_FORCE_CHECKS,
+        ),
         ("invalid-attribute", INVALID_ATTRIBUTE, 1, INVALID_ATTRIBUTE_CHECKS),
     )
     for name, source, parameters, checks in entries:
@@ -680,6 +688,35 @@ def main():
             standalone(
                 args, native, label, checks, compilers, selected_includes, selected_libraries
             )
+
+    # The frontend erases sloppy writes to the fixed undefined binding. An
+    # explicit source IR write must still withdraw the complete DOM proof.
+    ir, manifest = prepared["written-undefined"]
+    if 'ctjs.store_global "undefined"' in ir.read_text():
+        raise RuntimeError("sloppy undefined assignment unexpectedly survived import")
+    text, count = re.subn(
+        r'^( +)(%[-\w.$]+) = ctjs\.load_global "undefined"[^\n]*',
+        lambda match: match[0] + f'\n{match[1]}ctjs.store_global "undefined", {match[2]}',
+        ir.read_text(),
+        count=1,
+        flags=re.M,
+    )
+    if count != 1:
+        raise RuntimeError("raw undefined store control lost its source load")
+    written = args.work / "raw-written-undefined.mlir"
+    written.write_text(text)
+    manifest = dict(manifest, module_sha256=fingerprint(args.opt, written))
+    for optimize in (False, True):
+        diagnostic = lower(
+            args,
+            written,
+            manifest,
+            f"raw-written-undefined-{optimize}",
+            optimize=optimize,
+            success=False,
+        )
+        if "DOM" not in diagnostic:
+            raise RuntimeError(f"raw undefined store lost its DOM refusal\n{diagnostic}")
 
     action, contract = prepared["action"]
     raw = run([args.opt, str(action), "--ctnative-lower-to-emitc=optimize=false"]).stdout
@@ -767,13 +804,6 @@ def main():
             "DOM",
         ),
         (
-            "written-undefined",
-            EXPLICIT_FORCES.replace(
-                "  element.classList", "  undefined = true;\n  element.classList", 1
-            ),
-            "DOM",
-        ),
-        (
             "retained-key",
             "function retain(element) { const data = new Map(); data.set(element, true); return true; }",
             "DOM",
@@ -848,7 +878,7 @@ def main():
         lower(args, action, changed, name, success=False)
     print(
         f"native DOM: {len(entries)} action/identity/attribute/query/error entries, "
-        f"both policies/layouts, GCC/Clang, DOM/Core and selector-only Style; {len(refusals) + 6} refusal controls"
+        f"both policies/layouts, GCC/Clang, DOM/Core and selector-only Style; {len(refusals) + 7} refusal controls"
     )
 
 
