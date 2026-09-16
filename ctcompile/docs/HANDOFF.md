@@ -6,6 +6,68 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Helper/URI composition, the JSON chain draft and the audit, 2026-09-15 UTC
+
+**7a337ee2** composes helper expansion with URI normalization: every
+handler-owning function in the fingerprinted DOMSource clone is normalized by
+`normalizeDOMURI` (which now takes the function name; the working contract is
+re-fingerprinted between functions) and `expandDOMHelpers` then inlines the
+structured invoke, treating it as opaque in the helper body check because the
+complete DOM entry proof reproves the inlined result. **1392f435** adds three
+helper-shaped nullable URI sources (function, saved read, arrow) and three
+refusals (payload observed, unguarded nullable read, call inside a branch arm).
+Focused gate: `ctcompile_native_dom_strings` PASS 133.48 s; the full gate on
+that tip was 605/606 with `ctcompile_native_dom_entry` at its 300 s cap under
+`-j8` (223 s in the previous green run) — both DOM driver caps are 900 s now.
+
+**Next native boundary, drafted but UNBUILT:** branch `claude-json-chain`
+(efe8daa8, worktree `~/Downloads/claude/wt/claude-json-chain`) carries original
+M's protected body `JSON.parse(decodeURIComponent(t))` as a two-call chain:
+`inspectSingleInvocationRegion(fn, steps, maxCalls)` accepts checked calls on one
+success path, `normalizeDOMURI` emits nested invokes when the contract binds the
+initial `JSON`, `DOMEntryAnalysis` gains `jsonIntrinsic`/`jsonParse`/`json` kinds
+with `HostDOMMethod::jsonParse`, the lattice's existing `JsonType` gets
+`carrier::json = ctbrowser::json_value` (String arms convert with
+`ctbrowser::json_value(text)`), the emitter lowers the parse invoke to
+`ctbrowser::parse_json` with `std::expected` moves, and
+`test/CTNative/Browser/native_dom_json.py` (5 sources / 6 refusals, Node + VM
+oracles) is registered as `ctcompile_native_dom_json`. It predates the audit
+merges below and must be rebased (EmitC/Types.cpp, ScalarConversions.cpp,
+LowerToEmitC.cpp and DOMEntry.cpp all moved) before its first devbox build.
+After it: M's remaining prefix (`'true'`/`'false'`/`Number(t).toString()`/
+`''`/`'null'` arms joining into `json_value`), then H.getDataAttribute's
+`data-bs-${F(key)}` template.
+
+**Operator-directed ponytail audit** (this session, all by locked merge, each
+branch gated in its own devbox dir): `41d0185a` tools/cmake (mingw builders in
+one table, snapshot.sh and its selftest gone, shaderc/gen-shaders/ratchet
+shims/CTProject.cmake/LLVMVersion.cmake/GLM deleted, compare.py on Pillow),
+`d47a8dd8` Script dedups, `2eae1dc7` Core/DOM/Raster (plain in-place node
+payloads, deque slab, one-queue scheduler, abstract ttf backend, GL probes
+gone; tsan clean), `11185599` ctcompile lowering (the three PDLL files are
+`OpRewritePattern`s, `mlir-pdll` is no longer needed, `withProvedClone`
+replaces four host-preparation transactions, `ctjs::functionIndex`/
+`isPrimitiveAttr`/`sameValueZero`, `--mode` and `manifest::mode` gone,
+`DOMEntryAnalysis` charges its module census before the fingerprint — 604/604),
+`4e0b3b77` Style (leading_imports gone, resolve() in engine.cpp, small helper
+dedups; the two shorthand expanders were left as two contracts on purpose),
+`c3108dc5` Shell (installer helpers, 600 lines out of public headers, WebGL
+X-macro, `<canvas width=0>` per spec, ctx.font through the CSS parser, ANGLE
+preference deleted). `24eeb654`/`7662b763`/`3c50bc67` format the test
+JS/HTML/CSS and repin what that moved (`escape-claims/Initialize.cmake` hashes,
+`expected.txt` program row; `Exports/boundary.js` stays byte-exact under
+js-beautify ignore markers because 27 pinned hashes derive from it).
+Two audit branches were still in their final gates at hand-over —
+`audit-ctcompile-emit` (nine string-literal helper headers → compiled
+`include/ctcompile/CTNative/Runtime/ctnative.hpp`; source-name provenance for
+emitted identifiers removed, locals are `v<N>`) and `audit-ctcompile-tests`
+(24 `cmake -P` checks and 7 driver registrations → lit, ~320 CTests → ~250 lit
+tests; `check()` copies → `ctbrowser/test/support/check.hpp`) — see AGENT-SYNC
+for who lands them. The integrated tip had NOT had one combined full gate yet;
+run `tools/remote-build.sh` first. Sanitizer findings outside the audit, not
+fixed: `Script/builtins/collections/keyed.cpp:593` UAF,
+`Style/css/calc/units.cpp:36` UAF, `Core/number_format.cpp:194` UB cast.
+
 ## Saved nullable URI guards and fingerprinting, 2026-09-15 UTC
 
 Resumed the interrupted **6caa728b** full-validation thread, found in this
