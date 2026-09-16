@@ -24,7 +24,7 @@ struct lowering {
     mlir::DataFlowSolver & solver;
     mlir::MLIRContext * context;
     mlir::ModuleOp module;
-    // UnaryPlusIsIdentity.pdll, frozen. Declared here so the member
+    // UnaryPlusIsIdentity (LoweringSupport.cpp), frozen. Declared here so the member
     // initialisation order matches the list below and -Wreorder stays quiet.
     mlir::FrozenRewritePatternSet declarative;
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)

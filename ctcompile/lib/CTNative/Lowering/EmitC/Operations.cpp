@@ -372,18 +372,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         case UnaryKind::Neg:
             swap(ec::UnaryMinusOp::create(b, where, f64, number(b, where, u.getOperand())));
             return;
-        // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity.pdll in
+        // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity in
         // applyDeclarativeRules() above. This arm is not dead code and it
-        // is not llvm_unreachable: PDL has NO DIAGNOSTIC ON A NON-MATCH, so
-        // a pattern that silently stopped firing - a rename in CTJSOps.td,
-        // a guard the constraint gets wrong, a driver that never ran - would
-        // otherwise reach the default arm and abort with a message blaming
-        // admission. Naming the file that owed the rewrite is the whole
-        // difference between a bug report and a wild goose chase.
+        // is not llvm_unreachable: a pattern driver has NO DIAGNOSTIC ON A
+        // NON-MATCH, so a pattern that silently stopped firing - a rename in
+        // CTJSOps.td, a guard the match gets wrong, a driver that never ran -
+        // would otherwise reach the default arm and abort with a message
+        // blaming admission. Naming the pattern that owed the rewrite is the
+        // whole difference between a bug report and a wild goose chase.
         case UnaryKind::Plus:
             if (u.getOperand().getType() == f64) {
                 llvm::report_fatal_error("ctnative lowering: numeric unary plus survived "
-                                         "UnaryPlusIsIdentity.pdll");
+                                         "UnaryPlusIsIdentity");
             }
             swap(number(b, where, u.getOperand()));
             return;
