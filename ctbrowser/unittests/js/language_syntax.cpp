@@ -330,6 +330,30 @@ int main() {
             " try { new K().m(); } catch (e) { r = e.name; } return r;",
             "ReferenceError");
 
+    // --- the temporal dead zone, statically: a read of this frame's own
+    // let/const/class before the declarator that initialises it throws
+    // (9.1.1.1.6), typeof included; a read after it, or from a nested
+    // function, or of an outer binding, does not.
+    answers("function f() { try { x; } catch (e) { return e.name; } let x = 1; return 'no'; }"
+            " return f();",
+            "ReferenceError");
+    answers("function f() { try { let y = y + 1; } catch (e) { return e.name; } return 'no'; }"
+            " return f();",
+            "ReferenceError");
+    answers("function f() { try { return typeof z; } catch (e) { return e.name; } const z = 1; }"
+            " return f();",
+            "ReferenceError");
+    answers("function f() { try { new K(); } catch (e) { return e.name; } class K {} }"
+            " return f();",
+            "ReferenceError");
+    answers("function f() { let a = 1, b = a + 1; const g = () => a + b; return g(); }"
+            " return f();",
+            "3");
+    answers("function f() { const g = () => w; let w = 5; return g(); } return f();", "5");
+    answers("let outer = 7; function f() { const r = outer; let outer = 1; return r + outer; }"
+            " try { return f(); } catch (e) { return e.name; }",
+            "ReferenceError");
+
     // --- an object literal's method has the literal as its home object
     // (15.4.4) - and only a method that says `super` carries the link.
     answers("const base = { hi() { return 'base'; } }; const o = { __proto__: base,"

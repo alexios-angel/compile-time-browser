@@ -153,9 +153,10 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     if (body < 0 || (at(body).kind != vp::nk::block && at(body).kind != vp::nk::program)) {
         return;
     }
-    const auto hoist = [this](std::string name) {
+    const auto hoist = [this](std::string name, std::uint32_t initialized_at = 0) {
         if (name.empty() || find_local_entry(fn(), name) != nullptr) { return; }
         const std::uint16_t r = declare_local(name);
+        fn().locals.back().initialized_at = initialized_at;
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
         fn().predeclared.push_back(std::move(name));
@@ -176,13 +177,18 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         const std::int32_t stmt =
             at(outer).kind == vp::nk::export_decl && at(outer).a >= 0 ? at(outer).a : outer;
         if (at(stmt).kind == vp::nk::var_decl) {
+            // A `let`/`const`/`using` binding is in its TDZ until its
+            // declarator has run: the offset past the declarator (or, with
+            // no initialiser, past the statement) is when it is initialised.
+            const bool lexical = at(stmt).text != "var";
             for (const std::int32_t d : kids(at(stmt))) {
+                const std::uint32_t ready = lexical ? at(d).end : 0;
                 if (at(d).b >= 0) { // a shape: hoist every name inside it
                     std::vector<std::string> names;
                     pattern_names(at(d).b, names);
-                    for (std::string & name : names) { hoist(std::move(name)); }
+                    for (std::string & name : names) { hoist(std::move(name), ready); }
                 } else {
-                    hoist(std::string{at(d).text});
+                    hoist(std::string{at(d).text}, ready);
                 }
             }
         } else if (at(stmt).kind == vp::nk::import_decl) {
@@ -207,7 +213,7 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             // the next statement's temporaries reuse the slot. `class S {}`
             // followed by two `new S()` therefore worked once and then
             // found an object in the register the second time.
-            hoist(std::string{at(stmt).text});
+            hoist(std::string{at(stmt).text}, at(stmt).end);
         }
     }
     // And every `var` in a NESTED block, which the loop above cannot see -

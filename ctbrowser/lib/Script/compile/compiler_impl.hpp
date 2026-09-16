@@ -56,6 +56,14 @@ public:
         std::string name;
         std::uint16_t reg = 0;
         bool boxed = false; // lives in a heap cell; see mark_captured
+        // WHERE A LEXICAL BINDING IS INITIALISED: the source offset past its
+        // declarator (or class), 0 for a `var`, a parameter, a function. A
+        // read of the same frame textually before it is in the temporal
+        // dead zone whenever it runs (the scope is entered once per run, the
+        // declaration always after such a read), so compile_ident throws
+        // there statically. A read from a nested function is not decided
+        // here - that needs a runtime check this engine does not make.
+        std::uint32_t initialized_at = 0;
         // WHERE THIS LOCAL'S ENTRY IN `function_proto::locals` IS, or none when
         // the debug tables are off. The compiler's `locals` is a STACK that
         // shrinks at every scope exit, so by the time a function is finished

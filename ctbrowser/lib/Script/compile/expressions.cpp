@@ -244,6 +244,20 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst, bool ty
         proto().emit(instruction{op::load_undef, dst});
         return;
     }
+    // THE TEMPORAL DEAD ZONE, decided statically (local::initialized_at): a
+    // read of this frame's own `let`/`const`/`class` textually before the
+    // declarator that initialises it - `let x = x + 1`, `use(y); const y = 1`
+    // - runs before that declarator every time the scope runs, so it is the
+    // ReferenceError of 9.1.1.1.6 whenever it runs, `typeof` included.
+    if (n.end > n.begin) {
+        if (const local * l = find_local_entry(fn(), n.text);
+            l != nullptr && l->initialized_at != 0 && n.begin < l->initialized_at) {
+            emit_throw("ReferenceError",
+                       "Cannot access '" + std::string{n.text} + "' before initialization");
+            proto().emit(instruction{op::load_undef, dst});
+            return;
+        }
+    }
     // Inside a `with`: the object that binds the name answers the read.
     const std::uint32_t mark = reg_mark();
     const std::uint16_t obj = alloc_reg();
