@@ -99,7 +99,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         state.lines = lines_or_null;
         for (std::size_t slot = 0; slot < proto.param_count; ++slot) {
             entry->getArgument(static_cast<unsigned>(implicit_arguments + slot))
-                .setLoc(state.names.location(state.location_for(0), slot, 0));
+                .setLoc(state.location_for(0));
         }
         into.setInsertionPointToStart(entry);
 
