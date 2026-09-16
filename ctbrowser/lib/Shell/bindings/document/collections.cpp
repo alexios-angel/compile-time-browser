@@ -571,6 +571,23 @@ value dom_bindings::make_live_collection(context & cx,
     handler->set("set", native(cx, "set", [](context & c, std::span<value> args) {
                      if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
                      const std::string key = c.to_string(args[1]);
+                     // ...UNLESS AN INTERFACE UP THE CHAIN HAS A SETTER FOR IT:
+                     // HTMLOptionsCollection's `length` is writable (HTML
+                     // 4.10.10, `select.options.length = 2` truncates), and it
+                     // lives on that prototype, which this trap would otherwise
+                     // never consult.
+                     if (key == "length") {
+                         for (value at = c.get_prototype(args[0]); at.is_object();
+                              at = c.get_prototype(at)) {
+                             script::context::property_descriptor found;
+                             if (c.own_property(at, key, found) && found.setter.is_callable()) {
+                                 const value v = args[2];
+                                 (void)c.call(found.setter, {&v, 1},
+                                              args.size() > 3 ? args[3] : args[0]);
+                                 return value::boolean(true);
+                             }
+                         }
+                     }
                      if (key == "length" || whole_index(key).has_value()) {
                          return value::boolean(false);
                      }

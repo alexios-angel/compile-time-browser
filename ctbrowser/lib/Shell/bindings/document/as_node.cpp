@@ -876,11 +876,10 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
         if (auto * mine = document_object();
             mine != nullptr && fresh.document_object() != nullptr) {
             fresh.document_object()->prototype = mine->prototype;
-            // Written once at install, from flags that have just changed.
-            for (const char * name : {"contentType", "compatMode"}) {
-                if (const value * held = mine->find(name)) {
-                    fresh.document_object()->set(name, *held);
-                }
+            // Written once at install, from a flag that has just changed
+            // (compatMode is live, off the quirks flag copied above).
+            if (const value * held = mine->find("contentType")) {
+                fresh.document_object()->set("contentType", *held);
             }
         }
         if (!deep) { return made; }

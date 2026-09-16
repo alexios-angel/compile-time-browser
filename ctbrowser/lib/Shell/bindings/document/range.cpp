@@ -984,6 +984,14 @@ void dom_bindings::install_range(context & cx) {
     static_ctor->define("prototype", static_proto_value, script::attr_none);
     static_proto->define("constructor", value::object(static_ctor), script::attr_builtin);
     cx.define_global("StaticRange", value::object(static_ctor));
+    // UNDER AbstractRange, when the interface table has already been linked:
+    // install_dom_interfaces adopts `Range.prototype` off the global and
+    // chains it, but only if it runs after this - and the first wrap() of
+    // the load can have run it before install_range was reached.
+    if (const value abstract = interface_prototype("AbstractRange"); abstract.is_object()) {
+        proto->prototype = abstract;
+        static_proto->prototype = abstract;
+    }
 }
 
 // `document.createRange()`: a range collapsed at (this document, 0).

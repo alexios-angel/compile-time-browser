@@ -1381,8 +1381,8 @@ void dom_bindings::install_control_methods(context & cx) {
 
     // `select.add(element, before)` and HTMLOptionsCollection.add: an option
     // or optgroup, before an element or an index, or at the end.
-    const auto select_add = [this, is](context & c, dom_bindings * b, node_id select,
-                                       std::span<value> a) {
+    const auto select_add = [this, is, ask_for_reset](context & c, dom_bindings * b, node_id select,
+                                                      std::span<value> a) {
         const node_id element = b->handle_of(arg(a, 0));
         {
             const auto txn = b->doc_->read();
@@ -1432,6 +1432,9 @@ void dom_bindings::install_control_methods(context & cx) {
         }
         if (element == before) { return; }
         (void)b->insert_node(parent, element, before);
+        // The option insertion steps run the selectedness setting algorithm:
+        // a selected option arriving beside a selected one keeps the LAST.
+        ask_for_reset(c, b, select);
     };
 
     // --- `Option`, the legacy factory --------------------------------------------
@@ -1699,7 +1702,7 @@ void dom_bindings::install_control_methods(context & cx) {
     // `remove()` with no argument is ChildNode's; with an index it removes
     // that option.
     operation("HTMLSelectElement", "remove", 0,
-              [this, options_of](context & c, std::span<value> a) {
+              [this, options_of, ask_for_reset](context & c, std::span<value> a) {
                   const node_id id = receiver(c);
                   if (!id) { return value::undefined(); }
                   if (a.empty()) {
@@ -1719,6 +1722,7 @@ void dom_bindings::install_control_methods(context & cx) {
                   }
                   if (index >= 0 && static_cast<std::size_t>(index) < options.size()) {
                       (void)doc_->remove_child(options[static_cast<std::size_t>(index)]);
+                      ask_for_reset(c, this, id); // the removal steps run it too
                       mutated();
                   }
                   return value::undefined();
@@ -1787,7 +1791,7 @@ void dom_bindings::install_control_methods(context & cx) {
                 script::attr_builtin);
             set_method(
                 cx, *on, "remove",
-                [owner_select, options_of](context & c, std::span<value> a) {
+                [owner_select, options_of, ask_for_reset](context & c, std::span<value> a) {
                     const auto where = owner_select(c);
                     dom_bindings * b = where.first;
                     const node_id id = where.second;
@@ -1800,6 +1804,7 @@ void dom_bindings::install_control_methods(context & cx) {
                     }
                     if (index >= 0 && static_cast<std::size_t>(index) < options.size()) {
                         (void)b->doc_->remove_child(options[static_cast<std::size_t>(index)]);
+                        ask_for_reset(c, b, id);
                         b->mutated();
                     }
                     return value::undefined();

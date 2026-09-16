@@ -482,7 +482,15 @@ void dom_bindings::install_document(context & cx) {
     doc->set("contentType", cx.string(!content_type_.empty() ? content_type_
                                       : doc_->xml()          ? std::string{"application/xhtml+xml"}
                                                              : std::string{"text/html"}));
-    doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
+    // LIVE: the parser decides the mode at the doctype, which a script the
+    // parser stopped for has already passed - and `document.open()` resets it.
+    doc->define_accessor("compatMode",
+                         value::object(cx.allocate<script::native_object>(
+                             "compatMode",
+                             [this](context & c, std::span<value>) {
+                                 return c.string(doc_->quirks() ? "BackCompat" : "CSS1Compat");
+                             })),
+                         value::undefined());
     doc->set("nodeType", value::number(9));
     doc->set("nodeName", cx.string("#document"));
     // NULL, AND IT STAYS NULL: `document.nodeValue = "x"` is defined to do
