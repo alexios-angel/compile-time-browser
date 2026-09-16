@@ -261,6 +261,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         return "native DOM source: " + llvm::toString(std::move(sourceError));
                     }
                     transformed.moduleSha256 = hostContractFingerprint(*composed);
+                    if (auto error = normalizeDOMIteration(*composed, transformed, hostMaxSteps)) {
+                        return "native DOM iteration: " + llvm::toString(std::move(error));
+                    }
+                    transformed.moduleSha256 = hostContractFingerprint(*composed);
                     // An explicit library entry may replace only its proved
                     // inert declaration wrapper. Prepare privately, discard
                     // supplied native reports, and reprove before publishing

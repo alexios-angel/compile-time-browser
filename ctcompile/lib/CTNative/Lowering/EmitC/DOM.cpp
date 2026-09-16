@@ -45,6 +45,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         });
         function.walk([&](ctjs::GetPropertyOp read) {
             if (entry.isStringVectorLength(read)) { vectorLengthReads.insert(read); }
+            if (entry.isStringVectorIndex(read)) { domStringVectorIndices.insert(read); }
             if (entry.method(read) || entry.isTokenList(read.getResult()) ||
                 entry.isDataset(read.getResult())) {
                 domReads.insert(read);
@@ -163,6 +164,18 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     mlir::OpBuilder at(operation);
     const auto where = operation->getLoc();
     const auto optionalString = ec::OpaqueType::get(context, kDOMOptionalStringType);
+    if (domStringVectorIndices.contains(operation)) {
+        auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
+        auto index = ec::CastOp::create(at, where, ec::OpaqueType::get(context, "std::size_t"),
+                                        read.getKey());
+        auto value = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)}, read.getObject(),
+            at.getStringAttr("at"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{index.getResult()});
+        read.getResult().replaceAllUsesWith(value.getResult(0));
+        read.erase();
+        return true;
+    }
     if (domInvocations.contains(operation)) {
         auto invocation = llvm::cast<ctjs::InvokeOp>(operation);
         auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());

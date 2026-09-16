@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proved HTML/SVG dataset key snapshots and original Bootstrap filtering."""
+"""Proved HTML/SVG dataset key snapshots, Bootstrap filtering and iteration."""
 
 import argparse
 import json
@@ -39,6 +39,25 @@ FILTER_BODIES = {
     "dataset_filter_prefix": "return Object.keys(element.dataset).filter(key => key.startsWith('bs'));",
     "dataset_filter_helper": f"function select(keys) {{ return keys.filter({PREDICATE}); }} "
     "return select(Object.keys(element.dataset));",
+}
+LOOP_COUNT = (
+    f"let count = 0; for (const n of {BOOTSTRAP_FILTER}) {{ count = count + 1; }} return count;"
+)
+ITERATION_INTRINSICS = [
+    "Object",
+    "Array",
+    "String",
+    "__ctbrowser_for_of_open",
+    "__ctbrowser_iter_next",
+    "__ctbrowser_iter_close",
+]
+LOOP_SOURCES = {
+    "dataset_loop": f"function dataset_loop(t) {{ {LOOP_COUNT} }}\n",
+    "dataset_loop_order": f"function dataset_loop_order(t) {{ let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + n + '|'; }} return joined; }}\n",
+    "dataset_loop_snapshot": f"function dataset_loop_snapshot(t) {{ const selected = {BOOTSTRAP_FILTER}; "
+    "t.setAttribute('data-bs-later', 'x'); t.removeAttribute('data-bs-z'); let joined = ''; "
+    "for (const n of selected) { joined = joined + n + '|'; } return joined; }\n",
 }
 # Web IDL's named-property order is attribute order, including numeric names.
 # Chrome independently measures this order; an ordinary object is the wrong double.
@@ -95,8 +114,8 @@ FILTER_CASES = [
 SOURCES = {
     name: f"function {name}(element) {{ {body} }}\n"
     for name, body in (BODIES | FILTER_BODIES).items()
-}
-CASES = {name: FILTER_CASES if name in FILTER_BODIES else [(ATTRS, KEYS, KEYS)] for name in SOURCES}
+} | LOOP_SOURCES
+CASES = {name: [(ATTRS, KEYS, KEYS)] if name in BODIES else FILTER_CASES for name in SOURCES}
 REFUSALS = {
     "missing_read": "return element.dataset.missing;",
     "dataset_escape": "return element.dataset;",
@@ -144,6 +163,29 @@ REFUSALS = {
     "filter_callback_index": "return Object.keys(element.dataset).filter((key, index) => index === 0);",
     "filter_callback_this": "return Object.keys(element.dataset).filter(function(key) "
     "{ return this === element; });",
+    **{
+        f"loop_replaced_{helper}": f"__ctbrowser_{helper} = element; const t = element; {LOOP_COUNT}"
+        for helper in ("for_of_open", "iter_next", "iter_close")
+    },
+    "loop_replaced_iterator": "Array.prototype[Symbol.iterator] = element; "
+    f"const t = element; {LOOP_COUNT}",
+    "loop_replaced_next": "Object.getPrototypeOf([][Symbol.iterator]()).next = element; "
+    f"const t = element; {LOOP_COUNT}",
+    "loop_replaced_return": "Object.getPrototypeOf([][Symbol.iterator]()).return = element; "
+    f"const t = element; {LOOP_COUNT}",
+    "loop_own_iterator": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
+    "selected[Symbol.iterator] = element; let count = 0; "
+    "for (const n of selected) { count = count + 1; } return count;",
+    "loop_vector_mutation": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
+    "let count = 0; for (const n of selected) { selected[0] = n; count = count + 1; } return count;",
+    "loop_iterator_escape": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
+    "return __ctbrowser_for_of_open(selected);",
+    "loop_dom_mutation": f"const t = element; let count = 0; for (const n of {BOOTSTRAP_FILTER}) "
+    "{ t.setAttribute('data-bs-later', 'x'); count = count + 1; } return count;",
+    "loop_global_write": f"const t = element; let count = 0; for (const n of {BOOTSTRAP_FILTER}) "
+    "{ saved = n; count = count + 1; } return count;",
+    "loop_callback": f"const t = element; let count = 0; for (const n of {BOOTSTRAP_FILTER}) "
+    "{ element(n); count = count + 1; } return count;",
 }
 
 
@@ -157,15 +199,24 @@ def oracles(args):
             names.append(label)
             if name == "dataset_filter_prefix":
                 selected = [key for key in keys if key.startswith("bs")]
-            elif name not in FILTER_BODIES:
+            elif name in BODIES:
                 selected = keys
                 if name == "dataset_after_write":
                     selected = keys + ["later"]
                 elif name == "dataset_reread":
                     selected = keys[1:] + ["later"]
-            number = name == "dataset_filter_length"
-            wanted[name].append(str(len(selected)) if number else "|".join(selected))
-            observation = f"String({name}(element))" if number else f"{name}(element).join('|')"
+            number = name in ("dataset_filter_length", "dataset_loop")
+            if number:
+                wanted[name].append(str(len(selected)))
+            elif name in LOOP_SOURCES:
+                wanted[name].append("".join(key + "|" for key in selected))
+            else:
+                wanted[name].append("|".join(selected))
+            observation = (
+                f"String({name}(element))"
+                if number or name in LOOP_SOURCES
+                else f"{name}(element).join('|')"
+            )
             source += f"""
 var {label} = (function() {{
     const keys = {json.dumps(keys)};
@@ -174,8 +225,9 @@ var {label} = (function() {{
     const dataset = new Proxy(target, {{ownKeys() {{ return keys.slice(); }} }});
     const element = {{dataset,
         setAttribute(key, value) {{
-            if (key !== 'data-later' || value !== 'x') throw new Error('unexpected write');
-            keys.push('later'); Object.defineProperty(target, 'later', {{value, enumerable: true, configurable: true}});
+            if ((key !== 'data-later' && key !== 'data-bs-later') || value !== 'x') throw new Error('unexpected write');
+            const name = key === 'data-later' ? 'later' : 'bsLater';
+            keys.push(name); Object.defineProperty(target, name, {{value, enumerable: true, configurable: true}});
         }},
         removeAttribute(key) {{
             if (key !== 'data-bs-z') throw new Error('unexpected removal');
@@ -210,17 +262,29 @@ def client(symbol, owned, name):
     fixtures = ",".join(
         "{" + ",".join(json.dumps(key) for key in attrs) + "}" for attrs, _, _ in CASES[name]
     )
-    number = name == "dataset_filter_length"
-    saved_type = "double" if number else "std::vector<std::string>"
+    number = name in ("dataset_filter_length", "dataset_loop")
+    saved_type = (
+        "double"
+        if number
+        else "std::string" if name in LOOP_SOURCES else "std::vector<std::string>"
+    )
     observe = (
         "std::cout << saved;"
-        if number
+        if number or name in LOOP_SOURCES
         else """
         for (std::size_t i = 0; i < saved.size(); ++i) {
             if (i) std::cout << '|';
             std::cout << saved[i];
         }
         """
+    )
+    mutations = (
+        """
+            assert(doc.read().attribute_value(node, doc.atoms().intern("data-bs-later")) == "x");
+            assert(!doc.read().has_attribute(node, doc.atoms().intern("data-bs-z")));
+        """
+        if name == "dataset_loop_snapshot"
+        else ""
     )
     return f"""
     for (const auto & names : std::vector<std::vector<const char *>>{{{fixtures}}}) {{
@@ -236,6 +300,7 @@ def client(symbol, owned, name):
             assert(doc.set_attribute_ns(node, doc.atoms().intern("urn:ignored"), doc.atoms().intern("data-hidden"), "x"));
             assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern("data-Upper"), "x"));
             saved = {call};
+            {mutations}
             assert(doc.set_attribute(node, doc.atoms().intern("data-after"), "x"));
             const auto other = doc.create_element(doc.atoms().intern("test"), node_ns::other);
             element = {{&doc, other}};
@@ -283,9 +348,13 @@ def main():
                             contract,
                             provider=provider,
                             initial_intrinsics=(
-                                ["Object", "Array", "String"]
-                                if name in FILTER_BODIES
-                                else ["Object"]
+                                ITERATION_INTRINSICS
+                                if name in LOOP_SOURCES
+                                else (
+                                    ["Object", "Array", "String"]
+                                    if name not in BODIES
+                                    else ["Object"]
+                                )
                             ),
                             dataset_parameters=[0],
                         ),
@@ -297,9 +366,9 @@ def main():
                         run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
                         native = deduced
                     entries = dom.NATIVE.findall(native.read_text())
-                    assert len(entries) == (
-                        2 if name in FILTER_BODIES else 1
-                    ) and not dom.FUNCTION.search(native.read_text()), native.read_text()
+                    assert len(entries) == (1 if name in BODIES else 2) and not dom.FUNCTION.search(
+                        native.read_text()
+                    ), native.read_text()
                     entry = next(
                         symbol
                         for symbol in entries
@@ -307,6 +376,7 @@ def main():
                     )
                     cpp = run([args.translate, "--mlir-to-cpp", native]).stdout
                     assert "ctnative::dataset_keys" in cpp and not dom.VM.search(cpp), cpp
+                    assert "__ctbrowser_" not in cpp, cpp
                     assert not re.search(
                         r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
                     ), cpp
@@ -370,7 +440,7 @@ def main():
                     dict(
                         contract,
                         provider=provider,
-                        initial_intrinsics=["Object", "Array", "String"],
+                        initial_intrinsics=ITERATION_INTRINSICS,
                         dataset_parameters=[0],
                     ),
                     f"refuse-{name}-{provider}-{optimize}",
@@ -408,6 +478,38 @@ def main():
                         dataset_parameters=[0],
                     ),
                     f"filter-premise-{refusals}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+    _, ir, contract = next(item for item in prepared if item[0] == "dataset_loop")
+    for budget in (0, 64, 256):
+        for optimize in (False, True):
+            dom.lower(
+                args,
+                ir,
+                dict(contract, initial_intrinsics=ITERATION_INTRINSICS, dataset_parameters=[0]),
+                f"loop-budget-{refusals}",
+                optimize=optimize,
+                max_steps=budget,
+                success=False,
+            )
+            refusals += 1
+    for missing in ITERATION_INTRINSICS:
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        initial_intrinsics=[
+                            name for name in ITERATION_INTRINSICS if name != missing
+                        ],
+                        dataset_parameters=[0],
+                    ),
+                    f"loop-premise-{refusals}",
                     optimize=optimize,
                     success=False,
                 )
