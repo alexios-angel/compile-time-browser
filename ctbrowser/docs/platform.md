@@ -183,3 +183,52 @@ prints its usage and a page's script errors, and `ctdrive` prints the port it is
 listening on, which is the only way its client ever learns it. Give those two
 the GUI subsystem and the comparison rig hangs waiting for a line that can no
 longer be written.
+
+## URLs: the WHATWG URL Standard, in `shell/net/url.hpp` (2026-09-16)
+
+Every URL the engine touches - `new URL()`, `URLSearchParams`, `location.*`,
+`a.href` and the other reflected URL attributes, every relative `src` and
+`href` a page resolves, and what the HTTP client connects to - goes through ONE
+parser, `ctbrowser::shell::parse_url`, which is the URL Standard's basic URL
+parser written out in full: the §4.4 state machine, the §3.5 host parser (IPv4
+with its hex and octal forms, IPv6, opaque hosts, the forbidden code points),
+the §1.3 percent-encode sets, the §4.5 serialiser, the §4.7 origin, the §6.1
+setter steps with their state overrides, and §5's
+application/x-www-form-urlencoded. Until this date it was Boost.URL - RFC 3986,
+which is not the specification a browser implements - and `docs/plans/ada-url.md`
+records the eight of fifteen measured cases that differed.
+
+**Measured**: `unittests/unit/url_wpt` drives the suite's own
+`url/resources/urltestdata.json` (893 inputs) and `setters_tests.json` (278
+cases) through the parser with no VM in between and asserts every one passes
+at the pinned WPT commit. It reads the corpus from `~/.cache/wpt` when
+`tools/wpt/fetch-wpt.sh` has made it and skips the two tables otherwise.
+
+**What it leaves out**, deliberately: the full UTS #46 table. `domain to
+ASCII` does ASCII case folding, RFC 3492 punycode for a non-ASCII label, and
+the handful of mappings the corpus reaches for - the ideographic full stops,
+full-width ASCII, the Latin-1 capitals and the mathematical alphabets, the
+ignorable format characters, the non-ASCII spaces that map to a forbidden
+U+0020. No NFC normalisation, no Bidi or joiner checks, and a label already
+spelled `xn--` is passed through unverified. A corpus bump that adds a mapping
+is the moment to extend `map_for_domain` in `url.cpp`; `IdnaTestV2.json` is
+the table that would measure the whole thing.
+
+**The bindings are views** (`lib/Shell/bindings/window/url.cpp`). A `URL`
+object keeps its serialised record in a private slot and every getter
+re-parses it, so the record and the string cannot drift; a `URLSearchParams`
+attached to a URL reads that URL's query on every call and writes it back
+through the standard's update steps, so `url.search = ...` and
+`url.searchParams.append(...)` are one state read two ways. `for (const [k, v]
+of params)` is materialised eagerly by the VM (`docs/script.md`), so a
+mutation inside the loop body is seen by a hand-driven `next()` and not by the
+loop - the one place the iterator is not live.
+
+**Lenient on the way out**: `resolve(base, reference)` returns the reference
+as written when the pair does not parse, which is what HTML's URL reflection
+asks for ("if parsing fails, return the content attribute"), and
+`location_parts` answers all-empty rather than throwing. `parse_absolute`, the
+HTTP client's view, is derived from the same record: an IPv6 literal loses its
+brackets there because that is what a resolver wants, and the `Host:` header
+form is the record's `host:port` because the parser already dropped a default
+port.
