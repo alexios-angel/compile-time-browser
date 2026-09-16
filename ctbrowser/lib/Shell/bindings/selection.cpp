@@ -380,11 +380,26 @@ void dom_bindings::install_selection(context & cx) {
     getter->retained.push_back(selection_value);
     cx.define_global("getSelection", value::object(getter));
 
-    // `document.getSelection()` - the SAME object, and null for a document
-    // with no browsing context, which is what a null `defaultView` says. On
-    // Document.prototype rather than on the document object: every document of
-    // the realm has the method, and only the page's own answers with a
-    // selection.
+    // `document.getSelection()` - THE SAME OBJECT, and null for a document with
+    // no browsing context, which is what a null `defaultView` says.
+    //
+    // ON THE PAGE'S OWN DOCUMENT IT IS AN OWN PROPERTY, and that is not
+    // belt and braces: `document` is a PROXY, and a method reached through it
+    // does not arrive with the document as its receiver - the prototype method
+    // below therefore read `defaultView` off the wrong thing and answered null,
+    // so `getSelection() === document.getSelection()` was false. This one
+    // answers with the selection and asks nothing.
+    if (auto * doc = document_object()) {
+        auto * own = cx.allocate<script::native_object>(
+            "getSelection",
+            [selection_value](context &, std::span<value>) { return selection_value; });
+        own->retained.push_back(selection_value);
+        doc->set("getSelection", value::object(own));
+        doc->set_attrs("getSelection", script::attr_builtin);
+    }
+    // AND ON Document.prototype for every OTHER document of the realm - one
+    // from createHTMLDocument or DOMParser - which have no browsing context
+    // and answer null.
     if (const value document_proto = interface_prototype("Document"); document_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(document_proto.as_heap());
         // RETAINED HERE TOO. A captured `value` is invisible to the collector,
