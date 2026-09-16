@@ -1,6 +1,6 @@
 #pragma once
 // The runtime document: a slab of nodes addressed by generation-tagged
-// handles, their payloads immutable blocks a write replaces whole.
+// handles, mutated in place on the one thread that owns it.
 //
 //   node      the node itself - and, deliberately, NOT its layout results.
 //             Those belong to the box tree.
@@ -9,8 +9,7 @@
 //             to that node
 //   html      the WHATWG tokenizer and tree builder, behind document::builder
 //
-// See :document for the locking policy and for precisely which atomicity
-// guarantees this does and does not make.
+// See :document for what a write invalidates.
 
 #include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/document.hpp>

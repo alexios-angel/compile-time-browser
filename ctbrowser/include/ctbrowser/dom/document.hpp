@@ -1,12 +1,8 @@
 #pragma once
 #include <algorithm>
-#include <array>
-#include <atomic>
-#include <boost/container/small_vector.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,29 +15,19 @@
 
 // The live document.
 //
-// SINGLE-THREADED, and the contract that follows from it: reads take no
-// locks, and a write INVALIDATES every span and string_view a read_txn
-// handed out over the node it wrote. children(), attributes(), text() and
-// find_attribute() point into an immutable block; a write to that node
-// builds a new block, swaps it in and deletes the old one on the spot. A
-// caller that walks a child or attribute list and writes in the body copies
-// the list to a vector first; a write to a DIFFERENT node touches nothing
-// the reader holds.
+// SINGLE-THREADED, and the contract that follows from it: a write MAY
+// INVALIDATE every span and string_view a read_txn handed out over the node
+// it wrote. children(), attributes(), text() and find_attribute() point into
+// the node's own containers, which a write mutates in place. A caller that
+// walks a child or attribute list and writes in the body copies the list to
+// a vector first; a write to a DIFFERENT node touches nothing the reader
+// holds.
 //
-// The stripe locks on per-node writes and the one document-wide mutex on
-// structural writes (append, remove, reparent) are what the original
-// concurrent design left behind (git history, audit CTB-01: the DOM was
-// built for lock-free readers under epoch reclamation, and no engine thread
-// ever read it off the frame thread). Uncontended, they cost one atomic
-// each and keep the cycle check trivially correct; they are not a promise
-// that a second thread may write.
-//
-// WHAT ATOMICITY YOU GET. Each node's publication is atomic: a reader sees a
-// node's old children or its new children, never a mix. A multi-node write is
-// NOT atomic as a unit - a reader can observe the child appended to its new
-// parent slightly before it observes the removal from the old one. read_txn
-// is named for what it does: per-node coherent reads, not an isolating
-// snapshot.
+// It was built for lock-free readers under epoch reclamation (git history,
+// audit CTB-01): copy-on-write payload blocks behind atomics, a stripe lock
+// per node and a document-wide mutex on shape changes. No engine thread ever
+// read the DOM off the frame thread, so all of that is gone; read_txn stays
+// as the name every reader already uses.
 
 namespace ctbrowser {
 
@@ -90,7 +76,7 @@ public:
     [[nodiscard]] std::string_view prefix(node_id) const noexcept;
     [[nodiscard]] node_id parent(node_id) const noexcept;
 
-    // The returned span points into an IMMUTABLE block, valid until the next
+    // The returned span points into the node's own list, valid until the next
     // write to THAT node - copy it before a loop that writes.
     [[nodiscard]] std::span<const node_id> children(node_id) const noexcept;
     [[nodiscard]] std::span<const attribute> attributes(node_id) const noexcept;
@@ -108,8 +94,8 @@ public:
     [[nodiscard]] bool has_attribute(node_id, atom name) const noexcept;
     // The attribute itself, so a caller that wants its namespace or its value
     // AND its presence does not pay for the walk twice. The pointer is into the
-    // same immutable block `attributes` returns a span over, and is valid for
-    // exactly as long: until the next write to that node.
+    // same list `attributes` returns a span over, and is valid for exactly as
+    // long: until the next write to that node.
     [[nodiscard]] const attribute * find_attribute(node_id, atom name) const noexcept;
     // `ns` and `local` are TEXT rather than atoms on purpose: a read must not be
     // able to grow the atom table, and `getAttributeNS` is handed whatever URI a
@@ -160,9 +146,7 @@ public:
     // LIST, never of a parent pointer - see is_document_child.
     [[nodiscard]] node_id document_node() const noexcept { return document_node_; }
     [[nodiscard]] atom_table & atoms() const noexcept { return *atoms_; }
-    [[nodiscard]] std::uint64_t version() const noexcept {
-        return version_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
 
     // --- creation: the new node is DETACHED until it is appended ----------
@@ -184,7 +168,7 @@ public:
     // A CDATASection: a text node that remembers it was one.
     [[nodiscard]] node_id create_cdata_section(std::string_view value);
 
-    // --- structural writes (document-wide mutex) ---------------------------
+    // --- structural writes ---------------------------------------------------
     std::expected<void, dom_error> append_child(node_id parent, node_id child);
     // MAKE `id` THE DOCUMENT ELEMENT. `root()` becomes it, and the Document
     // node's child list takes it in the previous element's slot, or - when
@@ -203,7 +187,7 @@ public:
     std::expected<void, dom_error> insert_before(node_id parent, node_id child, node_id before);
     std::expected<void, dom_error> remove_child(node_id child);
 
-    // --- per-node writes (striped) -----------------------------------------
+    // --- per-node writes -----------------------------------------------------
     //
     // "SET AN ATTRIBUTE VALUE", DOM §4.9.1, in its two spellings. Both CHANGE
     // an existing attribute rather than adding a second one, and which existing
@@ -251,11 +235,11 @@ public:
     [[nodiscard]] std::vector<node_id> shadow_roots() const;
 
     // --- the parse path -----------------------------------------------------
-    // Building a document by repeatedly appending through the published path
-    // would copy the child list on every append: O(n^2) for one element's
-    // children, to keep spans valid for readers that do not exist yet.
-    // `builder` mutates in place instead. It is legal ONLY while nothing else
-    // can see the document, which is exactly the case during parsing.
+    // The parsers' append: no detach, no cycle check, no version bump, because
+    // every node a parser appends is fresh and nothing observes the document
+    // until it returns. It was also the only O(1) append while the published
+    // path copied the child list; that reason is gone, the contract is not -
+    // ctcompile's comparator tests build torn trees through it on purpose.
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
@@ -274,8 +258,7 @@ public:
         // Move a node to a new parent, keeping its own subtree. The HTML tree
         // builder needs it for the adoption agency algorithm - the one that
         // turns `<b>1<p>2</b>3` into what a browser shows - and that algorithm
-        // genuinely MOVES already-inserted nodes. Cheap here for the same reason
-        // append is: nothing can be reading the document yet.
+        // genuinely MOVES already-inserted nodes.
         void reparent(node_id child, node_id new_parent);
         // Insert BEFORE a sibling. Foster parenting needs it: content that turns
         // up inside a <table> but outside a cell goes immediately before the
@@ -300,8 +283,8 @@ public:
     // Deliberately NOT wired into the selector engine's case folding: whether
     // quirks mode changes MATCHING is a separate, render-visible decision and
     // this is a reporting one.
-    [[nodiscard]] bool quirks() const noexcept { return quirks_.load(std::memory_order_acquire); }
-    void set_quirks(bool on) noexcept { quirks_.store(on, std::memory_order_release); }
+    [[nodiscard]] bool quirks() const noexcept { return quirks_; }
+    void set_quirks(bool on) noexcept { quirks_ = on; }
 
     // WHICH LANGUAGE THIS DOCUMENT WAS WRITTEN IN, which is not the same
     // question as which vocabulary an element belongs to. `node_ns` says an
@@ -313,41 +296,25 @@ public:
     // than `text/html`, `compatMode` is always `CSS1Compat` because an XML
     // document has no quirks mode to be in, and `createCDATASection` is only
     // allowed here. See dom/xml.hpp for the parser that sets it.
-    [[nodiscard]] bool xml() const noexcept { return xml_.load(std::memory_order_acquire); }
-    void set_xml(bool on) noexcept { xml_.store(on, std::memory_order_release); }
+    [[nodiscard]] bool xml() const noexcept { return xml_; }
+    void set_xml(bool on) noexcept { xml_ = on; }
 
 private:
     friend class read_txn;
 
-    static constexpr std::size_t stripe_count = 256;
-
-    // Atomic for the same reason `version_` is: the tree builder writes it on
-    // one thread and a binding reads it on another, and a torn bool is a data
-    // race whatever the hardware does about it in practice.
-    std::atomic<bool> quirks_{true};
+    bool quirks_ = true;
     // FALSE by default: every document this engine has ever built came from the
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
-    std::atomic<bool> xml_{false};
+    bool xml_ = false;
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
-    [[nodiscard]] std::mutex & stripe_of(node_id id) const noexcept {
-        return stripes_[id.slot % stripe_count];
-    }
-    void bump_version() noexcept { version_.fetch_add(1, std::memory_order_release); }
+    void bump_version() noexcept { ++version_; }
 
-    // Publish a replacement payload and delete the old one - which is what
-    // invalidates every span a read_txn handed out over this node.
-    template <typename Payload>
-    void publish(std::atomic<const Payload *> & slot, const Payload * fresh) {
-        node::destroy_payload(slot.exchange(fresh, std::memory_order_release));
-    }
-
-    // detach `child` from whatever parent it has; caller holds structure_
-    void detach_locked(node * child_node, node_id child);
+    // detach `child` from whatever parent it has
+    void detach(node * child_node, node_id child);
 
     // A ProcessingInstruction's attribute map and its data, kept in step both
-    // ways (DOM §4.13) - see the parser above them in document.cpp. Caller
-    // holds the node's stripe.
+    // ways (DOM §4.13) - see the parser above them in document.cpp.
     void update_pi_attributes(node & n, std::string_view data);
     void update_pi_data(node_id id, node & n);
 
@@ -384,26 +351,20 @@ public:
 
 private:
     void note_write(node_id id, atom name, bool text);
-    std::atomic<bool> log_writes_{false};
-    std::mutex writes_;
+    bool log_writes_ = false;
     std::vector<write_note> writes_log_;
 
     atom_table * atoms_;
     mutable slab<node, node_tag> nodes_;
-    mutable std::array<std::mutex, stripe_count> stripes_;
-    std::mutex structure_; // serializes tree-SHAPE changes; see the policy note
     // (element, contents fragment) pairs - see template_content. A vector
     // because a page holds a few and a lookup happens once per `.content`
-    // read. ONE mutex for the whole vector rather than the element's stripe:
-    // two templates are on two stripes, and an emplace_back under either of
-    // them would race the other's walk.
-    mutable std::mutex templates_;
+    // read.
     std::vector<std::pair<node_id, node_id>> template_contents_;
     flat_map<std::uint64_t, node_id> shadow_roots_;
     flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
     node_id root_{};
     node_id document_node_{};
-    std::atomic<std::uint64_t> version_{1};
+    std::uint64_t version_ = 1;
 };
 
 // IS THIS NODE A CHILD OF THE DOCUMENT? Asked of the child list rather than a

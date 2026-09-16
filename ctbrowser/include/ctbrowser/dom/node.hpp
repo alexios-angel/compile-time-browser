@@ -1,27 +1,25 @@
 #pragma once
-#include <atomic>
 #include <boost/container/small_vector.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include <ctbrowser/core/core.hpp>
 
 // The DOM node.
 //
-// A generation-tagged handle stops a reader resolving a FREED node. The
-// mutable parts of a node are not mutable: children, attributes and text are
-// IMMUTABLE blocks behind pointers. A writer builds a whole new block, swaps
-// the pointer and DELETES the old block at once - so a span or string_view a
-// read_txn handed out over a node is invalidated by the next write to THAT
-// node, and a caller that walks a list while writing copies it first.
+// A generation-tagged handle stops a reader resolving a FREED node. Children,
+// attributes and text are plain members mutated in place, so a span or
+// string_view a read_txn handed out over a node is invalidated by the next
+// write to THAT node, and a caller that walks a list while writing copies it
+// first.
 //
-// SINGLE-THREADED. The blocks were once retired through an epoch domain so
-// that concurrent readers could keep them (git history, audit CTB-01); no
-// engine thread ever read the DOM off the frame thread, and the atomics are
-// what that design left behind.
+// SINGLE-THREADED. They were copy-on-write blocks behind atomics, retired
+// through an epoch domain so that concurrent readers could keep them (git
+// history, audit CTB-01); no engine thread ever read the DOM off the frame
+// thread, and the blocks, the atomics and the per-node stripe locks went
+// with that design.
 //
 // What this deliberately does NOT store: layout rects, text-line caches, widget
 // state, selection ranges, caret positions, blink phase. Those are outputs of
@@ -83,14 +81,13 @@ enum class node_kind : std::uint8_t {
 //
 // FREE, in the literal sense: `node` is kind(1) + tag(4) with three bytes of
 // padding between them, so this occupies padding that already existed.
-// unittests/unit/dom_basics asserts sizeof(node) did not move.
 enum class node_ns : std::uint8_t {
     html,
     svg,
     // NEITHER, which `document.createElementNS` can ask for and the parser
     // never produces. The exact URI is not here - it lives beside the element
-    // wrapper, because putting a fourth field on `node` would take it from 40
-    // bytes to 48 and this is the most replicated object in the engine. What
+    // wrapper, because a fourth field on `node` is not free and this is the
+    // most replicated object in the engine. What
     // the enumerator buys is the distinction every consumer actually tests for:
     // `element_ns == html` gates script execution, <style> collection and the
     // tagName case fold, and an element in some page-invented namespace must
@@ -171,26 +168,6 @@ static_assert(sizeof(attribute) <= sizeof(std::string) + alignof(std::string),
     return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
 }
 
-// Immutable once published. Small-vector because the overwhelming majority of
-// elements have a handful of children and one or two attributes, and a heap
-// allocation each would dominate document construction.
-struct child_list {
-    boost::container::small_vector<node_id, 4> items;
-};
-struct attr_list {
-    boost::container::small_vector<attribute, 2> items;
-};
-struct text_block {
-    std::string value;
-};
-
-// Shared empties, so a leaf element costs no allocation at all. Never deleted
-// - `destroy_payload` skips them.
-template <class T> inline const T empty_payload{};
-inline const child_list & empty_children = empty_payload<child_list>;
-inline const attr_list & empty_attributes = empty_payload<attr_list>;
-inline const text_block & empty_text = empty_payload<text_block>;
-
 struct node {
     node_kind kind = node_kind::element;
     node_ns ns = node_ns::html; // elements only; see node_ns - this is free
@@ -202,18 +179,21 @@ struct node {
     bool prefixed = false;
     atom tag; // elements only
 
-    std::atomic<node_id> parent{node_id{}};
+    node_id parent;
 
-    std::atomic<const child_list *> children{&empty_children};
-    std::atomic<const attr_list *> attributes{&empty_attributes};
-    std::atomic<const text_block *> text{&empty_text};
+    // Small-vector because the overwhelming majority of elements have a
+    // handful of children and one or two attributes, and a heap allocation
+    // each would dominate document construction.
+    boost::container::small_vector<node_id, 4> children;
+    boost::container::small_vector<attribute, 2> attributes;
+    std::string text;
 
     node() = default;
     explicit node(node_kind k, atom t = {}, node_ns n = node_ns::html,
                   bool has_prefix = false) noexcept
         : kind(k), ns(n), prefixed(has_prefix), tag(t) {}
 
-    // The slab stores these in place; atomics make them immovable anyway.
+    // The slab stores these in place; nothing copies a node.
     node(const node &) = delete;
     node & operator=(const node &) = delete;
 
@@ -225,20 +205,6 @@ struct node {
     static_assert(sizeof(node_kind) + sizeof(node_ns) + sizeof(bool) <=
                       alignof(atom) + sizeof(atom),
                   "kind, ns and prefixed must share the padding ahead of `tag`");
-
-    ~node() {
-        // Only the shared empties survive a document teardown untouched;
-        // anything else was allocated by a publish and is ours to free.
-        // The same three calls are what a publish makes for the block it
-        // replaced - see document::publish.
-        destroy_payload(children.load(std::memory_order_relaxed));
-        destroy_payload(attributes.load(std::memory_order_relaxed));
-        destroy_payload(text.load(std::memory_order_relaxed));
-    }
-
-    template <class T> static void destroy_payload(const T * p) {
-        if (p != &empty_payload<T>) { delete p; }
-    }
 };
 
 } // namespace ctbrowser

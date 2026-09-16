@@ -232,22 +232,6 @@ unsigned device::bound_buffer(int target) const {
 void device::delete_object(object_kind kind, unsigned name) {
     if (!ok() || name == 0) { return; }
 
-    // WHAT ELSE WEARS THIS NUMBER. Off unless asked for, and it exists because
-    // the bug it documents was invisible for five commits: the collision is
-    // silent, GL raises nothing, and the damage only surfaces later as a
-    // wrongly-sized buffer. One line per delete says whether the namespaces
-    // really do overlap on this page rather than leaving it an argument.
-    const char * trace = std::getenv("CTBROWSER_GL_DELETE");
-    if (trace != nullptr && std::string_view{trace} != "0") {
-        std::fprintf(stderr, "[del] kind=%d name=%u  also:%s%s%s%s%s%s\n", static_cast<int>(kind),
-                     name, glIsBuffer(name) == GL_TRUE ? " buffer" : "",
-                     glIsTexture(name) == GL_TRUE ? " texture" : "",
-                     glIsFramebuffer(name) == GL_TRUE ? " framebuffer" : "",
-                     glIsRenderbuffer(name) == GL_TRUE ? " renderbuffer" : "",
-                     glIsProgram(name) == GL_TRUE ? " program" : "",
-                     glIsShader(name) == GL_TRUE ? " shader" : "");
-    }
-
     // SWITCH, DO NOT PROBE. The caller named the class; asking GL which classes
     // the number happens to belong to answers a different question and deletes
     // whatever else it finds.

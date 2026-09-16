@@ -1,31 +1,29 @@
 #pragma once
-#include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <new>
-#include <stdexcept>
 #include <utility>
 
 #include <ctbrowser/core/handle.hpp>
 
 // Stable, generation-tagged storage.
 //
-// Storage is chunked and the chunk directory is a fixed array, never
-// reallocated, so a slot's address is stable for the life of the slab and a
-// handle is an index plus a generation. Generations encode liveness in their
-// parity - odd is live, even is free - so "is this slot occupied" and "is this
-// handle current" are the same check. Generation 0 means never used, which is
-// what makes a zeroed handle null.
+// Slots live in a std::deque, whose push_back never moves an existing element,
+// so a slot's address is stable for the life of the slab and a handle is an
+// index plus a generation. Generations encode liveness in their parity - odd
+// is live, even is free - so "is this slot occupied" and "is this handle
+// current" are the same check. Generation 0 means never used, which is what
+// makes a zeroed handle null.
 //
 // erase() destroys the object and recycles the slot at once; the generation
 // bump is what stops a stale handle resolving to whatever takes the slot next.
 //
 // SINGLE-THREADED. It was built for concurrent readers under epoch-based
 // reclamation (git history, audit CTB-01), which no engine thread ever used;
-// the atomics are what that left behind and cost nothing uncontended. A
-// pointer from get() is valid until the next erase() of that handle.
+// the hand-rolled chunk directory of atomics that design needed went with it.
+// A pointer from get() is valid until the next erase() of that handle.
 //
 // A template, so it stays in the header: there is no fixed set of T to
 // instantiate it for in one place.
@@ -36,71 +34,64 @@ template <typename T, typename Tag> class slab {
 public:
     using handle_type = handle<Tag>;
 
-    static constexpr std::uint32_t chunk_bits = 12;
-    static constexpr std::uint32_t chunk_size = 1u << chunk_bits;
-    static constexpr std::uint32_t chunk_mask = chunk_size - 1;
-    static constexpr std::size_t max_chunks = 1024; // 4M slots
-
     slab() = default;
     slab(const slab &) = delete;
     slab & operator=(const slab &) = delete;
 
     ~slab() {
         // Live slots (odd generation) still hold a constructed T.
-        for (std::uint32_t s = 0; s < capacity_.load(std::memory_order_relaxed); ++s) {
-            entry * e = locate(s);
-            if (e != nullptr && is_live(e->generation.load(std::memory_order_relaxed))) {
-                std::destroy_at(value_of(e));
-            }
+        for (entry & e : slots_) {
+            if (is_live(e.generation)) { std::destroy_at(value_of(&e)); }
         }
-        for (std::atomic<entry *> & c : directory_) { delete[] c.load(std::memory_order_relaxed); }
     }
 
     // --- reader side ---------------------------------------------------------
 
     [[nodiscard]] T * get(handle_type h) const noexcept {
-        if (!h) { return nullptr; }
-        entry * e = locate(h.slot);
-        if (e == nullptr) { return nullptr; }
+        if (!h || h.slot >= slots_.size()) { return nullptr; }
+        entry & e = slots_[h.slot];
         // The generation check is the whole safety argument: a slot recycled
         // since this handle was made has a different generation, so a stale
         // handle resolves to nullptr instead of to somebody else's object.
-        if (e->generation.load(std::memory_order_acquire) != h.generation) { return nullptr; }
-        return value_of(e);
+        if (e.generation != h.generation) { return nullptr; }
+        return value_of(&e);
     }
 
     // --- writer side -----------------------------------------------------------
 
-    // Throws length_error when every slot is occupied; allocation and T's
-    // constructor may also throw. Failed construction leaves the slot reusable.
+    // Allocation and T's constructor may throw. Failed construction leaves the
+    // slot reusable.
     template <typename... Args> [[nodiscard]] handle_type insert(Args &&... args) {
-        const std::uint32_t slot = claim_slot();
-        entry * e = locate(slot);
+        std::uint32_t slot;
+        if (free_head_ != 0) {
+            slot = free_head_ - 1;
+            free_head_ = slots_[slot].next_free;
+        } else {
+            slot = static_cast<std::uint32_t>(slots_.size());
+            slots_.emplace_back();
+        }
+        entry & e = slots_[slot];
         try {
-            std::construct_at(reinterpret_cast<T *>(e->storage), std::forward<Args>(args)...);
+            std::construct_at(reinterpret_cast<T *>(e.storage), std::forward<Args>(args)...);
         } catch (...) {
-            e->next_free = free_head_;
+            e.next_free = free_head_;
             free_head_ = slot + 1;
             throw;
         }
-        // Publishing the generation is what makes the object visible; the
-        // construction above must not be reordered after it.
-        const std::uint32_t generation = e->generation.load(std::memory_order_relaxed) + 1;
-        e->generation.store(generation, std::memory_order_release);
+        ++e.generation;
         ++live_;
-        return handle_type{slot, generation};
+        return handle_type{slot, e.generation};
     }
 
     // Destroy the object and recycle the slot. Every outstanding handle to it
     // stops resolving here.
     bool erase(handle_type h) {
-        if (!h) { return false; }
-        entry * e = locate(h.slot);
-        if (e == nullptr) { return false; }
-        if (e->generation.load(std::memory_order_relaxed) != h.generation) { return false; }
-        e->generation.store(h.generation + 1, std::memory_order_release); // even == dead
-        std::destroy_at(value_of(e));
-        e->next_free = free_head_;
+        if (!h || h.slot >= slots_.size()) { return false; }
+        entry & e = slots_[h.slot];
+        if (e.generation != h.generation) { return false; }
+        e.generation = h.generation + 1; // even == dead
+        std::destroy_at(value_of(&e));
+        e.next_free = free_head_;
         free_head_ = h.slot + 1; // biased by one so 0 can mean "empty"
         --live_;
         return true;
@@ -110,8 +101,8 @@ public:
 
 private:
     struct entry {
-        std::atomic<std::uint32_t> generation{0}; // odd = live, even = free, 0 = never used
-        std::uint32_t next_free = 0;              // biased by one; 0 = end of list
+        std::uint32_t generation = 0; // odd = live, even = free, 0 = never used
+        std::uint32_t next_free = 0;  // biased by one; 0 = end of list
         alignas(T) std::byte storage[sizeof(T)]{};
     };
 
@@ -122,34 +113,9 @@ private:
         return std::launder(reinterpret_cast<T *>(e->storage));
     }
 
-    [[nodiscard]] entry * locate(std::uint32_t slot) const noexcept {
-        const std::size_t chunk = slot >> chunk_bits;
-        if (chunk >= max_chunks) { return nullptr; }
-        entry * c = directory_[chunk].load(std::memory_order_acquire);
-        if (c == nullptr) { return nullptr; }
-        return c + (slot & chunk_mask);
-    }
-
-    [[nodiscard]] std::uint32_t claim_slot() {
-        if (free_head_ != 0) {
-            const std::uint32_t slot = free_head_ - 1;
-            free_head_ = locate(slot)->next_free;
-            return slot;
-        }
-        const std::uint32_t slot = capacity_.load(std::memory_order_relaxed);
-        const std::size_t chunk = slot >> chunk_bits;
-        if (chunk >= max_chunks) { throw std::length_error("slab capacity exceeded"); }
-        if (directory_[chunk].load(std::memory_order_relaxed) == nullptr) {
-            // Published with release so a reader that sees the pointer also
-            // sees zero-initialized generations behind it.
-            directory_[chunk].store(new entry[chunk_size], std::memory_order_release);
-        }
-        capacity_.store(slot + 1, std::memory_order_release);
-        return slot;
-    }
-
-    mutable std::array<std::atomic<entry *>, max_chunks> directory_{};
-    std::atomic<std::uint32_t> capacity_{0};
+    // mutable because get() is const and hands out a T* the caller may write
+    // through: the slab is storage, not an owner of constness.
+    mutable std::deque<entry> slots_;
     std::uint32_t free_head_ = 0; // biased by one
     std::size_t live_ = 0;
 };

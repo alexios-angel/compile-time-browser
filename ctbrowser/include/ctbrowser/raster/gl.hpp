@@ -278,9 +278,6 @@ public:
     [[nodiscard]] bool read_pixels(paint::bitmap & into) const;
 
 private:
-    // Prints the pipeline state of the FIRST draw under CTBROWSER_GL_DEBUG.
-    void note_first_draw();
-
     struct impl;
     std::unique_ptr<impl> impl_;
 };

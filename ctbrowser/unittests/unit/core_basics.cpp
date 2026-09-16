@@ -109,9 +109,9 @@ void test_stale_handle_does_not_resolve() {
     CHECK_EQ(*s.get(second), std::string{"second"});
 }
 
-void test_slab_grows_past_a_chunk() {
+void test_slab_grows_past_a_block() {
     slab<int, thing_tag> s;
-    constexpr int n = 2 * static_cast<int>(decltype(s)::chunk_size) + 1; // spans three chunks
+    constexpr int n = 100'000; // far past any deque block, so growth really happened
     std::vector<thing_id> ids;
     for (int i = 0; i < n; ++i) { ids.push_back(s.insert(i)); }
     CHECK_EQ(s.size(), static_cast<std::size_t>(n));
@@ -119,32 +119,6 @@ void test_slab_grows_past_a_chunk() {
         const int * v = s.get(ids[static_cast<std::size_t>(i)]);
         CHECK(v != nullptr && *v == i); // every handle still resolves after growth
     }
-}
-
-void test_slab_capacity_and_reuse() {
-    slab<std::uint8_t, thing_tag> s;
-    constexpr std::size_t limit = decltype(s)::max_chunks * decltype(s)::chunk_size;
-    const thing_id first = s.insert(std::uint8_t{7});
-    thing_id last = first;
-    for (std::size_t i = 1; i < limit; ++i) { last = s.insert(std::uint8_t{9}); }
-    CHECK_EQ(s.size(), limit);
-    CHECK_EQ(last.slot, limit - 1);
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        bool refused = false;
-        try {
-            (void)s.insert(std::uint8_t{11});
-        } catch (const std::length_error &) { refused = true; }
-        CHECK(refused);
-        CHECK_EQ(s.size(), limit);
-        CHECK_EQ(*s.get(last), 9u);
-    }
-    CHECK(s.erase(first));
-    const thing_id reused = s.insert(std::uint8_t{13});
-    CHECK_EQ(reused.slot, first.slot);
-    CHECK(reused.generation != first.generation);
-    CHECK(s.get(first) == nullptr);
-    CHECK_EQ(*s.get(reused), 13u);
-    CHECK_EQ(s.size(), limit);
 }
 
 void test_slab_construction_failure_reuses_slot() {
@@ -391,8 +365,7 @@ int main() {
     test_handle();
     test_slab_basics();
     test_stale_handle_does_not_resolve();
-    test_slab_grows_past_a_chunk();
-    test_slab_capacity_and_reuse();
+    test_slab_grows_past_a_block();
     test_slab_construction_failure_reuses_slot();
     test_atoms();
     test_geometry();

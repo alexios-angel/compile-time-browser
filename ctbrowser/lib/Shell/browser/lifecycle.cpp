@@ -153,9 +153,8 @@ bool browser::use_real_fonts(std::string_view directory) {
         resolved = default_font_directory();
         directory = resolved;
     }
-#if CTBROWSER_WITH_TTF
-    auto backend = std::make_unique<ctbrowser::raster::ttf_backend>();
-    if (!backend->ok()) { return false; }
+    std::unique_ptr<ctbrowser::raster::ttf_backend> backend = ctbrowser::raster::make_ttf_backend();
+    if (!backend) { return false; }
     // The baked-in faces first, if this build has any. They go into the same
     // registry the loop below reads, under the same names, so nothing after
     // this point knows or cares whether a face came from the binary or the
@@ -196,10 +195,6 @@ bool browser::use_real_fonts(std::string_view directory) {
     // Everything measured so far was measured with the other font.
     mark(dirty::everything);
     return true;
-#else
-    (void)directory;
-    return false;
-#endif
 }
 
 void browser::allow_network(bool allowed) {

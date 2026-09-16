@@ -1614,11 +1614,9 @@ private:
     // Null means font8x8, which is always available and always identical - so a
     // build with no font files still renders and its goldens still compare.
     const ctbrowser::raster::font_backend * fonts_ = nullptr;
-#if CTBROWSER_WITH_TTF
     // Owned so its glyph cache outlives any one frame; the renderer only
-    // borrows it.
+    // borrows it. Null in a build without SDL3_ttf.
     std::unique_ptr<ctbrowser::raster::ttf_backend> ttf_;
-#endif
     std::vector<std::pair<std::string, script::native_fn>> embedder_natives_;
     asset_registry assets_;
     image_store images_;

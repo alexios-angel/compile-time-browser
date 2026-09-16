@@ -13,58 +13,22 @@ namespace ctbrowser::raster::gl {
 
 #if CTBROWSER_WITH_ANGLE
 
-// WHAT STATE THE FIRST DRAW WAS MADE IN, once, under CTBROWSER_GL_DEBUG.
-//
-// "The picture is wrong but GL reported nothing" is almost always pipeline
-// state, and every one of those facts is a glGetIntegerv away - but only if
-// somebody asks. Nobody did, and the p5 WEBGL page differed from its golden by
-// exactly one such fact for a whole session.
-void device::note_first_draw() {
-    if (impl_->announced_draw) { return; }
-    const char * want = std::getenv("CTBROWSER_GL_DEBUG");
-    if (want == nullptr || std::string_view{want} == "0") { return; }
-    impl_->announced_draw = true;
-
-    GLint bits = 0;
-    GLint func = 0;
-    GLint write = 0;
-    GLint framebuffer = 0;
-    GLint program = 0;
-    GLint array = 0;
-    glGetIntegerv(GL_DEPTH_BITS, &bits);
-    glGetIntegerv(GL_DEPTH_FUNC, &func);
-    glGetIntegerv(GL_DEPTH_WRITEMASK, &write);
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
-    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &array);
-    std::fprintf(stderr,
-                 "[draw] depth: test=%d bits=%d func=0x%04X write=%d | blend=%d cull=%d | "
-                 "framebuffer=%d program=%d vao=%d\n",
-                 static_cast<int>(glIsEnabled(GL_DEPTH_TEST)), bits, static_cast<unsigned>(func),
-                 write, static_cast<int>(glIsEnabled(GL_BLEND)),
-                 static_cast<int>(glIsEnabled(GL_CULL_FACE)), framebuffer, program, array);
-}
-
 void device::draw_arrays(int mode, int first, int count) {
-    note_first_draw();
     if (ok()) { glDrawArrays(static_cast<GLenum>(mode), first, count); }
 }
 
 void device::draw_elements(int mode, int count, int type, std::size_t offset) {
-    note_first_draw();
     if (!ok()) { return; }
     glDrawElements(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
                    reinterpret_cast<const void *>(offset));
 }
 
 void device::draw_arrays_instanced(int mode, int first, int count, int instances) {
-    note_first_draw();
     if (ok()) { glDrawArraysInstanced(static_cast<GLenum>(mode), first, count, instances); }
 }
 
 void device::draw_elements_instanced(int mode, int count, int type, std::size_t offset,
                                      int instances) {
-    note_first_draw();
     if (!ok()) { return; }
     glDrawElementsInstanced(static_cast<GLenum>(mode), count, static_cast<GLenum>(type),
                             reinterpret_cast<const void *>(offset), instances);
