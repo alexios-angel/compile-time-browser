@@ -383,6 +383,7 @@ private:
                 r.condition = condition_;
                 r.layer = layer_;
                 r.scope = scope_;
+                r.container = container_;
                 sheet_.rules.push_back(r);
             } else if (context_.in_scope) {
                 // Bare declarations directly inside `@scope` style the
@@ -396,6 +397,7 @@ private:
                 r.condition = condition_;
                 r.layer = layer_;
                 r.scope = scope_;
+                r.container = container_;
                 sheet_.rules.push_back(r);
             }
             run_first = now;
@@ -475,6 +477,12 @@ private:
             i = open + 1;
         }
         flush();
+    }
+
+    // The token at a run's front, when the front IS a single token.
+    [[nodiscard]] const css_token * token_at(std::span<const component_value> run) const {
+        if (run.empty() || run.front().kind != cv_kind::token) { return nullptr; }
+        return &sheet_.tokens[run.front().token];
     }
 
     // The text of a run of component values: every token's text, joined.
@@ -619,6 +627,28 @@ private:
             return;
         }
         case at_kind::scope: scope_block_of(prelude, block); return;
+        case at_kind::container: {
+            // `[<container-name>]? <container-condition>`: a leading identifier
+            // that is not `not`/`and`/`or` is the name; the rest is the
+            // condition, kept as text for the engine. No condition is no rule.
+            auto run = sheet_.trimmed(prelude);
+            container_condition made;
+            made.parent = container_;
+            const css_token * first = token_at(run);
+            if (first != nullptr && first->type == token_type::ident &&
+                !ascii_iequals_any(text(*first), {"not", "and", "or"})) {
+                made.name = std::string{text(*first)};
+                run = sheet_.trimmed(run.subspan(1));
+            }
+            if (run.empty()) { return; }
+            made.condition = text_of_run(run);
+            sheet_.containers.push_back(std::move(made));
+            const std::uint32_t saved =
+                std::exchange(container_, static_cast<std::uint32_t>(sheet_.containers.size()));
+            grouped();
+            container_ = saved;
+            return;
+        }
         case at_kind::media_like: grouped(); return;
         case at_kind::font_face: {
             const std::uint32_t first = static_cast<std::uint32_t>(sheet_.declarations.size());
@@ -646,13 +676,11 @@ private:
             (kind == at_kind::property ? sheet_.properties : sheet_.functions).push_back(r);
             return;
         }
-        case at_kind::container:
         case at_kind::statement:
         case at_kind::skip:
-            // @keyframes, @page, @container, @starting-style, ... Their block
-            // is discarded. @keyframes is CAPTURED by a later rung - nothing
-            // reads it today. @container needs layout, which is the engine's
-            // rung, and until it asks its rules do not apply.
+            // @keyframes, @page, @starting-style, ... Their block is
+            // discarded. @keyframes is CAPTURED by a later rung - nothing
+            // reads it today.
             return;
         }
     }
@@ -1074,6 +1102,8 @@ private:
     // `:where(:scope)` selector its bare declarations file under.
     std::uint32_t scope_ = 0;
     std::uint32_t scope_root_selector_ = 0;
+    // The `@container` a rule sits inside, 0 for none.
+    std::uint32_t container_ = 0;
     // The enclosing style rule, for nesting - see block_context.
     block_context context_;
     // Whether the sheet's leading run of `@charset` / `@layer x;` / `@import`

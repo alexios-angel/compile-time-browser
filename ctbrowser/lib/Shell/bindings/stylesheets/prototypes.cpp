@@ -851,7 +851,15 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                            !ascii_iequals(first, "and") && !ascii_iequals(first, "or");
         if (want_name) { return c.string(named ? std::string{first} : std::string{}); }
         const std::string_view whole = rule->prelude;
-        return c.string(collapse_whitespace(named ? whole.substr(at) : whole, html_whitespace));
+        std::string query = collapse_whitespace(named ? whole.substr(at) : whole, html_whitespace);
+        // The one function a container condition has is spelled lowercase,
+        // as cq-testcommon.js's feature probe reads it back.
+        for (std::size_t k = 0; k + 6 <= query.size(); ++k) {
+            if (ascii_iequals(std::string_view{query}.substr(k, 6), "style(")) {
+                query.replace(k, 6, "style(");
+            }
+        }
+        return c.string(query);
     };
     define_getter(
         cx, *container_proto, "containerName",

@@ -62,6 +62,15 @@ void engine::clear_origin(std::uint8_t origin) {
         layer_rank_.assign(1, 0xFFFFFFFFu);
     }
     if (!scoped) { scopes_.assign(1, scope_entry{}); }
+    bool contained = false;
+    const auto scan_containers = [&](const std::vector<rule> & rules) {
+        for (const rule & r : rules) { contained = contained || r.container != 0; }
+    };
+    for (const auto & [key, rules] : index_.by_id) { scan_containers(rules); }
+    for (const auto & [key, rules] : index_.by_class) { scan_containers(rules); }
+    for (const auto & [key, rules] : index_.by_tag) { scan_containers(rules); }
+    scan_containers(index_.universal);
+    if (!contained) { containers_.assign(1, css::container_condition{}); }
     // A sheet's @function rules go with its other rules; a registration does not.
     erase_if(functions_, [origin](const auto & entry) { return entry.second.origin == origin; });
     // The @font-face list is not indexed by origin and is not cleared: a face is
@@ -401,6 +410,15 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         scope_map[i + 1] = static_cast<std::uint16_t>(scopes_.size() - 1);
     }
 
+    // ...AND ITS `@container` CONDITIONS, appended with their nesting remapped.
+    std::vector<std::uint16_t> container_map(sheet.containers.size() + 1, 0);
+    for (std::size_t i = 0; i < sheet.containers.size(); ++i) {
+        css::container_condition made = sheet.containers[i];
+        made.parent = container_map[made.parent];
+        containers_.push_back(std::move(made));
+        container_map[i + 1] = static_cast<std::uint16_t>(containers_.size() - 1);
+    }
+
     // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
     // declaration): the push is outside the declaration loop, and a selector
     // that can never match is never pushed.
@@ -425,6 +443,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
                 filed.condition = engine_condition(r.condition);
                 filed.layer = layer_map[r.layer];
                 filed.scope = scope_map[r.scope];
+                filed.container = container_map[r.container];
                 filed.origin = origin;
                 filed.important = d.important;
                 index_.add(selectors_[sel_index], filed);
@@ -525,6 +544,62 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
               }});
     scope_ = node_id{};
     return found;
+}
+
+bool engine::container_holds(const read_txn & /*txn*/, std::uint16_t c, std::size_t depth) {
+    const atom type_key = atoms_->intern_lower("container-type");
+    const atom name_key = atoms_->intern_lower("container-name");
+    for (; c != 0; c = static_cast<std::uint16_t>(containers_[c].parent)) {
+        const css::container_condition & e = containers_[c];
+        // A size query needs a size container; a `style()`-only query takes
+        // any ancestor (CSS Containment 3 §5.1).
+        const bool wants_size = e.condition.find('(') != std::string::npos &&
+                                e.condition.find("style(") == std::string::npos;
+        bool held = false;
+        for (std::size_t d = depth; d-- > 0;) {
+            if (d >= chain_styles_.size() || !chain_styles_[d]) { continue; }
+            const computed_style_ptr & style = chain_styles_[d];
+            if (!e.name.empty()) {
+                bool named = false;
+                for (const std::string_view n : split_top_level(style->get(name_key), " \t\n")) {
+                    if (n == e.name) { named = true; }
+                }
+                if (!named) { continue; }
+            }
+            css::media_environment env = environment_;
+            if (wants_size) {
+                const std::string_view type = style->get(type_key);
+                const bool sized = type.find("size") != std::string_view::npos;
+                if (!sized) { continue; }
+                const std::optional<container_size> box =
+                    container_size_ ? container_size_(levels_[d][path_[d]].node) : std::nullopt;
+                if (!box) { return false; }
+                env.viewport_width = box->width;
+                env.viewport_height = box->height;
+            }
+            // `style(--x: y)`: the container's computed value of the property
+            // against the query's, as text (custom properties are token
+            // streams, CSS Containment 3 §5.3); `style(--x)` alone asks whether
+            // it has a value other than the guaranteed-invalid one.
+            const css::style_query query = [&](std::string_view text) {
+                const std::size_t colon = text.find(':');
+                const std::string_view name = trim(text.substr(0, colon), html_whitespace);
+                if (name.empty()) { return css::truth::unknown; }
+                const std::string_view have = style->get(atoms_->intern(name));
+                if (colon == std::string_view::npos) {
+                    return !have.empty() && have != guaranteed_invalid ? css::truth::yes
+                                                                       : css::truth::no;
+                }
+                const std::string_view want = trim(text.substr(colon + 1), html_whitespace);
+                return trim(have, html_whitespace) == want ? css::truth::yes : css::truth::no;
+            };
+            held = css::evaluate_container_condition(e.condition, env, query)
+                       .value_or(css::truth::unknown) == css::truth::yes;
+            break; // the nearest eligible container decides, §5.1
+        }
+        if (!held) { return false; }
+    }
+    return true;
 }
 
 // THE DOCUMENT ELEMENT HAS NO SIBLINGS. Depth 0 is entered from the root
@@ -1938,6 +2013,8 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
 
     const computed_style_ptr resolved = resolve(txn, node, self, ancestors, depth, parent);
     out[key_of(node)] = resolved;
+    if (chain_styles_.size() <= depth) { chain_styles_.resize(depth + 1); }
+    chain_styles_[depth] = resolved;
 
     // The tag, id and classes are read from the stored facts rather than from
     // `self`, because resolve() may have grown levels_ and reallocated it.

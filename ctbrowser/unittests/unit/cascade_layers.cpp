@@ -168,6 +168,29 @@ void test_scope() {
     expect_value(h, ha, "z-index", "3", "& in @scope is the root");
 }
 
+// `@container`: a style query needs no layout; a size query asks the hook
+// for the nearest `container-type: size` ancestor's box, and is unknown -
+// so its rules do not apply - until the browser installs one.
+void test_container_queries() {
+    fixture f;
+    (void)parse_html(f.doc, "<div id=c><div id=n><span>x</span></div></div>");
+    f.styles.add_sheet("#c { container-type: size; container-name: card; --theme: dark } "
+                       "@container style(--theme: dark) { span { color: styled } } "
+                       "@container (width > 300px) { span { z-index: 1 } } "
+                       "@container card (width < 300px) { span { z-index: 2 } } "
+                       "@container other (width > 300px) { span { z-index: 3 } }",
+                       1);
+    f.resolved = f.styles.resolve_all(f.doc.read());
+    const node_id span = f.find("span");
+    expect_value(f, span, "color", "styled", "a style() query against the ancestor");
+    CHECK(f.value_of(span, "z-index").empty()); // no hook: a size query is unknown
+    f.styles.set_container_size([](node_id) {
+        return std::optional<engine::container_size>{engine::container_size{400, 100}};
+    });
+    f.resolved = f.styles.resolve_all(f.doc.read());
+    expect_value(f, span, "z-index", "1", "the sized container's box answers the query");
+}
+
 } // namespace
 
 int main() {
@@ -178,5 +201,6 @@ int main() {
     test_supports_is_decided();
     test_nesting();
     test_scope();
+    test_container_queries();
     REPORT("cascade_layers");
 }

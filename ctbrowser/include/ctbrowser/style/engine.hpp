@@ -214,6 +214,22 @@ public:
         return environment_;
     }
 
+    // THE SIZE OF A QUERY CONTAINER, CSS Containment 3 §5.1 - what an
+    // `@container (width > 400px)` is asked against. Only layout knows it, and
+    // this engine runs before layout, so the browser hands the question in:
+    // the content box of the element as last laid out, or nullopt before any
+    // layout, when every size query is unknown and its rules do not apply.
+    // The browser re-resolves the cascade after a layout that changed a
+    // container's size, which is the style -> layout -> style loop §5 asks
+    // for. Without one installed a size query never matches; `style()`
+    // queries need no layout and are answered here regardless.
+    struct container_size {
+        float width = 0;
+        float height = 0;
+    };
+    using container_size_query = std::function<std::optional<container_size>(node_id)>;
+    void set_container_size(container_size_query query) { container_size_ = std::move(query); }
+
     // SHORTHAND EXPANSION. `margin: 1px 2px` becomes four longhand
     // declarations, emitted in place of the shorthand.
     //
@@ -631,6 +647,7 @@ private:
         // ONE BOOL, before any selector work. A false condition is the cheapest
         // possible rejection and it is checked first for that reason.
         if (!condition_truth_[r.condition]) { return; }
+        if (r.container != 0 && !container_holds(txn, r.container, depth)) { return; }
         if (r.scope == 0) {
             if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
             return;
@@ -659,6 +676,13 @@ private:
     [[nodiscard]] bool scope_root_for(const read_txn & txn, const ancestor_filter & ancestors,
                                       std::uint16_t s, std::size_t depth, bool explicit_scope,
                                       std::size_t & root_depth);
+    // DOES `@container` `c` HOLD for the element at `depth`: the nearest
+    // ancestor that is a query container for the condition's features - any
+    // element for a `style()` query, one with `container-type: size |
+    // inline-size` for a size query - carrying the name if one was asked,
+    // with the condition true of its box and computed style; and the
+    // enclosing `@container`s likewise.
+    [[nodiscard]] bool container_holds(const read_txn & txn, std::uint16_t c, std::size_t depth);
 
     // Everything a compound can require, of the element at (depth, index).
     //
@@ -771,6 +795,15 @@ private:
         std::vector<compiled_selector> limits;
     };
     std::vector<scope_entry> scopes_{scope_entry{}};
+    // THE CONTAINER CONDITIONS, entry 0 none, and the size hook - see
+    // set_container_size.
+    std::vector<css::container_condition> containers_{css::container_condition{}};
+    container_size_query container_size_;
+    // THE STYLES OF THE CHAIN: `chain_styles_[d]` is the resolved style of the
+    // element at depth d of the current traversal, set as resolve_subtree
+    // descends, which is what a container query reads `container-type` and a
+    // `style()` query's property from.
+    std::vector<computed_style_ptr> chain_styles_;
     // THE PSEUDO-ELEMENT BEING RESOLVED, or none: a selector's subject compound
     // must name exactly this one - `#t::before` matches nothing in the ordinary
     // cascade and only `#t::before` matches while resolve_pseudo runs.

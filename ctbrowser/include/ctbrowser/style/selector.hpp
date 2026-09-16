@@ -292,6 +292,8 @@ struct rule {
     std::uint16_t layer = 0;
     // Which `@scope`, as an index into the engine's scope table; 0 is none.
     std::uint16_t scope = 0;
+    // Which `@container`, likewise; 0 is none.
+    std::uint16_t container = 0;
     // HOW FAR THE SCOPING ROOT IS from the element this rule matched, in
     // generations (CSS Cascade 6 §6.3): 0 is the root itself. Filled in when
     // the rule is collected for one element, so it is meaningful only on a

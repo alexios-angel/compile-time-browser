@@ -94,6 +94,8 @@ struct raw_rule {
     // Which `@scope` this rule sits inside: 0 is none, k is
     // stylesheet::scopes[k - 1] (CSS Cascade 6 §3).
     std::uint32_t scope = 0;
+    // Which `@container`: 0 is none, k is stylesheet::containers[k - 1].
+    std::uint32_t container = 0;
 };
 
 // One `@scope (<start>) to (<end>)` block, CSS Cascade 6 §3. The roots and
@@ -198,6 +200,7 @@ struct stylesheet {
     // with `\x01` - unique within this sheet.
     std::vector<std::string> layers;
     std::vector<scope_block> scopes;
+    std::vector<container_condition> containers;
 
     [[nodiscard]] std::string_view text_of(const css_token & t) const noexcept {
         return std::string_view{pool}.substr(t.text, t.length);

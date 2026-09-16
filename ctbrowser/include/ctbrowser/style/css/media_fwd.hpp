@@ -125,4 +125,16 @@ struct media_condition {
     std::vector<media_query> queries;
 };
 
+// One `@container [<name>]? <condition>` (CSS Containment 3 §5): the name
+// the query container must carry, or empty for any, and the condition as
+// text - size features against the container's laid-out box, `style()`
+// against its computed style - read by the engine per element, which is the
+// only place both are known. Nesting is a parent index, as a media
+// condition's is.
+struct container_condition {
+    std::uint32_t parent = 0;
+    std::string name;
+    std::string condition;
+};
+
 } // namespace ctbrowser::style::css

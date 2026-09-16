@@ -108,9 +108,22 @@ constexpr feature_entry feature_table[] = {
      "progressive"},
 };
 
-[[nodiscard]] const feature_entry * entry_of(std::string_view text) {
+// The two a CONTAINER has and a window does not (CSS Containment 3 §5.2):
+// the logical sizes, which read as width and height here since nothing this
+// engine lays out is vertical.
+constexpr feature_entry container_features[] = {
+    {"inline-size", media_feature::name::width, media_feature::kind::length, {}, {}},
+    {"block-size", media_feature::name::height, media_feature::kind::length, {}, {}},
+};
+
+[[nodiscard]] const feature_entry * entry_of(std::string_view text, bool container) {
     for (const feature_entry & e : feature_table) {
         if (ascii_iequals(text, e.name)) { return &e; }
+    }
+    if (container) {
+        for (const feature_entry & e : container_features) {
+            if (ascii_iequals(text, e.name)) { return &e; }
+        }
     }
     return nullptr;
 }
@@ -213,7 +226,7 @@ constexpr feature_entry feature_table[] = {
 //   <mf-range>   = <mf-name> <op> <mf-value> | <mf-value> <op> <mf-name>
 //                | <mf-value> <lt> <mf-name> <lt> <mf-value>  (and the `>` twin)
 [[nodiscard]] std::optional<truth> feature(const token_stream & s, std::size_t from, std::size_t to,
-                                           const media_environment & env) {
+                                           const media_environment & env, bool container = false) {
     std::vector<std::size_t> at; // the significant tokens
     // A FUNCTION IS ONE VALUE: its tokens up to the matching `)` are one
     // entry here, keyed on the function token, so `calc(200vh + 5em)` has
@@ -367,7 +380,7 @@ constexpr feature_entry feature_table[] = {
     // <mf-boolean>: one name.
     if (at.size() == 1) {
         if (!is_name(at[0])) { return std::nullopt; }
-        const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]));
+        const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]), container);
         media_feature f;
         f.which = e == nullptr ? media_feature::name::unknown : e->which;
         f.op = media_feature::compare::boolean;
@@ -378,7 +391,7 @@ constexpr feature_entry feature_table[] = {
         media_feature f;
         std::string_view name = s.text_of(s.tokens[at[0]]);
         f.op = media_feature::compare::equal;
-        const feature_entry * plain = entry_of(name);
+        const feature_entry * plain = entry_of(name, container);
         if (plain == nullptr && ascii_istarts_with(name, "min-")) {
             f.op = media_feature::compare::at_least;
             name.remove_prefix(4);
@@ -386,7 +399,7 @@ constexpr feature_entry feature_table[] = {
             f.op = media_feature::compare::at_most;
             name.remove_prefix(4);
         }
-        const feature_entry * e = entry_of(name);
+        const feature_entry * e = entry_of(name, container);
         f.which = e == nullptr ? media_feature::name::unknown : e->which;
         written w = written::other;
         const std::size_t took = value_at(2, f, w);
@@ -405,7 +418,7 @@ constexpr feature_entry feature_table[] = {
         // name op value
         const std::size_t took = operator_at(1, op1);
         if (took == 0) { return std::nullopt; }
-        const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]));
+        const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]), container);
         media_feature f;
         f.which = e == nullptr ? media_feature::name::unknown : e->which;
         f.op = op1;
@@ -424,7 +437,7 @@ constexpr feature_entry feature_table[] = {
     if (took == 0 || at.size() < vtook + took + 1 || !is_name(at[vtook + took])) {
         return std::nullopt;
     }
-    const feature_entry * e = entry_of(s.text_of(s.tokens[at[vtook + took]]));
+    const feature_entry * e = entry_of(s.text_of(s.tokens[at[vtook + took]]), container);
     f.which = e == nullptr ? media_feature::name::unknown : e->which;
     f.op = flipped(op1); // `400px < width` is `width > 400px`
     if (at.size() == vtook + took + 1) {
@@ -624,6 +637,24 @@ bool evaluate(std::span<const media_query> queries, const media_environment & en
         if (query_holds(q, env)) { return true; } // a comma list is an OR
     }
     return false;
+}
+
+std::optional<truth> evaluate_container_condition(std::string_view text,
+                                                  const media_environment & env,
+                                                  const style_query & query) {
+    const token_stream s = tokenize(text);
+    const std::size_t end = s.tokens.size() - 1;
+    // `style(<query>)` is the one function a container condition has (CSS
+    // Containment 3 §5.3); the query is handed over as text, since only the
+    // engine holds the container's computed style.
+    const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (!ascii_iequals(name, "style")) { return truth::unknown; }
+        return query(trim(slice(s, a, b), html_whitespace));
+    };
+    const auto enclosed = [&](std::size_t a, std::size_t b) {
+        return feature(s, a, b, env, true).value_or(truth::unknown);
+    };
+    return boolean_expression(s, 0, end, test, enclosed);
 }
 
 std::optional<bool> evaluate_media_condition(std::string_view text, const media_environment & env) {
