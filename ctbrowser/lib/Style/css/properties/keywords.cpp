@@ -449,6 +449,33 @@ constexpr string_grammar string_grammars[] = {
     return only ? out + " only" : out;
 }
 
+// `normal | italic | oblique <angle>?` (CSS Fonts 4 §font-style). A zero angle
+// IS `normal` - `oblique 0deg` and `normal` are the same style and serialise
+// the same way - and an angle written in grad or rad keeps its unit, because
+// only a math function is simplified.
+[[nodiscard]] std::optional<std::string> font_style(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty() || ts.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
+    const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[at[0]]));
+    if (at.size() == 1) {
+        if (word != "normal" && word != "italic" && word != "oblique") { return std::nullopt; }
+        return word;
+    }
+    if (word != "oblique") { return std::nullopt; }
+    const css_token & t = ts.tokens[at[1]];
+    if (t.type == token_type::function) {
+        std::size_t k = 1;
+        const std::optional<std::string> math = math_component(ts, found, k, numeric_type::angle);
+        if (!math || k + 1 != at.size()) { return std::nullopt; }
+        return "oblique " + *math;
+    }
+    if (at.size() != 2 || t.type != token_type::dimension) { return std::nullopt; }
+    const std::string_view unit = ts.unit_of(t);
+    if (!ascii_iequals_any(unit, {"deg", "grad", "rad", "turn"})) { return std::nullopt; }
+    if (t.number == 0) { return "normal"; }
+    return "oblique " + serialize_number(t.number) + ascii_lower_copy(unit);
+}
+
 // `[ a | b | ... ]{1,2}`, the pair written once when both words are the same
 // (`border-image-repeat: space space` is `space`, CSS Backgrounds 3 §6.4).
 struct pair_grammar {
@@ -765,6 +792,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         const std::optional<std::vector<std::string>> words = words_of(ts, found);
         if (words) { answer = keyword_pair(g, *words); }
+    }
+    if (!handled && ascii_iequals(property, "font-style")) {
+        handled = true;
+        answer = font_style(ts, found);
     }
     if (!handled && ascii_iequals(property, "text-combine-upright")) {
         handled = true;

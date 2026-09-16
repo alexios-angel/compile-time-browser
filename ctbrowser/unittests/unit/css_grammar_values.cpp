@@ -355,6 +355,10 @@ void test_filters() {
 void test_module_longhands() {
     ok("continue", "discard", "discard");
     ok("word-break", "auto-phrase", "auto-phrase");
+    ok("font-style", "oblique 10grad", "oblique 10grad");
+    ok("font-style", "oblique 0deg", "normal");
+    bad("font-style", "italic oblique");
+    bad("font-style", "auto");
     ok("unicode-bidi", "isolate", "isolate");
     bad("unicode-bidi", "isolate plaintext");
     ok("border-image-repeat", "space space", "space");
