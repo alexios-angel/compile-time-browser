@@ -475,8 +475,18 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(original, "%index = %zero", "%index = %p"));
     reject("a structured zero step does not prove termination",
            replace(original, "binary_static add %i, %one", "binary_static add %i, %zero"));
-    reject("a structured dynamic step does not borrow static Number induction",
-           replace(original, "binary_static add %i, %one", "binary add %i, %one"));
+    const auto dynamic = replace(original, "binary_static add %i, %one", "binary add %i, %one");
+    rows.push_back({.what = "structured dynamic Add retains the exact returned child",
+                    .body = dynamic,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject("structured dynamic Add cannot concatenate a String stride",
+           replace(dynamic, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"));
+    reject("structured dynamic Add cannot borrow an unknown stride",
+           replace(dynamic, "binary add %i, %one", "binary add %i, %p"));
+    reject("structured dynamic Add still excludes zero strides",
+           replace(dynamic, "binary add %i, %one", "binary add %i, %zero"));
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
     reject("a structured array backedge must preserve its certified formal",

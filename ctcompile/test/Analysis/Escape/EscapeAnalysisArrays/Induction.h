@@ -541,8 +541,30 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    "add %i, %one", "add %i, %big"));
     reject("an unknown update cannot reuse the previous iteration's exact index",
            replace(original, "^header(%base, %step, %added", "^header(%base, %p, %added"));
-    reject("a dynamic Add update has no static Number induction certificate",
-           replace(original, "binary_static add %i, %one", "binary add %i, %one"));
+    for (const std::string & source : {savedChild, reversed, negated, negatedReversed}) {
+        const auto dynamic = replace(source, "binary_static add %i, %one", "binary add %i, %one");
+        run({.what = "dynamic Add retains a returned child under exact Number induction",
+             .body = dynamic,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "dynamic Add releases children only after complete bounded replay",
+             .body = replace(dynamic, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    const auto dynamic = replace(original, "binary_static add %i, %one", "binary add %i, %one");
+    for (const std::string constant : {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
+                                       "#ctjs.number<0>", "#ctjs.number<9221120237041090560>"}) {
+        reject("dynamic Add requires a bounded positive Number stride",
+               replace(dynamic, "#ctjs.number<4607182418800017408>", constant));
+    }
+    reject("dynamic Add cannot concatenate its String initialization",
+           replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
+    reject("a dynamic subtract latch cannot borrow the Add proof",
+           replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",

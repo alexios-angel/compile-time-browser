@@ -1062,15 +1062,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!argument || argument.getOwner() != body) { return {}; }
             return intoBody[argument.getArgNumber()];
         };
-        auto step = backedge[index.getArgNumber()].getDefiningOp<ctjs::BinaryStaticOp>();
-        if (!step || step->getBlock() != body || step.getKind() != ctjs::BinaryKind::Add ||
-            fromHeader(step.getLhs()) != index ||
+        auto * step = backedge[index.getArgNumber()].getDefiningOp();
+        auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
+        auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
+        if ((!dynamic && !numeric) || step->getBlock() != body ||
+            (dynamic ? dynamic.getKind() : numeric.getKind()) != ctjs::BinaryKind::Add ||
+            fromHeader(step->getOperand(0)) != index ||
             (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
         }
         // A held positive step must survive every backedge unchanged. Read a body
         // formal through its actual header operand before the body has executed.
-        mlir::Value increment = step.getRhs();
+        // Both Add forms use the same exact Number proof below. A String or
+        // unknown operand cannot borrow the numeric opcode's certificate.
+        mlir::Value increment = step->getOperand(1);
         if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
         if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(increment);
