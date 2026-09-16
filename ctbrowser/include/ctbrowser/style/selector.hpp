@@ -141,6 +141,15 @@ inline constexpr std::uint32_t structural_link = 1u << 11;
 inline constexpr std::uint32_t structural_visited = 1u << 12;
 // `:scope` - the query's root, or `:root` when there is none. See engine::scope_.
 inline constexpr std::uint32_t structural_scope = 1u << 13;
+// `:defined` - HTML §4.13.4. An element whose custom element state is neither
+// "undefined" nor "failed": every built-in (uncustomized) element, and every
+// custom element that has been upgraded. The matcher answers the honest subset
+// it can see from the tree alone - a built-in HTML element, a non-HTML element,
+// and NOT a potential custom element name (autonomous) or an `is=` customized
+// built-in - because the custom element registry lives in the shell and the
+// style matcher is not told which names were defined. An upgraded custom
+// element is thus wrongly not `:defined`; see the engine's is_defined comment.
+inline constexpr std::uint32_t structural_defined = 1u << 14;
 
 struct compiled_selector;
 

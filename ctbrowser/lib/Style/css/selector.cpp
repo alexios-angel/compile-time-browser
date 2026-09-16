@@ -51,6 +51,9 @@ namespace {
     if (ascii_iequals(name, "link") || ascii_iequals(name, "any-link")) { return structural_link; }
     if (ascii_iequals(name, "visited")) { return structural_visited; }
     if (ascii_iequals(name, "scope")) { return structural_scope; }
+    // `:defined` is answered from the element's name and namespace - a built-in is
+    // always defined - so it belongs here rather than in the state bits nothing sets.
+    if (ascii_iequals(name, "defined")) { return structural_defined; }
     return 0;
 }
 

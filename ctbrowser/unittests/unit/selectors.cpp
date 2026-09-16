@@ -415,6 +415,46 @@ void test_lang_and_dir() {
 
 } // namespace
 
+// --- `:defined`, the honest subset the style matcher can see ----------------
+//
+// A built-in element and a non-HTML element are always defined; a name that is a
+// potential custom element (autonomous) or a customized built-in `is=` naming one
+// is undefined until the shell's registry upgrades it, which this layer cannot
+// see. Every element the parser makes here is un-upgraded, so a custom name reads
+// as :not(:defined) and everything else as :defined.
+constexpr const char * defined_html = R"(<html><body>
+<div id=d1>built-in</div>
+<font-face id=ff>reserved, not a custom name</font-face>
+<my-el id=me>autonomous custom name</my-el>
+<a-a id=aa>another custom name</a-a>
+<button id=cb is="my-button">customized built-in</button>
+</body></html>)";
+
+void test_defined() {
+    // Built-ins and reserved SVG/MathML names are defined; `font-face` is on the
+    // list HTML §4.13.2 forbids as a custom element name, so it is a plain element.
+    is_in(defined_html, "document.getElementById('d1').matches(':defined')", "true");
+    is_in(defined_html, "document.getElementById('ff').matches(':defined')", "true");
+    // A potential custom element name is undefined until upgraded, and nothing
+    // upgraded it here.
+    is_in(defined_html, "document.getElementById('me').matches(':defined')", "false");
+    is_in(defined_html, "document.getElementById('me').matches(':not(:defined)')", "true");
+    is_in(defined_html, "document.getElementById('aa').matches(':defined')", "false");
+    // A customized built-in whose `is=` names a custom element is undefined too.
+    is_in(defined_html, "document.getElementById('cb').matches(':defined')", "false");
+    // The query form agrees with matches(), and the built-ins carry the two helper
+    // <script>s and <html>/<head>/<body> with them - so this asks about the ones
+    // the page names rather than counting the tree builder's own elements.
+    is_in(defined_html,
+          "[].map.call(document.querySelectorAll(':defined'), function (e) { return e.id; })"
+          ".filter(function (s) { return s; }).join(',')",
+          "d1,ff");
+    is_in(defined_html,
+          "[].map.call(document.querySelectorAll(':not(:defined)'), function (e) "
+          "{ return e.id; }).filter(function (s) { return s; }).join(',')",
+          "me,aa,cb");
+}
+
 int main() {
     test_the_compound_selectors_still_work();
     test_the_four_combinators();
@@ -425,5 +465,6 @@ int main() {
     test_a_detached_element_matches_against_itself();
     test_syntax_errors_and_the_selectors_that_are_merely_unsupported();
     test_lang_and_dir();
+    test_defined();
     REPORT("selectors");
 }
