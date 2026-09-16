@@ -124,6 +124,26 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // store nothing.
     if (text.empty()) { return {}; }
 
+    // A BLOCK EOF CLOSED IS CLOSED (CSS Syntax 3 §consume a component value).
+    // The tokenizer closes it, so `scale: calc(sin(pi * sibling-index())` - one
+    // paren short as written - is a perfectly good value; but every grammar
+    // below reads the AUTHOR'S text through the token stream's pool, which is
+    // the text as written, so `calc/` saw an unterminated function and called
+    // the whole declaration a syntax error. The closers go on FIRST and the
+    // value is read once, closed: seventeen assertions of css-values'
+    // sin-cos-tan-computed and minmax-angle-computed are that shape, and the
+    // serialisations below no longer have to append them by hand.
+    std::string closed;
+    {
+        const token_stream probe = tokenize(text);
+        const scan probed = scan_tokens(probe);
+        if (probed.unclosed > 0) {
+            closed = std::string{text};
+            closed.append(static_cast<std::size_t>(probed.unclosed), ')');
+            text = closed;
+        }
+    }
+
     const token_stream ts = tokenize(text);
     const scan found = scan_tokens(ts);
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
@@ -153,18 +173,6 @@ value_check check_declaration(std::string_view property, std::string_view value,
     std::string normalized = normalize_value_tokens(ts, text, &bad_url);
     if (bad_url) { return {}; }
     normalized.append(static_cast<std::size_t>(found.unclosed), ')');
-    // A BLOCK EOF CLOSED IS CLOSED (CSS Syntax 3 §consume a component value):
-    // the tokenizer closes it, `verbatim` and `normalized` above write the
-    // closers out, and everything below that reads the AUTHOR'S text has to see
-    // them too. `scale: calc(sin(pi * sibling-index())` is one paren short as
-    // written and a perfectly good value once tokenized, and sin-cos-tan-computed
-    // and minmax-angle-computed are seventeen assertions of exactly that shape.
-    std::string closed;
-    if (found.unclosed > 0) {
-        closed = std::string{text};
-        closed.append(static_cast<std::size_t>(found.unclosed), ')');
-        text = closed;
-    }
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.
