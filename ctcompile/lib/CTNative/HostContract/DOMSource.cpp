@@ -1141,12 +1141,22 @@ struct DOMSource {
                 } else {
                     values.insert(operation.getResults().begin(), operation.getResults().end());
                 }
-                // Callable/capture scheduling still requires a single source
-                // block. Fresh data objects remain for the complete DOM proof.
+                // A capture-free filter callback stays in its selected source
+                // arm. Other callable/capture scheduling still requires the
+                // entry block; repeated loop-local identities are not proved.
                 auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
-                if (depth && (llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp>(operation) ||
-                              (object && !dataObject(object)))) {
-                    return refuse("DOM helper branch contains an unproved local identity");
+                if (depth) {
+                    auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+                    auto target =
+                        closure && closure.getFunction() >= 0
+                            ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
+                            : ctjs::FuncOp{};
+                    if ((closure && (!target || closure->getParentOfType<mlir::scf::WhileOp>() ||
+                                     !confinedFilterCallback(closure, target))) ||
+                        llvm::isa<ctjs::CreateCellOp>(operation) ||
+                        (object && !dataObject(object))) {
+                        return refuse("DOM helper branch contains an unproved local identity");
+                    }
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
                     if (closure.getFunctionAttr().getInt() < 0 ||
@@ -1199,6 +1209,18 @@ struct DOMSource {
             if (!step()) { return false; }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
                 closures.push_back(closure);
+            }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                const auto collected =
+                    branch.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * nested) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        if (llvm::isa<ctjs::InvokeOp>(nested)) { return mlir::WalkResult::skip(); }
+                        if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(nested)) {
+                            closures.push_back(closure);
+                        }
+                        return mlir::WalkResult::advance();
+                    });
+                if (collected.wasInterrupted()) { return false; }
             }
             if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(operation)) {
                 localCells.push_back(cell);

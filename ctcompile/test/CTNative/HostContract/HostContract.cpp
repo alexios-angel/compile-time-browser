@@ -6,6 +6,7 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
+#include "DOMBranchFilter.h"
 #include "DOMDataset.h"
 #include "DOMIteration.h"
 #include "DOMJSON.h"
@@ -844,6 +845,7 @@ int main() {
     checkDOMEntry(context);
     checkDOMNumbers(context);
     checkDOMDataset(context);
+    checkDOMBranchFilter(context);
     checkDOMIteration(context);
     checkDOMURI(context);
     checkDOMJSON(context);
