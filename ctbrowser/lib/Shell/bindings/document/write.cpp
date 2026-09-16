@@ -82,6 +82,14 @@ parse_result dom_bindings::parse_document(std::string_view html) {
 // browser's runner (a classic script) or, for a module, its loader.
 void dom_bindings::prepare_parser_script(node_id script) {
     if (parser_ == nullptr || parser_->aborted()) { return; }
+    // 13.2.6.4.8 step 8: WHAT THE PARSER BUILT IS ANNOUNCED, THEN A
+    // MICROTASK CHECKPOINT, THEN THE SCRIPT IS PREPARED - so a mutation
+    // observer's callback sees the <script> before it runs and may change its
+    // type (microtask_before_prepare_the_script_element-01.html does exactly
+    // that). The checkpoint is only performed when no script is on the stack;
+    // inside a written script it waits for that script's end.
+    mutated();
+    if (cx_ != nullptr && cx_->current_stack().empty()) { cx_->drain_microtasks(); }
     const atom src_name = atoms_->intern("src");
     const bool svg = doc_->read().element_ns(script) == node_ns::svg;
     parser_script prepared{script, {}, {}, false};
@@ -194,10 +202,6 @@ void dom_bindings::prepare_parser_script(node_id script) {
     }
     if (!run_script_) { return; }
     const bool external = !src.empty();
-    // WHAT THE PARSER BUILT SINCE THE LAST SCRIPT IS ANNOUNCED FIRST: the
-    // mutation records an observer is owed, the custom elements a definition
-    // upgrades, the browser's restyle. The script is about to look.
-    mutated();
     if (!run_script_(prepared)) {
         parser_->abort();
         return;
