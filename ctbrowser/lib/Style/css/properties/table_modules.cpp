@@ -233,7 +233,7 @@ constexpr property_syntax modules[] = {
     {"text-combine-upright", k::freeform, "", "none", true, false},
     {"text-orientation", k::keyword_only, "mixed upright sideways", "mixed", true, false},
     {"text-decoration-skip-ink", k::keyword_only, "auto none all", "auto", true, false},
-    {"text-underline-position", k::freeform, "", "auto", true, false},
+    {"text-underline-position", k::freeform, "", "auto", true, false}, // keywords.cpp
     {"text-emphasis", k::freeform, "", "none currentcolor", true, false, true},
     {"text-emphasis-style", k::freeform, "", "none", true, false},
     {"text-emphasis-color", k::color, "", "currentcolor", true, false},

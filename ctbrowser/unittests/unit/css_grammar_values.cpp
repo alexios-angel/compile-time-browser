@@ -166,6 +166,38 @@ void test_grid() {
     CHECK(!set_declaration(block, "grid-area", "auto / auto / auto / auto / auto", false));
 }
 
+void test_keyword_combinations() {
+    ok("text-decoration-line", "overline underline", "underline overline");
+    ok("text-decoration-line", "blink line-through", "line-through blink");
+    ok("text-decoration-line", "spelling-error", "spelling-error");
+    bad("text-decoration-line", "none underline");
+    bad("text-decoration-line", "underline underline");
+    bad("text-decoration-line", "spelling-error overline");
+    ok("text-transform", "full-width capitalize", "capitalize full-width");
+    ok("contain", "size style layout paint", "strict");
+    ok("contain", "style layout paint", "content");
+    ok("contain", "paint layout", "layout paint");
+    bad("contain", "size inline-size");
+    ok("font-variant-numeric", "slashed-zero ordinal", "ordinal slashed-zero");
+    ok("text-underline-position", "left under", "under left");
+    ok("hanging-punctuation", "allow-end first", "allow-end first");
+    bad("hanging-punctuation", "none first");
+    ok("counter-reset", "foo", "foo 0");
+    ok("counter-increment", "foo 2 bar", "foo 2 bar 1");
+    ok("counter-reset", "reversed(foo) 3", "reversed(foo) 3");
+    ok("counter-set", "foo calc(1.6)", "foo 2");
+    bad("counter-reset", "none foo");
+    ok("will-change", "TRANSFORM, transform", "TRANSFORM, transform");
+    ok("will-change", "auto", "auto");
+    bad("will-change", "auto, transform");
+    bad("will-change", "none");
+    ok("scroll-snap-type", "inline proximity", "inline");
+    ok("scroll-snap-type", "x mandatory", "x mandatory");
+    bad("scroll-snap-type", "x y");
+    ok("scroll-snap-align", "start start", "start");
+    ok("scroll-snap-align", "center end", "center end");
+}
+
 void test_filters() {
     ok("filter", "blur()", "blur()");
     ok("filter", "blur(0)", "blur(0px)");
@@ -210,6 +242,7 @@ int main() {
     test_box_alignment();
     test_the_small_shorthands();
     test_grid();
+    test_keyword_combinations();
     test_filters();
     REPORT("css_grammar_values");
 }

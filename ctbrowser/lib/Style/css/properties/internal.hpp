@@ -125,6 +125,12 @@ struct scan {
 [[nodiscard]] bool split_grid_lines(std::string_view shorthand, std::string_view value,
                                     std::vector<std::string> & out);
 [[nodiscard]] std::string fold_grid_lines(std::span<const std::string> lines);
+// The keyword-combination grammars (text-decoration-line, text-transform,
+// contain, font-synthesis, font-variant-*, ...) and the will-change,
+// counter-* and scroll-snap-* lists. False for a property not modelled
+// here, an empty `out` for an invalid value. Defined in keywords.cpp.
+[[nodiscard]] bool match_keywords(std::string_view property, const token_stream & ts,
+                                  const scan & found, std::string & out);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by

@@ -241,8 +241,7 @@ constexpr property_syntax table[] = {
     {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
      true, false},
     {"text-indent", k::length_percentage, "", "0px", true, false},
-    {"text-transform", k::keyword_only,
-     "none capitalize uppercase lowercase full-width full-size-kana", "none", true, false},
+    {"text-transform", k::freeform, "", "none", true, false}, // keywords.cpp's grammar
     {"text-decoration", k::freeform, "", "none", false, false, true},
     {"text-decoration-line", k::freeform, "", "none", false, false},
     {"text-decoration-color", k::color, "", "currentcolor", false, false},

@@ -249,6 +249,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // THE KEYWORD COMBINATIONS (keywords.cpp): `overline underline` is
+    // `underline overline`, `size style layout paint` is `strict`.
+    if (p->kind == k::freeform) {
+        std::string serialized;
+        if (match_keywords(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // THE GRID GRAMMARS (grid.cpp): track lists, lines, areas and auto-flow.
     if (p->kind == k::freeform && ascii_istarts_with(property, "grid-")) {
         std::string serialized;
