@@ -734,7 +734,13 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
                 if (target.is_undefined()) { return target; }
             }
             const context::rooted keep{c, target};
-            std::vector<value> work(len);
+            // The elements ROOTED while the comparator runs: a BigInt kind's
+            // are fresh heap objects off a view, and a C++ vector is not a
+            // root (docs/script.md) - an array the collector can see is.
+            const value scratch = c.make_array();
+            const context::rooted keep_work{c, scratch};
+            std::vector<value> & work = static_cast<array_object *>(scratch.as_heap())->items;
+            work.resize(len);
             for (std::size_t i = 0; i < len; ++i) { work[i] = typed_element_get(c, *arr, i); }
             if (!sort_elements(c, work, comparator)) { return value::undefined(); }
             auto * into = static_cast<array_object *>(target.as_heap());
