@@ -9,10 +9,13 @@
 // and 278 of 278, 2026-09-16) - so the file asserts the total rather than a
 // ratchet.
 //
-// IdnaTestV2.json is the exception, and is a RATCHET at 2,668 of 2,671: the
-// UTS #46 processing in url.cpp does not do CheckBidi (see the note above
-// domain_to_ascii there), and the three cases that miss are the ones that need
-// it. Raise the floor when it lands; never lower it.
+// IdnaTestV2.json is a RATCHET at 2,668 of 2,671: its JSON is generated with
+// --exclude-bidi, so CheckBidi (now done, see domain_to_ascii) does not move
+// it, and the three that miss turn on a handful of code points whose mapping
+// status differs between the fetched IdnaMappingTable and unicodedata's Unicode
+// release (the drift the generator's docstring names). Raise the floor if that
+// closes; never lower it. The CheckBidi wins are in url/toascii.window.js,
+// which carries its Bidi cases inline.
 
 #include <ctbrowser.hpp>
 #include <ctbrowser/core/json.hpp>
@@ -220,6 +223,31 @@ void test_form_urlencoded_round_trips() {
     CHECK(serialize_form_urlencoded({{"q", "+1 (555)"}}) == "q=%2B1+%28555%29");
 }
 
+// CheckBidi (RFC 5893) and the all-ASCII short-circuit that carries
+// IgnoreInvalidPunycode - the url/toascii.window.js cases, driven through the
+// whole parser so they run even without the corpus on disk.
+void test_checkbidi_and_the_ascii_short_circuit() {
+    const auto host_of = [](const std::string & domain) -> std::optional<std::string> {
+        const std::optional<url_record> url = parse_url("https://" + domain + "/x");
+        return url ? std::optional<std::string>{url->hostname()} : std::nullopt;
+    };
+    // An all-ASCII domain is left verbatim: an invalid `xn--` label is not
+    // decoded to a disallowed U+0080 and refused.
+    CHECK(host_of("xn--a") == "xn--a");
+    CHECK(host_of("xn--a.xn--zca") == "xn--a.xn--zca");
+    // But a domain that already carries non-ASCII must decode every `xn--`
+    // label, and one that decodes to an invalid label fails the whole domain.
+    CHECK(host_of("xn--a.\xc3\x9f") == std::nullopt); // xn--a.ß
+    // CheckBidi: a Latin letter ends an Arabic (RTL) label - rule 2.
+    CHECK(host_of("\xd9\x8a"
+                  "a") == std::nullopt); // ي then 'a'
+    // An R (Hebrew) point inside a Latin (LTR) label - rule 5.
+    CHECK(host_of("look\xd6\xbeout.net") == std::nullopt); // look U+05BE out.net
+    // A well-formed Arabic (RTL) domain still resolves - CheckBidi is not a
+    // blanket ban on right-to-left labels.
+    CHECK(host_of("\xd9\x85\xd8\xab\xd8\xa7\xd9\x84") == "xn--mgbh0fb"); // مثال
+}
+
 void test_a_lone_surrogate_becomes_the_replacement_character() {
     // WTF-8 for U+D800, as the VM spells a lone surrogate.
     CHECK(to_usv_string("a\xed\xa0\x80z") == "a\xef\xbf\xbdz");
@@ -279,6 +307,7 @@ int main() {
     test_the_setters_corpus();
     test_the_eight_rows_that_differed_from_a_browser();
     test_form_urlencoded_round_trips();
+    test_checkbidi_and_the_ascii_short_circuit();
     test_a_lone_surrogate_becomes_the_replacement_character();
     REPORT("url_wpt");
 }

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace ctbrowser::shell {
 
@@ -585,11 +586,15 @@ void decompose_into(std::u32string & out, char32_t c) {
 //
 // Step 2's NFC is above, over Annex #15's data (tools/gen/nfc_table.py).
 //
-// NOT DONE: CheckBidi (5.4), which costs THREE of IdnaTestV2's 2,671 cases -
-// which is why a table of every code point's Bidi_Class is not carried for it.
+// CheckBidi (5.4) IS done - a Bidi_Class table (tools/gen/idna_table.py) and
+// `valid_bidi_label` below - but ONLY for a domain that carries a non-ASCII
+// code point. An all-ASCII domain is never a Bidi domain, and browsers do not
+// run IDNA on one at all: `xn--a` is left verbatim rather than decoded to a
+// disallowed U+0080 and refused. That ASCII short-circuit is also what carries
+// `IgnoreInvalidPunycode`: an invalid `xn--` label survives when the whole
+// domain is ASCII, but in a domain that already holds non-ASCII an `xn--` that
+// does not decode to a valid label fails it (url/toascii `xn--a.ß` -> failure).
 // CheckHyphens is false and VerifyDnsLength is false: the URL Standard says so.
-// IgnoreInvalidPunycode is TRUE, which is what leaves `xn--ASCII-` alone
-// instead of failing the domain.
 
 struct idna_range {
     char32_t first;
@@ -602,6 +607,11 @@ struct joining_range {
     char32_t first;
     char32_t last;
     char kind;
+};
+struct bidi_range {
+    char32_t first;
+    char32_t last;
+    char kind; // R, AL='A', AN='N', EN='E', ES='S', CS='C', ET='T', ON='O', BN='B', NSM='M'
 };
 
 #include "idna_table.inc"
@@ -658,6 +668,68 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
         }
     }
     return 'U';
+}
+
+// Bidi_Class as CheckBidi reads it; 'L' for everything the table does not name.
+[[nodiscard]] char bidi_class(char32_t c) {
+    std::size_t lo = 0;
+    std::size_t hi = std::size(bidi_ranges);
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (c < bidi_ranges[mid].first) {
+            hi = mid;
+        } else if (c > bidi_ranges[mid].last) {
+            lo = mid + 1;
+        } else {
+            return bidi_ranges[mid].kind;
+        }
+    }
+    return 'L';
+}
+
+// CheckBidi (RFC 5893 / UTS #46 5.4), one label. Only reached for a label of a
+// Bidi domain - one where SOME label carries an R, AL ('A') or AN ('N') point.
+[[nodiscard]] bool valid_bidi_label(std::u32string_view label) {
+    if (label.empty()) { return true; }
+    const char first = bidi_class(label.front());
+    if (first == 'R' || first == 'A') {
+        // RTL label: rule 2 (allowed set), rule 4 (no EN with AN), rule 3 (end).
+        bool seen_en = false, seen_an = false;
+        for (const char32_t c : label) {
+            const char k = bidi_class(c);
+            // R AL AN EN ES CS ET ON BN NSM
+            if (k != 'R' && k != 'A' && k != 'N' && k != 'E' && k != 'S' && k != 'C' && k != 'T' &&
+                k != 'O' && k != 'B' && k != 'M') {
+                return false;
+            }
+            if (k == 'E') { seen_en = true; }
+            if (k == 'N') { seen_an = true; }
+        }
+        if (seen_en && seen_an) { return false; }
+        std::size_t end = label.size();
+        while (end > 0 && bidi_class(label[end - 1]) == 'M') { --end; }
+        if (end == 0) { return false; }
+        const char last = bidi_class(label[end - 1]);
+        return last == 'R' || last == 'A' || last == 'E' || last == 'N';
+    }
+    if (first == 'L') {
+        // LTR label: rule 5 (allowed set), rule 6 (end).
+        for (const char32_t c : label) {
+            const char k = bidi_class(c);
+            // L EN ES CS ET ON BN NSM
+            if (k != 'L' && k != 'E' && k != 'S' && k != 'C' && k != 'T' && k != 'O' && k != 'B' &&
+                k != 'M') {
+                return false;
+            }
+        }
+        std::size_t end = label.size();
+        while (end > 0 && bidi_class(label[end - 1]) == 'M') { --end; }
+        if (end == 0) { return false; }
+        const char last = bidi_class(label[end - 1]);
+        return last == 'L' || last == 'E';
+    }
+    // Rule 1: the first character must be L, R or AL.
+    return false;
 }
 
 // RFC 3492's decoder - the half `xn--` needs and the half this file did not
@@ -762,6 +834,11 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
 // §3.3 "domain to ASCII", beStrict false - UTS #46 ToASCII with the URL
 // Standard's parameters.
 [[nodiscard]] std::optional<std::string> domain_to_ascii(std::u32string_view domain) {
+    // A domain with no non-ASCII code point is never a Bidi domain and never
+    // needs Punycode decoded: browsers leave it verbatim. That is what keeps an
+    // invalid `xn--` label (IgnoreInvalidPunycode) and skips CheckBidi below.
+    const bool all_ascii =
+        std::all_of(domain.begin(), domain.end(), [](char32_t c) { return c < 0x80; });
     // Step 1, "Map": disallowed fails the whole domain, ignored disappears,
     // mapped is replaced.
     std::u32string mapped;
@@ -779,54 +856,73 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     // into labels - a combining mark can only compose with what precedes it,
     // and the label boundary is a U+002E that composes with nothing.
     mapped = to_nfc(mapped);
-    // Steps 3-5: break on U+002E, convert and validate each label, then
-    // re-encode the ones that are not ASCII.
-    std::string out;
+    // Steps 3-4: break on U+002E, convert and validate each label into its
+    // Unicode form. `verbatim` labels (an invalid `xn--` kept in an all-ASCII
+    // domain) hold their ASCII bytes; the rest hold the validated code points.
+    struct label_form {
+        std::u32string unicode; // the validated Unicode label (verbatim: empty)
+        std::string verbatim;   // the ASCII bytes to emit as they stand
+        bool keep = false;
+    };
+    std::vector<label_form> labels;
     for (std::u32string_view label : split_dots(mapped)) {
         const bool ascii =
             std::all_of(label.begin(), label.end(), [](char32_t c) { return c < 0x80; });
-        std::string as_ascii;
-        if (ascii) {
-            for (const char32_t c : label) { as_ascii.push_back(static_cast<char>(c)); }
-        }
-        std::u32string decoded;
         const bool is_punycode = label.size() >= 4 && lower(label[0]) == 'x' &&
                                  lower(label[1]) == 'n' && label[2] == '-' && label[3] == '-';
         if (is_punycode) {
             // "If the label contains any non-ASCII code point, record an
             // error": `xn--te\u0161la` is a failure and not a label to decode.
             if (!ascii) { return std::nullopt; }
+            std::string as_ascii;
+            for (const char32_t c : label) { as_ascii.push_back(static_cast<char>(c)); }
             const std::optional<std::u32string> converted =
                 punycode_decode(std::string_view{as_ascii}.substr(4));
+            // A conversion that fails - and an all-ASCII result is a failed
+            // conversion, there being nothing for Punycode to have encoded - or
+            // one whose result does not meet the validity criteria is an error.
+            // IgnoreInvalidPunycode leaves such a label verbatim, but only when
+            // the whole domain is ASCII; otherwise the domain fails.
             const bool decodes = converted && std::any_of(converted->begin(), converted->end(),
                                                           [](char32_t c) { return c >= 0x80; });
-            if (!decodes) {
-                // IgnoreInvalidPunycode, which the URL Standard sets: a
-                // CONVERSION that fails - and an all-ASCII result is a failed
-                // conversion, there being nothing for Punycode to have encoded
-                // - leaves the label exactly as it is and is not an error.
-                // Without it `xn--ASCII-` takes the whole domain down.
-                out += as_ascii;
-                out.push_back('.');
+            if (!decodes || !valid_label(*converted)) {
+                if (!all_ascii) { return std::nullopt; }
+                labels.push_back({{}, std::move(as_ascii), true});
                 continue;
             }
-            // And a converted label that does not MEET the validity criteria
-            // is left alone too, by the same flag: browsers show `xn--a`
-            // rather than refusing the domain it sits in, and IdnaTestV2 loses
-            // 741 of its cases when this is a failure instead.
-            if (!valid_label(*converted)) {
-                out += as_ascii;
-                out.push_back('.');
-                continue;
-            }
-            decoded = *converted;
-        }
-        const std::u32string_view checked = decoded.empty() ? label : std::u32string_view{decoded};
-        if (!valid_label(checked)) { return std::nullopt; }
-        if (std::all_of(checked.begin(), checked.end(), [](char32_t c) { return c < 0x80; })) {
-            for (const char32_t c : checked) { out.push_back(static_cast<char>(c)); }
+            labels.push_back({*converted, {}, false});
         } else {
-            const std::optional<std::string> encoded = punycode(checked);
+            if (!valid_label(label)) { return std::nullopt; }
+            labels.push_back({std::u32string{label}, {}, false});
+        }
+    }
+    // Step 4.2, CheckBidi (RFC 5893): a non-ASCII domain that carries an R, AL
+    // or AN point in any label is a Bidi domain, and then EVERY label must obey
+    // the RTL/LTR rules. All-ASCII domains are handled above and never reach it.
+    if (!all_ascii) {
+        const bool bidi_domain =
+            std::any_of(labels.begin(), labels.end(), [](const label_form & l) {
+                return std::any_of(l.unicode.begin(), l.unicode.end(), [](char32_t c) {
+                    const char k = bidi_class(c);
+                    return k == 'R' || k == 'A' || k == 'N';
+                });
+            });
+        if (bidi_domain) {
+            for (const label_form & l : labels) {
+                if (!l.keep && !valid_bidi_label(l.unicode)) { return std::nullopt; }
+            }
+        }
+    }
+    // Step 5: re-encode the labels that are not ASCII and join on U+002E.
+    std::string out;
+    for (const label_form & l : labels) {
+        if (l.keep) {
+            out += l.verbatim;
+        } else if (std::all_of(l.unicode.begin(), l.unicode.end(),
+                               [](char32_t c) { return c < 0x80; })) {
+            for (const char32_t c : l.unicode) { out.push_back(static_cast<char>(c)); }
+        } else {
+            const std::optional<std::string> encoded = punycode(l.unicode);
             if (!encoded) { return std::nullopt; }
             out += "xn--" + *encoded;
         }
