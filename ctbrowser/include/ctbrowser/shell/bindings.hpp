@@ -2159,6 +2159,52 @@ private:
         std::vector<node_id> added;
     };
     std::optional<replace_all_note> replace_all_;
+
+public:
+    // --- THE PARSER-DRIVEN DOCUMENT - bindings/document/write.cpp -----------
+    //
+    // HTML 8.4 dynamic markup insertion and 13.2.6 "in text" on `</script>`:
+    // the page's parse runs HERE, interleaved with its scripts, and
+    // `document.open/write/writeln/close` reach the same parser. The browser
+    // supplies only how a script is RUN - its compile cache, its module loader
+    // and its packager hooks are the browser's; the parser, the insertion
+    // point, the defer/async sets and readyState are the document's.
+    struct parser_script {
+        node_id element;
+        std::string source;
+        std::string specifier; // a module's registry key (its src, or synthetic)
+        bool module = false;
+        // The src could not be fetched: nothing runs, `error` fires at the
+        // element, and the runner is told so the embedder can report it.
+        bool missing = false;
+    };
+    // False when the page is being replaced: the parser stops reading.
+    using script_runner = std::function<bool(const parser_script &)>;
+    void set_script_runner(script_runner run) { run_script_ = std::move(run); }
+    // Parse `html` as this document's page. Every parser-inserted script has
+    // run, the deferred ones after the tree, and readyState is "interactive"
+    // when it returns; DOMContentLoaded and load are the caller's task. The
+    // <svg> sources are for the rasteriser, as parse_html's are.
+    [[nodiscard]] parse_result parse_document(std::string_view html);
+
+private:
+    std::unique_ptr<html::tree_builder> parser_;
+    script_runner run_script_;
+    // The scripts that "will execute when the document has finished parsing"
+    // (defer, and modules) and "as soon as possible" (async), 4.12.1.1.
+    std::vector<parser_script> deferred_scripts_;
+    std::vector<parser_script> asap_scripts_;
+    // "Prepare the script element" for one the parser just closed.
+    void prepare_parser_script(node_id script);
+    // "The end", 13.2.7, from the readiness change on: `initial` is the page
+    // load, whose DOMContentLoaded/load task the browser's tick already is;
+    // a script-created parser queues its own.
+    void parser_finished(bool initial);
+    bool parser_script_created_ = false;
+    void install_dynamic_markup(context & cx, script::object_object & doc);
+    void document_open(context & cx);
+    void document_write(context & cx, std::span<value> args, bool newline);
+    void document_close(context & cx);
 };
 
 } // namespace ctbrowser::shell
