@@ -88,8 +88,10 @@ def main():
         assert created.count("text_length(capture_text)") == 2, created
         assert f"append_marker({text})" in created, created
         if label == "callables":
-            seed = re.search(r"int32_t const (v\d+) = 40;", created).group(1)
-            offset = re.search(r"int32_t const (v\d+) = 2;", created).group(1)
+            # The function's own statements sit two spaces in; the inlined
+            # lambda bodies carry their own `= 2` four spaces in.
+            seed = re.search(r"^  int32_t const (v\d+) = 40;$", created, re.M).group(1)
+            offset = re.search(r"^  int32_t const (v\d+) = 2;$", created, re.M).group(1)
             assert re.search(rf"int32_t const v\d+ = {seed} \+ {offset};", created), created
             second = re.search(
                 r"auto const (v\d+) = ctnative::ctn_env_string\s*[({]", created
