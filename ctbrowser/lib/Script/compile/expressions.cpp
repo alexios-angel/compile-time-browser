@@ -654,11 +654,10 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
     case reference::kind::upvalue: proto().emit(instruction{op::set_upvalue, ref.reg, src}); break;
     case reference::kind::global: {
-        // A COPY: the check interns names, which can grow `names` under a
+        // A COPY: the write interns names, which can grow `names` under a
         // view into it.
         const std::string name = proto().names[ref.name];
-        emit_strict_assign_check(name);
-        proto().emit(instruction::with_bx(op::set_global, src, ref.name));
+        emit_global_write(name, src);
         break;
     }
     case reference::kind::member:

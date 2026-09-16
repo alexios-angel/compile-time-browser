@@ -141,6 +141,12 @@ void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
         proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), src});
         return;
     }
+    emit_global_write(name, src);
+}
+
+// THE ONE PLACE A GLOBAL IS WRITTEN, for a name that resolved to nothing
+// nearer: a plain assignment, a compound one, an update, a for-in/of head.
+void compiler_impl::emit_global_write(std::string_view name, std::uint16_t src) {
     // 19.1: `NaN`, `Infinity` and `undefined` are { false, false, false } on
     // the global object. The globals table has no attributes, so the refusal
     // is decided here: a sloppy write is dropped, a strict one is the

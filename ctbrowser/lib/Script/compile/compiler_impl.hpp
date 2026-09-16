@@ -643,6 +643,7 @@ public:
     // compile_ident without the with lookup: a local, an upvalue or a global.
     void emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup = false);
     void emit_plain_write(std::string_view name, std::uint16_t src);
+    void emit_global_write(std::string_view name, std::uint16_t src);
 
     // A numeric literal's value. The radix prefixes take the integer overload
     // and then widen; a double is exact up to 2^53, which is further than any
