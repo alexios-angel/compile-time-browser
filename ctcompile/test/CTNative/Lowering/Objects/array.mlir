@@ -96,10 +96,10 @@
 // types still refuse. The separate called array-overwrite.js exercises emission.
 // INDEXED-SAME: ctnative.not_native = "an array whose elements are <unvisited>, not numbers"
 
-// `delete a[0]` punches the hole directly.
+// `delete a[0]` now reaches the opaque __ctbrowser_delete host call.
 //
 // DELETED: ctjs.func private @drop$1
-// DELETED-SAME: ctnative.not_native = "an array literal with an element deleted - `delete a[0]` punches a hole in it, so density is not proved"
+// DELETED-SAME: ctnative.not_native = "an array literal that escapes - it reaches `ctjs.call`"
 
 // A RETURNED ARRAY OUTLIVES ITS FRAME. This is the default arm of
 // isDenseVectorSite doing its job: a return is not an append and not a read,

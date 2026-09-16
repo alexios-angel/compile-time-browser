@@ -74,6 +74,7 @@ class Case:
     error: str | None = None
     callback: str | None = None
     final_count: int = 0
+    opaque_delete: bool = False
 
     def provider_steps(self):
         return [step for step in self.steps if step.provider]
@@ -93,6 +94,7 @@ class Case:
         fields = [
             f"{name}: function {name}({parameters}) {{ {body} }}"
             for name, (parameters, body) in (METHODS | self.methods).items()
+            if name != "removeField" or self.opaque_delete or name in self.methods
         ]
         invocation = (
             "first = factory(); host.slot = factory();" if self.twice else "host.slot = factory();"
@@ -144,6 +146,20 @@ def cases():
                 call("host.slot.read('a')", OBJECT, "objectA"),
                 call("host.slot.same('a', objectA)", True),
             ],
+        ),
+        Case(
+            "basic_opaque_delete",
+            [
+                store,
+                call("host.slot.value('a')", 11),
+                call("host.slot.label('a')", "same"),
+                call("host.slot.read('a')", OBJECT, "objectA"),
+                call("host.slot.same('a', objectA)", True),
+            ],
+            completed=0,
+            calls=0,
+            boundary=None,
+            opaque_delete=True,
         ),
         Case(
             "equal_fields",
@@ -247,6 +263,10 @@ def cases():
                 call("host.slot.value('a')", 27),
                 call("host.slot.same('a', objectA)", True),
             ],
+            completed=0,
+            calls=0,
+            boundary=None,
+            opaque_delete=True,
         ),
         Case(
             "entry_computed_delete_reinsert",
@@ -255,6 +275,10 @@ def cases():
                 statement("delete objectA['value']; objectA.value = 27;"),
                 call("host.slot.value('a')", 27),
             ],
+            completed=0,
+            calls=0,
+            boundary=None,
+            opaque_delete=True,
         ),
         Case(
             "provider_delete_reinsert",
@@ -265,6 +289,10 @@ def cases():
                 call("host.slot.value('a')", 28),
                 observe("objectA.value", 28),
             ],
+            completed=0,
+            calls=0,
+            boundary=None,
+            opaque_delete=True,
         ),
         Case(
             "provider_computed_delete_reinsert",
@@ -275,6 +303,10 @@ def cases():
                 call("host.slot.value('a')", 28),
             ],
             methods={"removeField": ("key", "return delete resource.get(key)['value'];")},
+            completed=0,
+            calls=0,
+            boundary=None,
+            opaque_delete=True,
         ),
         Case(
             "replacement_reinsert",
@@ -335,8 +367,10 @@ def cases():
         Case(
             "missing_own_field",
             [store, statement("delete objectA.value;"), call("host.slot.value('a')", UNDEFINED)],
-            completed=1,
-            boundary="value",
+            completed=0,
+            calls=0,
+            opaque_delete=True,
+            boundary=None,
         ),
         Case(
             "provider_missing_own_field",
@@ -345,8 +379,10 @@ def cases():
                 call("host.slot.removeField('a')", True),
                 call("host.slot.value('a')", UNDEFINED),
             ],
-            completed=2,
-            boundary="value",
+            completed=0,
+            calls=0,
+            opaque_delete=True,
+            boundary=None,
         ),
         Case(
             "dynamic_field",
@@ -437,8 +473,10 @@ def cases():
                 name,
                 [store, call("host.slot.bad('a', objectB)", expected)],
                 methods={"bad": ("key, value", body)},
-                completed=1,
-                boundary="bad",
+                completed=0 if name == "dynamic_delete" else 1,
+                calls=0 if name == "dynamic_delete" else None,
+                boundary=None if name == "dynamic_delete" else "bad",
+                opaque_delete=name == "dynamic_delete",
                 error=error,
             )
         )
@@ -532,6 +570,15 @@ def no_facts(report, label):
 def check_report(case, report, before, after):
     if not report["valid"] or report["full_host_contract_claimed"]:
         raise RuntimeError(f"{case.name}: wrong complete-host boundary: {report}")
+    if case.opaque_delete:
+        # The frontend now implements delete through an opaque host helper.
+        # Keep the original source and require the complete context to withhold facts.
+        if (
+            report["boundary"]
+            != "call lacks one closed source invocation context at `ctjs.call_direct`"
+        ):
+            raise RuntimeError(f"{case.name}: opaque delete lost its source boundary: {report}")
+        no_facts(dict(report, valid=False), case.name)
     rows, completed = report["provider_calls"], case.summaries()
     calls = case.calls if case.calls is not None else completed + (3 if case.twice else 2)
     if (len(rows), report["summarized_provider_calls"], report["resolved_calls"]) != (

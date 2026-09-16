@@ -505,8 +505,6 @@ def main():
         descriptor_change = name in {
             "realm_descriptor",
             "realm_prototype",
-            "realm_delete",
-            "realm_delete_index",
         }
         report, output, result = specialize(
             args.opt, ir, realm_contract, args.work / f"{name}-check", success=not descriptor_change
@@ -526,6 +524,9 @@ def main():
             (2, 1) if positive else (0, 0)
         ):
             raise RuntimeError(f"{name}: wrong realm receiver proof: {report}")
+        if name in {"realm_delete", "realm_delete_index"}:
+            if "call lacks one closed source invocation context" not in report["boundary"]:
+                raise RuntimeError(f"{name}: opaque delete lost its context boundary: {report}")
         if name == "realm_receiver_guard" and "unproved unary conversion" not in report["boundary"]:
             raise RuntimeError(
                 "a script receiver contract characterized ordinary-call effective this"

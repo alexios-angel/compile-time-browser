@@ -9,7 +9,7 @@
 // arm that produces the largest share of DISTINCT reasons was the one nothing
 // pinned.
 //
-// FOUR OPERATIONS, ONE TEMPLATE. One case would pin a string; four pin the
+// THREE DEFAULT-ARM OPERATIONS AND THE DELETE HOST BOUNDARY. Three pin the
 // SHAPE - operation name in backticks, then the fixed tail - which is what a
 // rewrite would break. They are chosen from four different JavaScript
 // constructs so that a change to any one importer path leaves the others.
@@ -41,7 +41,10 @@
 
 // --- `delete o.x` -----------------------------------------------------------
 //
-// DELETE: ctnative.not_native = "`ctjs.delete_named` is not native yet"
+// The frontend retains delete as an opaque helper; no native fallback is granted.
+// DELETE-LABEL: ctjs.func private @deleted$1
+// DELETE-SAME: ctnative.not_native =
+// DELETE: ctjs.load_global "__ctbrowser_delete"
 
 // --- `arguments` ------------------------------------------------------------
 //
