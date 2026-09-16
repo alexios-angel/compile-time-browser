@@ -347,6 +347,19 @@ int main() {
     js_expect("[...\"aaa\".matchAll(/a/g)].length", "3");
     js_expect(throws("\"aaa\".replaceAll(/a/, \"b\")"), "TypeError");
     js_expect("\"aaa\".replaceAll(/a/g, \"b\")", "bbb");
+    // 22.1.3.20 step order: the argument's @@replace and the global-flag
+    // refusal come BEFORE ToString(this) - a receiver whose toString throws
+    // never runs it when the argument answers or is refused.
+    js_expect(
+        "var poison = { toString() { throw 'no'; } }; var r; try {"
+        " ''.replaceAll.call(poison, /a/, 'b'); } catch (e) { r = e instanceof TypeError; } r",
+        "true");
+    js_expect("var poison = { toString() { throw 'no'; } };"
+              " ''.replace.call(poison, { [Symbol.replace]() { return 'ok'; } }, 'b')",
+              "ok");
+    js_expect("var poison = { toString() { throw 'no'; } }; var r; try {"
+              " ''.split.call(poison, 'x'); } catch (e) { r = e; } r",
+              "no");
 
     // --- normalize checks its form even though it normalises nothing --------
     // The identity is a stated deviation (strings are bytes, so there is no

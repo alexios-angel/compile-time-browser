@@ -288,6 +288,35 @@ void install_string(context & cx) {
         method(cx, string_proto, name, arity,
                on_text(std::string{"String.prototype."} + name, std::move(body)));
     };
+    // THE SIX THAT ASK THEIR ARGUMENT FIRST - match, matchAll, replace,
+    // replaceAll, search, split (22.1.3.13-14, .19-20, .22, .24): step 1 is
+    // RequireObjectCoercible(this) only; the argument's own @@method (and, for
+    // matchAll/replaceAll, the global-flag refusal) comes next, and ToString of
+    // the receiver is AFTER that - so a receiver whose toString throws never
+    // runs it when the argument answers, and a poisoned receiver beside a
+    // non-global RegExp sees the TypeError, not its own throw.
+    const auto text_after_dispatch = [&cx, string_proto](const char * name, double arity,
+                                                         const char * symbol, bool needs_global,
+                                                         text_body body) {
+        const std::string owner = std::string{"String.prototype."} + name;
+        method(cx, string_proto, name, arity,
+               [owner, symbol, needs_global, body = std::move(body)](context & c,
+                                                                     std::span<value> a) -> value {
+                   if (c.current_this().is_nullish()) {
+                       c.throw_error("TypeError", owner + " called on null or undefined");
+                       return value::undefined();
+                   }
+                   if (needs_global && refuse_non_global(c, arg_at(a, 0), owner.c_str())) {
+                       return value::undefined();
+                   }
+                   if (value dispatched; symbol_dispatch(c, arg_at(a, 0), symbol, a, dispatched)) {
+                       return dispatched;
+                   }
+                   const std::string self = detail::this_string(c);
+                   if (c.throw_pending()) { return value::undefined(); }
+                   return body(c, self, a);
+               });
+    };
     text("charAt", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
         // A NEGATIVE POSITION IS OUT OF RANGE, not clamped to zero - that is
         // `at`'s job, not `charAt`'s. Clamping made `"abc".charAt(-1)` answer
@@ -556,52 +585,52 @@ void install_string(context & cx) {
     // 22.1.3.23. A separator with @@split - every RegExp - answers through it
     // (regexp.cpp's [@@split] is the specification's sticky walk); the string
     // form is here.
-    text("split", 2, [](context & c, const std::string & s, std::span<value> a) -> value {
-        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@split", a, dispatched)) {
-            return dispatched;
-        }
-        value out = c.make_array();
-        const context::rooted keep{c, out};
-        auto * result = static_cast<array_object *>(out.as_heap());
-        // THE LIMIT, which this used to ignore completely - so
-        // `"a,b,c".split(",", 2)` handed back all three and `split(x, 0)` handed
-        // back everything instead of nothing. `undefined` means unlimited, and
-        // it is ToUint32 rather than an integer, so a negative wraps to a very
-        // large number (which is why 2**32-1 and "no limit" behave alike).
-        const std::size_t limit = has_index(a, 1) ? static_cast<std::size_t>(uint32_arg(c, a[1]))
-                                                  : std::numeric_limits<std::size_t>::max();
-        if (c.throw_pending()) { return value::undefined(); }
-        // ToString(separator) is step 5 and the `lim = 0` return is step 6, IN
-        // THAT ORDER: a separator with a `toString` is coerced even when the
-        // limit already says the answer is [].
-        const value separator = arg_at(a, 0);
-        if (!stringable_arg(c, separator)) { return value::undefined(); }
-        const std::string sep = c.to_string(separator);
-        if (c.throw_pending()) { return value::undefined(); }
-        if (limit == 0) { return out; }
-        if (separator.is_undefined()) {
-            result->items.push_back(c.string(s));
-            return out;
-        }
-        if (sep.empty()) {
-            for (const char ch : s) {
-                if (result->items.size() >= limit) { break; }
-                result->items.push_back(c.string(std::string{ch}));
-            }
-            return out;
-        }
-        std::size_t at = 0;
-        while (result->items.size() < limit) {
-            const std::size_t found = s.find(sep, at);
-            if (found == std::string::npos) {
-                result->items.push_back(c.string(s.substr(at)));
-                break;
-            }
-            result->items.push_back(c.string(s.substr(at, found - at)));
-            at = found + sep.size();
-        }
-        return out;
-    });
+    text_after_dispatch("split", 2, "@@split", false,
+                        [](context & c, const std::string & s, std::span<value> a) -> value {
+                            value out = c.make_array();
+                            const context::rooted keep{c, out};
+                            auto * result = static_cast<array_object *>(out.as_heap());
+                            // THE LIMIT, which this used to ignore completely - so
+                            // `"a,b,c".split(",", 2)` handed back all three and `split(x, 0)`
+                            // handed back everything instead of nothing. `undefined` means
+                            // unlimited, and it is ToUint32 rather than an integer, so a negative
+                            // wraps to a very large number (which is why 2**32-1 and "no limit"
+                            // behave alike).
+                            const std::size_t limit =
+                                has_index(a, 1) ? static_cast<std::size_t>(uint32_arg(c, a[1]))
+                                                : std::numeric_limits<std::size_t>::max();
+                            if (c.throw_pending()) { return value::undefined(); }
+                            // ToString(separator) is step 5 and the `lim = 0` return is step 6, IN
+                            // THAT ORDER: a separator with a `toString` is coerced even when the
+                            // limit already says the answer is [].
+                            const value separator = arg_at(a, 0);
+                            if (!stringable_arg(c, separator)) { return value::undefined(); }
+                            const std::string sep = c.to_string(separator);
+                            if (c.throw_pending()) { return value::undefined(); }
+                            if (limit == 0) { return out; }
+                            if (separator.is_undefined()) {
+                                result->items.push_back(c.string(s));
+                                return out;
+                            }
+                            if (sep.empty()) {
+                                for (const char ch : s) {
+                                    if (result->items.size() >= limit) { break; }
+                                    result->items.push_back(c.string(std::string{ch}));
+                                }
+                                return out;
+                            }
+                            std::size_t at = 0;
+                            while (result->items.size() < limit) {
+                                const std::size_t found = s.find(sep, at);
+                                if (found == std::string::npos) {
+                                    result->items.push_back(c.string(s.substr(at)));
+                                    break;
+                                }
+                                result->items.push_back(c.string(s.substr(at, found - at)));
+                                at = found + sep.size();
+                            }
+                            return out;
+                        });
     // 22.1.3.19 replace and 22.1.3.20 replaceAll, THE STRING FORMS. A pattern
     // with @@replace - every RegExp - answered above through symbol_dispatch,
     // and regexp.cpp's [@@replace] is where the matching loop lives; what is
@@ -660,22 +689,18 @@ void install_string(context & cx) {
         return c.string(out);
     };
 
-    text("replace", 2,
-         [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
-             if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@replace", a, dispatched)) {
-                 return dispatched;
-             }
-             return replace_string(c, s, a, false);
-         });
+    text_after_dispatch(
+        "replace", 2, "@@replace", false,
+        [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
+            return replace_string(c, s, a, false);
+        });
     // `match` - the single commonest thing done with a regular expression.
     // 22.1.3.13: the argument's own @@match, else RegExpCreate and the new
     // pattern's @@match, which is where the `g` / no-`g` shapes are decided.
-    text("match", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
-        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@match", a, dispatched)) {
-            return dispatched;
-        }
-        return create_and_invoke(c, arg_at(a, 0), nullptr, "@@match", self);
-    });
+    text_after_dispatch("match", 1, "@@match", false,
+                        [](context & c, const std::string & self, std::span<value> a) -> value {
+                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@match", self);
+                        });
     // `search` - WHERE a pattern matches, or -1. It is the smallest of the
     // regular-expression string methods and it was the one missing, which is
     // worth stating plainly: Babylon's shader processor calls it on every
@@ -685,34 +710,22 @@ void install_string(context & cx) {
     // rejection was inside a promise the engine does not surface - and the
     // canvas simply showed the clear colour. One missing method, and a whole
     // renderer draws nothing.
-    text("search", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
-        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@search", a, dispatched)) {
-            return dispatched;
-        }
-        return create_and_invoke(c, arg_at(a, 0), nullptr, "@@search", self);
-    });
+    text_after_dispatch("search", 1, "@@search", false,
+                        [](context & c, const std::string & self, std::span<value> a) -> value {
+                            return create_and_invoke(c, arg_at(a, 0), nullptr, "@@search", self);
+                        });
     // 22.1.3.14 matchAll: the non-global refusal first, then the argument's
     // @@matchAll, then RegExpCreate with "g" - which is what makes
     // `"aaa".matchAll("a")` three matches rather than the first forever.
-    text("matchAll", 1, [](context & c, const std::string & self, std::span<value> a) -> value {
-        if (refuse_non_global(c, arg_at(a, 0), "String.prototype.matchAll")) {
-            return value::undefined();
-        }
-        if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@matchAll", a, dispatched)) {
-            return dispatched;
-        }
-        return create_and_invoke(c, arg_at(a, 0), "g", "@@matchAll", self);
-    });
-    text("replaceAll", 2,
-         [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
-             if (refuse_non_global(c, arg_at(a, 0), "String.prototype.replaceAll")) {
-                 return value::undefined();
-             }
-             if (value dispatched; symbol_dispatch(c, arg_at(a, 0), "@@replace", a, dispatched)) {
-                 return dispatched;
-             }
-             return replace_string(c, s, a, true);
-         });
+    text_after_dispatch("matchAll", 1, "@@matchAll", true,
+                        [](context & c, const std::string & self, std::span<value> a) -> value {
+                            return create_and_invoke(c, arg_at(a, 0), "g", "@@matchAll", self);
+                        });
+    text_after_dispatch(
+        "replaceAll", 2, "@@replace", true,
+        [replace_string](context & c, const std::string & s, std::span<value> a) -> value {
+            return replace_string(c, s, a, true);
+        });
     // ASCII-ONLY, on purpose and for the whole family: core/algorithms.hpp
     // folds A-Z and nothing else so that a rendered page cannot depend on the
     // host's locale or Unicode tables. `"Straße".toUpperCase()` is
