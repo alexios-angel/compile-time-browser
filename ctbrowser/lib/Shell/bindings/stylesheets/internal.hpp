@@ -63,6 +63,7 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/properties.hpp>
+#include <ctbrowser/style/css/selector.hpp>
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/css/value.hpp>
 #include <ctbrowser/style/selector.hpp>
@@ -164,5 +165,20 @@ void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & s
 // A CSSKeyframesRule is ITSELF indexed - `keyframes[0]` is `cssRules[0]` -
 // so the rule object mirrors the list cached under `rules_key` on it.
 void mirror_rule_list(script::object_object & rule_obj);
+
+// --- CSS Nesting, defined in rules.cpp ---------------------------------------
+// The `at_name` marker of a CSSNestedDeclarations record (type 0, no
+// at-keyword of its own); whether a rule sits inside a style rule; the pruning
+// of bare declarations from a group that does not; and the re-spelling of a
+// nested style rule's selector with `&` once it has its parent.
+extern const std::string_view nested_declarations_name;
+[[nodiscard]] bool nested_in_style(
+    const std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store, std::size_t rule);
+void prune_bare_declarations(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                             std::size_t rule);
+void nest_rule_selector(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                        atom_table & atoms,
+                        std::span<const style::css::namespace_declaration> namespaces,
+                        std::size_t rule);
 
 } // namespace ctbrowser::shell::detail

@@ -103,7 +103,8 @@ public:
     // A selector list on its own: no braces, no declarations. `invalid` comes back
     // set when the text is not a selector at all.
     [[nodiscard]] stylesheet take_selector_list(bool & invalid,
-                                                const std::vector<namespace_declaration> * ns) {
+                                                const std::vector<namespace_declaration> * ns,
+                                                const nesting_context * nesting) {
         if (ns != nullptr) {
             sheet_.namespaces = *ns;
         } else {
@@ -111,7 +112,7 @@ public:
         }
         std::vector<component_value> run;
         while (!at_eof()) { run.push_back(consume_component_value()); }
-        (void)parse_selector_list(sheet_, span_of(run), *atoms_, &invalid);
+        (void)parse_selector_list(sheet_, span_of(run), *atoms_, &invalid, nesting);
         return std::move(sheet_);
     }
 
@@ -1064,9 +1065,10 @@ stylesheet parse_stylesheet(std::string_view css, atom_table & atoms) {
 }
 
 stylesheet parse_selector_text(std::string_view text, atom_table & atoms, bool & invalid,
-                               const std::vector<namespace_declaration> * namespaces) {
+                               const std::vector<namespace_declaration> * namespaces,
+                               const nesting_context * nesting) {
     parser p{text, atoms};
-    return p.take_selector_list(invalid, namespaces);
+    return p.take_selector_list(invalid, namespaces, nesting);
 }
 
 stylesheet parse_declaration_list(std::string_view css, atom_table & atoms) {

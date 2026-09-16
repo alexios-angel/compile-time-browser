@@ -388,6 +388,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                     "the text is not a single CSS rule");
                 return value::undefined();
             }
+            prune_bare_declarations(css_rule_store_, made);
             const std::uint32_t kind = css_rule_store_[made]->type;
             if (kind == import_rule && sheet->constructed) {
                 // "@import rules are not allowed in a constructed stylesheet."
@@ -606,7 +607,11 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         },
         {}, script::attr_configurable);
 
-    script::object_object * style_rule_proto = interface("CSSStyleRule", "CSSRule", nullptr);
+    // A STYLE RULE IS A GROUPING RULE, CSS Nesting 1 §5: its nested rules are
+    // `cssRules`, with insertRule and deleteRule.
+    script::object_object * grouping_proto = interface("CSSGroupingRule", "CSSRule", nullptr);
+    script::object_object * style_rule_proto =
+        interface("CSSStyleRule", "CSSGroupingRule", nullptr);
     define_getter(
         cx, *style_rule_proto, "selectorText",
         [this](context & c, std::span<value>) {
@@ -630,12 +635,18 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             bool bad = false;
             const std::vector<style::css::namespace_declaration> namespaces =
                 sheet_namespaces(rule->sheet);
-            const style::css::stylesheet parsed =
-                style::css::parse_selector_text(text, *atoms_, bad, &namespaces);
+            // A NESTED rule's text is parsed as one - `&` and an implicit `&`.
+            const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+            const std::vector<style::compiled_selector> placeholder(1);
+            const style::css::nesting_context nesting{placeholder, false};
+            const bool nested = nested_in_style(css_rule_store_, self);
+            const style::css::stylesheet parsed = style::css::parse_selector_text(
+                text, *atoms_, bad, &namespaces, nested ? &nesting : nullptr);
             if (bad || parsed.selectors.empty()) { return value::undefined(); }
+            rule->prelude = collapse_whitespace(text, html_whitespace);
             rule->selector = representable(parsed.selectors)
                                  ? serialize_selector_list(parsed.selectors, *atoms_, namespaces)
-                                 : collapse_whitespace(text, html_whitespace);
+                                 : rule->prelude;
             style_sheets_changed();
             return value::undefined();
         },
@@ -678,7 +689,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     };
     declaration_accessor(style_rule_proto);
 
-    script::object_object * grouping_proto = interface("CSSGroupingRule", "CSSRule", nullptr);
+    // (CSSGroupingRule was made above CSSStyleRule, which inherits it.)
     define_getter(
         cx, *grouping_proto, "cssRules",
         [this](context & c, std::span<value>) {
@@ -744,6 +755,15 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             css_rule_store_[made]->parent = self;
             rule->children.insert(rule->children.begin() + static_cast<std::ptrdiff_t>(asked),
                                   made);
+            // Inside a style rule the new rule is nested - its selector is
+            // spelled with `&`; outside one its bare declarations are dropped.
+            if (nested_in_style(css_rule_store_, made)) {
+                const std::vector<style::css::namespace_declaration> namespaces =
+                    sheet_namespaces(rule->sheet);
+                nest_rule_selector(css_rule_store_, *atoms_, namespaces, made);
+            } else {
+                prune_bare_declarations(css_rule_store_, made);
+            }
             style_sheets_changed();
             return value::number(asked);
         },
@@ -824,6 +844,75 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         cx, *container_proto, "containerQuery",
         [container_part](context & c, std::span<value>) { return container_part(c, false); }, {},
         script::attr_configurable);
+    // --- CSSLayerBlockRule / CSSLayerStatementRule, CSS Cascade 5 §6.4.4:
+    // the block's one name (empty for an anonymous layer) and the statement's
+    // list, each name as written.
+    script::object_object * layer_block_proto =
+        interface("CSSLayerBlockRule", "CSSGroupingRule", nullptr);
+    define_getter(
+        cx, *layer_block_proto, "name",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->prelude);
+        },
+        {}, script::attr_configurable);
+    script::object_object * layer_statement_proto =
+        interface("CSSLayerStatementRule", "CSSRule", nullptr);
+    define_getter(
+        cx, *layer_statement_proto, "nameList",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            const value names = c.make_array();
+            if (rule != nullptr) {
+                auto * items = static_cast<script::array_object *>(names.as_heap());
+                for (const std::string_view part : split_on_commas(rule->prelude)) {
+                    items->items.push_back(c.string(std::string{trim(part, html_whitespace)}));
+                }
+            }
+            return names;
+        },
+        {}, script::attr_configurable);
+    // --- CSSScopeRule, CSS Cascade 6 §3.5: `start` and `end` are the two
+    // parenthesised selector lists of the prelude, or null when absent.
+    script::object_object * scope_proto = interface("CSSScopeRule", "CSSGroupingRule", nullptr);
+    const auto scope_part = [this](context & c, bool want_end) {
+        const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::null(); }
+        const std::string_view text = rule->prelude;
+        std::size_t at = 0;
+        std::string_view start;
+        std::string_view end;
+        if (!text.empty() && text.front() == '(') {
+            const std::size_t close = scan_to(text, 1, ")");
+            start = text.substr(1, close - 1);
+            at = std::min(close + 1, text.size());
+        }
+        while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) {
+            ++at;
+        }
+        if (text.compare(at, 2, "to") == 0) {
+            const std::size_t open = text.find('(', at);
+            if (open != std::string_view::npos) {
+                const std::size_t close = scan_to(text, open + 1, ")");
+                end = text.substr(open + 1, close - open - 1);
+            }
+        }
+        const std::string_view part = want_end ? end : start;
+        if (part.empty()) { return value::null(); }
+        return c.string(collapse_whitespace(part, html_whitespace));
+    };
+    define_getter(
+        cx, *scope_proto, "start",
+        [scope_part](context & c, std::span<value>) { return scope_part(c, false); }, {},
+        script::attr_configurable);
+    define_getter(
+        cx, *scope_proto, "end",
+        [scope_part](context & c, std::span<value>) { return scope_part(c, true); }, {},
+        script::attr_configurable);
+    (void)interface("CSSStartingStyleRule", "CSSGroupingRule", nullptr);
+    // --- CSSNestedDeclarations, CSS Nesting 1 §4.1: a declaration block and
+    // nothing else, reached through `style`.
+    declaration_accessor(interface("CSSNestedDeclarations", "CSSRule", nullptr));
     declaration_accessor(interface("CSSFontFaceRule", "CSSRule", nullptr));
 
     // --- CSSImportRule, CSSOM 6.4.7

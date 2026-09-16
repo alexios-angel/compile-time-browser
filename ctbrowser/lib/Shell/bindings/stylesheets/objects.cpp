@@ -186,6 +186,16 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSFontFeatureValuesRule.prototype";
         } else if (record.at_name == "container") {
             interface = "CSSContainerRule.prototype";
+        } else if (record.at_name == "layer") {
+            interface = "CSSLayerBlockRule.prototype";
+        } else if (record.at_name == "layer-statement") {
+            interface = "CSSLayerStatementRule.prototype";
+        } else if (record.at_name == "scope") {
+            interface = "CSSScopeRule.prototype";
+        } else if (record.at_name == "starting-style") {
+            interface = "CSSStartingStyleRule.prototype";
+        } else if (record.at_name == nested_declarations_name) {
+            interface = "CSSNestedDeclarations.prototype";
         }
         if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
