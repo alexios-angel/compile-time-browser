@@ -23,6 +23,15 @@ using namespace detail;
 
 namespace {
 
+// `<custom-ident>` EXCLUDES THE CSS-WIDE KEYWORDS AND `default` (CSS Values 4
+// §identifier-value). `revert-rule` is a CSS-wide keyword of CSS Cascade 6 that
+// nothing else here implements, and it is excluded on the same grounds:
+// `will-change: revert-rule` and `counter-reset: default 0` are two of those
+// parsing files' assertions.
+[[nodiscard]] bool reserved_ident(std::string_view word) {
+    return is_wide_keyword(word) || ascii_iequals_any(word, {"default", "revert-rule"});
+}
+
 struct or_grammar {
     std::string_view property;
     std::string_view alone;                 // words valid only on their own
@@ -69,6 +78,11 @@ constexpr or_grammar or_grammars[] = {
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
     {"text-emphasis-position", "auto", {"over under", "right left"}, true},
+    {"ruby-position", "inter-character", {"alternate", "over under"}, true},
+    {"text-autospace",
+     "normal auto no-autospace",
+     {"ideograph-alpha", "ideograph-numeric", "punctuation", "insert replace"},
+     true},
 };
 
 [[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,
@@ -126,8 +140,7 @@ constexpr or_grammar or_grammars[] = {
                 if (found.significant.size() != 1) { return std::nullopt; }
                 return "auto";
             }
-            if (is_wide_keyword(word) ||
-                ascii_iequals_any(word, {"will-change", "none", "all", "default"})) {
+            if (reserved_ident(word) || ascii_iequals_any(word, {"will-change", "none", "all"})) {
                 return std::nullopt;
             }
             out += (out.empty() ? "" : ", ") + std::string{word};
@@ -161,7 +174,7 @@ constexpr or_grammar or_grammars[] = {
         bool reversed = false;
         if (t.type == token_type::ident) {
             const std::string_view word = ts.text_of(t);
-            if (is_wide_keyword(word) || ascii_iequals(word, "none")) { return std::nullopt; }
+            if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
             name = std::string{word};
             ++k;
         } else if (t.type == token_type::function && reset &&
@@ -171,7 +184,7 @@ constexpr or_grammar or_grammars[] = {
                 return std::nullopt;
             }
             const std::string_view word = ts.text_of(ts.tokens[at[k + 1]]);
-            if (is_wide_keyword(word) || ascii_iequals(word, "none")) { return std::nullopt; }
+            if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
             name = "reversed(" + std::string{word} + ")";
             reversed = true;
             k += 3;
@@ -282,6 +295,456 @@ constexpr or_grammar or_grammars[] = {
     return std::nullopt;
 }
 
+// The source text of a run of significant tokens, empty when any of it came
+// from the decoded-escape tail of the pool rather than the author's bytes.
+[[nodiscard]] std::string_view run_text(const token_stream & ts, std::span<const std::size_t> at) {
+    if (at.empty()) { return {}; }
+    const css_token & first = ts.tokens[at.front()];
+    const css_token & last = ts.tokens[at.back()];
+    if (first.text >= ts.source_length || last.text >= ts.source_length) { return {}; }
+    return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+}
+
+// A MATH FUNCTION'S WHOLE BLOCK AS ONE COMPONENT, typed. `nullopt` when the
+// cursor is not on a function, the block does not close, `calc/` calls it
+// malformed, or it resolves to something other than `want`; `k` is left on the
+// closing paren. It is what lets a property whose grammar is a list of
+// keywords and one number still take `calc()` in the number's place.
+[[nodiscard]] std::optional<std::string> math_component(const token_stream & ts, const scan & found,
+                                                        std::size_t & k, numeric_type want) {
+    if (ts.tokens[found.significant[k]].type != token_type::function) { return std::nullopt; }
+    const std::size_t first = k;
+    int depth = 0;
+    for (; k < found.significant.size(); ++k) {
+        const token_type type = ts.tokens[found.significant[k]].type;
+        if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+        if (type == token_type::close_paren && --depth == 0) { break; }
+    }
+    if (k == found.significant.size()) { return std::nullopt; }
+    const std::string_view text =
+        run_text(ts, std::span<const std::size_t>{found.significant}.subspan(first, k - first + 1));
+    if (text.empty() || !may_have_math(text)) { return std::nullopt; }
+    const math_answer answer = evaluate_math(text, length_context{});
+    if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
+    if (answer.outcome == math_outcome::resolved &&
+        (answer.value.is_number || answer.value.type != want)) {
+        return std::nullopt;
+    }
+    return simplify_math(text);
+}
+
+// `<custom-ident>` PROPERTIES: a word the property does not spell for itself.
+// `alone` are that property's own words, valid only as the whole value and NOT
+// custom idents, so `view-transition-class: foo none` is invalid. `lowercase`
+// are words that may stand IN the list and are keywords all the same -
+// `transition-property: ALL, SRC` is `all, SRC`, because a custom ident keeps
+// its case and a keyword never does. `list` says whether more than one may
+// follow and `comma` what separates them.
+struct ident_grammar {
+    std::string_view property;
+    std::string_view alone;
+    std::string_view lowercase;
+    bool list;
+    bool comma;
+};
+
+constexpr ident_grammar ident_grammars[] = {
+    {"page", "auto", "", false, false},
+    {"view-transition-group", "normal contain nearest none", "", false, false},
+    {"view-transition-class", "none", "", true, false},
+    {"transition-property", "none", "all", true, true},
+};
+
+[[nodiscard]] std::optional<std::string> custom_idents(const ident_grammar & g,
+                                                       const token_stream & ts,
+                                                       const scan & found) {
+    std::string out;
+    std::size_t count = 0;
+    bool want_ident = true;
+    for (const std::size_t i : found.significant) {
+        const css_token & t = ts.tokens[i];
+        if (!want_ident) {
+            if (!g.comma || t.type != token_type::comma) { return std::nullopt; }
+            want_ident = true;
+            continue;
+        }
+        if (t.type != token_type::ident) { return std::nullopt; }
+        const std::string_view word = ts.text_of(t);
+        if (has_keyword(g.alone, word)) {
+            if (found.significant.size() != 1) { return std::nullopt; }
+            return ascii_lower_copy(word);
+        }
+        if (reserved_ident(word)) { return std::nullopt; }
+        if (++count > 1 && !g.list) { return std::nullopt; }
+        out += (out.empty() ? "" : (g.comma ? ", " : " "));
+        out += has_keyword(g.lowercase, word) ? ascii_lower_copy(word) : std::string{word};
+        want_ident = !g.comma;
+    }
+    if (out.empty() || (g.comma && want_ident)) { return std::nullopt; }
+    return out;
+}
+
+// `<string>` PROPERTIES: one string, or one of the property's own keywords.
+// `font-language-override` is the one with a rule about WHICH string: CSS Fonts
+// 4 says an OpenType language system tag, which is one to four characters from
+// the printable ASCII range, and its shortest serialisation drops the trailing
+// spaces the tag is padded with (`"ENG "` is `"ENG"`, `" en "` is `" en"`).
+struct string_grammar {
+    std::string_view property;
+    std::string_view keywords;
+    bool opentype_tag;
+};
+
+constexpr string_grammar string_grammars[] = {
+    {"hyphenate-character", "auto", false},
+    {"block-ellipsis", "no-ellipsis ellipsis", false},
+    {"font-language-override", "normal", true},
+};
+
+[[nodiscard]] std::optional<std::string> one_string(const string_grammar & g,
+                                                    const token_stream & ts, const scan & found) {
+    if (found.significant.size() != 1) { return std::nullopt; }
+    const css_token & only = ts.tokens[found.significant.front()];
+    if (only.type == token_type::ident) {
+        const std::string_view word = ts.text_of(only);
+        if (!has_keyword(g.keywords, word)) { return std::nullopt; }
+        return ascii_lower_copy(word);
+    }
+    if (only.type != token_type::string) { return std::nullopt; }
+    const std::string_view quoted = ts.text_of(only);
+    if (quoted.size() < 2) { return std::nullopt; }
+    std::string_view body = quoted.substr(1, quoted.size() - 2);
+    if (g.opentype_tag) {
+        if (body.empty() || body.size() > 4) { return std::nullopt; }
+        for (const char c : body) {
+            const auto code = static_cast<unsigned char>(c);
+            if (code < 0x20 || code > 0x7E) { return std::nullopt; }
+        }
+        while (!body.empty() && body.back() == ' ') { body.remove_suffix(1); }
+        if (body.empty()) { return std::nullopt; }
+    }
+    return string_text(body);
+}
+
+// `normal | [ light | dark | <custom-ident> ]+ && only?` (CSS Color Adjust 1).
+// The `&&` is why `light only dark` is invalid where `only light dark` is not:
+// `only` sits beside the whole list, never inside it, and serialises last.
+[[nodiscard]] std::optional<std::string> color_scheme(std::span<const std::string> words) {
+    if (words.empty()) { return std::nullopt; }
+    if (words.size() == 1 && words.front() == "normal") { return words.front(); }
+    std::string out;
+    bool only = false;
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        const std::string & w = words[i];
+        if (w == "only") {
+            // Only at an end, and once: the list itself has to stay contiguous.
+            if (only || (i != 0 && i + 1 != words.size())) { return std::nullopt; }
+            only = true;
+            continue;
+        }
+        if (w == "normal" || reserved_ident(w)) { return std::nullopt; }
+        out += (out.empty() ? "" : " ") + w;
+    }
+    if (out.empty()) { return std::nullopt; }
+    return only ? out + " only" : out;
+}
+
+// `normal | italic | oblique <angle>?` (CSS Fonts 4 §font-style). A zero angle
+// IS `normal` - `oblique 0deg` and `normal` are the same style and serialise
+// the same way - and an angle written in grad or rad keeps its unit, because
+// only a math function is simplified.
+[[nodiscard]] std::optional<std::string> font_style(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty() || ts.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
+    const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[at[0]]));
+    if (at.size() == 1) {
+        if (word != "normal" && word != "italic" && word != "oblique") { return std::nullopt; }
+        return word;
+    }
+    if (word != "oblique") { return std::nullopt; }
+    const css_token & t = ts.tokens[at[1]];
+    if (t.type == token_type::function) {
+        std::size_t k = 1;
+        const std::optional<std::string> math = math_component(ts, found, k, numeric_type::angle);
+        if (!math || k + 1 != at.size()) { return std::nullopt; }
+        return "oblique " + *math;
+    }
+    if (at.size() != 2 || t.type != token_type::dimension) { return std::nullopt; }
+    const std::string_view unit = ts.unit_of(t);
+    if (!ascii_iequals_any(unit, {"deg", "grad", "rad", "turn"})) { return std::nullopt; }
+    if (t.number == 0) { return "normal"; }
+    return "oblique " + serialize_number(t.number) + ascii_lower_copy(unit);
+}
+
+// `[ a | b | ... ]{1,2}`, the pair written once when both words are the same
+// (`border-image-repeat: space space` is `space`, CSS Backgrounds 3 §6.4).
+struct pair_grammar {
+    std::string_view property;
+    std::string_view keywords;
+};
+
+constexpr pair_grammar pair_grammars[] = {
+    {"border-image-repeat", "stretch repeat round space"},
+};
+
+[[nodiscard]] std::optional<std::string> keyword_pair(const pair_grammar & g,
+                                                      std::span<const std::string> words) {
+    if (words.empty() || words.size() > 2) { return std::nullopt; }
+    for (const std::string & w : words) {
+        if (!has_keyword(g.keywords, w)) { return std::nullopt; }
+    }
+    if (words.size() == 2 && words[0] != words[1]) { return words[0] + " " + words[1]; }
+    return words[0];
+}
+
+// `auto | stable && both-edges?` (CSS Overflow 3): `both-edges` needs `stable`
+// beside it, and the pair serialises in that order however it was written.
+[[nodiscard]] std::optional<std::string> scrollbar_gutter(std::span<const std::string> words) {
+    if (words.size() == 1 && words.front() == "auto") { return words.front(); }
+    if (words.size() == 1 && words.front() == "stable") { return words.front(); }
+    if (words.size() == 2 && ((words[0] == "stable" && words[1] == "both-edges") ||
+                              (words[0] == "both-edges" && words[1] == "stable"))) {
+        return "stable both-edges";
+    }
+    return std::nullopt;
+}
+
+// `none | all | [ digits <integer [2,4]>? ]` (CSS Writing Modes 4).
+[[nodiscard]] std::optional<std::string> text_combine_upright(const token_stream & ts,
+                                                              const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty() || at.size() > 2) { return std::nullopt; }
+    if (ts.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
+    const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[at[0]]));
+    if (at.size() == 1 && (word == "none" || word == "all")) { return word; }
+    if (word != "digits") { return std::nullopt; }
+    if (at.size() == 1) { return word; }
+    const css_token & n = ts.tokens[at[1]];
+    if (n.type != token_type::number || (n.flags & flag_integer) == 0) { return std::nullopt; }
+    if (n.number < 2 || n.number > 4) { return std::nullopt; }
+    return word + " " + serialize_number(n.number);
+}
+
+// `[ auto | reverse ] || <angle>` (CSS Motion 1), the keyword written first.
+[[nodiscard]] std::optional<std::string> offset_rotate(const token_stream & ts,
+                                                       const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty()) { return std::nullopt; }
+    std::string keyword;
+    std::string angle;
+    for (std::size_t k = 0; k < at.size(); ++k) {
+        const css_token & t = ts.tokens[at[k]];
+        if (t.type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(t));
+            if (!keyword.empty() || (word != "auto" && word != "reverse")) { return std::nullopt; }
+            keyword = word;
+            continue;
+        }
+        if (!angle.empty()) { return std::nullopt; }
+        if (t.type == token_type::function) {
+            const std::optional<std::string> math =
+                math_component(ts, found, k, numeric_type::angle);
+            if (!math) { return std::nullopt; }
+            angle = *math;
+            continue;
+        }
+        if (t.type != token_type::dimension) { return std::nullopt; }
+        const std::string_view unit = ts.unit_of(t);
+        if (!ascii_iequals_any(unit, {"deg", "grad", "rad", "turn"})) { return std::nullopt; }
+        angle = serialize_number(t.number) + ascii_lower_copy(unit);
+    }
+    if (keyword.empty() && angle.empty()) { return std::nullopt; }
+    if (keyword.empty()) { return angle; }
+    if (angle.empty()) { return keyword; }
+    return keyword + " " + angle;
+}
+
+// One `<length-percentage>`, literal or a math function, canonical.
+[[nodiscard]] std::optional<std::string> length_percentage(const token_stream & ts,
+                                                           std::span<const std::size_t> at) {
+    static constexpr property_syntax any_length{"", k::length_percentage, "", "", false, false};
+    if (at.empty()) { return std::nullopt; }
+    if (at.size() == 1) {
+        std::string one;
+        if (match_typed(ts, ts.tokens[at.front()], any_length, one)) { return one; }
+        if (ts.tokens[at.front()].type != token_type::function) { return std::nullopt; }
+    }
+    const std::string_view text = run_text(ts, at);
+    if (text.empty() || !may_have_math(text)) { return std::nullopt; }
+    const math_answer answer = evaluate_math(text, length_context{});
+    if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
+    if (answer.outcome == math_outcome::resolved &&
+        (answer.value.is_number || answer.value.type != numeric_type::length)) {
+        return std::nullopt;
+    }
+    return simplify_math(text);
+}
+
+// The comma-separated items of a value, each a run of significant tokens.
+// `nullopt` for an empty item - a leading, trailing or doubled comma.
+[[nodiscard]] std::optional<std::vector<std::vector<std::size_t>>> comma_items(
+    const token_stream & ts, const scan & found) {
+    std::vector<std::vector<std::size_t>> items{{}};
+    for (const std::size_t i : found.significant) {
+        if (ts.tokens[i].type == token_type::comma) {
+            if (items.back().empty()) { return std::nullopt; }
+            items.emplace_back();
+            continue;
+        }
+        items.back().push_back(i);
+    }
+    if (items.back().empty()) { return std::nullopt; }
+    return items;
+}
+
+// `[ normal | <length-percentage> | <timeline-range-name> <length-percentage>? ]#`
+// (Scroll-driven Animations §animation-range). The offset that names the whole
+// of the named range is dropped, which is 0% at the start and 100% at the end.
+[[nodiscard]] std::optional<std::string> animation_range(std::string_view property,
+                                                         const token_stream & ts,
+                                                         const scan & found) {
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    const std::string_view whole = ascii_iequals(property, "animation-range-start") ? "0%" : "100%";
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        std::string one;
+        std::size_t k = 0;
+        if (ts.tokens[item.front()].type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[item.front()]));
+            if (word == "normal") {
+                if (item.size() != 1) { return std::nullopt; }
+                one = word;
+            } else if (has_keyword("cover contain entry exit entry-crossing exit-crossing", word)) {
+                one = word;
+                k = 1;
+            } else {
+                return std::nullopt;
+            }
+        }
+        if (one != "normal" && k < item.size()) {
+            const std::optional<std::string> offset =
+                length_percentage(ts, std::span<const std::size_t>{item}.subspan(k));
+            if (!offset) { return std::nullopt; }
+            if (one.empty()) {
+                one = *offset;
+            } else if (*offset != whole) {
+                one += " " + *offset;
+            }
+        } else if (one.empty()) {
+            return std::nullopt;
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
+// `[ from-image || <resolution> ] && snap?` (CSS Images 4). The `&&` is why
+// `3dpi snap from-image` is invalid and `snap 3dpi from-image` is not: `snap`
+// sits beside the pair, never inside it. Written as the author wrote it.
+[[nodiscard]] std::optional<std::string> image_resolution(const token_stream & ts,
+                                                          const scan & found) {
+    std::string out;
+    bool from_image = false;
+    bool resolution = false;
+    std::size_t snap_at = found.significant.size();
+    for (std::size_t k = 0; k < found.significant.size(); ++k) {
+        const css_token & t = ts.tokens[found.significant[k]];
+        if (t.type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(t));
+            if (word == "snap") {
+                if (snap_at != found.significant.size()) { return std::nullopt; }
+                snap_at = k;
+            } else if (word == "from-image" && !from_image) {
+                from_image = true;
+            } else {
+                return std::nullopt;
+            }
+            out += (out.empty() ? "" : " ") + word;
+            continue;
+        }
+        if (resolution) { return std::nullopt; }
+        // A MATH FUNCTION IS A `<resolution>` TOO, and image-resolution is the
+        // property css/css-values puts every resolution-typed calc() through
+        // (numeric-testcommon.js picks it for `type:'resolution'`), so the
+        // whole of the function's block is one component here.
+        if (t.type == token_type::function) {
+            const std::optional<std::string> math =
+                math_component(ts, found, k, numeric_type::resolution);
+            if (!math) { return std::nullopt; }
+            resolution = true;
+            out += (out.empty() ? "" : " ") + *math;
+            continue;
+        }
+        if (t.type != token_type::dimension) { return std::nullopt; }
+        const std::string_view unit = ts.unit_of(t);
+        if (!ascii_iequals_any(unit, {"dpi", "dpcm", "dppx", "x"})) { return std::nullopt; }
+        resolution = true;
+        out += (out.empty() ? "" : " ") + serialize_number(t.number) + ascii_lower_copy(unit);
+    }
+    if (!from_image && !resolution) { return std::nullopt; }
+    if (snap_at != found.significant.size() && snap_at != 0 &&
+        snap_at + 1 != found.significant.size()) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+// `auto | rect( [ <length> | auto ]#{4} )` (CSS Masking 1, the CSS 2.1
+// property). The comma-separated form is the only one: `rect(10px 20px, 30px
+// 40px)` is a syntax error however many engines once took it.
+[[nodiscard]] std::optional<std::string> clip_rect(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "auto")) {
+        return "auto";
+    }
+    if (at.size() < 2 || ts.tokens[at.front()].type != token_type::function ||
+        !ascii_iequals(ts.text_of(ts.tokens[at.front()]), "rect(") ||
+        ts.tokens[at.back()].type != token_type::close_paren) {
+        return std::nullopt;
+    }
+    static constexpr property_syntax any_length{"", k::length, "", "", false, false};
+    std::string out{"rect("};
+    std::size_t sides = 0;
+    std::size_t commas = 0;
+    bool want_side = true;
+    for (std::size_t k = 1; k + 1 < at.size(); ++k) {
+        const css_token & t = ts.tokens[at[k]];
+        if (t.type == token_type::comma) {
+            if (want_side) { return std::nullopt; }
+            ++commas;
+            want_side = true;
+            continue;
+        }
+        // THE SEPARATORS ARE UNIFORM. `rect(10px, 20px, 30px, 40px)` is CSS
+        // Masking 1's `[ <length> | auto ]#{4}` and `rect(0 0 0 0)` is CSS 2.1's
+        // comma-less form that every engine still takes; `rect(10px 20px, 30px
+        // 40px)` is neither, and css-masking/parsing/clip-invalid says so.
+        if (!want_side && commas != 0) { return std::nullopt; }
+        std::string one;
+        if (t.type == token_type::ident && ascii_iequals(ts.text_of(t), "auto")) {
+            one = "auto";
+        } else if (t.type == token_type::function) {
+            // A side may be a math function: `rect(10px, 20px, calc(-1em +
+            // 10px), 1em)` is clip-computed's, and `k` lands on its close paren.
+            std::size_t block = k;
+            const std::optional<std::string> math =
+                math_component(ts, found, block, numeric_type::length);
+            if (!math) { return std::nullopt; }
+            one = *math;
+            k = block;
+        } else if (!match_typed(ts, t, any_length, one)) {
+            return std::nullopt;
+        }
+        out += (sides == 0 ? "" : ", ") + one;
+        ++sides;
+        want_side = false;
+    }
+    if (want_side || sides != 4 || (commas != 0 && commas != 3)) { return std::nullopt; }
+    return out + ")";
+}
+
 } // namespace
 
 namespace detail {
@@ -314,6 +777,54 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         const std::optional<std::vector<std::string>> words = words_of(ts, found);
         if (words) { answer = scroll_snap(property, *words); }
+    }
+    for (const ident_grammar & g : ident_grammars) {
+        if (handled || !ascii_iequals(g.property, property)) { continue; }
+        handled = true;
+        answer = custom_idents(g, ts, found);
+    }
+    for (const string_grammar & g : string_grammars) {
+        if (handled || !ascii_iequals(g.property, property)) { continue; }
+        handled = true;
+        answer = one_string(g, ts, found);
+    }
+    if (!handled && ascii_iequals_any(property, {"color-scheme", "scrollbar-gutter"})) {
+        handled = true;
+        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        if (words) {
+            answer = ascii_iequals(property, "color-scheme") ? color_scheme(*words)
+                                                             : scrollbar_gutter(*words);
+        }
+    }
+    for (const pair_grammar & g : pair_grammars) {
+        if (handled || !ascii_iequals(g.property, property)) { continue; }
+        handled = true;
+        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        if (words) { answer = keyword_pair(g, *words); }
+    }
+    if (!handled && ascii_iequals(property, "font-style")) {
+        handled = true;
+        answer = font_style(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "text-combine-upright")) {
+        handled = true;
+        answer = text_combine_upright(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "offset-rotate")) {
+        handled = true;
+        answer = offset_rotate(ts, found);
+    }
+    if (!handled && ascii_iequals_any(property, {"animation-range-start", "animation-range-end"})) {
+        handled = true;
+        answer = animation_range(property, ts, found);
+    }
+    if (!handled && ascii_iequals(property, "image-resolution")) {
+        handled = true;
+        answer = image_resolution(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "clip")) {
+        handled = true;
+        answer = clip_rect(ts, found);
     }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});

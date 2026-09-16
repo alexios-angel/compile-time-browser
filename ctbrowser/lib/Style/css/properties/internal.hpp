@@ -83,6 +83,9 @@ struct scan {
 // where they were, in grammar.cpp, and this declares them.
 
 [[nodiscard]] bool has_keyword(std::string_view set, std::string_view word);
+// A CSS string as CSSOM 2.1 'serialize a string' writes it, given the body
+// between the quotes. Defined in grammar.cpp.
+[[nodiscard]] std::string string_text(std::string_view body);
 [[nodiscard]] scan scan_tokens(const token_stream & ts);
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts);
 [[nodiscard]] bool integer_slots_ok(std::string_view property, const token_stream & ts);

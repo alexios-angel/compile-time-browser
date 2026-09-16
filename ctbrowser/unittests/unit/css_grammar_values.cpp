@@ -350,6 +350,112 @@ void test_filters() {
              std::string{"drop-shadow(rgb(4, 5, 6) 1px 2px 0px)"});
 }
 
+// The module longhands that were `freeform` rows until they had a grammar.
+// Every line is an assertion of a css/<module>/parsing/*-{valid,invalid} file.
+void test_module_longhands() {
+    ok("continue", "discard", "discard");
+    ok("word-break", "auto-phrase", "auto-phrase");
+    ok("font-style", "oblique 10grad", "oblique 10grad");
+    ok("font-style", "oblique 0deg", "normal");
+    bad("font-style", "italic oblique");
+    bad("font-style", "auto");
+    ok("unicode-bidi", "isolate", "isolate");
+    bad("unicode-bidi", "isolate plaintext");
+    ok("border-image-repeat", "space space", "space");
+    ok("border-image-repeat", "repeat round", "repeat round");
+    bad("border-image-repeat", "stretch repeat round");
+    bad("continue", "auto");
+    bad("continue", "normal collapse");
+    ok("text-spacing-trim", "trim-both", "trim-both");
+    bad("text-spacing-trim", "allow-end");
+    ok("scroll-target-group", "auto", "auto");
+    bad("scroll-target-group", "default");
+    bad("scroll-target-group", "auto, auto");
+    ok("image-orientation", "none", "none");
+    bad("image-orientation", "0deg flip");
+    ok("text-size-adjust", "200%", "200%");
+    bad("text-size-adjust", "-100%");
+    bad("text-size-adjust", "10px");
+    ok("-webkit-line-clamp", "6", "6");
+    bad("-webkit-line-clamp", "0");
+    bad("column-count", "0");
+    ok("column-count", "2", "2");
+    ok("ruby-position", "inter-character", "inter-character");
+    ok("ruby-position", "alternate over", "alternate over");
+    bad("ruby-position", "over under");
+    ok("text-autospace", "insert punctuation ideograph-alpha",
+       "ideograph-alpha punctuation insert");
+    bad("text-autospace", "normal insert");
+
+    ok("page", "xyzabc", "xyzabc");
+    bad("page", "not valid");
+    bad("page", "default");
+    ok("view-transition-class", "foo bar", "foo bar");
+    bad("view-transition-class", "foo none");
+    ok("view-transition-group", "nearest", "nearest");
+    ok("transition-property", "ALL, INVALID, SYNTAX", "all, INVALID, SYNTAX");
+    bad("transition-property", "one two three");
+    bad("transition-property", "none, one");
+    bad("view-transition-group", "foo 12px");
+    ok("counter-reset", "chapter 2", "chapter 2");
+    bad("counter-reset", "default 0");
+    bad("will-change", "revert-rule, transform");
+
+    ok("hyphenate-character", "\"=\"", "\"=\"");
+    bad("hyphenate-character", "1400");
+    ok("block-ellipsis", "ellipsis", "ellipsis");
+    bad("block-ellipsis", "auto");
+    ok("font-language-override", "\"ENG \"", "\"ENG\"");
+    bad("font-language-override", "\"turkish\"");
+    bad("font-language-override", "\"\"");
+
+    ok("color-scheme", "only light dark", "light dark only");
+    bad("color-scheme", "light only dark");
+    bad("color-scheme", "only");
+    ok("scrollbar-gutter", "both-edges stable", "stable both-edges");
+    bad("scrollbar-gutter", "force both");
+    ok("text-combine-upright", "digits 3", "digits 3");
+    bad("text-combine-upright", "none all");
+
+    ok("offset-rotate", "0rad reverse", "reverse 0rad");
+    bad("offset-rotate", "auto reverse");
+    ok("offset-rotate", "calc(90deg - 0.5turn)", "calc(-90deg)");
+    ok("image-resolution", "calc(100dpi + 20dpi)", "calc(1.25dppx)"); // canonical: dppx
+    ok("offset-anchor", "auto", "auto");
+    bad("offset-anchor", "left 10% top");
+    ok("offset-position", "10px 20%", "10px 20%");
+    ok("background-blend-mode", "luminosity", "luminosity");
+    // One paren short as written; the tokenizer closes it, so it is a value.
+    CHECK(check_declaration("scale", "calc(sin(pi * sibling-index())").valid);
+    CHECK(check_declaration("rotate", "calc(min(90deg, 1.58rad) * 1.5").valid);
+    bad("grid-auto-columns", "[] 1px []");
+    ok("background-position", "calc(2px + 3px) calc(4px + 5px)", "calc(5px) calc(9px)");
+    ok("background-position", "calc(6px + 21%) calc(7em + 22%)", "calc(21% + 6px) calc(22% + 7em)");
+    bad("background-blend-mode", "normal luminosity");
+
+    ok("animation-duration", "1s, 2s, 3s", "1s, 2s, 3s");
+    ok("animation-direction", "normal, reverse", "normal, reverse");
+    ok("animation-iteration-count", "0, infinite, 3", "0, infinite, 3");
+    bad("animation-duration", "1s, initial");
+    bad("animation-duration", "-3s");
+    bad("animation-duration", "0");
+    bad("transition-duration", "-500ms");
+    bad("animation-iteration-count", "auto");
+    bad("animation-iteration-count", "3 4");
+    ok("animation-range-start", "exit 1%, cover 2%, contain 0%", "exit 1%, cover 2%, contain");
+    ok("animation-range-end", "cover 100%", "cover");
+    bad("animation-range-start", "50% contain");
+    bad("animation-range-end", "none");
+    ok("image-resolution", "snap from-image 0dppx", "snap from-image 0dppx");
+    bad("image-resolution", "3dpi snap from-image");
+    ok("clip", "rect(10px, -20px, auto, auto)", "rect(10px, -20px, auto, auto)");
+    ok("clip", "rect(0 0 0 0)", "rect(0px, 0px, 0px, 0px)");
+    ok("clip", "rect(10px, 20px, calc(1em + 10px), 1em)",
+       "rect(10px, 20px, calc(1em + 10px), 1em)");
+    bad("clip", "rect(10px 20px, 30px 40px)");
+    bad("clip", "rect(10px, 20px, 30px)");
+}
+
 } // namespace
 
 int main() {
@@ -362,5 +468,6 @@ int main() {
     test_shadows();
     test_background_layers();
     test_filters();
+    test_module_longhands();
     REPORT("css_grammar_values");
 }

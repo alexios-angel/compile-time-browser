@@ -124,6 +124,26 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // store nothing.
     if (text.empty()) { return {}; }
 
+    // A BLOCK EOF CLOSED IS CLOSED (CSS Syntax 3 §consume a component value).
+    // The tokenizer closes it, so `scale: calc(sin(pi * sibling-index())` - one
+    // paren short as written - is a perfectly good value; but every grammar
+    // below reads the AUTHOR'S text through the token stream's pool, which is
+    // the text as written, so `calc/` saw an unterminated function and called
+    // the whole declaration a syntax error. The closers go on FIRST and the
+    // value is read once, closed: seventeen assertions of css-values'
+    // sin-cos-tan-computed and minmax-angle-computed are that shape, and the
+    // serialisations below no longer have to append them by hand.
+    std::string closed;
+    {
+        const token_stream probe = tokenize(text);
+        const scan probed = scan_tokens(probe);
+        if (probed.unclosed > 0) {
+            closed = std::string{text};
+            closed.append(static_cast<std::size_t>(probed.unclosed), ')');
+            text = closed;
+        }
+    }
+
     const token_stream ts = tokenize(text);
     const scan found = scan_tokens(ts);
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
@@ -222,6 +242,31 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // `signs-abs-invalid`. It is asked before `freeform` because a freeform
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
+
+    // A `#` LIST IS THE PROPERTY'S OWN GRAMMAR, ONCE PER ITEM. Every longhand
+    // of CSS Animations 1 and CSS Transitions 1 is a comma-separated list - one
+    // value per animation, one per transitioned property - and this table has a
+    // row per PROPERTY, not per item, so `animation-duration: 1s, 2s, 3s` was
+    // refused by the very grammar that makes `1s` valid. The items are asked the
+    // same question the whole value would have been, which keeps the two
+    // answers one definition; only the `#` itself lives here.
+    //
+    // A CSS-WIDE KEYWORD IS NOT AN ITEM (CSS Values 4 §common-keywords): it is a
+    // value for the WHOLE declaration or for nothing, which is what
+    // `animation-duration: 1s, initial` asserts.
+    if (p->kind != k::freeform && (ascii_istarts_with(property, "animation-") ||
+                                   ascii_istarts_with(property, "transition-"))) {
+        const std::vector<std::string_view> items = split_top_level(text, ",");
+        if (items.size() > 1) {
+            std::string list;
+            for (const std::string_view item : items) {
+                const value_check one = check_declaration(property, item, false);
+                if (!one.valid || is_wide_keyword(one.serialized)) { return {}; }
+                list += (list.empty() ? "" : ", ") + one.serialized;
+            }
+            return yes(std::move(list));
+        }
+    }
 
     // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
     // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
@@ -345,6 +390,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
     }
 
     if (p->kind == k::position) {
+        // ITS OWN KEYWORDS FIRST: `offset-anchor: auto` and `offset-position:
+        // normal` are not positions, and no component of one is spelled that
+        // way, so the whole-value matcher below can never answer for them.
+        if (found.significant.size() == 1) {
+            const css_token & only = ts.tokens[found.significant.front()];
+            if (only.type == token_type::ident && has_keyword(p->keywords, ts.text_of(only))) {
+                return yes(ascii_lower_copy(ts.text_of(only)));
+            }
+        }
         std::string serialized;
         if (match_position(ts, found, serialized)) { return yes(std::move(serialized)); }
         for (const std::size_t i : found.significant) {

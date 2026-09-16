@@ -73,7 +73,7 @@ constexpr std::array<std::string_view, 6> performed_substitutions{
 // when the engine does. It costs a false NEGATIVE - a page asking about a
 // function the engine handles but this list has not caught up with - which makes
 // a test skip rather than lie.
-constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
+constexpr std::array<std::string_view, 31> value_functions{"cross-origin",
                                                            "integrity",
                                                            "referrer-policy",
                                                            "rgb",
@@ -102,6 +102,7 @@ constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
                                                            "cubic-bezier",
                                                            "steps",
                                                            "counter",
+                                                           "rect",
                                                            "format"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit) {
@@ -133,29 +134,6 @@ constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
                                                        value, std::chars_format::fixed);
     if (written.ec != std::errc{}) { return "0"; }
     return std::string{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
-}
-
-// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
-// with `"` and `\` escaped and a control character as a hex escape.
-[[nodiscard]] std::string string_text(std::string_view body) {
-    std::string out{"\""};
-    for (const char c : body) {
-        const auto code = static_cast<unsigned char>(c);
-        if (code == 0) {
-            out += "\xEF\xBF\xBD";
-        } else if (code <= 0x1F || code == 0x7F) {
-            static constexpr char digits[] = "0123456789abcdef";
-            out += '\\';
-            if (code >= 16) { out += digits[code >> 4]; }
-            out += digits[code & 0xF];
-            out += ' ';
-        } else {
-            if (c == '"' || c == '\\') { out += '\\'; }
-            out += c;
-        }
-    }
-    out += '"';
-    return out;
 }
 
 // AN ARBITRARY SUBSTITUTION FUNCTION HAS A GRAMMAR AT PARSE TIME even though
@@ -301,6 +279,29 @@ enum class position_axis : std::uint8_t {
 } // namespace
 
 namespace detail {
+
+// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
+// with `"` and `\` escaped and a control character as a hex escape.
+[[nodiscard]] std::string string_text(std::string_view body) {
+    std::string out{"\""};
+    for (const char c : body) {
+        const auto code = static_cast<unsigned char>(c);
+        if (code == 0) {
+            out += "\xEF\xBF\xBD";
+        } else if (code <= 0x1F || code == 0x7F) {
+            static constexpr char digits[] = "0123456789abcdef";
+            out += '\\';
+            if (code >= 16) { out += digits[code >> 4]; }
+            out += digits[code & 0xF];
+            out += ' ';
+        } else {
+            if (c == '"' || c == '\\') { out += '\\'; }
+            out += c;
+        }
+    }
+    out += '"';
+    return out;
+}
 
 // A space-separated keyword set, matched ASCII case-insensitively. Written as
 // one string rather than an array per property because there are ~90 of them
@@ -647,6 +648,11 @@ namespace detail {
                               p.kind == k::number_percentage || p.kind == k::number_length ||
                               p.kind == k::number_length_percentage;
     if (p.nonnegative && t.number < 0) { return false; }
+    // A NONNEGATIVE `<integer>` IS `<integer [1,inf]>`: every row in this table that
+    // marks an integer nonnegative - column-count, orphans, widows, max-lines,
+    // -webkit-line-clamp - is spelled `<integer [1,inf]>` by its specification,
+    // and `column-count: 0` is the assertion four of those parsing files make.
+    if (p.nonnegative && p.kind == k::integer && t.number == 0) { return false; }
 
     switch (t.type) {
     case token_type::number:
