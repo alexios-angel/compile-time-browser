@@ -94,6 +94,11 @@ void install_function(context & cx) {
                const value self = this_function(c, "bind");
                if (!self.is_callable()) { return value::undefined(); }
                const value receiver = bind_this(c, self, arg_at(a, 0));
+               // 10.4.1.3 step 1, ? target.[[GetPrototypeOf]](): a proxy's trap
+               // runs here and may throw; the bound function's [[Prototype]] is
+               // the target's, not Function.prototype's.
+               const value proto = detail::prototype_of(c, self);
+               if (c.throw_pending()) { return value::undefined(); }
                // The arguments bound NOW are prepended to the ones supplied later,
                // which is what makes `f.bind(o, 1)` a partial application rather than
                // just a receiver change.
@@ -127,6 +132,8 @@ void install_function(context & cx) {
                // a constructor exactly when its target is (10.4.1.3 step 5).
                fn->define("@#BoundTargetFunction", self, attr_none);
                fn->is_constructor = is_constructor(self);
+               fn->proto_link = proto;
+               if (proto.is_object_like()) { fn->retained.push_back(proto); }
                // 20.2.3.2: a bound function's `length` is the target's less the
                // arguments already supplied, floored at zero, and its `name` is
                // "bound " prefixed to the target's - both { false, false, true }. It
@@ -141,13 +148,22 @@ void install_function(context & cx) {
                double left = 0.0;
                if (c.has_own_property(self, "length")) {
                    const value target_length = c.lookup_property(self, "length");
+                   if (c.throw_pending()) { return value::undefined(); }
                    if (target_length.is_number()) {
-                       left = to_length(target_length.as_number()) -
-                              static_cast<double>(bound->size());
+                       // Step 7.b: +Infinity stays, -Infinity is 0, else
+                       // ToIntegerOrInfinity less the bound count - not ToLength,
+                       // which clamped an infinite length to 2^53 - 1.
+                       const double n = target_length.as_number();
+                       if (std::isinf(n)) {
+                           left = n > 0 ? n : 0.0;
+                       } else if (!std::isnan(n)) {
+                           left = std::trunc(n) - static_cast<double>(bound->size());
+                       }
                    }
                }
                fn->define("length", value::number(std::max(0.0, left)), attr_configurable);
                const value target_name = c.lookup_property(self, "name");
+               if (c.throw_pending()) { return value::undefined(); }
                fn->define("name",
                           c.string("bound " + (target_name.is_string() ? c.to_string(target_name)
                                                                        : std::string{})),

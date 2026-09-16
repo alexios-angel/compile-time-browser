@@ -313,7 +313,11 @@ void install_object(context & cx) {
         if (self.is_undefined()) { return c.string("[object Undefined]"); }
         if (self.is_null()) { return c.string("[object Null]"); }
         std::string_view tag = "Object";
-        if (self.is_array()) {
+        // Step 4, ? IsArray(O): through a proxy to its target, a TypeError for
+        // a revoked one - and a typed array is not an Array exotic.
+        bool array = false;
+        if (!detail::is_array_value(c, self, array)) { return value::undefined(); }
+        if (array) {
             tag = "Array";
         } else if (self.is_callable()) {
             tag = "Function";

@@ -897,6 +897,16 @@ void test_restricted_properties() {
 // strict one takes the value as given. And `new bound()` constructs the
 // target with the bound arguments in front (10.4.1.2).
 void test_call_bind_this() {
+    // 10.4.1.3: a bound function's [[Prototype]] is the target's, and its
+    // length follows 20.2.3.2 step 7 - an infinite target length stays
+    // infinite, a fractional one truncates, less the bound arguments.
+    expect_result("function f() {} class A {} class B extends A {}"
+                  " return [Object.getPrototypeOf(f.bind()) === Function.prototype,"
+                  " Object.getPrototypeOf(B.bind()) === A].join();",
+                  "true,true");
+    expect_result("const l = v => Object.defineProperty(function (a, b) {}, 'length', {value: v})"
+                  ".bind(null, 1).length; return [l(Infinity), l(-Infinity), l(2.5), l(0)].join();",
+                  "Infinity,0,1,0");
     expect_result("function f() { return this === globalThis; } return f.call() + ',' + "
                   "f.apply(null) + ',' + f.bind(undefined)();",
                   "true,true,true");
