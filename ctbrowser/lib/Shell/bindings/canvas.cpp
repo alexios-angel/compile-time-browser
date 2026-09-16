@@ -562,12 +562,13 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
 }
 
 bool dom_bindings::apply_canvas_font(canvas_context & canvas, std::string_view font) {
-    // The same expansion a stylesheet's `font:` gets, so `bold 16px/1.2 "Fira
-    // Sans", serif`, a numeric weight and a keyword size all mean here what
-    // they mean there. The longhands come back as (name, serialized value).
-    const auto longhands = style::css::expand_cascaded_shorthand("font", font);
-    if (longhands.empty()) { return false; }
-    for (const auto & [name, text] : longhands) {
+    // The same reading a stylesheet's `font:` gets - set_declaration splits the
+    // shorthand into its seven longhands and refuses what is not one - so `bold
+    // 16px/1.2 "Fira Sans", serif`, a numeric weight and a keyword size all mean
+    // here what they mean there. (expand_cascaded_shorthand does not do `font`.)
+    style::css::declaration_block longhands;
+    if (!style::css::set_declaration(longhands, "font", font, false)) { return false; }
+    for (const auto & [name, text, important] : longhands) {
         if (name == "font-size") {
             // ponytail: em/% and the keyword sizes resolve against 16px, the
             // UA default, rather than the canvas element's computed font.
