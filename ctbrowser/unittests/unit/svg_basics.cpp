@@ -498,18 +498,19 @@ void test_cdata_inside_an_svg_is_text() {
     check(tree.find("b(") == std::string::npos, "cdata: and did not become a <b> element");
 }
 
-// NOT inside an integration point, though - and this is the spec's rule rather
-// than an accident of the implementation. Inside <desc>, <title> or
-// <foreignObject> the content is HTML, and in HTML `<![CDATA[` is a bogus
-// comment. An earlier version of the test above used <desc> and failed here,
-// which is the right answer arriving for the right reason.
-void test_cdata_in_an_integration_point_is_html_again() {
+// AND INSIDE AN INTEGRATION POINT TOO. The tokenizer's rule (13.2.5.42) asks
+// only whether the adjusted current node is in the HTML namespace - <desc> is
+// SVG's - so `<![CDATA[` there is a CDATA section as well; the integration
+// point changes which INSERTION MODE the tokens go through, not how they are
+// tokenized. Until 2026-09-16 this engine made it a bogus comment and the
+// test said the spec agreed; the html5lib fixtures say otherwise.
+void test_cdata_in_an_integration_point_is_still_cdata() {
     atom_table atoms;
     document doc{atoms};
     (void)parse_html(doc, R"(<svg width="10" height="10"><desc><![CDATA[<b>x]]></desc></svg>)");
     const std::string tree = tree_of(doc, doc.read().root(), atoms);
-    check(tree.find(R"("<b>x")") == std::string::npos,
-          "cdata: inside <desc> the content is HTML, so CDATA is a comment");
+    check(tree.find(R"("<b>x")") != std::string::npos,
+          "cdata: inside <desc> the section is still TEXT");
 }
 
 // The same bytes outside an SVG must keep behaving as they always did.
@@ -572,7 +573,7 @@ int main() {
     test_html_breaks_out_of_an_unclosed_svg();
     test_foreign_object_returns_to_html();
     test_cdata_inside_an_svg_is_text();
-    test_cdata_in_an_integration_point_is_html_again();
+    test_cdata_in_an_integration_point_is_still_cdata();
     test_cdata_outside_an_svg_is_unchanged();
     test_a_stray_close_tag_inside_an_svg_is_ignored();
     test_an_unclosed_svg_still_draws();

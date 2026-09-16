@@ -34,7 +34,7 @@ void test_walker_state_is_readonly_on_the_prototype() {
        " try { w.currentNode = {}; } catch (e) { out.push(e.name); }"
        " w.currentNode = document.getElementById('b'); out.push(w.currentNode.id);"
        " return out.join(); })()",
-       "true,5,function,undefined,0,[object TreeWalker],TypeError,TypeError,b");
+       "true,5,function,,0,[object TreeWalker],TypeError,TypeError,b");
     is("(function () { var i = document.createNodeIterator(document.body);"
        " var d = Object.getOwnPropertyDescriptor(NodeIterator.prototype, 'referenceNode');"
        " return typeof d.get + ',' + d.set + ',' + i.pointerBeforeReferenceNode + ','"

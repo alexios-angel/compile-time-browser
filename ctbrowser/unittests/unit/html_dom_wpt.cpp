@@ -104,7 +104,7 @@ void test_the_rows_the_element_tables_name_are_all_there() {
        " var m = document.createElement('meter'); m.low = -0; m.high = 1e-10;"
        " seen.push(m.getAttribute('low'), m.getAttribute('high'), m.optimum);"
        " return seen.join(); })()",
-       "number,1,7,100,1,1,0.5,1e-10,kept,1e+25,0,1e-10,0");
+       "number,1,7,100,1,1,0.5,1e-10,kept,1e+25,0,1e-10,0.5");
     // `option.label` and `option.value` fall back to the option's text.
     is("(function () { var o = document.createElement('option'); o.textContent = ' a  b ';"
        " var seen = [o.label, o.value]; o.value = 'v'; o.label = 'l';"

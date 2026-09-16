@@ -52,34 +52,33 @@ void test_a_script_sees_the_tree_built_so_far() {
 // --- document.write lands at the insertion point --------------------------------
 
 void test_write_inserts_at_the_insertion_point() {
-    // document-write/001.html: written text is in the body, where the script is.
-    is("<body><script>document.write('PASS'); console.log(document.body.textContent)"
-       "</script></body>",
-       "PASS");
+    // document-write/001.html: the script is head content, so what it writes
+    // is what makes the body - and is all the body holds.
+    is("<script>document.write('PASS'); console.log(document.body.textContent)</script>", "PASS");
     // What is written goes BEFORE the markup that follows the script.
     is("<body><script>document.write('<p id=w></p>')</script><p id=after></p>"
        "<script>console.log(document.getElementById('w').nextElementSibling.id)</script></body>",
        "after");
     // document-write/002.html: an unclosed <i> stays open across what follows.
-    is("<body><script>document.write('<i>Filler Text')</script>more"
+    is("<script>document.write('<i>Filler Text')</script>more"
        "<script>var i = document.body.firstChild;"
        " console.log(i.localName + ':' + i.textContent)</script></body>",
        "i:Filler Textmore");
     // document-write/010.html: two half-writes are one tag, read once whole.
-    is("<body><script>document.write('<i id='); document.write(\"'test'>Filler Text\");"
+    is("<script>document.write('<i id='); document.write(\"'test'>Filler Text\");"
        " var i = document.body.firstChild;"
        " console.log(i.localName + ':' + i.getAttribute('id') + ':' + i.textContent)"
        "</script></body>",
        "i:test:Filler Text");
     // Two writes of text are ONE Text node, not two (13.2.6.1 "insert a
     // character" appends to the Text node before the insertion point).
-    is("<body><script>document.write('a'); document.write('b');"
+    is("<script>document.write('a'); document.write('b');"
        " console.log(document.body.childNodes.length + ':' + document.body.firstChild.data)"
-       "</script></body>",
+       "</script>",
        "1:ab");
     // writeln adds the newline.
-    is("<body><script>document.writeln('x'); console.log(JSON.stringify(document.body."
-       "firstChild.data))</script></body>",
+    is("<script>document.writeln('x'); console.log(JSON.stringify(document.body."
+       "firstChild.data))</script>",
        "\"x\\n\"");
 }
 
