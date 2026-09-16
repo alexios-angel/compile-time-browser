@@ -16,6 +16,7 @@ add_mlir_library(CTNativeAnalysis
   ../HostContract/Contract.cpp
   ../HostContract/DOMEntry.cpp
   ../HostContract/DOMSource.cpp
+  ../HostContract/DOMIteration.cpp
   ../HostContract/Values.cpp
   ../HostContract/CapturedMapBody.cpp
   ../HostContract/ScalarCallbacks.cpp

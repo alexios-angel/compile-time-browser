@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
@@ -49,12 +50,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 6 ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 9 ||
         llvm::any_of(contract.initialIntrinsics,
                      [&](const auto & name) {
                          return (name != "Object" && name != "Number" &&
                                  name != "decodeURIComponent" && name != "JSON" &&
-                                 name != "Array" && name != "String") ||
+                                 name != "Array" && name != "String" &&
+                                 name != "__ctbrowser_for_of_open" &&
+                                 name != "__ctbrowser_iter_next" &&
+                                 name != "__ctbrowser_iter_close") ||
                                 !intrinsicNames.insert(name).second;
                      }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
@@ -176,7 +180,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         null,
         undefined
     };
-    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths;
+    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
+        provedStringVectorIndices;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics;
     std::vector<ctjs::InvokeOp> provedInvocations;
@@ -218,6 +223,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         const bool callbackBody = function != target;
         auto & block = function.getBody().front();
         llvm::DenseMap<mlir::Value, Kind> values;
+        llvm::DenseSet<mlir::Value> increasingIndices;
         unsigned mutationEpoch = 0;
         llvm::DenseMap<mlir::Value, unsigned> datasetEpochs;
         struct Predicate {
@@ -241,12 +247,13 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             const auto found = values.find(value);
             return found != values.end() && found->second == kind;
         };
-        // ponytail: bounded structured branches; loops and early-return CFG
-        // need a separate control-flow proof. Both arms are checked, always.
+        // Both arms are checked. Loop-carried values have invariant scalar
+        // kinds; indexed snapshots additionally require the exact 0/+1 proof.
         const auto visit = [&](auto && self, mlir::Block & body, unsigned depth,
                                mlir::Value frame) -> bool {
-            if (depth == 64 || (!body.getArguments().empty() && depth != 0 &&
-                                !llvm::isa<ctjs::InvokeOp>(body.getParentOp()))) {
+            if (depth == 64 ||
+                (!body.getArguments().empty() && depth != 0 &&
+                 !llvm::isa<ctjs::InvokeOp, mlir::scf::WhileOp>(body.getParentOp()))) {
                 refusal = "DOM entry branch depth or block arguments are unsupported";
                 return false;
             }
@@ -264,7 +271,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     return false;
                 }
                 if ((operation.getNumRegions() != 0 &&
-                     !llvm::isa<mlir::scf::IfOp, ctjs::InvokeOp>(operation)) ||
+                     !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::InvokeOp>(operation)) ||
                     operation.getNumSuccessors() != 0 || returned) {
                     refusal =
                         "DOM entry does not admit nested control flow or a source continuation";
@@ -284,6 +291,133 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedRefinements[found->second].uses.push_back(
                             {&operation, use.getOperandNumber()});
                     }
+                }
+                if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation)) {
+                    if (!loop.getBefore().hasOneBlock() || !loop.getAfter().hasOneBlock()) {
+                        refusal = "DOM loop requires complete scalar regions";
+                        return false;
+                    }
+                    auto & before = loop.getBefore().front();
+                    auto & after = loop.getAfter().front();
+                    auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.getTerminator());
+                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.getTerminator());
+                    if (!condition || !yield || !llvm::hasSingleElement(after) ||
+                        before.getNumArguments() != loop.getInits().size() ||
+                        after.getNumArguments() != loop.getNumResults() ||
+                        yield.getNumOperands() != loop.getInits().size() ||
+                        condition.getArgs().size() != loop.getNumResults()) {
+                        refusal = "DOM loop lost scalar state correspondence";
+                        return false;
+                    }
+                    for (auto [argument, initial] :
+                         llvm::zip(before.getArguments(), loop.getInits())) {
+                        if (!spend()) { return false; }
+                        if (!hasKind(initial, Kind::number) && !hasKind(initial, Kind::string) &&
+                            !hasKind(initial, Kind::boolean)) {
+                            refusal = "DOM loop cannot carry borrowed or unknown values";
+                            return false;
+                        }
+                        values[argument] = values[initial];
+                        auto constant = initial.getDefiningOp<ctjs::ConstantOp>();
+                        auto zero = constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())
+                                             : ctjs::NumberAttr{};
+                        auto forwarded = llvm::dyn_cast<mlir::BlockArgument>(
+                            yield.getOperand(argument.getArgNumber()));
+                        if (!zero || zero.getDouble() != 0 || !forwarded ||
+                            forwarded.getOwner() != &after) {
+                            continue;
+                        }
+                        const unsigned slot = forwarded.getArgNumber();
+                        // The normalizer returns the condition and its entire
+                        // continuation tuple together from each selected arm.
+                        const auto advances = [&](auto && check, mlir::Value flag, mlir::Value next,
+                                                  unsigned level) -> bool {
+                            if (!spend() || level == 64) { return false; }
+                            if (auto branch = flag.getDefiningOp<mlir::scf::IfOp>()) {
+                                auto flagResult = llvm::cast<mlir::OpResult>(flag);
+                                for (mlir::Region & region : branch->getRegions()) {
+                                    if (!spend() || !region.hasOneBlock()) { return false; }
+                                    auto exit = llvm::dyn_cast<mlir::scf::YieldOp>(
+                                        region.front().getTerminator());
+                                    if (!exit) { return false; }
+                                    auto nextResult = llvm::dyn_cast<mlir::OpResult>(next);
+                                    const auto value =
+                                        nextResult && nextResult.getOwner() == branch
+                                            ? exit.getOperand(nextResult.getResultNumber())
+                                            : next;
+                                    if (!check(check, exit.getOperand(flagResult.getResultNumber()),
+                                               value, level + 1)) {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            }
+                            auto constant = flag.getDefiningOp<mlir::arith::ConstantOp>();
+                            auto bit = constant
+                                           ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                           : mlir::IntegerAttr{};
+                            if (!bit || !bit.getType().isInteger(1)) { return false; }
+                            if (!bit.getInt()) { return true; }
+                            auto add = next.getDefiningOp<ctjs::BinaryStaticOp>();
+                            auto rhs = add ? add.getRhs().getDefiningOp<ctjs::ConstantOp>()
+                                           : ctjs::ConstantOp{};
+                            auto one = rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue())
+                                           : ctjs::NumberAttr{};
+                            return add && add.getKind() == ctjs::BinaryKind::Add &&
+                                   add.getLhs() == argument && one && one.getDouble() == 1;
+                        };
+                        if (advances(advances, condition.getCondition(), condition.getArgs()[slot],
+                                     0)) {
+                            increasingIndices.insert(argument);
+                        }
+                        if (budgetExhausted) { return false; }
+                    }
+                    const unsigned loopEpoch = mutationEpoch;
+                    if (!self(self, before, depth + 1, frame)) { return false; }
+                    if (mutationEpoch != loopEpoch) {
+                        refusal = "DOM loop mutation needs a backedge dataset-alias proof";
+                        return false;
+                    }
+                    for (auto [argument, result, value] :
+                         llvm::zip(after.getArguments(), loop.getResults(), condition.getArgs())) {
+                        if (!spend()) { return false; }
+                        if (!hasKind(value, Kind::number) && !hasKind(value, Kind::string) &&
+                            !hasKind(value, Kind::boolean)) {
+                            refusal = "DOM loop result is not an invariant scalar";
+                            return false;
+                        }
+                        values[argument] = values[result] = values[value];
+                        if (values[value] == Kind::string) {
+                            provedStrings.push_back(argument);
+                            provedStrings.push_back(result);
+                        }
+                    }
+                    if (!self(self, after, depth + 1, frame)) { return false; }
+                    for (auto [value, initial] : llvm::zip(yield.getOperands(), loop.getInits())) {
+                        if (!spend()) { return false; }
+                        if (values[value] != values[initial]) {
+                            refusal = "DOM loop changes its scalar state kind";
+                            return false;
+                        }
+                    }
+                    continue;
+                }
+                if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(operation)) {
+                    if (!llvm::isa<mlir::scf::WhileOp>(body.getParentOp()) ||
+                        !hasKind(condition.getCondition(), Kind::boolean)) {
+                        refusal = "DOM loop condition lacks a proved Boolean";
+                        return false;
+                    }
+                    returned = true;
+                    continue;
+                }
+                if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
+                    if (!constant.getType().isInteger(1)) {
+                        refusal = "DOM completion arithmetic must be a Boolean constant";
+                        return false;
+                    }
+                    values[constant.getResult()] = Kind::boolean;
+                    continue;
                 }
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                     if (!hasKind(branch.getCondition(), Kind::boolean) ||
@@ -617,6 +751,35 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedStringVectorLengths.push_back(read);
                         continue;
                     }
+                    if (hasKind(read.getObject(), Kind::stringVector) &&
+                        increasingIndices.contains(read.getKey())) {
+                        bool guarded = false;
+                        for (mlir::Operation * parent = read->getParentOp(); parent != function;
+                             parent = parent->getParentOp()) {
+                            if (!spend()) { return false; }
+                            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
+                            if (!branch ||
+                                !branch.getThenRegion().isAncestor(read->getParentRegion())) {
+                                continue;
+                            }
+                            auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                            auto compare = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                                 : ctjs::CompareOp{};
+                            auto length =
+                                compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
+                                        : ctjs::GetPropertyOp{};
+                            guarded |= compare && compare.getKind() == ctjs::CompareKind::Lt &&
+                                       compare.getLhs() == read.getKey() && length &&
+                                       length.getObject() == read.getObject() &&
+                                       llvm::is_contained(provedStringVectorLengths, length);
+                        }
+                        if (guarded) {
+                            values[read.getResult()] = Kind::string;
+                            provedStringVectorIndices.push_back(read);
+                            provedStrings.push_back(read.getResult());
+                            continue;
+                        }
+                    }
                     if (suppliedArray && hasKind(read.getObject(), Kind::stringVector) &&
                         key == "filter") {
                         values[read.getResult()] = Kind::filterStrings;
@@ -870,6 +1033,27 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     refusal = "DOM call arguments lack the supported primitive contract";
                     return false;
                 }
+                if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(operation);
+                    binary && binary.getKind() == ctjs::BinaryKind::Add &&
+                    hasKind(binary.getLhs(), Kind::number) &&
+                    hasKind(binary.getRhs(), Kind::number)) {
+                    values[binary.getResult()] = Kind::number;
+                    continue;
+                }
+                if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
+                    binary && binary.getKind() == ctjs::BinaryKind::Add &&
+                    hasKind(binary.getLhs(), Kind::number) &&
+                    hasKind(binary.getRhs(), Kind::number)) {
+                    values[binary.getResult()] = Kind::number;
+                    continue;
+                }
+                if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                    compare && compare.getKind() == ctjs::CompareKind::Lt &&
+                    hasKind(compare.getLhs(), Kind::number) &&
+                    hasKind(compare.getRhs(), Kind::number)) {
+                    values[compare.getResult()] = Kind::boolean;
+                    continue;
+                }
                 if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
                     binary &&
                     (binary.getKind() == ctjs::BinaryKind::Add ||
@@ -1012,6 +1196,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     tokenLists = std::move(provedTokens);
     datasets = std::move(provedDatasets);
     stringVectorLengths = std::move(provedStringVectorLengths);
+    stringVectorIndices = std::move(provedStringVectorIndices);
     datasetElements = std::move(provedDatasetElements);
     objectIntrinsics = std::move(provedObjectIntrinsics);
     numberIntrinsics = std::move(provedNumberIntrinsics);
@@ -1063,6 +1248,10 @@ bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
 
 bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {
     return llvm::is_contained(stringVectorLengths, read);
+}
+
+bool DOMEntryAnalysis::isStringVectorIndex(ctjs::GetPropertyOp read) const {
+    return llvm::is_contained(stringVectorIndices, read);
 }
 
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {

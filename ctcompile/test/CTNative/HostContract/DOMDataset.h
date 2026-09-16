@@ -66,7 +66,8 @@ module {
         input.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
-                     !proof.isTokenList(read.getResult()) && !proof.isStringVectorLength(read);
+                     !proof.isTokenList(read.getResult()) && !proof.isStringVectorLength(read) &&
+                     !proof.isStringVectorIndex(read);
         });
         return empty;
     };

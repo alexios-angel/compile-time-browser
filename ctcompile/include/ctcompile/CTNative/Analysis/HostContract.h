@@ -67,7 +67,11 @@ struct HostContract {
     // providers accept Object, Number, decodeURIComponent, JSON, Array and String
     // as standard own global data bindings, including Number.prototype.toString,
     // Object.keys, JSON.parse, Array.prototype.filter, String.prototype.startsWith
-    // and the default Array constructor/species chain. Source
+    // and the default Array constructor/species chain. Array also promises
+    // original Array iteration, including its Symbol.iterator/values method
+    // and iterator-prototype chain, with no custom next or return hooks. DOM
+    // iteration additionally requires the original __ctbrowser_for_of_open,
+    // __ctbrowser_iter_next and __ctbrowser_iter_close source-helper bindings. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
@@ -90,6 +94,8 @@ void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 // Only on a private, fingerprint-checked clone. The caller must reprove its
 // complete DOM entry after this bounded local-call normalization.
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps);
+llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
+                                  unsigned maxSteps);
 
 enum class HostDOMMethod {
     toggleClass,
@@ -175,6 +181,7 @@ public:
     [[nodiscard]] bool isDataset(mlir::Value value) const;
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
     // One URI or JSON.parse call with owning String/json_value continuations;
@@ -206,6 +213,7 @@ private:
     std::vector<mlir::BlockArgument> elements;
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
+    std::vector<ctjs::GetPropertyOp> stringVectorIndices;
     std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
     std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics;
