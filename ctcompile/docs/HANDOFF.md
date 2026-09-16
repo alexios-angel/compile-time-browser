@@ -6,6 +6,23 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Prefix work landed; integrated-runtime gate in progress, 2026-09-16 UTC
+
+Commits **ba98d8f4**, **7d8148e0** and **c0536547** add held bounded Neg strides,
+branch-local confined filter scheduling and original Bootstrap anchored prefix removal.
+Corrected focused **3/3 CTests / 4/4 lit** pass, with **17 dataset sources / 55 Node-VM
+observations / eight native binaries / 304 refusals** and lifetime sanitization.
+Full **305/305 CTests (2257.92s) / 257/257 lit** passed on frozen **c0536547**.
+The final local hash check then detected browser merge **a2486f85** (Annex B bytecode
+and platform changes), so those results do not validate the current runtime.
+
+Current session is preserving that completed gate and validating the integrated tree.
+Do not discard the three landed commits or revert the browser merge. Evidence and
+running gate scripts are under `/tmp/ctcompile-prefix-finalize/`; AGENT-SYNC records
+the active build and claims. Native live dataset reads, Unicode key normalization,
+loop-local M calls, dynamic result writes and the application driver remain open.
+The checkpoint below is historical; final measured results will replace this notice.
+
 ## Original snapshot iteration and scalar loop completion, 2026-09-16 UTC
 
 Resumed clean **9b02a344**, its HANDOFF and the **19:22:54 AGENT-SYNC** journal:
