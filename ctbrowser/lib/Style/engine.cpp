@@ -999,6 +999,30 @@ namespace {
     return true;
 }
 
+// A VALID CUSTOM ELEMENT NAME, HTML §4.13.2 (the ASCII subset). Contains a
+// hyphen, starts with an ASCII lowercase letter, holds only PCEN characters,
+// and is not one of the eight reserved SVG/MathML names. An element whose local
+// name is one - or a customized built-in whose `is=` value is one - has custom
+// element state "undefined" until it is defined, which is the only case `:defined`
+// can rule out from the tree alone. Bytes >= 0x80 pass so a Unicode name is not
+// mistaken for a built-in; uppercase ASCII does not, so `is="Foo"` is uncustomized.
+[[nodiscard]] bool is_potential_custom_element_name(std::string_view name) {
+    if (name.empty() || name[0] < 'a' || name[0] > 'z') { return false; }
+    if (name.find('-') == std::string_view::npos) { return false; }
+    for (const char ch : name) {
+        const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' ||
+                        ch == '.' || ch == '_' || static_cast<unsigned char>(ch) >= 0x80;
+        if (!ok) { return false; }
+    }
+    static constexpr std::string_view reserved[] = {
+        "annotation-xml", "color-profile",    "font-face",      "font-face-src",
+        "font-face-uri",  "font-face-format", "font-face-name", "missing-glyph"};
+    for (const std::string_view r : reserved) {
+        if (name == r) { return false; }
+    }
+    return true;
+}
+
 // `An+B`: does `index` appear in the series for some non-negative n?
 //
 // The spec's series is An+B for n = 0, 1, 2, ..., and only POSITIVE results count -
@@ -1049,6 +1073,25 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
     if (c.structural != 0 && !structural_matches(f, c.structural)) { return false; }
     if ((c.structural & structural_scope) != 0 && (scope_ ? node != scope_ : !f.is_root)) {
         return false;
+    }
+    // `:defined`. The honest subset the tree can answer: a non-HTML element is
+    // uncustomized and always defined; an HTML element is defined unless its own
+    // name is a potential custom element name (an autonomous custom element,
+    // undefined until upgraded) or it carries an `is=` that names one (a
+    // customized built-in, likewise). An element already upgraded reads as
+    // undefined here, because the registry that would say otherwise lives in the
+    // shell - see selector.hpp's structural_defined.
+    if ((c.structural & structural_defined) != 0) {
+        bool defined = true;
+        if (ns == node_ns::html) {
+            if (is_potential_custom_element_name(atoms_->text(f.tag))) {
+                defined = false;
+            } else {
+                const std::string_view is_attr = txn.attribute_value(node, atoms_->intern("is"));
+                if (is_potential_custom_element_name(is_attr)) { defined = false; }
+            }
+        }
+        if (!defined) { return false; }
     }
     // ATTRIBUTES: everything above compares interned integers, and this reads the
     // element's attribute list and then compares strings.
