@@ -355,6 +355,8 @@ int main() {
             "ReferenceError");
     answers("function f() { let h = 1; { function h() {} } return typeof h; } return f();",
             "number");
+    answers("function f() { { let h = 1; { function h() {} } } return typeof h; } return f();",
+            "undefined");
     answers("var r = typeof blockFn; { function blockFn() { return 3; } } return r + blockFn();",
             "undefined3");
 

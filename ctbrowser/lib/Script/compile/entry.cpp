@@ -46,10 +46,12 @@ void compiler_impl::compile_program() {
         // global the declaration itself writes, and listing it here as well
         // would show the native prover a var where it expects a function.
         if (!fn().is_strict) {
+            std::vector<std::string> lexical;
             for (const std::int32_t stmt : kids(root)) {
                 if (at(stmt).kind == vp::nk::func_decl) { continue; }
                 each_block_function(
-                    stmt, [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
+                    stmt, [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); },
+                    lexical);
             }
         }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());

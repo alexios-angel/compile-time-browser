@@ -225,16 +225,20 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     // local, and not one of the vars" means here, the parameters and the
     // body's own let/const/class having been declared above.
     if (!fn().is_strict) {
+        std::vector<std::string> lexical;
         for (const std::int32_t stmt : kids(at(body))) {
-            each_block_function(stmt, [&](std::string name) {
-                const bool fresh = find_local_entry(fn(), name) == nullptr;
-                if (fresh) {
-                    hoist(name);
-                } else if (std::find(vars.begin(), vars.end(), name) == vars.end()) {
-                    return;
-                }
-                fn().annex_b_functions.push_back(std::move(name));
-            });
+            each_block_function(
+                stmt,
+                [&](std::string name) {
+                    const bool fresh = find_local_entry(fn(), name) == nullptr;
+                    if (fresh) {
+                        hoist(name);
+                    } else if (std::find(vars.begin(), vars.end(), name) == vars.end()) {
+                        return;
+                    }
+                    fn().annex_b_functions.push_back(std::move(name));
+                },
+                lexical);
         }
     }
 }

@@ -508,16 +508,46 @@ public:
     // function boundaries as hoist_nested_vars does; the caller decides
     // which of them may take a var binding (none that a parameter or a
     // lexical declaration already names).
-    template <typename Each> void each_block_function(std::int32_t index, const Each & each) {
+    // ...unless a `let`/`const`/`class` of the same name is declared in an
+    // enclosing block on the way down (B.3.3.1 step ii, "would not produce any
+    // Early Errors": `{ let f; { function f() {} } }` gets no var binding),
+    // which is what `lexical` carries - the names declared by the blocks
+    // between the body and the declaration.
+    template <typename Each>
+    void each_block_function(std::int32_t index, const Each & each,
+                             std::vector<std::string> & lexical) {
         if (index < 0) { return; }
         const vp::node & n = at(index);
         if (n.kind == vp::nk::func_decl) {
-            each(std::string{n.text});
+            if (std::find(lexical.begin(), lexical.end(), n.text) == lexical.end()) {
+                each(std::string{n.text});
+            }
             return;
         }
         if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
-        for (const std::int32_t slot : child_slots(n)) { each_block_function(slot, each); }
-        for (const std::int32_t k : kids(n)) { each_block_function(k, each); }
+        const std::size_t mark = lexical.size();
+        // A block's own lexical declarations shadow for everything inside it,
+        // including the function declarations that are its direct children -
+        // those are the early error itself, not a hoisting question.
+        if (n.kind == vp::nk::block || n.kind == vp::nk::program) {
+            for (const std::int32_t k : kids(n)) {
+                const vp::node & stmt = at(k);
+                if (stmt.kind == vp::nk::var_decl && stmt.text != "var") {
+                    for (const std::int32_t d : kids(stmt)) {
+                        if (at(d).b >= 0) {
+                            pattern_names(at(d).b, lexical);
+                        } else {
+                            lexical.emplace_back(at(d).text);
+                        }
+                    }
+                } else if (stmt.kind == vp::nk::class_decl) {
+                    lexical.emplace_back(stmt.text);
+                }
+            }
+        }
+        for (const std::int32_t slot : child_slots(n)) { each_block_function(slot, each, lexical); }
+        for (const std::int32_t k : kids(n)) { each_block_function(k, each, lexical); }
+        lexical.resize(mark);
     }
 
     [[nodiscard]] bool was_predeclared(std::string_view name) const;
