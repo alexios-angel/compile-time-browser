@@ -383,6 +383,9 @@ void test_module_longhands() {
     ok("view-transition-class", "foo bar", "foo bar");
     bad("view-transition-class", "foo none");
     ok("view-transition-group", "nearest", "nearest");
+    ok("transition-property", "ALL, INVALID, SYNTAX", "all, INVALID, SYNTAX");
+    bad("transition-property", "one two three");
+    bad("transition-property", "none, one");
     bad("view-transition-group", "foo 12px");
     ok("counter-reset", "chapter 2", "chapter 2");
     bad("counter-reset", "default 0");

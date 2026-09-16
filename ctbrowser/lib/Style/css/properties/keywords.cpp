@@ -334,39 +334,53 @@ constexpr or_grammar or_grammars[] = {
 }
 
 // `<custom-ident>` PROPERTIES: a word the property does not spell for itself.
-// `keywords` are that property's own words - they are NOT custom idents, so
-// `view-transition-class: foo none` is invalid - and `list` says whether more
-// than one ident may follow. A custom ident KEEPS ITS CASE; a keyword
-// lowercases, like every other keyword here.
+// `alone` are that property's own words, valid only as the whole value and NOT
+// custom idents, so `view-transition-class: foo none` is invalid. `lowercase`
+// are words that may stand IN the list and are keywords all the same -
+// `transition-property: ALL, SRC` is `all, SRC`, because a custom ident keeps
+// its case and a keyword never does. `list` says whether more than one may
+// follow and `comma` what separates them.
 struct ident_grammar {
     std::string_view property;
-    std::string_view keywords;
+    std::string_view alone;
+    std::string_view lowercase;
     bool list;
+    bool comma;
 };
 
 constexpr ident_grammar ident_grammars[] = {
-    {"page", "auto", false},
-    {"view-transition-group", "normal contain nearest none", false},
-    {"view-transition-class", "none", true},
+    {"page", "auto", "", false, false},
+    {"view-transition-group", "normal contain nearest none", "", false, false},
+    {"view-transition-class", "none", "", true, false},
+    {"transition-property", "none", "all", true, true},
 };
 
 [[nodiscard]] std::optional<std::string> custom_idents(const ident_grammar & g,
                                                        const token_stream & ts,
                                                        const scan & found) {
     std::string out;
+    std::size_t count = 0;
+    bool want_ident = true;
     for (const std::size_t i : found.significant) {
         const css_token & t = ts.tokens[i];
+        if (!want_ident) {
+            if (!g.comma || t.type != token_type::comma) { return std::nullopt; }
+            want_ident = true;
+            continue;
+        }
         if (t.type != token_type::ident) { return std::nullopt; }
         const std::string_view word = ts.text_of(t);
-        if (has_keyword(g.keywords, word)) {
+        if (has_keyword(g.alone, word)) {
             if (found.significant.size() != 1) { return std::nullopt; }
             return ascii_lower_copy(word);
         }
         if (reserved_ident(word)) { return std::nullopt; }
-        if (!out.empty() && !g.list) { return std::nullopt; }
-        out += (out.empty() ? "" : " ") + std::string{word};
+        if (++count > 1 && !g.list) { return std::nullopt; }
+        out += (out.empty() ? "" : (g.comma ? ", " : " "));
+        out += has_keyword(g.lowercase, word) ? ascii_lower_copy(word) : std::string{word};
+        want_ident = !g.comma;
     }
-    if (out.empty()) { return std::nullopt; }
+    if (out.empty() || (g.comma && want_ident)) { return std::nullopt; }
     return out;
 }
 
