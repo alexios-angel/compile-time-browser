@@ -165,7 +165,8 @@ value dom_bindings::create_html_element(context & cx, const std::string & name) 
 
 // --- the scan ----------------------------------------------------------------------
 
-void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected) {
+void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected,
+                                        bool upgrade) {
     struct frame {
         node_id at;
         bool moved; // an ancestor changed parent while connected
@@ -228,7 +229,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             txn.element_ns(here.at) == node_ns::html) {
             const std::uint64_t key = here.at.key();
             const auto found = custom_elements_.find(key);
-            if (found == custom_elements_.end()) {
+            if (found == custom_elements_.end() && upgrade) {
                 const std::size_t index = custom_definition_for(txn, here.at);
                 if (index != npos) {
                     // "Upgrade an element": the constructor, then
@@ -245,7 +246,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                     if (connected) { enqueue(here.at, kind::connected); }
                     custom_elements_.emplace(key, std::move(state));
                 }
-            } else {
+            } else if (found != custom_elements_.end()) {
                 custom_element_state & state = found->second;
                 const custom_element_definition & def = custom_definitions_[state.definition];
                 state.visited = true;
@@ -289,22 +290,31 @@ void dom_bindings::scan_custom_elements() {
             top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
         walk_custom_elements(txn, root, connected);
     }
-    // What no root reached is detached: a connected one left the tree.
+    // WHAT NO ROOT REACHED IS DETACHED - AND IS STILL A CUSTOM ELEMENT.
+    //
+    // A disconnected element's reactions do not stop: `el.setAttribute(...)`
+    // on one a page made and has not inserted still runs
+    // attributeChangedCallback, and that is most of what
+    // custom-elements/reactions/* measures - every one of those files creates
+    // its element, mutates it, and reads the log before anything is in the
+    // document. Walking it with connected=false does both halves at once, the
+    // disconnect and the attribute diff, through the same code a connected one
+    // goes through.
+    //
+    // THE KEYS ARE COLLECTED FIRST: an upgrade inside a detached subtree
+    // inserts into this map, and a flat_map rehashes under an iterator.
+    std::vector<node_id> loose;
+    for (const auto & [key, state] : custom_elements_) {
+        if (!state.visited) { loose.push_back(unpack(key)); }
+    }
+    for (const node_id at : loose) {
+        if (txn.contains(at)) { walk_custom_elements(txn, at, false, false); }
+    }
+    // A node that is GONE, rather than merely detached, is forgotten.
     for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
-        if (it->second.visited) {
-            ++it;
-            continue;
-        }
-        const node_id at = unpack(it->first);
-        if (!txn.contains(at)) {
+        if (!it->second.visited && !txn.contains(unpack(it->first))) {
             it = custom_elements_.erase(it);
             continue;
-        }
-        if (it->second.connected) {
-            custom_reactions_.push_back(custom_element_reaction{
-                at, custom_element_reaction::kind::disconnected, {}, {}, {}, false, false});
-            it->second.connected = false;
-            it->second.parent = node_id{};
         }
         ++it;
     }

@@ -1039,7 +1039,12 @@ private:
     // the HTMLElement constructor learns which class `super()` came from.
     [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver) const;
     // One subtree in tree order: upgrade what is new, diff what is tracked.
-    void walk_custom_elements(const read_txn & txn, node_id start, bool connected);
+    // `upgrade` is false for the pass over DETACHED elements: a candidate that
+    // is not in a document is not upgraded (HTML 4.13.5 upgrades on insertion
+    // and on `customElements.upgrade`), but one that was already upgraded
+    // still gets its attributeChanged and disconnected reactions.
+    void walk_custom_elements(const read_txn & txn, node_id start, bool connected,
+                              bool upgrade = true);
     void scan_custom_elements();
     void flush_custom_element_reactions();
     void sync_custom_element_roots();
