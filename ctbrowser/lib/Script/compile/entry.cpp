@@ -79,6 +79,18 @@ void compiler_impl::compile_program() {
         if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
     }
     const std::span<const std::int32_t> body = kids(root);
+    // A `using` at the top level: the rest of the script is its region, and
+    // the completion value of an eval is not kept across one.
+    bool has_using = false;
+    for (const std::int32_t s : body) { has_using = has_using || is_using_decl(at(s)); }
+    if (has_using) {
+        compile_statement_list(body, true);
+        proto().emit(instruction{op::ret_undef});
+        finish_frame(fn().proto, 0);
+        pop_scope();
+        frames_.pop_back();
+        return;
+    }
     for (std::size_t i = 0; i < body.size(); ++i) {
         const std::int32_t s = body[i];
         if (at(declared_by(s)).kind == vp::nk::func_decl) { continue; }

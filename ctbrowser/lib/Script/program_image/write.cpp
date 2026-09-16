@@ -392,6 +392,7 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         out.text(fn.name);
         out.text(fn.inferred_name);
         out.u16(fn.param_count);
+        out.u16(fn.length);
         out.u16(fn.frame_size);
         out.u8((fn.is_arrow ? 1u : 0u) | (fn.is_strict ? 2u : 0u));
         // 2 is an ASYNC generator: the one case the VM reads is_async. Bit 2

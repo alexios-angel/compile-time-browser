@@ -44,6 +44,57 @@ object_object * typed_array_prototype(context & cx, element_kind kind) {
                                                   : nullptr;
 }
 
+bool context::private_element_present(value target, const std::string & key) {
+    property_descriptor found;
+    if (own_property(target, key, found)) { return true; }
+    // A method or accessor: on the prototype chain, or up the constructor's
+    // static chain for a static one - and then only with the brand.
+    bool declared = false;
+    for (value up = get_prototype(target); up.is_object_like() && !declared;
+         up = get_prototype(up)) {
+        declared = own_property(up, key, found);
+    }
+    if (!declared && target.is_callable()) {
+        for (value up = target; up.is_kind(heap_kind::function) && !declared;) {
+            up = static_cast<closure_object *>(up.as_heap())->proto_link;
+            declared = up.is_callable() && own_property(up, key, found);
+        }
+    }
+    if (!declared) { return false; }
+    const std::size_t colon = key.rfind(':');
+    if (colon == std::string::npos) { return true; }
+    const std::string brand = std::string{private_key_prefix} + key.substr(colon);
+    return own_property(target, brand, found);
+}
+
+value context::get_with_receiver(value base, const std::string & name, value receiver) {
+    for (value at = base; at.is_object_like();) {
+        if (at.is_kind(heap_kind::proxy)) {
+            auto * p = static_cast<proxy_object *>(at.as_heap());
+            const value trap = proxy_trap(at, "get");
+            if (trap.is_callable()) {
+                const value args[3] = {p->target, string(name), receiver};
+                return call(trap, args, p->handler);
+            }
+            at = p->target;
+            continue;
+        }
+        property_descriptor found;
+        if (own_property(at, name, found)) {
+            if (!found.is_accessor()) { return found.held; }
+            return found.getter.is_callable() ? call(found.getter, {}, receiver)
+                                              : value::undefined();
+        }
+        // The implicit tables (Object.prototype and the like) sit past the
+        // explicit chain: lookup_property walks them, with `at` as the
+        // receiver, which no getter of theirs observes.
+        const value up = get_prototype(at);
+        if (!up.is_object_like()) { return lookup_property(at, name); }
+        at = up;
+    }
+    return value::undefined();
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
@@ -98,7 +149,7 @@ value context::lookup_property(value target, const std::string & name) {
     // on the hot path; the walk only for the `@#` keys the compiler spells.
     if (is_private_key(name)) [[unlikely]] {
         if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !has_property(target, name)) {
+            !private_element_present(target, name)) {
             const std::size_t colon = name.find(':');
             throw_error(
                 "TypeError",
@@ -374,8 +425,12 @@ value context::lookup_property(value target, const std::string & name) {
         // to the other undefined it is being tested against - so a nameless
         // class reported a MATCH against anything else with no name.
         if (closure->proto != nullptr) {
-            if (name == "name") { return string(closure->proto->display_name()); }
-            if (name == "length") { return value::number(closure->proto->param_count); }
+            if (name == "name" && !closure->name_erased) {
+                return string(closure->proto->display_name());
+            }
+            if (name == "length" && !closure->length_erased) {
+                return value::number(closure->proto->length);
+            }
             // A SLOPPY function's `caller` and `arguments` are null (Annex B's
             // implementation-defined answer, and every browser's); a strict
             // one reaches Function.prototype's %ThrowTypeError% accessor.
@@ -396,6 +451,10 @@ value context::lookup_property(value target, const std::string & name) {
             if (up.is_kind(heap_kind::function)) {
                 auto * parent = static_cast<closure_object *>(up.as_heap());
                 if (value * found = parent->find(name)) { return *found; }
+                // `static get x()` on the parent: called on the SUBCLASS.
+                if (accessor_entry * entry = parent->find_accessor(name)) {
+                    return call_getter(*this, *entry, target);
+                }
                 up = parent->proto_link;
                 continue;
             }

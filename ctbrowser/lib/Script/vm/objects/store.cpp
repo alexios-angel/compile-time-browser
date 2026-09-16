@@ -142,7 +142,7 @@ void context::store_property(value target, const std::string & name, value v) {
         const std::string shown =
             name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1);
         if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !has_property(target, name)) {
+            !private_element_present(target, name)) {
             throw_error("TypeError", "Cannot write private member " + shown +
                                          " to an object whose class did not declare it");
             return;
@@ -342,7 +342,9 @@ void context::store_property(value target, const std::string & name, value v) {
             } else if (!closure->extensible) {
                 store_rejected_ = true;
                 return;
-            } else if ((name == "length" || name == "name") && closure->proto != nullptr) {
+            } else if (((name == "length" && !closure->length_erased) ||
+                        (name == "name" && !closure->name_erased)) &&
+                       closure->proto != nullptr) {
                 // The SYNTHESISED `length` and `name` (own_property answers
                 // them off the compiled function, { false, false, true }) are
                 // not writable: the write is refused, not shadowed by a new

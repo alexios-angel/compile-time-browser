@@ -301,15 +301,15 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (closure->proto != nullptr) {
-            // 10.2.5 again: both are { false, false, true }.
-            if (name == "name") {
+            // 10.2.5 again: both are { false, false, true } - until deleted.
+            if (name == "name" && !closure->name_erased) {
                 out = property_descriptor::data(string(closure->proto->display_name()),
                                                 attr_configurable);
                 out.virtual_slot = true;
                 return true;
             }
-            if (name == "length") {
-                out = property_descriptor::data(value::number(closure->proto->param_count),
+            if (name == "length" && !closure->length_erased) {
+                out = property_descriptor::data(value::number(closure->proto->length),
                                                 attr_configurable);
                 out.virtual_slot = true;
                 return true;
@@ -390,13 +390,23 @@ bool context::delete_own_property(value target, const std::string & name) {
             if ((entry->attrs & attr_configurable) == 0) { return false; }
             return fn->erase(name);
         }
-        if (fn->find(name) == nullptr) { return true; }
+        if (fn->find(name) == nullptr) {
+            // The synthesised `name` (see own_property) is configurable, and
+            // deleting it has to be remembered.
+            if (name == "name") { fn->name_erased = true; }
+            return true;
+        }
         if ((fn->attrs_of(name) & attr_configurable) == 0) { return false; }
         return fn->erase(name);
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
-        if (closure->find(name) == nullptr) { return true; }
+        if (closure->find(name) == nullptr) {
+            // The synthesised `name` and `length` - see closure_object::name_erased.
+            if (name == "name") { closure->name_erased = true; }
+            if (name == "length") { closure->length_erased = true; }
+            return true;
+        }
         if ((closure->attrs_of(name) & attr_configurable) == 0) { return false; }
         return closure->erase(name);
     }

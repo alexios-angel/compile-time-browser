@@ -249,6 +249,15 @@ struct closure_object final : heap_object {
     // the subclass FUNCTION chains to the superclass function for static ones.
     value proto_link = value::null();
 
+    // WERE THE SYNTHESISED `name` / `length` DELETED? Both are answered off the
+    // compiled function rather than stored (see context::own_property), so
+    // without a memory a `delete f.name` uncovered the same answer again and
+    // `hasOwnProperty("name")` stayed true - the question test262's
+    // verifyProperty asks to decide `name` is configurable. The native_object
+    // flag above has the same story.
+    bool name_erased = false;
+    bool length_erased = false;
+
     const function_proto * proto = nullptr;
     // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a
     // function by INDEX, and the index only means anything in the program it
@@ -295,6 +304,87 @@ struct run_result {
     bool ok = true;
     std::string error;
 };
+
+// `import.source(x)` (13.3.10.1.1 EvaluateImportCall, phase source), as a
+// hidden native the compiler calls: ToString the specifier, then answer a
+// promise REJECTED with the SyntaxError GetModuleSource of a source text
+// module always is (16.2.1.7.2) - or with what the ToString threw. A name a
+// page cannot shadow, like the ones in builtins.hpp; declared here because
+// the compiler and the VM's own builtins share it and this is the header
+// both include.
+inline constexpr std::string_view import_source_name = "__ctbrowser_import_source";
+// `using` / `await using` (explicit resource management, 9.13), as five
+// hidden natives the compiler calls around a protected region - see
+// compile/statements/using.cpp for the lowering and builtins/objects/
+// function.cpp for the bodies. `stack()` makes the DisposeCapability;
+// `add(stack, v, async)` is AddDisposableResource and answers v; `dispose
+// (stack, kind, value)` is DisposeResources for a sync stack, handed the
+// completion in flight (kind 1 = a throw of `value`) and throwing what comes
+// out; `step(stack, kind, value)` disposes ONE resource of an async stack and
+// answers what to await, or the stack itself when it is empty (throwing the
+// folded completion then); `failed(stack, e)` folds an awaited rejection in.
+// GetTemplateObject (13.2.8.4) for a tagged template: `(key, cooked, raw)`
+// answers the frozen strings array - `raw` frozen and hung off it - cached
+// per site under `key`, so the same site hands the same object to its tag
+// on every evaluation. See compile_tagged.
+inline constexpr std::string_view template_object_name = "__ctbrowser_template_object";
+// PutValue on an unresolvable reference in STRICT code (6.2.5.6 step 3.a): the
+// compiler calls this with the name before a set_global that is an
+// ASSIGNMENT (never a declaration's own write), and it throws the
+// ReferenceError when the name is neither a global nor on the global object.
+// A call rather than a check inside op::set_global, whose contract says it
+// cannot throw.
+inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
+// PrivateFieldAdd / PrivateMethodOrAccessorAdd (7.3.28, 7.3.29): `(obj, key,
+// v)` defines the private element - a field's value, or the class BRAND (see
+// context::private_element_present) as undefined - and it is the TypeError
+// when the object already carries the key (a constructor that returns the
+// same object twice) or is not extensible.
+inline constexpr std::string_view private_add_name = "__ctbrowser_private_add";
+// ClassDefinitionEvaluation steps 6-9 (15.7.14) for `class C extends P`:
+// `(C, P, C.prototype)` checks P is null or a constructor and P.prototype an
+// object or null - each a TypeError otherwise - then chains C.prototype to
+// P.prototype and C itself to P (or to Function.prototype for null).
+inline constexpr std::string_view class_heritage_name = "__ctbrowser_class_heritage";
+// `super.x` / `super[k]` READ (13.3.7.3, 6.2.5.5 GetValue of a Super
+// Reference): `(base, key, this)` is base.[[Get]](key, this) - a getter on
+// the parent runs with the method's own receiver, not with the parent.
+inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
+// A direct `eval(src)` written in a function's PARAMETER EXPRESSIONS:
+// `(src, name...)` is `eval` (the intrinsic - anything else the name is
+// bound to is simply called) with the one rule of 19.2.1.3
+// EvalDeclarationInstantiation step 3.d this engine can keep without a
+// caller-scoped eval: a `var` the eval'd code declares may not be one of the
+// names bound in that parameter scope - the parameters, and `arguments`
+// unless the function is an arrow or names a parameter so - which is the
+// SyntaxError the eval throws.
+inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
+// `delete o.k` / `delete o[k]` (13.5.1.2): `(obj, key, strict, super)` is
+// ToObject(obj).[[Delete]](ToPropertyKey(key)) with its ANSWER - the opcodes
+// delete_prop/delete_index produce none - a TypeError for a null or undefined
+// base, a TypeError in strict code when the delete answers false, and a
+// ReferenceError for `delete super.x` (`super` true; the key is still
+// evaluated first).
+inline constexpr std::string_view delete_ref_name = "__ctbrowser_delete";
+// InitializeInstanceElements (7.3.34) for a DERIVED class, `(this, C)`: run C's
+// `__fields` on the object `super()` just bound as `this` - which is where
+// 10.2.1.3 / 13.3.7.1's super call runs them, and why a base constructor's
+// `Object.preventExtensions(this)` or a returned object is what the derived
+// fields meet. The compiler emits it after every `super(...)`; a base class's
+// fields still run at construct entry (context::run_field_initialisers).
+inline constexpr std::string_view init_fields_name = "__ctbrowser_init_fields";
+// `super(...)` returned `(result)`: BindThisValue (10.2.1.3) with what the
+// parent constructor answered - the object it returned (a "return
+// override") replaces the instance as `this` for the rest of the derived
+// constructor, and a derived constructor's implicit return hands back
+// `this`, so `new` evaluates to it. The compiler emits it right after every
+// super call, before the fields.
+inline constexpr std::string_view bind_this_name = "__ctbrowser_bind_this";
+inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
+inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
+inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";
+inline constexpr std::string_view using_step_name = "__ctbrowser_using_step";
+inline constexpr std::string_view using_failed_name = "__ctbrowser_using_failed";
 
 class context {
 public:
@@ -591,6 +681,32 @@ public:
         if (has_pending_throw_) { return; }
         thrown_ = make_error(kind, std::move(message));
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+    // BindThisValue for the frame a native was called from (see
+    // bind_this_name): a native pushes no frame, so frames_.back() is its
+    // caller's - the derived constructor whose `super()` just returned. An
+    // arrow's frame (a `super()` inside one) rebinds only the arrow's own
+    // receiver. ONLY WHEN THE PARENT IS A COMPILED FUNCTION: a native parent
+    // (Array, Object, a bound function) reached through super() is CALLED
+    // with the instance as `this`, and what it answers is an object of its
+    // own, not a return override - binding it lost `class A extends Array`
+    // its A.prototype (test262 subclass-builtins, gate 3).
+    void rebind_receiver(value v) {
+        if (frames_.empty()) { return; }
+        const closure_object * me = frames_.back().closure;
+        if (me == nullptr || !me->proto_link.is_kind(heap_kind::function)) { return; }
+        frames_.back().receiver = v;
+    }
+    // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
+    // that has to CONVERT a throw crossing one of its `call`s - into a rejected
+    // promise, as EvaluateImportCall does with a specifier whose toString
+    // threw. Undefined when nothing is parked.
+    [[nodiscard]] value take_pending_throw() {
+        if (!has_pending_throw_) { return value::undefined(); }
+        has_pending_throw_ = false;
+        const value taken = pending_throw_;
+        pending_throw_ = value::undefined();
+        return taken;
     }
     // The throw `call` parked, thrown again from the native's call site.
     // Answers whether there was one; the caller then continues as after any
@@ -1309,6 +1425,18 @@ public:
     // Does `target` have an own property `name` at all? The question
     // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
     [[nodiscard]] bool has_own_property(value target, const std::string & name);
+    // PrivateElementFind (7.3.30) over this engine's spelling: a private
+    // FIELD is an own property under its `@#name:class` key; a private
+    // METHOD or ACCESSOR lives on the prototype (or the constructor when
+    // static) under its key, and an object carries it only when it carries
+    // the class's BRAND - the own `@#:class` key the class's initialiser
+    // adds to every instance it constructs (and to the constructor itself,
+    // for the statics). So `Object.create(C.prototype)` and a subclass
+    // constructor fail the brand check, as PrivateBrandCheck says.
+    [[nodiscard]] bool private_element_present(value target, const std::string & key);
+    // [[Get]] with an explicit receiver (10.1.8.1 OrdinaryGet): `base`'s own
+    // property or the first one up its chain, a getter called on `receiver`.
+    [[nodiscard]] value get_with_receiver(value base, const std::string & name, value receiver);
 
     // [[DefineOwnProperty]], with 10.1.6.3's validation. False means REJECTED -
     // the caller decides whether that is a TypeError (Object.defineProperty) or

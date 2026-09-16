@@ -164,8 +164,17 @@ void context::copy_own_properties(value target, value source) {
 }
 
 value context::get_prototype(value target) {
-    return target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                              : value::undefined();
+    if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->prototype; }
+    // A closure's own [[Prototype]]: the parent class `extends` chained it
+    // to, else Function.prototype (10.2.5 / OrdinaryGetPrototypeOf) - which
+    // is what `super.x` inside a static method starts from.
+    if (target.is_kind(heap_kind::function)) {
+        const value link = static_cast<closure_object *>(target.as_heap())->proto_link;
+        if (!link.is_null()) { return link; }
+        object_object * table = prototype(proto_kind::function);
+        return table != nullptr ? value::object(table) : value::undefined();
+    }
+    return value::undefined();
 }
 
 void context::set_prototype(value target, value proto) {
@@ -188,6 +197,10 @@ bool context::has_property(value target, value key) {
 
 bool context::has_property(value target, const std::string & name) {
     if (target.is_kind(heap_kind::proxy)) { return has_property(target, string(name)); }
+    // `#x in o` (13.10.1): the brand check, not the chain walk.
+    if (is_private_key(name)) [[unlikely]] {
+        return target.is_object_like() && private_element_present(target, name);
+    }
     // --- HasProperty, 7.3.11: THE WHOLE CHAIN, not the own table ----------
     //
     // `in` used to answer about own DATA properties of an object_object and

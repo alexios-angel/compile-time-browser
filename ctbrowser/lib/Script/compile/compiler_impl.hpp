@@ -455,6 +455,7 @@ public:
     // The lexer hands back the RAW lexeme, quotes and all - `'a'` arrives as
     // three characters.
     [[nodiscard]] static std::string decode_string_literal(std::string_view lexeme);
+    [[nodiscard]] static std::string decode_string_body(std::string_view lexeme);
 
     // The names a SCRIPT declares with var/let/const, at any block depth and
     // outside any function. Only the script frame's list is read - the strict
@@ -747,6 +748,16 @@ public:
     void emit_finally_dispatch(const finally_context & open);
     void compile_try_with_finally(const vp::node & n);
 
+    // `using` / `await using` - statements/using.cpp. A statement list with a
+    // using declaration in it compiles, from that declaration on, inside a
+    // region whose finally disposes the resources; `using_stacks_` holds the
+    // register of the innermost region's stack for emit_using_add.
+    [[nodiscard]] static bool is_using_decl(const vp::node & n);
+    void compile_statement_list(std::span<const std::int32_t> stmts, bool skip_func_decls);
+    void compile_using_region(bool async, const std::function<void()> & body);
+    void emit_using_add(std::uint16_t reg, bool async);
+    std::vector<std::uint16_t> using_stacks_;
+
     void patch_breaks(loop_context & loop);
     void patch_continues(loop_context & loop, std::size_t target);
 
@@ -883,6 +894,19 @@ public:
     // `dst` = the object `super` looks properties up on: the prototype ABOVE the
     // one the running method was written into.
     void emit_super_base(std::uint16_t dst);
+    void emit_super_get(std::uint16_t key, std::uint16_t dst);
+    // After `super(...)` returned: the derived class's fields on the bound
+    // `this` (see init_fields_name).
+    void emit_init_fields_after_super();
+    // `super(...)` answered `result`: bind it as `this` when it is an object.
+    void emit_bind_this_after_super(std::uint16_t result);
+    // Set by compile_class while a BASE class's constructor compiles: its
+    // fields run first thing in the body (10.2.2 [[Construct]] step 6.b,
+    // InitializeInstanceElements before the body), whichever way the
+    // constructor is reached - `new`, a subclass's `super()`,
+    // Reflect.construct. compile_function_body consumes it.
+    bool base_fields_pending_ = false;
+    void emit_init_fields_at_entry();
 
     [[nodiscard]] bool any_spread(std::span<const std::int32_t> args) const;
 
@@ -924,6 +948,16 @@ public:
 
     // The comma operator: evaluate everything, yield the last.
     void compile_sequence(const vp::node & n, std::uint16_t dst);
+    // `tag\`a${x}b\`` (13.2.8, 13.3.11): the tag called with the site's cached
+    // strings array (cooked, with `raw` on it) and the substitution values.
+    void compile_tagged(const vp::node & n, std::int32_t idx, std::uint16_t dst);
+    // The template's text cut at its `${ }` holes: the literal chunks (raw
+    // spelling, between the delimiters) and the hole sources.
+    static void split_template(std::string_view raw, std::vector<std::string> & chunks,
+                               std::vector<std::string> & holes);
+    // Whether a template chunk's escapes are all well formed (12.9.6.1): a
+    // tagged template with a bad one has an undefined cooked value.
+    [[nodiscard]] static bool template_chunk_cooks(std::string_view chunk);
 
     // A function whose whole body is `this.x = <init>` for each instance field,
     // in declaration order. `new` runs it against the fresh object before the
@@ -933,7 +967,20 @@ public:
     //
     // It is compiled as an ordinary nested function, so an initialiser that
     // mentions an enclosing local captures it as an upvalue like anything else.
-    [[nodiscard]] std::uint32_t compile_field_initialiser(const std::vector<std::int32_t> & fields);
+    // `is_static` is the class's OTHER initialiser, `<static>`: the static
+    // fields and the `static { }` blocks in source order, run once against
+    // the class itself (ClassDefinitionEvaluation step 31). A static field's
+    // `this` is the class and a static block is a function body of its own -
+    // neither is true of code emitted inline in the enclosing frame, which is
+    // where static fields were evaluated before.
+    // `brand` is the class's brand key (see context::private_element_present)
+    // when the class declares a private method or accessor of that kind, and
+    // the initialiser adds it to every instance first; empty otherwise.
+    [[nodiscard]] std::uint32_t compile_field_initialiser(const std::vector<std::int32_t> & fields,
+                                                          bool is_static = false,
+                                                          std::string brand = {});
+    // `__ctbrowser_private_add(target, key, v)` - PrivateFieldAdd, or the brand.
+    void emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v);
 
     // Bind a class's own name to the class value, by whichever route this
     // frame uses. Harmless for a `class Foo {}` DECLARATION, which binds the
@@ -1027,6 +1074,18 @@ public:
     // whether one is open - see compile_chain.
     std::vector<std::size_t> optional_exits_;
     bool in_chain_ = false;
+    // A DECLARATION IS WRITING ITS OWN BINDING: `let x = 1`, `class C {}`,
+    // `var x = 1` at a script's top level all reach set_global, and in strict
+    // code only an ASSIGNMENT to a name nothing declares is the
+    // ReferenceError - see emit_strict_assign_check.
+    bool declaring_ = false;
+    void emit_strict_assign_check(std::string_view name);
+    // WHILE A FUNCTION'S PARAMETER EXPRESSIONS ARE BEING COMPILED: the names
+    // bound in that scope, which a direct `eval` written there may not
+    // `var`-declare (see param_eval_name). Empty outside a prologue.
+    std::vector<std::string> param_scope_names_;
+    // `eval(src)` inside parameter expressions, routed through param_eval_name.
+    [[nodiscard]] bool compile_param_eval(const vp::node & n, std::uint16_t dst);
     std::size_t handler_depth_ = 0;
 };
 

@@ -63,6 +63,11 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // The honest fix is a script_kind that says "this source is a
         // function body", which every embedder would have to pass; that is
         // a change to callers this file does not own.
+        //
+        // A STATIC BLOCK is [~Return] (15.7.1) and is not the top level.
+        if (frames_.back().what == frame_kind::static_block) {
+            report("`return` is not allowed in a class static block", idx);
+        }
         walk_expression(n.a);
         return;
 
@@ -170,7 +175,20 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
 
 void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) {
     if (idx < 0) { return; }
+    // 14.6.1 / 14.7.1: IsLabelledFunction(Statement) - a function declaration
+    // behind one or more labels is never the body of an `if` or a loop, and
+    // B.3.3 does not reach it.
+    std::int32_t item = idx;
+    while (at(item).kind == nk::labeled) { item = at(item).a; }
+    if (item != idx && at(item).kind == nk::func_decl) {
+        report("a labelled function declaration cannot be the body of a statement", item);
+        return;
+    }
     const vp::node & n = at(idx);
+    if (n.kind == nk::var_decl && (n.text == "using" || n.text == "await using")) {
+        report("a `using` declaration cannot be the body of a statement; it needs a block", idx);
+        return;
+    }
     if (n.kind == nk::var_decl && n.text != "var") {
         // `let` IS AN IDENTIFIER HERE WHEN A NEWLINE FOLLOWS IT.
         //
@@ -202,6 +220,12 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function) 
                    idx);
         } else if (!annex_b_function) {
             report("a function declaration cannot be the body of a loop; it needs a block", idx);
+        } else if (strict()) {
+            // B.3.3 is sloppy-mode only: in strict code an `if` body is a
+            // Statement and a declaration is not one.
+            report("a function declaration cannot be the body of an `if` in strict mode code; "
+                   "it needs a block",
+                   idx);
         }
     }
 }
@@ -219,8 +243,25 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     const bool is_var = n.text == "var";
     const bool is_const = n.text == "const";
+    // `using` / `await using` (14.3.2.1 / 14.3.3.1): a name, never a pattern,
+    // always with an initialiser, never named `let` (which the lexical
+    // rule below already refuses); `await using` only where `await` is the
+    // keyword - an async body, a module's top level, a static block.
+    const bool is_using = n.text == "using" || n.text == "await using";
+    if (n.text == "await using" && !(frames_.empty() || frames_.back().is_async)) {
+        report("`await using` is only allowed in an async function or a module", idx);
+    }
     for (const std::int32_t d : kids(n)) {
         const vp::node & decl = at(d);
+        if (is_using) {
+            if (decl.b >= 0) {
+                report("a `using` declaration binds a name, not a pattern", d);
+            } else if (decl.a < 0) {
+                report(quoted(decl.text) + " is declared `using` with no initialiser", d);
+            } else if (decl.text == "let") {
+                report("`let` cannot be the name of a `using` declaration", d);
+            }
+        }
         // 14.3.1.1: "It is a Syntax Error if Initializer is not present and
         // IsConstantDeclaration of LexicalDeclaration is true." The only
         // `const` without one that the grammar allows is a for-in/of head,
@@ -234,6 +275,17 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
                    names.empty() ? d : names.front().node);
         }
         if (is_var) { bound_names(d, binding_kind::var, vars); }
+        // 14.3.1.1: `let` is not a name a lexical declaration may bind - in
+        // sloppy code too, where `let let = 1` would otherwise parse.
+        if (!is_var) {
+            std::vector<binding> names;
+            bound_names(d, binding_kind::let_, names);
+            for (const binding & b : names) {
+                if (b.name == "let") {
+                    report("`let` cannot be the name of a lexically declared binding", b.node);
+                }
+            }
+        }
         if (decl.b >= 0) { walk_pattern(decl.b); }
         walk_expression(decl.a);
     }
@@ -294,10 +346,76 @@ void checker::check_for(std::int32_t idx, list_kind kind, std::vector<binding> &
 void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     const vp::node & target = at(n.a);
+    // 14.7.5.1: a head with nothing to declare (d bit1) is a
+    // LeftHandSideExpression whose AssignmentTargetType must be simple, or
+    // an array/object literal re-read as a pattern - `for (f() of xs)` and
+    // `for ((a, b) in o)` are errors.
+    if ((n.d & 2) != 0 && target.b >= 0) {
+        switch (at(target.b).kind) {
+        case nk::ident:
+        case nk::member:
+        case nk::index:
+        case nk::array:
+        case nk::object:
+        case nk::array_pattern:
+        case nk::object_pattern: break;
+        default:
+            report("the head of this `for` loop is not something a value can be assigned to",
+                   target.b);
+            break;
+        }
+    }
     if (target.b >= 0) { walk_pattern(target.b); }
+    // A DECLARED HEAD: its names are bindings (13.1.1 in strict code), and
+    // for `let`/`const` (d bit3 / bit0) 14.7.5.1 adds that they are
+    // distinct, that none is `let`, and that none is also var-declared in
+    // the body.
+    std::vector<binding> head;
+    // `for (using x of xs)` (d bit4) / `for (await using x of xs)` (bit5):
+    // `of` only, a plain name, and the async form only where `await` is the
+    // keyword (14.7.5.1).
+    if ((n.d & 48) != 0) {
+        if (n.text != "of") { report("a `using` declaration in a `for` head needs `of`", idx); }
+        if (target.b >= 0) { report("a `using` declaration binds a name, not a pattern", n.a); }
+        if ((n.d & 32) != 0 && !(frames_.empty() || frames_.back().is_async)) {
+            report("`await using` is only allowed in an async function or a module", idx);
+        }
+    }
+    if ((n.d & 2) == 0) {
+        const bool lexical = (n.d & 57) != 0;
+        bound_names(n.a, lexical ? binding_kind::let_ : binding_kind::var, head);
+        check_strict_bindings(head);
+        if (lexical) {
+            std::unordered_set<std::string_view> seen;
+            for (const binding & b : head) {
+                if (b.name == "let") {
+                    report("`let` cannot be the name of a lexically declared loop variable",
+                           b.node);
+                }
+                if (!seen.insert(b.name).second) {
+                    report(quoted(b.name) + " is declared twice in the head of this loop", b.node);
+                }
+            }
+        } else {
+            head.clear();
+        }
+    }
     walk_expression(n.b);
     check_nested_declaration(n.c, false);
-    walk_loop_body(n.c, vars);
+    std::vector<binding> body_vars;
+    walk_loop_body(n.c, body_vars);
+    if (!head.empty()) {
+        for (const binding & v : body_vars) {
+            for (const binding & h : head) {
+                if (h.name != v.name) { continue; }
+                report(quoted(v.name) + " is declared in the head of this loop and with var in "
+                                        "its body",
+                       v.node);
+                break;
+            }
+        }
+    }
+    vars.insert(vars.end(), body_vars.begin(), body_vars.end());
 }
 
 // A switch's CaseBlock is ONE lexical scope spanning every clause
@@ -308,7 +426,17 @@ void checker::check_switch(std::int32_t idx, std::vector<binding> & vars) {
     std::vector<std::int32_t> body;
     for (const std::int32_t clause : kids(n)) {
         walk_expression(at(clause).a);
-        for (const std::int32_t s : kids(at(clause))) { body.push_back(s); }
+        for (const std::int32_t s : kids(at(clause))) {
+            // A `using` is not a CaseClause's statement (14.3.2's grammar
+            // puts UsingDeclaration in a block, a body or a module only).
+            if (at(s).kind == nk::var_decl &&
+                (at(s).text == "using" || at(s).text == "await using")) {
+                report("a `using` declaration is not allowed directly in a `case` clause; it "
+                       "needs a block",
+                       s);
+            }
+            body.push_back(s);
+        }
     }
     ++frames_.back().switches;
     std::vector<binding> inner = check_list(body, list_kind::block, nullptr, "");
@@ -365,6 +493,11 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
 
 void checker::check_labeled(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
+    // A LabelIdentifier follows the identifier rules of 13.1.1: no reserved
+    // word (an escaped spelling is the one way one reaches here), `await`
+    // not in an async body, `yield` not in a generator, the strict set not
+    // in strict code.
+    check_strict_binding(n.text, idx, escaped(idx));
     frame & f = frames_.back();
     // 14.13.1: "It is a Syntax Error if any source text is matched by this
     // production" when a LabelledItem is contained in a LabelledStatement

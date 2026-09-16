@@ -352,6 +352,16 @@ void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> par
                                      static_cast<std::uint16_t>(i)});
         }
     }
+    if (base_fields_pending_) {
+        // A base class constructor: its instance fields, before the
+        // parameter defaults and the body (see base_fields_pending_) - and
+        // AFTER the rest gather, since the call's temporaries take the
+        // registers past the declared parameters, where the extra arguments
+        // still sit until gather_rest has read them (p5's `class Vector {
+        // values = []; constructor(...args)` got an empty `args` at gate 3).
+        base_fields_pending_ = false;
+        emit_init_fields_at_entry();
+    }
     // BOX THE CAPTURED PARAMETERS HERE, between the rest gather (a raw write)
     // and the defaults (which read earlier parameters by name, i.e. through
     // the cell). See compile_function_body.

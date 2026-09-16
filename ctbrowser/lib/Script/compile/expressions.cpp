@@ -67,12 +67,17 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     case vp::nk::ternary: compile_ternary(n, dst); break;
     case vp::nk::member: {
         // `super.x` reads through the parent prototype rather than through
-        // an object expression - there is no value `super` evaluates to.
+        // an object expression - there is no value `super` evaluates to -
+        // and with `this` as the receiver, so a getter up there sees it.
         if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
-            emit_super_base(dst);
-        } else {
-            compile_expr(n.a, dst);
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            emit_string(key, std::string{n.text});
+            emit_super_get(key, dst);
+            release_to(mark);
+            break;
         }
+        compile_expr(n.a, dst);
         const std::uint16_t name = member_operand(n.text);
         proto().emit(instruction{op::get_prop, dst, dst, name});
         break;
@@ -84,13 +89,16 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         break;
     case vp::nk::index: {
         const std::uint32_t mark = reg_mark();
-        // `super[k]`, like `super.x` above (13.3.7.1: the base first, then the
-        // key).
+        // `super[k]`, like `super.x` above (13.3.7.1: the key is evaluated
+        // before the base is asked for, and the read carries `this`).
         if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
-            emit_super_base(dst);
-        } else {
-            compile_expr(n.a, dst);
+            const std::uint16_t key = alloc_reg();
+            compile_expr(n.b, key);
+            emit_super_get(key, dst);
+            release_to(mark > dst ? mark : static_cast<std::uint16_t>(dst + 1));
+            break;
         }
+        compile_expr(n.a, dst);
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);
         proto().emit(instruction{op::get_index, dst, dst, key});
@@ -173,6 +181,16 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t spec = alloc_reg();
         compile_expr(n.a, spec);
+        // `import.source(x)` (c == 1): the source phase, answered by a
+        // hidden native - see import_source_name. `import.defer(x)` (c == 2)
+        // loads like `import(x)` does: the deferral is not observable until
+        // a module graph with side effects asks for it, which is a loader
+        // concern (docs/plans/modules.md), not a compiler one.
+        if (n.c == 1) {
+            emit_iterator_native(import_source_name, dst, spec);
+            release_to(mark);
+            break;
+        }
         // The options argument (13.3.10.1 step 4) is evaluated for its
         // effects and its throw; import attributes themselves are not read.
         if (n.b >= 0) {
@@ -188,10 +206,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
              "docs/plans/modules.md");
         proto().emit(instruction{op::load_undef, dst});
         break;
-    case vp::nk::tagged:
-        fail("tagged template literals are not in this VM subset");
-        proto().emit(instruction{op::load_undef, dst});
-        break;
+    case vp::nk::tagged: compile_tagged(n, idx, dst); break;
     default:
         // Every kind the compiler once refused by name has its own case
         // above; what reaches here is a kind the parser grew that this
@@ -329,18 +344,32 @@ void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std:
 void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const vp::node & target = at(n.a);
-    if (target.kind == vp::nk::member) {
+    if (target.kind == vp::nk::member || target.kind == vp::nk::index) {
+        // Through delete_ref_name, which answers the boolean 13.5.1.2 gives
+        // and throws where it says - the opcodes answer nothing. `delete
+        // super.x` evaluates the key and is the ReferenceError.
+        const bool on_super = at(target.a).kind == vp::nk::super_lit;
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{delete_ref_name})));
         const std::uint16_t object = alloc_reg();
-        compile_expr(target.a, object);
-        proto().emit(instruction{op::delete_prop, object, member_operand(target.text)});
-        emit_const(dst, value::boolean(true));
-    } else if (target.kind == vp::nk::index) {
-        const std::uint16_t object = alloc_reg();
-        compile_expr(target.a, object);
+        if (on_super) {
+            proto().emit(instruction{op::load_undef, object});
+        } else {
+            compile_expr(target.a, object);
+        }
         const std::uint16_t key = alloc_reg();
-        compile_expr(target.b, key);
-        proto().emit(instruction{op::delete_index, object, key});
-        emit_const(dst, value::boolean(true));
+        if (target.kind == vp::nk::member) {
+            emit_string(key, std::string{target.text});
+        } else {
+            compile_expr(target.b, key);
+        }
+        const std::uint16_t strict = alloc_reg();
+        proto().emit(instruction{fn().is_strict ? op::load_true : op::load_false, strict});
+        const std::uint16_t super_flag = alloc_reg();
+        proto().emit(instruction{on_super ? op::load_true : op::load_false, super_flag});
+        proto().emit(instruction{op::call, callee, 4});
+        proto().emit(instruction{op::move, dst, callee});
     } else if (target.kind == vp::nk::ident) {
         // `delete x` inside a `with` whose object binds x deletes the
         // property (13.5.1.2 step 3.b through the object environment's
@@ -355,7 +384,11 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
             patch_here(unbound);
         }
     } else {
-        emit_const(dst, value::boolean(false));
+        // `delete 1`, `delete void a.b`, `delete f()`: not a reference - the
+        // operand is evaluated and the answer is true (13.5.1.2 step 2).
+        const std::uint16_t scratch = alloc_reg();
+        compile_expr(n.a, scratch);
+        emit_const(dst, value::boolean(true));
     }
     release_to(mark);
 }
@@ -601,9 +634,14 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
     case reference::kind::upvalue: proto().emit(instruction{op::set_upvalue, ref.reg, src}); break;
-    case reference::kind::global:
+    case reference::kind::global: {
+        // A COPY: the check interns names, which can grow `names` under a
+        // view into it.
+        const std::string name = proto().names[ref.name];
+        emit_strict_assign_check(name);
         proto().emit(instruction::with_bx(op::set_global, src, ref.name));
         break;
+    }
     case reference::kind::member:
         proto().emit(instruction{op::set_prop, ref.reg, static_cast<std::uint16_t>(ref.name), src});
         break;
@@ -758,43 +796,22 @@ void compiler_impl::compile_ternary(const vp::node & n, std::uint16_t dst) {
     patch_here(to_end);
 }
 
-void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
-    std::string_view raw = n.text;
+void compiler_impl::split_template(std::string_view raw, std::vector<std::string> & chunks,
+                                   std::vector<std::string> & holes) {
     if (raw.size() >= 2 && raw.front() == '`' && raw.back() == '`') {
         raw = raw.substr(1, raw.size() - 2);
     }
-    const std::uint32_t mark = reg_mark();
-    const std::uint16_t piece = alloc_reg();
-    bool started = false;
-
-    const auto append = [&](std::uint16_t src) {
-        if (!started) {
-            proto().emit(instruction{op::move, dst, src});
-            started = true;
-        } else {
-            proto().emit(instruction{op::concat, dst, dst, src});
-        }
-    };
-    const auto append_literal = [&](std::string text) {
-        if (text.empty() && started) { return; }
-        emit_string(piece, std::move(text));
-        append(piece);
-    };
-
-    std::string literal;
+    std::string chunk;
     for (std::size_t i = 0; i < raw.size();) {
         if (raw[i] == '\\' && i + 1 < raw.size()) {
-            // One level of escape handling, so `\n` and `\`` behave.
-            const char c = raw[i + 1];
-            literal += c == 'n' ? '\n' : (c == 't' ? '\t' : (c == 'r' ? '\r' : c));
+            chunk += raw[i];
+            chunk += raw[i + 1];
             i += 2;
             continue;
         }
         if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
-            append_literal(std::move(literal));
-            literal.clear();
-            // Find the matching brace, counting nesting so an object
-            // literal or a nested template inside the hole survives.
+            chunks.push_back(std::move(chunk));
+            chunk.clear();
             std::size_t depth = 1;
             std::size_t at_char = i + 2;
             const std::size_t start = at_char;
@@ -803,21 +820,184 @@ void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
                 if (raw[at_char] == '}') { --depth; }
                 if (depth > 0) { ++at_char; }
             }
-            // PARENTHESISED, so the hole is parsed as an EXPRESSION.
-            // `${ {v: 1}.v }` parses as a program otherwise, and a leading
-            // brace at statement position is a BLOCK - so the object
-            // literal became a labelled statement and the whole hole
-            // evaluated to undefined, silently.
-            compile_owned_expr("(" + std::string{raw.substr(start, at_char - start)} + ")", piece);
-            // Concatenation is what stringifies the value, which is exactly
-            // the coercion a template literal performs.
-            append(piece);
+            holes.emplace_back(raw.substr(start, at_char - start));
             i = at_char + 1;
             continue;
         }
-        literal += raw[i++];
+        chunk += raw[i++];
     }
-    append_literal(std::move(literal));
+    chunks.push_back(std::move(chunk));
+}
+
+bool compiler_impl::template_chunk_cooks(std::string_view chunk) {
+    const auto hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    for (std::size_t i = 0; i + 1 < chunk.size(); ++i) {
+        if (chunk[i] != '\\') { continue; }
+        const char e = chunk[++i];
+        if (e == 'x') {
+            if (i + 2 >= chunk.size() || !hex(chunk[i + 1]) || !hex(chunk[i + 2])) { return false; }
+            i += 2;
+        } else if (e == 'u') {
+            if (i + 1 < chunk.size() && chunk[i + 1] == '{') {
+                std::size_t j = i + 2;
+                unsigned long cp = 0;
+                std::size_t count = 0;
+                for (; j < chunk.size() && hex(chunk[j]); ++j) {
+                    cp = cp * 16 + static_cast<unsigned long>(chunk[j] <= '9'
+                                                                  ? chunk[j] - '0'
+                                                                  : (chunk[j] | 0x20) - 'a' + 10);
+                    if (cp > 0x10FFFF) { cp = 0x110000; }
+                    ++count;
+                }
+                if (count == 0 || j >= chunk.size() || chunk[j] != '}' || cp > 0x10FFFF) {
+                    return false;
+                }
+                i = j;
+            } else {
+                if (i + 4 >= chunk.size() || !hex(chunk[i + 1]) || !hex(chunk[i + 2]) ||
+                    !hex(chunk[i + 3]) || !hex(chunk[i + 4])) {
+                    return false;
+                }
+                i += 4;
+            }
+        } else if (e >= '0' && e <= '9') {
+            // `\0` not followed by a digit is NUL; any other digit escape is
+            // the legacy octal / non-octal-decimal form a template refuses.
+            if (!(e == '0' &&
+                  (i + 1 >= chunk.size() || chunk[i + 1] < '0' || chunk[i + 1] > '9'))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void compiler_impl::compile_tagged(const vp::node & n, std::int32_t idx, std::uint16_t dst) {
+    const vp::node & tmpl = at(n.b);
+    std::vector<std::string> chunks;
+    std::vector<std::string> holes;
+    split_template(tmpl.text, chunks, holes);
+
+    const std::uint32_t mark = reg_mark();
+    // The call's window: callee, then the strings array and one register per
+    // substitution, then the receiver (a member tag is called on its object).
+    const std::uint16_t base = alloc_reg();
+    std::vector<std::uint16_t> arg_regs;
+    arg_regs.reserve(holes.size() + 1);
+    for (std::size_t i = 0; i <= holes.size(); ++i) { arg_regs.push_back(alloc_reg()); }
+    const vp::node & tag = at(n.a);
+    const bool receiver = tag.kind == vp::nk::member || tag.kind == vp::nk::index;
+    const std::uint16_t self = receiver ? alloc_reg() : base;
+    if (receiver) {
+        compile_expr(tag.a, self);
+        if (tag.kind == vp::nk::member) {
+            proto().emit(instruction{op::get_prop, base, self, member_operand(tag.text)});
+        } else {
+            const std::uint32_t inner = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(tag.b, key);
+            proto().emit(instruction{op::get_index, base, self, key});
+            release_to(inner);
+        }
+    } else {
+        compile_expr(n.a, base);
+    }
+
+    // GetTemplateObject: `strings = __ctbrowser_template_object(key, cooked, raw)`.
+    // The key names the SITE - the template's offset in this source, salted
+    // with the source itself - so one site hands the same frozen array to its
+    // tag every time and two sites never share one. ponytail: two identical
+    // scripts compiled separately share a site; a per-program salt fixes it if
+    // anything observes that.
+    {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{template_object_name})));
+        const std::uint16_t key = alloc_reg();
+        emit_string(key, std::to_string(std::hash<std::string_view>{}(source_view_)) + ":" +
+                             std::to_string(offset_of(n.b)) + ":" + std::to_string(idx));
+        const std::uint16_t cooked = alloc_reg();
+        const std::uint16_t raw = alloc_reg();
+        proto().emit(instruction{op::new_array, cooked});
+        proto().emit(instruction{op::new_array, raw});
+        const std::uint16_t piece = alloc_reg();
+        for (const std::string & chunk : chunks) {
+            if (template_chunk_cooks(chunk)) {
+                emit_string(piece, decode_string_body(chunk));
+            } else {
+                proto().emit(instruction{op::load_undef, piece});
+            }
+            proto().emit(instruction{op::append, cooked, piece});
+            // TRV: a raw chunk keeps its escapes, with CRLF and CR read as LF.
+            std::string spelled;
+            for (std::size_t i = 0; i < chunk.size(); ++i) {
+                if (chunk[i] == '\r') {
+                    spelled += '\n';
+                    if (i + 1 < chunk.size() && chunk[i + 1] == '\n') { ++i; }
+                } else {
+                    spelled += chunk[i];
+                }
+            }
+            emit_string(piece, std::move(spelled));
+            proto().emit(instruction{op::append, raw, piece});
+        }
+        proto().emit(instruction{op::call, callee, 3});
+        proto().emit(instruction{op::move, arg_regs[0], callee});
+        release_to(inner);
+    }
+    for (std::size_t i = 0; i < holes.size(); ++i) {
+        compile_owned_expr("(" + holes[i] + ")", arg_regs[i + 1]);
+    }
+    proto().emit(instruction{receiver ? op::call_receiver : op::call, base,
+                             static_cast<std::uint16_t>(holes.size() + 1),
+                             receiver ? self : std::uint16_t{0}});
+    proto().emit(instruction{op::move, dst, base});
+    release_to(mark);
+}
+
+void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
+    // The same cut a tagged template gets (split_template); each chunk is
+    // COOKED - every escape 12.9.6 names, through decode_string_literal, not
+    // the three this used to know - and each hole is compiled as a
+    // parenthesised expression (`${ {v: 1}.v }` would otherwise parse as a
+    // block), then concatenated, which is the coercion a template performs.
+    std::vector<std::string> chunks;
+    std::vector<std::string> holes;
+    split_template(n.text, chunks, holes);
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t piece = alloc_reg();
+    bool started = false;
+    const auto append = [&](std::uint16_t src) {
+        if (!started) {
+            proto().emit(instruction{op::move, dst, src});
+            started = true;
+        } else {
+            proto().emit(instruction{op::concat, dst, dst, src});
+        }
+    };
+    for (std::size_t i = 0; i < chunks.size(); ++i) {
+        // A CRLF or lone CR in the template text reads as LF (TV, 12.9.6).
+        std::string text;
+        for (std::size_t k = 0; k < chunks[i].size(); ++k) {
+            if (chunks[i][k] == '\r') {
+                text += '\n';
+                if (k + 1 < chunks[i].size() && chunks[i][k + 1] == '\n') { ++k; }
+            } else {
+                text += chunks[i][k];
+            }
+        }
+        if (!text.empty() || !started) {
+            emit_string(piece, decode_string_body(text));
+            append(piece);
+        }
+        if (i < holes.size()) {
+            compile_owned_expr("(" + holes[i] + ")", piece);
+            append(piece);
+        }
+    }
     if (!started) { emit_string(dst, std::string{}); }
     release_to(mark);
 }
@@ -825,6 +1005,63 @@ void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
 void compiler_impl::emit_super_base(std::uint16_t dst) {
     proto().emit(instruction{op::load_home, dst});
     proto().emit(instruction{op::get_proto, dst, dst});
+}
+
+void compiler_impl::emit_init_fields_at_entry() {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{init_fields_name})));
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    const std::uint16_t klass = alloc_reg();
+    proto().emit(instruction{op::load_callee, klass});
+    proto().emit(instruction{op::call, callee, 2});
+    release_to(mark);
+}
+
+void compiler_impl::emit_bind_this_after_super(std::uint16_t result) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{bind_this_name})));
+    const std::uint16_t v = alloc_reg();
+    proto().emit(instruction{op::move, v, result});
+    proto().emit(instruction{op::call, callee, 1});
+    release_to(mark);
+}
+
+void compiler_impl::emit_init_fields_after_super() {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{init_fields_name})));
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    // The class: the constructor's home object is C.prototype, whose
+    // `constructor` is C. Through an arrow too, which inherits the home.
+    const std::uint16_t klass = alloc_reg();
+    proto().emit(instruction{op::load_home, klass});
+    proto().emit(instruction{op::get_prop, klass, klass, name_operand("constructor")});
+    proto().emit(instruction{op::call, callee, 2});
+    release_to(mark);
+}
+
+// `dst = __ctbrowser_super_get(HomeObject.[[Prototype]], key, this)`.
+void compiler_impl::emit_super_get(std::uint16_t key, std::uint16_t dst) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{super_get_name})));
+    const std::uint16_t base = alloc_reg();
+    emit_super_base(base);
+    const std::uint16_t k = alloc_reg();
+    proto().emit(instruction{op::move, k, key});
+    const std::uint16_t self = alloc_reg();
+    proto().emit(instruction{op::load_this, self});
+    proto().emit(instruction{op::call, callee, 3});
+    proto().emit(instruction{op::move, dst, callee});
+    release_to(mark);
 }
 
 bool compiler_impl::any_spread(std::span<const std::int32_t> args) const {
@@ -934,12 +1171,57 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{op::apply, target, argv, self});
     if (flag != nullptr) { emit_super_done(*flag); }
+    if (callee.kind == vp::nk::super_lit) {
+        emit_bind_this_after_super(target);
+        emit_init_fields_after_super();
+    }
     proto().emit(instruction{op::move, dst, target});
     release_to(mark);
 }
 
+bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
+    const vp::node & callee = at(n.a);
+    if (param_scope_names_.empty() || callee.kind != vp::nk::ident || callee.text != "eval" ||
+        n.kind != vp::nk::call) {
+        return false;
+    }
+    // `eval` that is a local or an upvalue is somebody else's function.
+    if (find_local_entry(fn(), "eval") != nullptr ||
+        resolve_upvalue(frames_.size() - 1, "eval") >= 0) {
+        return false;
+    }
+    const std::span<const std::int32_t> args = kids(n);
+    if (any_spread(args)) { return false; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t base = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, base, intern_name(std::string{param_eval_name})));
+    const std::uint16_t source = alloc_reg();
+    if (args.empty()) {
+        proto().emit(instruction{op::load_undef, source});
+    } else {
+        compile_expr(args[0], source);
+    }
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        // The other arguments are evaluated for their effects, as eval's are.
+        const std::uint16_t extra = alloc_reg();
+        compile_expr(args[i], extra);
+        release_to(static_cast<std::uint32_t>(extra));
+    }
+    for (const std::string & name : param_scope_names_) {
+        const std::uint16_t r = alloc_reg();
+        emit_string(r, name);
+    }
+    proto().emit(
+        instruction{op::call, base, static_cast<std::uint16_t>(1 + param_scope_names_.size())});
+    proto().emit(instruction{op::move, dst, base});
+    release_to(mark);
+    return true;
+}
+
 void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     const std::span<const std::int32_t> args = kids(n);
+    if (compile_param_eval(n, dst)) { return; }
     if (any_spread(args)) {
         compile_spread_call(n, dst);
         return;
@@ -965,6 +1247,10 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
                              static_cast<std::uint16_t>(args.size()),
                              receiver ? self : std::uint16_t{0}});
     if (flag != nullptr) { emit_super_done(*flag); }
+    if (callee.kind == vp::nk::super_lit) {
+        emit_bind_this_after_super(base);
+        emit_init_fields_after_super();
+    }
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
 }
@@ -1214,10 +1500,20 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             const std::uint16_t name = name_operand(decode_string_literal(prop.text));
             proto().emit(instruction{(prop.d & 4) != 0 ? op::define_setter : op::define_getter, dst,
                                      name, fnreg});
+            // The literal is the accessor's home object (15.4.5 step 3), so
+            // `super.x` inside it resolves through the literal's prototype.
+            emit_define_own(fnreg, "__home", dst, false);
             release_to(mark);
             continue;
         }
         const std::uint16_t v = alloc_reg();
+        if (prop.c == 2 && prop.b >= 0) {
+            // `{ a = 1 }` outside a pattern: the early-error pass refuses it
+            // (13.2.5.1), so this is unreachable from a checked program.
+            fail("`" + std::string{prop.text} + " = ...` in an object literal is only a pattern");
+            release_to(mark);
+            return;
+        }
         if (prop.b < 0) {
             compile_ident(prop, v); // shorthand { x }
         } else if ((prop.d & 1) == 0 && prop.text != "__proto__") {
@@ -1227,6 +1523,10 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         } else {
             compile_expr(prop.b, v);
         }
+        // A METHOD'S HOME OBJECT IS THE LITERAL (15.4.4 step 2): `super.m()`
+        // in `{ m() { super.m(); } }` starts at Object.prototype or whatever
+        // `__proto__:` set.
+        if (prop.c == 1) { emit_define_own(v, "__home", dst, false); }
         // A computed key - `{[k]: v}`, and also `{"a": v}` and `{1: v}`,
         // which the parser routes the same way so quotes and escapes get
         // cooked by evaluating the literal.
