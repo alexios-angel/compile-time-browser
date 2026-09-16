@@ -154,8 +154,8 @@ value context::construct(value callee, std::span<const value> args) {
         // is laid out): [[Construct]] is the target's, with the bound
         // arguments in front and the bound `this` ignored (10.4.1.2).
         if (const value * target = nat->find("@#BoundTargetFunction");
-            target != nullptr && target->is_callable() && nat->retained.size() >= 2) {
-            std::vector<value> all{nat->retained.begin() + 2, nat->retained.end()};
+            target != nullptr && target->is_callable() && nat->retained.size() >= 3) {
+            std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
             all.insert(all.end(), args.begin(), args.end());
             const rooted_values keep_all{*this, all};
             return construct(*target, all);

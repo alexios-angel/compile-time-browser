@@ -125,6 +125,11 @@ void install_function(context & cx) {
                // change afterwards.
                fn->retained.push_back(self);
                fn->retained.push_back(receiver);
+               // The [[Prototype]] taken above, which the collector does not
+               // reach through proto_link - null is a value like any other, so
+               // the layout stays fixed: target, this, prototype, then the
+               // bound arguments.
+               fn->retained.push_back(proto);
                fn->retained.insert(fn->retained.end(), bound->begin(), bound->end());
                // [[BoundTargetFunction]], for `new bound()`: context::construct
                // constructs the target with the bound arguments prepended (10.4.1.2),
@@ -133,7 +138,6 @@ void install_function(context & cx) {
                fn->define("@#BoundTargetFunction", self, attr_none);
                fn->is_constructor = is_constructor(self);
                fn->proto_link = proto;
-               if (proto.is_object_like()) { fn->retained.push_back(proto); }
                // 20.2.3.2: a bound function's `length` is the target's less the
                // arguments already supplied, floored at zero, and its `name` is
                // "bound " prefixed to the target's - both { false, false, true }. It
