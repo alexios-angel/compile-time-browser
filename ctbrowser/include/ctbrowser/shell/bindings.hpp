@@ -663,6 +663,9 @@ private:
     // see the helpers above install_character_data in element/character_data.cpp, and the note
     // there on what a surrogate pair costs.
     void install_character_data(context & cx);
+    // HTMLHyperlinkElementUtils (HTML 4.6.3) on HTMLAnchorElement and
+    // HTMLAreaElement - element/hyperlink.cpp.
+    void install_hyperlink_utils(context & cx);
     // `new Text("x")`, `new Comment("x")` and `new DocumentFragment()` - the
     // three node interfaces a page may construct. The other eighty-eight throw
     // "Illegal constructor", which is what a browser does too; these three make
