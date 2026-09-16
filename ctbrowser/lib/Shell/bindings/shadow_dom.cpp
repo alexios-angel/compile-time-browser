@@ -244,17 +244,18 @@ void dom_bindings::install_shadow_dom(context & cx) {
                         }
                         for (const node_id one : assigned) {
                             const auto txn = doc_->read();
-                            const node_kind kind = txn.kind(one).value_or(node_kind::comment);
+                            // A SLOT AMONG THEM IS ITS OWN ASSIGNMENT, flattened
+                            // in its place - that is what makes the flat tree
+                            // flat.
                             if (flatten && is_slot(txn, one)) {
                                 self(self, one);
                                 continue;
                             }
-                            if (kind != node_kind::element &&
-                                (elements_only || kind != node_kind::text)) {
-                                continue;
-                            }
-                            if (elements_only && kind != node_kind::element) { continue; }
-                            items.push_back(wrap(c, one));
+                            const node_kind kind = txn.kind(one).value_or(node_kind::comment);
+                            const bool wanted = elements_only ? kind == node_kind::element
+                                                              : kind == node_kind::element ||
+                                                                    kind == node_kind::text;
+                            if (wanted) { items.push_back(wrap(c, one)); }
                         }
                     };
                     gather(gather, slot);
