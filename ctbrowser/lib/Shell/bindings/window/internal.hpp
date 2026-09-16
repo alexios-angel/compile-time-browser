@@ -11,4 +11,8 @@ namespace ctbrowser::shell {
 // and need the bindings' asset registry, which nothing else here does.
 [[nodiscard]] script::native_object * install_url(context & cx);
 
+// `TextEncoder` and `TextDecoder`, the Encoding Standard §8 - encoding.cpp,
+// which also carries the label table and the single-byte indexes.
+void install_encoding(context & cx);
+
 } // namespace ctbrowser::shell

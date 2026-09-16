@@ -1080,114 +1080,11 @@ void dom_bindings::install_dom_interfaces(context & cx) {
                 })));
     }
 
-    // --- HTMLHyperlinkElementUtils, HTML 4.6.4, on <a> and <area> ------------
-    //
-    // `protocol`, `host`, `hostname`, `port`, `pathname`, `search`, `hash` and
-    // `origin` over the element's URL - which is `href` RESOLVED, the same
-    // answer the reflected `href` row gives, cut into the pieces
-    // `location.*` already reports through net/url.hpp. Two things measured it:
-    // a page routing on `link.pathname`, and every URL-typed subtest of
-    // `reflection-*.html`, because reflection.js resolves its expected values
-    // by reading these five parts back off an <a> - with them undefined, the
-    // expectation was "undefined//undefined..." and 200-odd subtests failed
-    // for a reason that had nothing to do with the attribute under test.
-    //
-    // NOT HERE: `username` and `password`, which net/url.hpp's location_url
-    // does not carry. A setter rewrites `href` from the parts and does nothing
-    // for an element with no href, which is the specification's "if url is
-    // null, return" and the shape every setter there has.
-    for (const char * which : {"HTMLAnchorElement", "HTMLAreaElement"}) {
-        const value iface = interface_prototype(which);
-        if (!iface.is_object()) { continue; }
-        auto * proto = static_cast<script::object_object *>(iface.as_heap());
-        // The resolved href, or nothing when there is no attribute - exactly
-        // what reflected_get answers for the `url` type, so the two agree.
-        const auto href_of = [this](node_id id) -> std::optional<std::string> {
-            const auto txn = doc_->read();
-            const atom name = atoms_->intern("href");
-            if (!id || !txn.has_attribute(id, name)) { return std::nullopt; }
-            const std::string raw{txn.attribute_value(id, name)};
-            if (location_href_.empty()) { return raw; }
-            const std::string resolved = resolve(location_href_, raw);
-            return resolved.empty() ? raw : resolved;
-        };
-        struct url_part {
-            std::string_view name;
-            std::string location_url::* field;
-            std::string_view when_null; // ":" for protocol, "" for the rest
-        };
-        constexpr url_part parts[] = {
-            {"protocol", &location_url::protocol, ":"}, {"host", &location_url::host, ""},
-            {"hostname", &location_url::hostname, ""},  {"port", &location_url::port, ""},
-            {"pathname", &location_url::pathname, ""},  {"search", &location_url::search, ""},
-            {"hash", &location_url::hash, ""},          {"origin", &location_url::origin, ""},
-        };
-        for (const url_part & part : parts) {
-            const std::string property{part.name};
-            auto * getter = cx.allocate<script::native_object>(
-                property, [this, href_of, part](context & c, std::span<value>) {
-                    const std::optional<std::string> href = href_of(receiver(c));
-                    if (!href) { return c.string(std::string{part.when_null}); }
-                    return c.string(location_parts(*href).*(part.field));
-                });
-            // `origin` is readonly; the rest rewrite the href from the parts.
-            value setter = value::undefined();
-            if (part.name != "origin") {
-                setter = value::object(cx.allocate<script::native_object>(
-                    property, [this, href_of, part](context & c, std::span<value> a) {
-                        const node_id id = receiver(c);
-                        const std::optional<std::string> href = href_of(id);
-                        if (!href) { return value::undefined(); }
-                        location_url url = location_parts(*href);
-                        // Whether the URL had an authority, which decides both
-                        // whether a host can be written and how it serialises.
-                        const bool authority = href->compare(url.protocol.size(), 2, "//") == 0;
-                        std::string given = arg_string(c, a, 0);
-                        if (part.name == "protocol") {
-                            given = ascii_lower_copy(given.substr(0, given.find(':')));
-                            if (given.empty()) { return value::undefined(); }
-                            url.protocol = given + ":";
-                        } else if (part.name == "host" || part.name == "hostname" ||
-                                   part.name == "port") {
-                            if (!authority) { return value::undefined(); }
-                            if (part.name == "port") {
-                                url.port = given.substr(0, given.find_first_not_of("0123456789"));
-                            } else {
-                                // `host` takes `name:port`; `hostname` never does.
-                                const std::size_t colon =
-                                    part.name == "host" ? given.rfind(':') : std::string::npos;
-                                if (colon != std::string::npos &&
-                                    given.find(']') == std::string::npos) {
-                                    url.port = given.substr(colon + 1);
-                                    given.resize(colon);
-                                }
-                                if (given.empty()) { return value::undefined(); }
-                                url.hostname = given;
-                            }
-                            url.host = url.hostname + (url.port.empty() ? "" : ":" + url.port);
-                        } else if (part.name == "pathname") {
-                            if (!authority) { return value::undefined(); }
-                            url.pathname = given.starts_with('/') ? given : "/" + given;
-                        } else if (part.name == "search") {
-                            url.search = given.empty()
-                                             ? ""
-                                             : "?" + given.substr(given.starts_with('?') ? 1 : 0);
-                        } else {
-                            url.hash = given.empty()
-                                           ? ""
-                                           : "#" + given.substr(given.starts_with('#') ? 1 : 0);
-                        }
-                        (void)doc_->set_attribute(id, atoms_->intern("href"),
-                                                  url.protocol +
-                                                      (authority ? "//" + url.host : "") +
-                                                      url.pathname + url.search + url.hash);
-                        mutated();
-                        return value::undefined();
-                    }));
-            }
-            proto->define_accessor(property, value::object(getter), setter);
-        }
-    }
+    // HTMLHyperlinkElementUtils, HTML 4.6.3, on <a> and <area>: the whole mixin
+    // over net/url.hpp's record, in element/hyperlink.cpp. AFTER the reflected
+    // rows above, because its `href` replaces the `url`-typed row - an <a>
+    // resolves against the document BASE url and a reflected row does not.
+    install_hyperlink_utils(cx);
 
     // THE OPERATIONS THAT ARE NOT REFLECTED ATTRIBUTES, and so far that is the
     // whole of CharacterData and the two Text adds to it. Here rather than in

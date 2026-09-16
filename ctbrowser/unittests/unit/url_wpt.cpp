@@ -6,9 +6,13 @@
 // hand-written cases below still run and the file passes.
 //
 // EVERY CASE PASSES at the WPT commit tools/wpt/fetch-wpt.sh pins (893 of 893
-// and 278 of 278, 2026-09-16), UTS #46 slice and all - so the file asserts the
-// total rather than a ratchet. A corpus bump that adds a mapping this engine
-// lacks is the moment to extend map_for_domain in url.cpp, not to lower this.
+// and 278 of 278, 2026-09-16) - so the file asserts the total rather than a
+// ratchet.
+//
+// IdnaTestV2.json is the exception, and is a RATCHET at 2,668 of 2,671: the
+// UTS #46 processing in url.cpp does not do CheckBidi (see the note above
+// domain_to_ascii there), and the three cases that miss are the ones that need
+// it. Raise the floor when it lands; never lower it.
 
 #include <ctbrowser.hpp>
 #include <ctbrowser/core/json.hpp>
@@ -223,10 +227,55 @@ void test_a_lone_surrogate_becomes_the_replacement_character() {
     CHECK(url && url->pathname() == "/%EF%BF%BD");
 }
 
+// --- IdnaTestV2.json ---------------------------------------------------------
+
+// Through the WHOLE URL parser rather than a private entry point: the domain
+// is what `https://<input>/x` reports as its host, which is the same path
+// url/IdnaTestV2.any.js drives and the only one a page can reach.
+void test_the_idna_corpus() {
+    for (const char * name : {"IdnaTestV2.json", "IdnaTestV2-removed.json"}) {
+        const std::string text = read_file(corpus_dir() / name);
+        if (text.empty()) { return; }
+        const auto parsed = parse_json(text);
+        CHECK(parsed.has_value());
+        if (!parsed) { return; }
+        const auto * cases = std::get_if<json_value::array>(&parsed->data);
+        CHECK(cases != nullptr);
+        if (cases == nullptr) { return; }
+
+        int total = 0;
+        int passed = 0;
+        for (const json_value & c : *cases) {
+            if (std::holds_alternative<std::string>(c.data)) { continue; }
+            ++total;
+            const std::string input = text_of(member(c, "input"));
+            const json_value * output = member(c, "output");
+            // A null or empty `output` is the corpus's "this must not parse".
+            const bool expect_failure = output == nullptr ||
+                                        !std::holds_alternative<std::string>(output->data) ||
+                                        text_of(output).empty();
+            const std::optional<url_record> url = parse_url("https://" + input + "/x");
+            const bool ok =
+                expect_failure ? !url.has_value() : (url && url->hostname() == text_of(output));
+            if (ok) {
+                ++passed;
+            } else if (std::getenv("CTBROWSER_URL_VERBOSE") != nullptr) {
+                std::printf("  miss: <%s> -> %s (want %s)\n", input.c_str(),
+                            url ? url->hostname().c_str() : "failure",
+                            expect_failure ? "failure" : text_of(output).c_str());
+            }
+        }
+        std::printf("url_wpt: %s %d / %d\n", name, passed, total);
+        // The ratchet, and the removed-codepoint file which is exact.
+        CHECK(passed >= (total > 100 ? 2668 : total));
+    }
+}
+
 } // namespace
 
 int main() {
     test_the_parser_corpus();
+    test_the_idna_corpus();
     test_the_setters_corpus();
     test_the_eight_rows_that_differed_from_a_browser();
     test_form_urlencoded_round_trips();
