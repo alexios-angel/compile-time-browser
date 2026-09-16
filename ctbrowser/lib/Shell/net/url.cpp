@@ -524,6 +524,12 @@ void decompose_into(std::u32string & out, char32_t c) {
 }
 
 [[nodiscard]] std::u32string to_nfc(std::u32string_view text) {
+    // ASCII IS ALREADY NFC: no ASCII code point has a canonical decomposition
+    // and no pair of them composes. Worth the scan because `domain to ASCII`
+    // runs on EVERY host the engine parses, and almost all of them are ASCII.
+    if (std::all_of(text.begin(), text.end(), [](char32_t c) { return c < 0x80; })) {
+        return std::u32string{text};
+    }
     std::u32string parts;
     parts.reserve(text.size());
     for (const char32_t c : text) { decompose_into(parts, c); }
@@ -720,7 +726,10 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     // Criterion 1: the label must ALREADY be in NFC. It is, for a label that
     // came through the step above; it need not be for one punycode just
     // decoded, which is the case this catches.
-    if (to_nfc(label) != label) { return false; }
+    if (std::any_of(label.begin(), label.end(), [](char32_t c) { return c >= 0x80; }) &&
+        to_nfc(label) != label) {
+        return false;
+    }
     if (in_pairs(combining_mark_ranges, label.front())) { return false; }
     for (const char32_t c : label) {
         if (c == '.') { return false; }
