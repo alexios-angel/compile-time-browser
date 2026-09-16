@@ -333,6 +333,8 @@ namespace detail {
                 inset = true;
             } else if (ascii_iequals(part, "currentcolor")) {
                 colour = "currentcolor";
+            } else if (std::string c = style::css::computed_color(part, {}); !c.empty()) {
+                colour = std::move(c);
             } else if (const std::optional<color> c = paint::parse_color(part)) {
                 colour = color_text(*c);
             } else if (const std::optional<color> s = system_color(part)) {

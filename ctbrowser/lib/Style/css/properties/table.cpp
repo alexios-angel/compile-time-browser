@@ -25,10 +25,13 @@ constexpr property_syntax table[] = {
     // shorthands.cpp expands it; here so `'all' in style` answers.
     {"all", k::freeform, "", "", false, false, true},
     // --- the box ---------------------------------------------------------
+    // The keyword set is display.cpp's; listed here for `CSS.supports` and the
+    // computed style, which read the table.
     {"display", k::keyword_only,
      "block inline inline-block flex inline-flex grid inline-grid none table inline-table "
      "table-row table-row-group table-header-group table-footer-group table-column "
-     "table-column-group table-cell table-caption list-item flow-root contents ruby",
+     "table-column-group table-cell table-caption list-item flow-root contents ruby run-in "
+     "ruby-base ruby-text ruby-base-container ruby-text-container flow",
      "inline", false, false},
     {"position", k::keyword_only, "static relative absolute fixed sticky", "static", false, false},
     {"float", k::keyword_only, "none left right inline-start inline-end", "none", false, false},
@@ -173,12 +176,13 @@ constexpr property_syntax table[] = {
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
     {"outline-style", k::keyword_only,
      "auto none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
-    {"outline-color", k::color, "", "currentcolor", false, false},
+    {"outline-color", k::color, "invert", "currentcolor", false, false},
     {"outline-offset", k::length, "", "0px", false, false},
 
     // --- colour and background ------------------------------------------
     {"color", k::color, "", "rgb(0, 0, 0)", true, false},
-    {"caret-color", k::freeform, "", "auto", true, false},
+    {"caret-color", k::color, "auto", "auto", true, false},
+    {"accent-color", k::color, "auto", "auto", false, false},
     {"background", k::freeform, "", "none", false, false, true},
     {"background-color", k::color, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},
@@ -237,8 +241,7 @@ constexpr property_syntax table[] = {
     {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
      true, false},
     {"text-indent", k::length_percentage, "", "0px", true, false},
-    {"text-transform", k::keyword_only,
-     "none capitalize uppercase lowercase full-width full-size-kana", "none", true, false},
+    {"text-transform", k::freeform, "", "none", true, false}, // keywords.cpp's grammar
     {"text-decoration", k::freeform, "", "none", false, false, true},
     {"text-decoration-line", k::freeform, "", "none", false, false},
     {"text-decoration-color", k::color, "", "currentcolor", false, false},
@@ -272,19 +275,12 @@ constexpr property_syntax table[] = {
      false},
     {"flex-wrap", k::keyword_only, "nowrap wrap wrap-reverse", "nowrap", false, false},
     {"flex-flow", k::freeform, "", "row nowrap", false, false, true},
-    {"justify-content", k::keyword_only,
-     "normal stretch flex-start flex-end center space-between space-around space-evenly start end "
-     "left right",
-     "normal", false, false},
-    {"align-items", k::keyword_only,
-     "normal stretch center start end flex-start flex-end self-start self-end baseline", "normal",
-     false, false},
-    {"align-self", k::keyword_only,
-     "auto normal stretch center start end flex-start flex-end self-start self-end baseline",
-     "auto", false, false},
-    {"align-content", k::keyword_only,
-     "normal stretch center start end flex-start flex-end space-between space-around space-evenly",
-     "normal", false, false},
+    // The six box-alignment longhands are alignment.cpp's grammar; freeform
+    // here so the table's single-keyword path does not answer first.
+    {"justify-content", k::freeform, "", "normal", false, false},
+    {"align-items", k::freeform, "", "normal", false, false},
+    {"align-self", k::freeform, "", "auto", false, false},
+    {"align-content", k::freeform, "", "normal", false, false},
     {"gap", k::freeform, "", "normal", false, false, true},
     {"row-gap", k::length_percentage, "normal", "normal", false, true},
     {"column-gap", k::length_percentage, "normal", "normal", false, true},
@@ -299,7 +295,7 @@ constexpr property_syntax table[] = {
     // Three more `<integer>` properties nothing lays out, so that `1e1` and
     // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
     // ponytail: hyphenate-limit-chars takes one value here, not the spec's three.
-    {"max-lines", k::integer, "none", "none", false, true},
+    {"max-lines", k::integer, "none auto", "auto", false, true},
     {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
     {"hyphenate-limit-chars", k::integer, "auto", "auto", true, true},
     {"column-span", k::keyword_only, "none all", "none", false, false},
@@ -365,22 +361,34 @@ constexpr property_syntax table[] = {
     {"resize", k::keyword_only, "none both horizontal vertical block inline", "none", false, false},
     {"object-fit", k::keyword_only, "fill contain cover none scale-down", "fill", false, false},
     {"object-position", k::position, "", "50% 50%", false, false},
-    {"rotate", k::angle, "none", "none", false, false},
+    {"rotate", k::freeform, "", "none", false, false}, // transforms.cpp's grammar
     {"scale", k::freeform, "", "none", false, false},
     {"translate", k::freeform, "", "none", false, false},
 };
 
 } // namespace
 
+// The core rows above and table_modules.cpp's rows, as one list in one order:
+// `getComputedStyle`'s indexed properties walk it.
+[[nodiscard]] const std::vector<property_syntax> & every_property() {
+    static const std::vector<property_syntax> all = [] {
+        std::vector<property_syntax> out(std::begin(table), std::end(table));
+        const std::span<const property_syntax> more = module_properties();
+        out.insert(out.end(), more.begin(), more.end());
+        return out;
+    }();
+    return all;
+}
+
 const property_syntax * find_property(std::string_view name) {
-    for (const property_syntax & one : table) {
+    for (const property_syntax & one : every_property()) {
         if (ascii_iequals(one.name, name)) { return &one; }
     }
     return nullptr;
 }
 
 std::span<const property_syntax> known_properties() {
-    return std::span<const property_syntax>{table, std::size(table)};
+    return std::span<const property_syntax>{every_property()};
 }
 
 // CSSOM §2.1 "serialize an identifier".

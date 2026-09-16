@@ -23,6 +23,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -90,12 +91,62 @@ struct scan {
                                   std::string_view text);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
 // `invalid`, when given, is set for a value whose `url()` modifiers are wrong.
+// [begin, end) restricts the walk to a run of tokens; `text` is what a token
+// with no source span falls back to.
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
-                                                 bool * invalid = nullptr);
+                                                 bool * invalid = nullptr, std::size_t begin = 0,
+                                                 std::size_t end = static_cast<std::size_t>(-1));
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
 // Defined in color.cpp.
 [[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
                                std::string_view normalized, std::string & out);
+// An `<image>` list - gradients, image(), cross-fade(), light-dark(), a url()
+// or an unknown image function kept as written. False when nothing in the
+// list is modelled, so the caller keeps the author's bytes. Defined in
+// image.cpp.
+[[nodiscard]] bool match_image_list(const token_stream & ts, const scan & found, std::string & out);
+// A `<filter-value-list>` for `filter` and `backdrop-filter`. Defined in
+// filter.cpp.
+[[nodiscard]] bool match_filter_list(const token_stream & ts, const scan & found,
+                                     std::string & out);
+// CSS Box Alignment 3's six longhands, and the split of a `place-*`
+// shorthand into its two. Defined in alignment.cpp.
+[[nodiscard]] bool match_alignment(std::string_view property, const token_stream & ts,
+                                   const scan & found, std::string & out);
+[[nodiscard]] bool split_place(std::string_view shorthand, std::string_view value,
+                               std::string & align, std::string & justify);
+// CSS Grid 2's track lists, grid lines, template areas and auto-flow; the
+// split and fold of grid-row / grid-column / grid-area. Defined in grid.cpp.
+// `match_grid` answers false for a property it does not model and an empty
+// `out` for an invalid value.
+[[nodiscard]] bool match_grid(std::string_view property, const token_stream & ts,
+                              const scan & found, std::string & out);
+[[nodiscard]] bool split_grid_lines(std::string_view shorthand, std::string_view value,
+                                    std::vector<std::string> & out);
+[[nodiscard]] std::string fold_grid_lines(std::span<const std::string> lines);
+// The keyword-combination grammars (text-decoration-line, text-transform,
+// contain, font-synthesis, font-variant-*, ...) and the will-change,
+// counter-* and scroll-snap-* lists. False for a property not modelled
+// here, an empty `out` for an invalid value. Defined in keywords.cpp.
+[[nodiscard]] bool match_keywords(std::string_view property, const token_stream & ts,
+                                  const scan & found, std::string & out);
+// rotate, scale, translate, transform-origin and perspective-origin.
+// Defined in transforms.cpp.
+[[nodiscard]] bool match_transform_property(std::string_view property, const token_stream & ts,
+                                            const scan & found, std::string & out);
+// box-shadow and text-shadow. Defined in shadows.cpp; an empty `out` is an
+// invalid list.
+[[nodiscard]] bool match_shadow_list(std::string_view property, const token_stream & ts,
+                                     const scan & found, std::string & out);
+// The comma-separated layer lists of background-* and mask-*. Defined in
+// backgrounds.cpp; an empty `out` is an invalid list.
+[[nodiscard]] bool match_background_list(std::string_view property, const token_stream & ts,
+                                         const scan & found, std::string & out);
+// `display`'s two-value grammar and its short forms. Defined in display.cpp.
+[[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
+// The rows of the property table beyond table.cpp's core set, grouped by
+// module. Defined in table_modules.cpp.
+[[nodiscard]] std::span<const property_syntax> module_properties() noexcept;
 
 } // namespace ctbrowser::style::css::detail
