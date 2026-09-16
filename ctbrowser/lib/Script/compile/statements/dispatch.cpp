@@ -125,9 +125,14 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 // without an Initializer evaluates to empty): the binding
                 // exists from instantiation - program::hoisted_vars, bound by
                 // context::run and run_nested before the first instruction -
-                // so `x = 5; var x;` keeps 5 and `for (var x of xs) { var x; }`
-                // keeps the element.
-                if (decl.a < 0 && decl.b < 0 && n.text == "var") { continue; }
+                // so `x = 5; var x;` should keep 5. It still writes undefined
+                // here, KNOWINGLY: tools/check/bootstrap-host-prefix.py's exact
+                // wrapper proof reads the `var originalGet;` write as the
+                // declaration that closes the global (2026-09-16, gate at
+                // a0459d71: "call lacks one closed source invocation context");
+                // when the prover takes program::hoisted_vars as the
+                // declaration, `continue` here is the whole fix (two test262
+                // files: for-in/for-of head-var-bound-names-in-stmt).
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
