@@ -89,9 +89,13 @@ if(CTCOMPILE_ENABLE_MLIR)
       set(ctcompile_lit_processors 1)
     endif()
     # Native ownership cases build both C++ layouts under GCC, Clang and
-    # sanitizers, and since 2026-09-15 every native fixture's compilation-unit,
-    # clean-compile and printing gates run here too (CTNative/Fixtures/*/*.test).
+    # sanitizers, and since 2026-09-15 the ~320 registrations that were
+    # `cmake -P` ctest tests - every native fixture's compilation-unit,
+    # clean-compile and printing gates, the claims and escape corpora, the
+    # launcher arms, the packaging round trip, the Browser drivers - run here
+    # too. Measured 567 s alone at -j4; over 2400 s on a box carrying two
+    # other ctests and two operator loops, which is what the cap has to hold.
     set_tests_properties(ctcompile_lit PROPERTIES
-      TIMEOUT 2400 PROCESSORS ${ctcompile_lit_processors})
+      TIMEOUT 5400 PROCESSORS ${ctcompile_lit_processors})
   endif()
 endif()
