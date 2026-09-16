@@ -85,6 +85,7 @@ namespace {
                                                  "focus-within",
                                                  "fullscreen",
                                                  "future",
+                                                 "has-slotted",
                                                  "host",
                                                  "hover",
                                                  "in-range",
@@ -130,15 +131,25 @@ namespace {
 }
 
 [[nodiscard]] bool known_functional_pseudo_class(std::string_view name) {
-    static constexpr std::string_view names[] = {"not",         "is",
-                                                 "where",       "has",
-                                                 "nth-child",   "nth-last-child",
-                                                 "nth-of-type", "nth-last-of-type",
-                                                 "nth-col",     "nth-last-col",
-                                                 "lang",        "dir",
-                                                 "host",        "host-context",
-                                                 "state",       "active-view-transition-type",
-                                                 "current",     "heading",
+    static constexpr std::string_view names[] = {"not",
+                                                 "is",
+                                                 "where",
+                                                 "has",
+                                                 "nth-child",
+                                                 "nth-last-child",
+                                                 "nth-of-type",
+                                                 "nth-last-of-type",
+                                                 "nth-col",
+                                                 "nth-last-col",
+                                                 "lang",
+                                                 "dir",
+                                                 "has-slotted",
+                                                 "host",
+                                                 "host-context",
+                                                 "state",
+                                                 "active-view-transition-type",
+                                                 "current",
+                                                 "heading",
                                                  "-webkit-any"};
     return ascii_iequals_any(name, names);
 }
@@ -578,6 +589,41 @@ private:
             ++into.classes; // a pseudo-class is class-level
             into.part.pseudos.push_back(std::move(ref));
             return true;
+        }
+        // `:has-slotted(<compound>)` - CSS Scoping (csswg-drafts#10586), a
+        // question about a <slot>'s ASSIGNED nodes. The assignment lives in the
+        // shell and the style matcher is not told it, so this is parsed for
+        // VALIDITY and left unmatchable. The argument is a selector over slotted
+        // nodes, which are a flat sibling list: sibling combinators are meaningful
+        // and the child/descendant combinators are not, so `:has-slotted(div +
+        // div)` is valid and `:has-slotted(div > span)` is not.
+        if (ascii_iequals(name, "has-slotted")) {
+            const std::size_t before = sheet_->selectors.size();
+            selector_parser nested{*sheet_, *atoms_};
+            nested.nesting_ = nesting_;
+            const std::uint32_t count = nested.run(inner);
+            const bool nested_bad = nested.invalid();
+            std::vector<compiled_selector> args;
+            for (std::size_t i = 0; i < count; ++i) {
+                args.push_back(std::move(sheet_->selectors[before + i]));
+            }
+            sheet_->selectors.resize(before);
+            // `:has-slotted()` is a syntax error, as is a malformed argument or one
+            // joined by a descendant or child combinator.
+            bool ok = !nested_bad && count != 0;
+            for (const compiled_selector & arg : args) {
+                for (const combinator link : arg.links) {
+                    if (link == combinator::descendant || link == combinator::child) { ok = false; }
+                }
+            }
+            if (!ok) {
+                invalid = true;
+                return false;
+            }
+            // Valid, and never matches: the caller marks the compound dead+lossy,
+            // which keeps it out of the rule index and sends selectorText to the
+            // author's bytes.
+            return false;
         }
         const bool is_not = ascii_iequals(name, "not");
         const bool is_is = ascii_iequals(name, "is");

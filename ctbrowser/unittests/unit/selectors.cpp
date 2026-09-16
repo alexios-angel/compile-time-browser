@@ -321,6 +321,21 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     // And an alternative that cannot be matched must not take its siblings with
     // it: `#p1, :has(a)` still finds #p1, exactly as a stylesheet would.
     is("one('#p1, li:has(a)')", "p1");
+    // `:has-slotted` (csswg-drafts#10586): a valid pseudo-class this engine cannot
+    // match - slot assignment lives in the shell - so it answers null, and its
+    // malformed forms are syntax errors. Sibling combinators are legal in the
+    // argument, child and descendant are not.
+    is("one(':has-slotted')", "null");
+    is("one(':has-slotted(bar)')", "null");
+    is("one(':has-slotted(*)')", "null");
+    is("one(':has-slotted(:not(foo))')", "null");
+    is("one(':has-slotted(div + div)')", "null");
+    is("one(':has-slotted(div:has(> span))')", "null");
+    is("one(':not(:has-slotted(foo))')", "null");
+    is("one('::has-slotted(foo)')", "threw:SyntaxError");
+    is("one(':has-slotted()')", "threw:SyntaxError");
+    is("one(':has-slotted(0)')", "threw:SyntaxError");
+    is("one(':has-slotted(div > span)')", "threw:SyntaxError");
 }
 
 // A DETACHED ELEMENT IS MATCHED AGAINST ITSELF, and it was not.
