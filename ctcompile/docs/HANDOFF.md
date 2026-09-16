@@ -6,6 +6,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## JSON recovery in flight, 2026-09-16 UTC
+
+Resumed **efe8daa8**, found in the previous checkpoint below, by replaying it in
+`../wt/codex-json-resume-20260916` on branch `codex-json-resume-20260916`.
+The repaired native JSON implementation and regressions are still uncommitted
+there; finish their gate before choosing new work. Three agents split recovery
+review, native regressions and the next Bootstrap boundary. September 7 WIP is
+already an ancestor and needs no further recovery.
+
+Integrated **09341902** passed the complete devbox build and **604/604 CTests
+in 1503.00s**, including the lit wrapper in **1086.91s**; wrapper exit **0**.
+**a244a2f9** fixes remote sync with `rsync --checksum --no-times`: changed older
+worktree inputs now invalidate Ninja, while identical files retain their times.
+Standalone rsync checks and shell syntax pass. The first candidate run linked
+stale objects and is invalid. The fresh 85-step rebuild compiled the compiler,
+then caught a const MLIR handle in a new recovery test; its one-line fix is queued.
+
+The active script is `/tmp/ctcompile-json-resume/full.sh`, with `full.log` and
+`full.exit`; it rebuilds, runs two proof tests, three native drivers, the complete
+gate, Bootstrap probes and frozen-input verification. `focused-unit.exit` and
+`focused-fresh.exit` are written only after their respective gates pass. Local
+manifests cover **1,561 source files / 113 submodule files**. Formatting with
+23.1.1 passes; the pinned formatter retains the known nine-file/26-diagnostic
+baseline. No candidate native result or full-bundle gain is claimed yet.
+
+After JSON recovery: original M's Boolean/Number/null prefix and mixed-result
+ownership, then F's original regexp/callback key conversion before H's attribute
+read. Runtime and escape-analysis source are unchanged. Current claims and the
+devbox queue are recorded in AGENT-SYNC.
+
 ## Helper/URI composition, the JSON chain draft and the audit, 2026-09-15 UTC
 
 **7a337ee2** composes helper expansion with URI normalization: every
