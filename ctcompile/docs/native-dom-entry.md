@@ -103,7 +103,8 @@ Only a checked inert declaration or the proved initialization above may be omitt
 Skipped source, additional initialization effects, calls to the entry from JavaScript,
 mutable entry bindings, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, loops and unstructured control flow refuse. Current operations are
-strict element identity, Boolean negation, Number/Boolean/String/undefined constants and returns,
+strict element identity, Boolean/Number negation, and Number/Boolean/String/undefined
+constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
@@ -152,8 +153,10 @@ function canonicalAttribute(element) {
 
 Number accepts one proved String, null or optional String with an undefined call
 receiver; standard Number `toString` accepts its exact Number receiver and no
-arguments. Number results may be returned or joined with other Numbers. The
-compiler checks the whole entry and both branch arms before erasing builtin reads.
+arguments. Number results may be returned, tested for truthiness or joined with
+other Numbers. Truthiness preserves NaN and signed-zero behavior. The owning JSON
+joins below also accept Numbers. The compiler checks the whole entry and both
+branch arms before erasing builtin reads.
 Replacement, prototype writes, callable escapes, unknown coercions, script reentry,
 radix arguments and stale source fingerprints refuse. Number, decodeURIComponent
 and JSON are the optional initial intrinsic names supported by these DOM providers;
@@ -164,8 +167,8 @@ Emission calls public Core `string_to_number` and `number_to_string` with ordina
 zero; saved attribute strings remain independent of later DOM changes. The shared
 Core implementation preserves the VM's current numeric behavior, including its
 known numeric-text limitations; this is not a claim of arbitrary-string ECMAScript
-equivalence. Original M's complete prefix and mixed return values still need
-separate proofs.
+equivalence. Original M's complete prefix uses the separately authorized URI/JSON
+chain and mixed-result ownership described below.
 
 DOM manifests may also supply `"initial_intrinsics": ["decodeURIComponent"]`.
 The supplied binding must be the standard own global data binding. Number authority
@@ -250,17 +253,29 @@ existing numeric, Unicode and nesting behavior remains the same as the VM parser
 
 Replacement or shadowing of JSON, another method, a changed receiver, a reviver,
 reversed or additional calls, observed catch payloads and missing or duplicate
-intrinsic declarations refuse. JSON/String joins are supported; joins with a
-separate Boolean, Number, null or optional String still refuse. Original M's full
-prefix and mixed-result ownership remain the next boundary.
+intrinsic declarations refuse. A JSON result may join with a definite String,
+Boolean, Number, null or optional String. Each alternative becomes an owning
+`ctbrowser::json_value`; optional Strings copy their bytes only in the selected
+present arm, while absence becomes JSON null. Undefined, borrowed and callable
+alternatives still refuse. Truthiness, `typeof`, equality and property observations
+of JSON results are not yet admitted.
+
+With all three initial intrinsics (`Number`, `decodeURIComponent`, `JSON`), the
+complete original M helper and `H.getDataAttribute(element, "config")` compile.
+M retains its Boolean/Number/null prefix, saved nullable guard, original lookup
+order and failure snapshots. H reuses the existing proof for F's original
+regexp/callback replacement when the constant key has no match, then calls the
+public DOM attribute core. Matching or live F keys remain refused. Config's next
+`"object" == typeof parsed` observation is outside the current JSON proof.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
 observation. Every operation in both arms is checked, including nested arms;
 values must dominate their uses and frame bookkeeping stays in the entry block.
 Joins carry Numbers, Booleans, definite Strings, owning `std::optional<std::string>`
-for String/null alternatives, or owning `ctbrowser::json_value` for JSON/String
-alternatives. Incompatible alternatives and borrowed or callable joins refuse.
+for String/null alternatives, or owning `ctbrowser::json_value` for JSON and the
+supported primitive alternatives above. Incompatible alternatives and borrowed or
+callable joins refuse.
 Strings widen to optionals at the existing region boundary, while
 source effects remain inside their selected arm. Work uses the existing host
 budget, and nesting reaching 64 branches refuses. **755af20b** applies complete
@@ -275,8 +290,8 @@ operation must be visited, and observing an inactive poison value refuses. Sourc
 effects and frame exits remain in their original paths; the unchanged proof checks
 the resulting branches. Three/four-return helpers and captured String snapshots
 compile; unknown selectors, unvisited arms, invalid frame exits, loops and
-general exceptions remain refused. The bounded URI case above has its own
-complete source proof; original M needs the remaining builtin and ownership proofs.
+general exceptions remain refused. The bounded URI/JSON cases above have their own
+complete source and ownership proofs.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified
