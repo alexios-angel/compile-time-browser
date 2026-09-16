@@ -1,41 +1,39 @@
 # What native Bootstrap needs next
 
-## Current boundary, 2026-09-15
+## Current boundary, 2026-09-16
 
-**bb7ba402** compiles the saved nullable attribute guard from original M followed
-by one `decodeURIComponent` try/catch. The exact saved value narrows only inside
-its proved String arm; null/empty String, later DOM mutation and the caught
-pre-call snapshot remain intact. Native output uses `std::optional<std::string>`
-and the public Core decoder. DOM Strings measures **745 Node/VM observations /
-eight GCC-Clang binaries / 1,048 source refusals**. **9517ff21** removes an
-unnecessary IR clone from report-free fingerprinting, measured at **15.56% less
-pass time / 4.45% less command time** on Bootstrap IR. This is not a full-program
-transcompilation measurement. [HANDOFF](HANDOFF.md) records current gates.
+**53b9f68a / 0a7c0302** recover and compile original M's protected body,
+`JSON.parse(decodeURIComponent(t))`, through explicit initial JSON/parse and URI
+identities. Lookup precedes decoding; both checked calls retain their original
+failure snapshots. Native C++ calls the public Core parser and owns a
+`ctbrowser::json_value`; String failure arms own their bytes. The recovered
+`efe8daa8` draft is superseded. [The DOM contract](native-dom-entry.md) describes
+the proof and refusals; [HANDOFF](HANDOFF.md) records the gate and evidence.
 
-The next bounded compiler slice is **helper/exception composition**. The selected
-entry may call a helper whose body owns the handler; current lowering chooses
-either URI normalization or helper expansion, based on the selected entry's
-handler. Compose the existing private transformations without erasing source
-calls, changing argument/capture/receiver order or bypassing either complete
-proof. Preserve original handler registers, unused catch payload checks, status
-edges and rollback for every insufficient budget. The direct nullable URI entry
-is now a working control for this next helper case.
+The JSON gate passes **7 sources / 14 Node-VM observations / 8 GCC-Clang binaries /
+72 refusals**, both providers/policies/layouts and post-document lifetime
+sanitizers. Complete **605/605 CTests (1706.00s) / 177/177 lit (1305.06s) PASS**,
+with wrapper exit **0** and frozen implementation hashes checked.
 
-Original `H.getDataAttribute -> M` then needs explicit JSON/parse identity,
-the original lookup before URI argument evaluation, two sequential failure
-continuations and mixed primitive/JSON ownership. Both failures return the
-original input. **c9c2e37b** already provides the shared public Core JSON parser
-and owning tree; use it rather than implementing another parser or calling Script.
-Its existing numeric/Unicode/depth limits remain those of the VM oracle.
+The exact original `H.getDataAttribute -> M` probe now reaches the typed DOM
+proof and refuses at **`ctjs.unary`**, in all four provider/policy combinations.
+M still has **24 nine-register blocks**, with its handler at **^bb12**. The next
+slice starts with original `!0`/`!1` Number truthiness, then the full
+Boolean/Number/null prefix joining the parsed JSON or original String. The saved
+optional-String guard and every source effect must survive that composition.
+After M, preserve F's original regexp/callback key conversion and H's
+`data-bs-${F(key)}` construction before the DOM read.
 
-Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, DOM Data **7/7**,
-Button **4/86**, with 22 Node observations and its separately recorded VM
-inheritance failure. Complete **606/606 CTests (1454.14s) / 177/177 lit
-(962.95s) PASS**. Original M and the isolated nullable URI helper both
-refuse all four provider/policy combinations at the complete helper source-shape
-check. M retains 24 nine-slot blocks and its handler at ^bb12. No full-bundle
-admission gain is claimed. Full H/dataset, initialization/inheritance, retained
-config/callbacks and the application driver remain unfinished.
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, DOM Data **7/7**,
+and Button **4/86**, with its 22 Node lifecycle observations and existing VM
+inheritance failure. Reports are unchanged; all **1,123 escape rows** match the
+current pinned baseline. Full dataset/config, initialization/inheritance,
+retained callbacks and the application driver remain unfinished.
+
+A separate compiler workflow can import and prove `program::hoisted_vars` instead
+of relying on top-level `var x;` writes in the host-prefix wrapper proof. Claude's
+03:53 UTC journal and **7ad52ce2** identify that temporary runtime compatibility
+restore; preserve the source declaration without requiring the runtime write.
 
 The earlier milestones below are historical context, not alternative next steps.
 
