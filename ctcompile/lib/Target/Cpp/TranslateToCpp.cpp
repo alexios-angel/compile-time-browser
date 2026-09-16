@@ -168,10 +168,13 @@ struct CppEmitter {
 
   // A nested callable shares only output and module spelling policy. Its
   // declaration caches, names, expression stack and analyses stay independent.
+  // Its v<N> counter continues the parent's so a lambda body never redeclares
+  // an enclosing local's name - legal C++, but a reader's trap.
   CppEmitter(raw_ostream &os, const CppEmitter &parent)
       : CppEmitter(os, parent.declareVariablesAtTop, parent.fileId) {
     readableLiterals = parent.readableLiterals;
     numericAlias = parent.numericAlias;
+    valueCount = parent.valueCount;
   }
 
   /// Emits attribute or returns failure.
