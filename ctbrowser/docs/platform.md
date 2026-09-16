@@ -208,22 +208,25 @@ at the pinned WPT commit. It reads the corpus from `~/.cache/wpt` when
 runs the whole mapping table, the §4.1 validity criteria (no U+002E, no leading
 combining mark, every code point valid) and both ContextJ rules, over RFC 3492
 in BOTH directions - so an `xn--` label is decoded and checked rather than taken
-on trust. `IgnoreInvalidPunycode` is true, as the URL Standard sets it: a label
-whose conversion or validation fails is left exactly as written instead of
-taking its domain down, which is what `xn--ASCII-` needs. The four tables -
-8,307 mapping ranges, `General_Category=M`, `Canonical_Combining_Class=Virama`
-and `Joining_Type` - are generated from unicode.org by
-`tools/gen/idna_table.py` into `lib/Shell/net/idna_table.inc`; regenerate,
-never hand-edit.
+on trust. `IgnoreInvalidPunycode` holds only when the WHOLE domain is ASCII, as
+browsers do it: an all-ASCII domain is never decoded, so an invalid `xn--` label
+(`xn--ASCII-`) is left exactly as written, but a domain that already carries
+non-ASCII decodes every `xn--` label and fails on one that does not decode to a
+valid label (`xn--a.ß` -> failure). The five tables - 8,307 mapping ranges,
+`General_Category=M`, `Canonical_Combining_Class=Virama`, `Joining_Type` and
+`Bidi_Class` - are generated from unicode.org by `tools/gen/idna_table.py` into
+`lib/Shell/net/idna_table.inc`; regenerate, never hand-edit.
 
 Step 2's NFC is done too, from Annex #15's own data
 (`tools/gen/nfc_table.py`): the only Unicode normalisation in the engine, and
 it is here because a domain is the one string the platform normalises before
-comparing. **What it still leaves out** is CheckBidi (§5.4), worth THREE of
-`IdnaTestV2.json`'s 2,671 cases - which is why no `Bidi_Class` table is
-carried. CheckHyphens and VerifyDnsLength are false because the URL Standard
-says so. `url_wpt` drives `IdnaTestV2.json` as a ratchet at 2,668 (up from
-1,395 measured) and `IdnaTestV2-removed.json` exactly.
+comparing. **CheckBidi (§5.4) is done** - the `Bidi_Class` table drives RFC
+5893's RTL/LTR rules over every label of a domain that carries an R, AL or AN
+point - which is what `url/toascii.window.js` needs for its inline Bidi cases.
+CheckHyphens and VerifyDnsLength are false because the URL Standard says so.
+`url_wpt` drives `IdnaTestV2.json` (generated `--exclude-bidi`, so CheckBidi
+does not move it) as a ratchet at 2,668 of 2,671 and `IdnaTestV2-removed.json`
+exactly.
 
 **`TextEncoder` and `TextDecoder`** live beside them in
 `lib/Shell/bindings/window/encoding.cpp`: the Encoding Standard's UTF-8 decoder
