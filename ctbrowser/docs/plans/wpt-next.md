@@ -1,26 +1,56 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-16, session 13.** Round one and round two are MERGED (§1
-and §3 below are history: round two landed as four merge commits ending
-`c5c660cb` on session 12's `99122ca1` - L layout `ffabd5db`, G properties
-`888fe52d`, C cascade `eb0b0add`, A animations `2b7a298c` - followed by the
-fixes their own gates had shown: a nested rule's declarations leaking into
-the parent rule (`57e8c9e7`), a calc() media value read as a resolution
-(`6978e58f`), CSSOM interface objects not inheriting and the anonymous
-`@layer` block refused (`e29e197f`), then the six session-12 pins that had
-never run (`3cbe733c`..`f9967aad`: the 19.1 refusal for a plain assignment,
-the block-level static TDZ, the bound-function retained layout, the alpha a
-colour serialises to). Round three is RUNNING as four agents in their own
-worktrees cut from `e29e197f` - B typed-array kinds, U the URL parser, D
-document.write + html/syntax, F forms/ranges/traversal - with the briefs in
-`~/Downloads/claude/wt/wpt11-session/round3/` (`COMMON.md` says the tip and
-where the before-numbers are). Brief S (shadow DOM, custom elements,
-Selection, DOMParser) waits for a free slot.
+**Updated 2026-09-16, session 14.** Rounds one, two and three are MERGED
+and integrated into `ctcompile-v1` (`bee703ed`). Round three landed as four
+merge commits ending `cb2cdcdf` on session 13's tip - U URL (the WHATWG
+URL parser replaces Boost.URL; `URL`/`URLSearchParams`), D parser (the
+WHATWG tokenizer and tree builder as written, 1,723 of the html5lib
+fixtures, `document.open/write/close` with the parser stopping at every
+`</script>`), B typed arrays (`BigInt64Array`, `BigUint64Array`,
+`Float16Array`), F forms/range/traversal (the select/option model,
+`form.elements`, validation, `FormData`, `Range`/`StaticRange`,
+`createContextualFragment`, TreeWalker/NodeIterator per DOM 6) - followed by
+what the merged gate found, since NONE of the four had gated (their devbox
+dirs lacked the ctc submodule): the per-script sheet application
+(`eb61fe9c`, `273773cd`), the BigInt-kind fast-path store, the options
+collection's length setter, `Range` under `AbstractRange`, a live
+`compatMode`, the dead-script nesting check, and five spec-wrong unit
+expectations. Two VM-side things that had turned 22 of Codex's ctcompile
+tests red were fixed on the way (`d626b2d6`: the iterator prototypes were
+hidden GLOBALS; `d1b577bc`: `__ctbrowser_init_fields` after `super()` read
+`.constructor` in bytecode, which resolve-globals took for `Function`
+escaping). Brief S (shadow DOM, custom elements, Selection, DOMParser) is
+the one still waiting, in `~/Downloads/claude/wt/wpt11-session/round2/`.
 
-**Measured** (devbox, the recorded instrument): the tip `e29e197f` and
-`a8b2d9af` (= `e29e197f` + the six fixes + ctcompile-v1 `53fef8aa`) are in
-`docs/wpt.md` and `docs/test262.md` once their runs land (`/tmp/m-<sha>`,
-`/tmp/w-<sha>` on the WSL box).
+**Measured** at `273773cd` (`docs/wpt.md`, `docs/test262.md`): the five
+suites **776/1,104 (70.3%)**, +43/-7 on `9c70aaa0`; test262 **38,730/48,624
+(79.7%)**, +1,818/-50 on `9c70aaa0` and +1,048/-0 on `e29e197f`.
+
+**The one regression this session left:** `css/css-values/viewport-units-
+invalidation.html` - "100vw computes to 400px after frame resize", got
+200px; PASS at `e29e197f`, FAIL from `f1613a5c`. A frame document's
+viewport units are not re-resolved when the frame is resized, and the
+change in between is that a page's author sheets are now applied per parser
+script (browser/scripts.cpp's runner: `load_author_styles` then
+`refresh_author_styles`) rather than once after the parse - so the frame's
+sheet is latched earlier, and whatever re-resolves it on resize (nested.cpp)
+sees `author_sheet_loaded_` already true. Start there.
+
+**Also open, found this session, not fixed:** Boost.URL is no longer used
+by any source (agent U's parser replaced it) but is still found, linked
+(`ctbrowser/cmake/dependencies.cmake`, `lib/Shell/CMakeLists.txt`,
+`Boost::url`), cross-built (`tools/mingw/build-boost-mingw.sh`,
+`remote-build.sh windows`) and licensed (NOTICE) - retiring it needs a
+Windows cross-build to verify, which this session did not run.
+`ctcompile_lit` has 10 cases red on Codex's side of the moved VM oracle
+(the 2026-09-16 JOURNAL lines in AGENT-SYNC.md list each with its message);
+every one is under `ctcompile/`.
+
+**How to gate faster than session 14 did**: `/tmp/wpt14/fastgate.sh <sha>`
+builds engine-only (`CTCOMPILE_MLIR=OFF`: no ctcompile lit, which is 33 of a
+full gate's 45 minutes) and runs the five suites + test262 only when green -
+about 20 minutes of devbox lock against 55. The full gate is for the commit
+that integrates.
 
 **What round two left open, by agent** (each a brief's worth, not yet
 briefed):
@@ -180,3 +210,20 @@ SHA under test, in devbox dir `projects/ctbrowser-wpt`, with
 `/tmp/wpt11/gate-3.remote`'s first half; tally with `/tmp/wpt11/wtally.py
 <dir> [<before-dir>]` and `/tmp/wpt11/t262table.py`. The measured JSON of
 every run this session is in `/tmp/m-*` and `/tmp/w-*`.
+
+## 5. (DONE 2026-09-16, session 14) The round-three briefs
+
+B, U, D, F from `~/Downloads/claude/wt/wpt11-session/round3/`, cut from
+`e29e197f`, merged as `cb2cdcdf` and fixed through `273773cd` - see the top
+of this file and the `273773cd` rows in `docs/wpt.md` and `docs/test262.md`.
+What each left open is in its commits' own words (`git log e29e197f..
+cb2cdcdf --no-merges`): D - MathML (no namespace in this DOM), the SVG
+attribute case table this engine does not carry, `<selectedcontent>`, the
+scripted html5lib files; B - a subclass instance is not a typed array,
+`ta.buffer === ta.buffer` is false, `$262.detachArrayBuffer` throws; U -
+nothing named: urltestdata.json (893) and setters_tests.json (278) pass
+whole in `unittests/unit/url_wpt`, so what url/ still fails is the
+bindings' surface, not the parser; F - `tooLong`/`tooShort` (the store
+cannot tell a user's edit from a script's), and the input type states'
+value sanitisation, which the wrapper's own `value`/`checked` accessors
+(element/views.cpp) shadow.

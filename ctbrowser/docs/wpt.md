@@ -14,6 +14,75 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-16, afternoon: rounds two and three merged
+
+**776 of the 1,104 that ran (70.3%); subtests 83,317 PASS, 4,449 FAIL** -
+from 740 (67.2%) and 45,822 / 2,025 at `9c70aaa0` (the row below):
+**+43 files, -7**. Engine at `273773cd` on `ctbrowser-wpt` (the ctbrowser
+tree of `316dcb34`, integrated into `ctcompile-v1` as `bee703ed`: `9c70aaa0`
+plus the four round-two branches - A animations, G properties, L layout, C
+cascade, session 13 - the four round-three branches - B typed-array kinds,
+U URL, D parser, F forms/range, this session - and the fixes each merge's
+gate demanded), same run as the test262 row of the
+same SHA in `docs/test262.md`; the five suites, 4 workers,
+`CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, corpus `3f6b09ae3e`. The
+intermediate cut `e29e197f` (round two only) measured **761** (68.9%),
+81,185 / 3,781, so round three is +16 files / -1 on top of it.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/css-values` | **163** (+10) | 96 | 7 | 0 | 5 | 237 | 508 | 7,293 / 2,773 |
+| `css/cssom` | **151** (+7) | 41 | 0 | 0 | 0 | 29 | 221 | 2,821 / 738 |
+| `dom/events` | **71** (+0) | 17 | 3 | 0 | 2 | 85 | 178 | 651 / 54 |
+| `dom/nodes` | **244** (+3) | 45 | 16 | 2 | 2 | 53 | 362 | 12,054 / 734 |
+| `html/dom` | **147** (+16) | 73 | 11 | 0 | 8 | 137 | 376 | 60,498 / 150 |
+| **total** | **776** | 272 | 37 | 2 | 17 | 541 | 1645 | 83,317 / 4,449 |
+776 of the 1104 that ran (70.3%); subtests 83,317 PASS, 4,449 FAIL, 76 NOTRUN, 37 TIMEOUT
+
+**The 43 gained.** The four 10,000-subtest reflection pages
+(`reflection-{text,forms,embedded,tabular}`: the runner's one-second
+`recv` gave up on them, `41a285dc`, and the subtest total is what those add
+- 26,036 -> 60,498 in html/dom); twelve `innertext-with-white-spaces`
+variants (agent D's tree builder keeps the text the old one folded); the
+calc-size and integer-interpolation rows (L and A); `calc-interpolation`,
+`random-in-animations`, the two `moveBefore/continue-css-animation-*`
+TIMEOUTs that now finish (A); `lh-unit-004`, `clamp-color-computed`, the
+tree-counting functions (G); `cssstyledeclaration-nested`,
+`serialize-values`, `font-family-serialization-001`, the `getComputedStyle-
+insets-*` pair, `HTMLLinkElement-load-event` (C, and this session's
+per-script sheet application); `ParentNode-querySelector-escapes`.
+
+**The 7 lost, each read.** Six are agent G's, named in `docs/plans/wpt-
+next.md` (G2): a property that was an expando refused everything and its
+real grammar now accepts some invalid forms or serialises differently -
+`sin-cos-tan-computed`, `minmax-angle-computed`, `calc-background-position-
+003`, `calc-linear-radial-conic-gradient-001`, `random-serialize`, and
+`css/cssom/getComputedStyle-property-order` (211 more properties on the
+declaration, in table order rather than alphabetical). The seventh is THIS
+session's, and the one open regression: `css/css-values/viewport-units-
+invalidation` - "100vw computes to 400px after frame resize", got 200px -
+was PASS at `e29e197f` and FAIL from `f1613a5c` on; a frame document's
+viewport units are not re-resolved after the frame is resized, and the
+change between the two is that a page's sheets are now applied per parser
+script (`eb61fe9c`, `273773cd`) rather than once after the parse. First
+thing to look at next.
+
+**What the merged gate found, which no agent's gate had.** The four
+round-three agents each built in their own devbox dir, and none of those
+dirs had the ctc submodule, so none of them ever ran the suite: the first
+gate of the merge was 282/305, and 16 of the 22 reds were one bug - the
+script-by-script parse (`d358c1da`) applied the author sheets only after
+the whole parse, so every page whose own `<script>` read
+`getComputedStyle` or `offsetWidth` read an unstyled page. `eb61fe9c` and
+`273773cd` apply the sheets before each parser script runs (and hand over
+their `load`s ahead of the script's own, in document order). The rest:
+`ta[i] = 1` on a BigInt kind is the TypeError on the fast path too
+(`17345cee`); `select.options.length = n` reached no setter, `add`/`remove`
+did not ask for a reset, `Range` was not under `AbstractRange`, and
+`compatMode` was the install-time value (`f1613a5c`); a first script that
+hit the call-stack ceiling made the second run as if nested; and five unit
+expectations that the spec parser proved wrong (`ee0e3862`).
+
 ## The baseline — 2026-09-16, the five suites after the round-one merges
 
 **740 of the 1,102 that ran (67.2%); subtests 45,822 PASS, 2,025 FAIL** -
