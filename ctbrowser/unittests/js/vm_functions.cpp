@@ -426,6 +426,20 @@ void test_function_to_string() {
                   "m(a) { return a; }");
     expect_result("const o = { go(n) { return n; } }; return o.go.toString();",
                   "go(n) { return n; }");
+    // ...after its `static` (not part of the MethodDefinition, 15.7.1) and
+    // WITH its `async` / `get` (which are).
+    expect_result("class C { static /* s */ m() {} static get g() { return 1; }"
+                  " static async * ag() {} } return [C.m, Object.getOwnPropertyDescriptor(C, 'g')"
+                  ".get, C.ag].map(String).join('|');",
+                  "m() {}|get g() { return 1; }|async * ag() {}");
+    expect_result("const f = async function /* a */ F(x) {}; async function g() {}"
+                  " const h = async /* b */ (a) => a; const k = async x => x;"
+                  " return [f, g, h, k].map(String).join('|');",
+                  "async function /* a */ F(x) {}|async function g() {}|async /* b */ (a) => a|"
+                  "async x => x");
+    // A symbol-named native shows no IdentifierName (the syntax makes it
+    // optional) rather than its internal spelling.
+    expect_result("return String([][Symbol.iterator]).indexOf('@@') < 0;", "true");
     // A CLASS IS ITS WHOLE TEXT (20.2.3.5), explicit constructor or not. The
     // synthesised constructor used to keep the offsets of the "(function ()
     // {})" it was compiled from, read against the program's own source.

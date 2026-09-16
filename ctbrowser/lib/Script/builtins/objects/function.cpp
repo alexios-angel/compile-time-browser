@@ -195,7 +195,8 @@ void install_function(context & cx) {
         // A symbol-named built-in's name is "[Symbol.x]", which is not an
         // IdentifierName; the specification permits omitting it (the
         // IdentifierName is optional), so it is left out.
-        if (!name.empty() && (name.front() == '[' || name.find(' ') != std::string::npos)) {
+        if (!name.empty() && (name.front() == '[' || name.starts_with("@@") ||
+                              name.find(' ') != std::string::npos)) {
             name.clear();
         }
         return c.string("function " + name + "() { [native code] }");
