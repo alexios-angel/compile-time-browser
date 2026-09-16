@@ -275,7 +275,19 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 if (!slot) { return value::undefined(); }
                 std::vector<node_id> assigned;
                 for (const value & one : args) {
-                    if (const node_id id = handle_of(one)) { assigned.push_back(id); }
+                    const node_id id = handle_of(one);
+                    const node_kind kind = id ? doc_->read().kind(id).value_or(node_kind::comment)
+                                              : node_kind::comment;
+                    // ONLY A SLOTTABLE: the argument type is
+                    // `(Element or Text)...`, so anything else is a WebIDL
+                    // conversion failure before one node is assigned.
+                    if (kind != node_kind::element && kind != node_kind::text) {
+                        c.throw_error("TypeError",
+                                      "Failed to execute 'assign' on 'HTMLSlotElement': the "
+                                      "arguments must be Element or Text nodes.");
+                        return value::undefined();
+                    }
+                    assigned.push_back(id);
                 }
                 // A node may be assigned to ONE slot: taking it here takes it
                 // from wherever it was.

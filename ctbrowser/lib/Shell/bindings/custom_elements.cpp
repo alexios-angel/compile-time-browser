@@ -88,6 +88,12 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
     if (name.empty()) { return false; }
     std::vector<char32_t> points;
     for (std::size_t at = 0; at < name.size();) { points.push_back(decode_utf8(name, at)); }
+    // THE FIRST CHARACTER IS AN ASCII LOWER ALPHA. It is a requirement of its
+    // own, beside the local-name production: `_-element`, `:-element` and
+    // `\u{10000}-element` are all valid element local names and none of them
+    // is a valid CUSTOM element name. MEASURED - five subtests of
+    // valid-custom-element-names.html say so by code point.
+    if (points.front() < 'a' || points.front() > 'z') { return false; }
     bool hyphen = false;
     for (const char32_t c : points) {
         if (c >= 'A' && c <= 'Z') { return false; }
