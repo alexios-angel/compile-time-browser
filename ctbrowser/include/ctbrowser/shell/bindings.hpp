@@ -1985,6 +1985,12 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // `XMLSerializer` - bindings/domparsing.cpp, the serialising half of the
+    // DOM Parsing specification (DOMParser itself is in window/window.cpp).
+    void install_xml_serializer(context & cx);
+    // One node as XML, with `inherited` the default namespace its parent put
+    // in scope. Not the HTML fragment serialiser: see the file.
+    [[nodiscard]] std::string serialize_xml(node_id node, std::string_view inherited) const;
     // Slots, `assignedSlot`, `setHTMLUnsafe` and `getHTML` - bindings/shadow_dom.cpp.
     // On the interface prototypes, so it runs once and AFTER the table exists.
     void install_shadow_dom(context & cx);

@@ -194,6 +194,7 @@ void dom_bindings::install(context & cx) {
     // Element.prototype and ShadowRoot.prototype are where slots and
     // setHTMLUnsafe go.
     install_shadow_dom(cx);
+    install_xml_serializer(cx);
 }
 
 // THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this
