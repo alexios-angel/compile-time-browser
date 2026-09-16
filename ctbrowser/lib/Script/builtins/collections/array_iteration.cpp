@@ -28,46 +28,66 @@ namespace ctbrowser::script::detail {
 // disagree and is written down here rather than discovered - nothing drives an
 // iterator halfway and then spreads it.
 [[nodiscard]] value list_iterator(context & cx, value items, const char * tag) {
+    // ONE PROTOTYPE PER KIND - %ArrayIteratorPrototype% and its siblings
+    // (23.1.5.2, 22.1.5.1, 24.1.5.1, 24.2.5.1): `next` and the tag live
+    // there, its [[Prototype]] is %Iterator.prototype% (so `@@iterator`, the
+    // helpers and `Object.getPrototypeOf(Object.getPrototypeOf([].values()))`
+    // are what the standard says), and two iterators of a kind share it.
+    // Made on first use and kept as a hidden global, because Iterator installs
+    // after the collections do. Each iterator used to carry its own two
+    // natives and a null prototype.
+    const std::string key = std::string{"__ctbrowser_iterator_proto:"} + tag;
+    value table = cx.global(key);
+    if (!table.is_object()) {
+        object_object * made = new_table(cx);
+        if (const value iterator = cx.global("Iterator"); iterator.is_object_like()) {
+            const value proto = cx.lookup_property(iterator, "prototype");
+            if (proto.is_object()) { made->prototype = proto; }
+        }
+        made->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
+        // Reads its state off the RECEIVER rather than out of the closure, so
+        // the collector sees one object holding everything and a native
+        // captures nothing it would have to root.
+        made->define("next",
+                     value::object(detail::method_native(
+                         cx, "next",
+                         [](context & c, std::span<value>) {
+                             auto * out = static_cast<object_object *>(c.make_object().as_heap());
+                             const value self = detail::array_this(c);
+                             array_object * items = nullptr;
+                             std::size_t at = 0;
+                             if (self.is_object()) {
+                                 auto * holder = static_cast<object_object *>(self.as_heap());
+                                 if (value * list = holder->find("__items");
+                                     list != nullptr && list->is_array()) {
+                                     items = static_cast<array_object *>(list->as_heap());
+                                 }
+                                 if (value * cursor = holder->find("__at"); cursor != nullptr) {
+                                     const double n = context::to_number(*cursor);
+                                     at = n > 0 ? static_cast<std::size_t>(n) : 0;
+                                 }
+                                 if (items != nullptr && at < items->items.size()) {
+                                     holder->define("__at",
+                                                    value::number(static_cast<double>(at + 1)),
+                                                    attr_builtin);
+                                 }
+                             }
+                             const bool done = items == nullptr || at >= items->items.size();
+                             out->set("done", value::boolean(done));
+                             out->set("value", done ? value::undefined() : items->items[at]);
+                             return value::object(out);
+                         })),
+                     attr_builtin);
+        table = value::object(made);
+        cx.define_global(key, table);
+    }
     auto * it = static_cast<object_object *>(cx.make_object().as_heap());
-    // NON-ENUMERABLE, all five. `__items` and `__at` are internal slots wearing
-    // property names, and an iterator's own methods and tag are not enumerable
-    // either - so `JSON.stringify(xs.entries())` is `{}` and `Object.keys` of one
-    // is empty, which is what a browser answers and what the first version of
-    // this got wrong by publishing its own bookkeeping.
+    it->prototype = table;
+    // NON-ENUMERABLE, both: `__items` and `__at` are internal slots wearing
+    // property names - so `JSON.stringify(xs.entries())` is `{}` and
+    // `Object.keys` of one is empty, which is what a browser answers.
     it->define("__items", items, attr_builtin);
     it->define("__at", value::number(0), attr_builtin);
-    it->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
-    const auto method_on = [&](const char * name, native_fn fn) {
-        it->define(name, value::object(detail::method_native(cx, name, std::move(fn))),
-                   attr_builtin);
-    };
-    // Reads its state off the RECEIVER rather than out of the closure, so the
-    // collector sees one object holding everything and a native captures
-    // nothing it would have to root.
-    method_on("next", [](context & c, std::span<value>) {
-        auto * out = static_cast<object_object *>(c.make_object().as_heap());
-        const value self = detail::array_this(c);
-        array_object * items = nullptr;
-        std::size_t at = 0;
-        if (self.is_object()) {
-            auto * holder = static_cast<object_object *>(self.as_heap());
-            if (value * list = holder->find("__items"); list != nullptr && list->is_array()) {
-                items = static_cast<array_object *>(list->as_heap());
-            }
-            if (value * cursor = holder->find("__at"); cursor != nullptr) {
-                const double n = context::to_number(*cursor);
-                at = n > 0 ? static_cast<std::size_t>(n) : 0;
-            }
-            if (items != nullptr && at < items->items.size()) {
-                holder->define("__at", value::number(static_cast<double>(at + 1)), attr_builtin);
-            }
-        }
-        const bool done = items == nullptr || at >= items->items.size();
-        out->set("done", value::boolean(done));
-        out->set("value", done ? value::undefined() : items->items[at]);
-        return value::object(out);
-    });
-    method_on("@@iterator", [](context & c, std::span<value>) { return c.current_this(); });
     return value::object(it);
 }
 

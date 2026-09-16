@@ -119,6 +119,14 @@ void test_constructor_steps_its_iterable() {
                   "TypeError,1");
     expect_result("try { new Set({}); } catch (e) { return e.name; }", "TypeError");
     expect_result("return new Map([[1, 2], [3, 4]]).size + new Set([1, 1, 2]).size;", "4");
+    // %ArrayIteratorPrototype% and its siblings: one prototype per kind,
+    // carrying next and the tag, under %Iterator.prototype%.
+    expect_result("const a = [1].values(), b = [2].keys(); const P = Object.getPrototypeOf(a);"
+                  " return [P === Object.getPrototypeOf(b), Object.getPrototypeOf(P) ==="
+                  " Iterator.prototype, a.hasOwnProperty('next'), P[Symbol.toStringTag],"
+                  " Object.prototype.toString.call(new Map().entries()), a[Symbol.iterator]() ==="
+                  " a, [...a].join()].join('|');",
+                  "true|true|false|Array Iterator|[object Map Iterator]|true|1");
 }
 
 } // namespace
