@@ -1067,15 +1067,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
         if ((!dynamic && !numeric) || step->getBlock() != body ||
             (dynamic ? dynamic.getKind() : numeric.getKind()) != ctjs::BinaryKind::Add ||
-            fromHeader(step->getOperand(0)) != index ||
             (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
         }
+        // Normalize only proof operands; the source Add keeps its evaluation
+        // order. Both operands still require the exact Number proof below.
+        const unsigned indexOperand = fromHeader(step->getOperand(0)) == index ? 0U : 1U;
+        if (fromHeader(step->getOperand(indexOperand)) != index) { return unsupported; }
         // A held positive step must survive every backedge unchanged. Read a body
         // formal through its actual header operand before the body has executed.
         // Both Add forms use the same exact Number proof below. A String or
         // unknown operand cannot borrow the numeric opcode's certificate.
-        mlir::Value increment = step->getOperand(1);
+        mlir::Value increment = step->getOperand(1U - indexOperand);
         if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
         if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(increment);
