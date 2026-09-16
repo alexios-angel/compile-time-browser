@@ -82,8 +82,16 @@ void install_uri(context & cx) {
             if (c.throw_pending()) { return value::undefined(); }
             std::string out;
             out.reserve(in.size());
-            for (const char ch : in) {
+            for (std::size_t i = 0; i < in.size(); ++i) {
+                const char ch = in[i];
                 const auto byte = static_cast<unsigned char>(ch);
+                // 19.2.6.5 Encode step 4.d: a lone surrogate is a URIError.
+                // The text is WTF-8, so one is ED A0..BF xx.
+                if (byte == 0xED && i + 1 < in.size() &&
+                    static_cast<unsigned char>(in[i + 1]) >= 0xA0) {
+                    c.throw_error("URIError", "URI malformed");
+                    return value::undefined();
+                }
                 if (byte < 0x80 && (unreserved.find(ch) != std::string_view::npos ||
                                     keep_extra.find(ch) != std::string_view::npos)) {
                     out += ch;
