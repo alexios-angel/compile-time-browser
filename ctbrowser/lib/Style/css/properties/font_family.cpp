@@ -21,14 +21,6 @@ namespace {
 // css/cssom/font-family-serialization-001 is fourteen assertions about exactly
 // this, and the five it makes about the COMPUTED value are the ones here.
 
-[[nodiscard]] bool is_identifier_start(unsigned char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c >= 0x80;
-}
-
-[[nodiscard]] bool is_identifier_char(unsigned char c) {
-    return is_identifier_start(c) || (c >= '0' && c <= '9') || c == '-';
-}
-
 // A CSS identifier that needs no escaping to be written down. A LEADING RUN OF
 // HYPHENS is allowed - `-webkit-serif` is an identifier and so is `--x` - but a
 // hyphen run with nothing after it is not, and neither is anything starting with
@@ -36,11 +28,9 @@ namespace {
 [[nodiscard]] bool is_bare_identifier(std::string_view word) {
     std::size_t start = 0;
     while (start < word.size() && word[start] == '-') { ++start; }
-    if (start >= word.size() || !is_identifier_start(static_cast<unsigned char>(word[start]))) {
-        return false;
-    }
+    if (start >= word.size() || !is_name_start(word[start])) { return false; }
     for (const char c : word) {
-        if (!is_identifier_char(static_cast<unsigned char>(c))) { return false; }
+        if (!is_name(c)) { return false; }
     }
     return true;
 }

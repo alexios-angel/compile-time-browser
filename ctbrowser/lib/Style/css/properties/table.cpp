@@ -416,8 +416,7 @@ std::string serialize_identifier(std::string_view text) {
             out += "\\-";
             continue;
         }
-        if (c >= 0x80 || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
-            (c >= 'A' && c <= 'Z')) {
+        if (is_name(static_cast<char>(c))) {
             out += static_cast<char>(c);
             continue;
         }

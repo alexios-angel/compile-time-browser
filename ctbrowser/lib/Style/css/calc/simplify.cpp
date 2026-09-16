@@ -131,7 +131,7 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
             ++after;
         }
         relative.push_back(ascii_iequals(value.substr(after, 4), "from") &&
-                           (after + 4 >= value.size() || !is_name_char(value[after + 4])));
+                           (after + 4 >= value.size() || !is_name(value[after + 4])));
         i += name.size();
     }
     return std::ranges::any_of(relative, [](bool r) { return r; });
@@ -311,7 +311,7 @@ std::string simplify_math(std::string_view value) {
         // not the ordinary one and simplifying it would be answering a question
         // this file was not asked.
         if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
-            (at == 0 || !is_name_char(value[at - 1]))) {
+            (at == 0 || !is_name(value[at - 1]))) {
             const std::size_t end = span_of(value, at, "calc-size(").end;
             out.append(value.substr(at, end - at));
             at = end;
@@ -516,34 +516,10 @@ std::string canonical_random(std::string_view value, std::string_view property) 
                 if (ascii_istarts_with(text, "fixed")) {
                     head = "fixed " + simplify_math(trim(text.substr(5), html_whitespace));
                 } else {
-                    std::string dashed;
-                    std::string ua;
-                    bool element_scoped = false;
-                    bool property_scoped = false;
-                    bool property_index_scoped = false;
-                    for (const std::string_view word : split_top_level(text, " \t\n\r\f")) {
-                        if (word.starts_with("--")) {
-                            dashed = std::string{word};
-                        } else if (ascii_istarts_with(word, "ua-")) {
-                            ua = ascii_lower_copy(word);
-                        } else if (ascii_iequals(word, "element-scoped")) {
-                            element_scoped = true;
-                        } else if (ascii_iequals(word, "property-scoped")) {
-                            property_scoped = true;
-                        } else if (ascii_iequals(word, "property-index-scoped")) {
-                            property_index_scoped = true;
-                        }
-                    }
-                    if (property_scoped) {
-                        ua = "ua-" + std::string{property};
-                    } else if (property_index_scoped) {
-                        ua = "ua-" + std::string{property} + '-' + std::to_string(position + 1);
-                    } else if (dashed.empty() && ua.empty() && !element_scoped) {
-                        ua = "ua-" + std::string{property} + '-' + std::to_string(position + 1);
-                        element_scoped = true;
-                    }
+                    const random_key sharing = random_options(text, property, position);
                     for (const std::string & word :
-                         {dashed, std::string{element_scoped ? "element-scoped" : ""}, ua}) {
+                         {sharing.name, std::string{sharing.element_scoped ? "element-scoped" : ""},
+                          sharing.ua}) {
                         if (word.empty()) { continue; }
                         if (!head.empty()) { head += ' '; }
                         head += word;
@@ -568,7 +544,7 @@ std::string canonical_random(std::string_view value, std::string_view property) 
         ++position;
         for (std::size_t nested = inner.find(name); nested != std::string_view::npos;
              nested = inner.find(name, nested + name.size())) {
-            if (nested == 0 || !is_name_char(inner[nested - 1])) { ++position; }
+            if (nested == 0 || !is_name(inner[nested - 1])) { ++position; }
         }
     }
     return out;
@@ -634,7 +610,7 @@ std::optional<std::string> calc_size_text(std::string_view value, std::string_vi
     // inside it. What has no answer here - `sign(size) * size` - keeps its bytes.
     for (std::size_t i = 0; i < calculation.size(); ++i) {
         if (ascii_iequals(calculation.substr(i, name.size()), name) &&
-            (i == 0 || !is_name_char(calculation[i - 1]))) {
+            (i == 0 || !is_name(calculation[i - 1]))) {
             return std::nullopt;
         }
     }
@@ -669,7 +645,7 @@ bool math_syntax_ok(std::string_view value) {
         // `transform: rotate(calc(...))` and wrong here, and the only thing that
         // tells the two apart is knowing which functions redefine their contents.
         if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
-            (at == 0 || !is_name_char(value[at - 1]))) {
+            (at == 0 || !is_name(value[at - 1]))) {
             at = span_of(value, at, "calc-size(").end;
             continue;
         }

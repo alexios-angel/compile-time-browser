@@ -197,11 +197,9 @@ std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_short
         // CSS-wide keywords apply to the whole shorthand and cannot be
         // paired with a second component. `put()` resolves each expanded
         // longhand against the parent/initial value afterwards.
-        const auto is_css_wide = [](std::string_view part) {
-            return ascii_iequals(part, "inherit") || ascii_iequals(part, "initial") ||
-                   ascii_iequals(part, "unset") || ascii_iequals(part, "revert");
-        };
-        if (parts.size() == 2 && (is_css_wide(parts[0]) || is_css_wide(parts[1]))) { return {}; }
+        if (parts.size() == 2 && (is_wide_keyword(parts[0]) || is_wide_keyword(parts[1]))) {
+            return {};
+        }
         return positional(property, parts);
     }
     // `list-style` is `<type> || <position> || <image>` in any order, and the

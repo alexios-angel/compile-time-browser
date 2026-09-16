@@ -36,7 +36,10 @@ namespace {
 // its three spellings, the media list with `layer` and `supports()` removed,
 // and byte spans a caller can splice.
 void test_leading_imports() {
-    using ctbrowser::style::css::leading_imports;
+    const auto leading_imports = [](std::string_view css) {
+        ctbrowser::atom_table atoms;
+        return ctbrowser::style::css::parse_stylesheet(css, atoms).imports;
+    };
     const std::string css = "@charset \"utf-8\";\n@import url(a.css);@import \"b.css\" screen and "
                             "(min-width: 1px);\n@import url(\"c.css\") layer(x) supports(display: "
                             "grid) print;\np { color: red }\n@import url(late.css);";

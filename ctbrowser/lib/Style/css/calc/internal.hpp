@@ -94,15 +94,6 @@ inline void add_symbol(term & into, std::string_view unit, double coefficient) {
     into.symbols.emplace_back(unit, coefficient);
 }
 
-// A `(`-terminated function name AT `at`, or an empty view. The boundary test is
-// the whole point: `-webkit-calc(` and a custom property called `--my-calc` both
-// contain the five bytes of `calc(` and neither is one, and `minmax(100px, 1fr)`
-// contains `max(` three bytes in.
-[[nodiscard]] constexpr bool is_name_char(char c) noexcept {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' ||
-           c == '_';
-}
-
 // The end of the math function that starts at `at`, name included. Parentheses
 // are matched with quoted runs skipped, so a `)` inside a string cannot end the
 // expression early.
@@ -149,7 +140,11 @@ struct function_span {
 // no canonical spelling. Defined in serialize.cpp.
 [[nodiscard]] std::string serialize_symbolic(const term & value);
 
-// Finding a math function in a value's text. Defined in fold.cpp.
+// Finding a math function in a value's text. Defined in fold.cpp. `name_at` is a
+// `(`-terminated name AT `at`, or an empty view, and the boundary test (`is_name`
+// on the byte before) is the whole point: `-webkit-calc(` and a custom property
+// called `--my-calc` both contain the five bytes of `calc(` and neither is one,
+// and `minmax(100px, 1fr)` contains `max(` three bytes in.
 [[nodiscard]] std::string_view name_at(std::string_view value, std::size_t at,
                                        std::span<const std::string_view> names) noexcept;
 [[nodiscard]] std::string_view math_name_at(std::string_view value, std::size_t at) noexcept;
@@ -169,6 +164,28 @@ struct function_span {
 [[nodiscard]] std::string rewritten_arguments(
     std::string_view name, std::string_view inner,
     const std::function<std::string(std::string_view)> & one);
+
+// A `random()`'s sharing options, CSS Values 5 §random, read the way
+// random-serialize spells them - the `<dashed-ident>`, the UA ident and whether
+// the value is element-scoped - with the defaults spelled out against the
+// property and the random's ordinal in the value:
+//
+//   nothing                 element-scoped ua-<property>-<position>
+//   property-index-scoped   ua-<property>-<position>, on every element
+//   property-scoped         ua-<property>, every position, every element
+//   element-scoped alone    this element, whatever the property
+//   --name                  the name alone, everywhere
+//   --name element-scoped   the name, on this element
+//
+// The evaluator hashes the three into a base and the serialiser writes them
+// back out, so they read the options exactly once. Defined in evaluator.cpp.
+struct random_key {
+    std::string name;
+    std::string ua;
+    bool element_scoped = false;
+};
+[[nodiscard]] random_key random_options(std::string_view options, std::string_view property,
+                                        std::size_t index);
 
 // The canonical unit's spelling, or an empty view for a `<number>`. This is what
 // a computed value is serialised with. Defined in units.cpp.

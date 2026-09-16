@@ -1242,50 +1242,14 @@ private:
 
 // THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
 // the same every time the same KEY asks for it, so a page reflows to the same
-// random layout it first had. The key is what the sharing options say, read
-// the way random-serialize spells them: a `<dashed-ident>`, a UA ident
-// (`ua-width-1`, which `property-index-scoped` means and `property-scoped`
-// means without the index), and `element-scoped` -
-//
-//   nothing                 element-scoped ua-<property>-<position>
-//   property-index-scoped   ua-<property>-<position>, on every element
-//   property-scoped         ua-<property>, every position, every element
-//   element-scoped alone    this element, whatever the property
-//   --name                  the name alone, everywhere
-//   --name element-scoped   the name, on this element
-//
-// - hashed (FNV-1a) into the mantissa of a double. Deterministic on purpose:
-// the render goldens are byte-compared and `Math.random` is seeded for the
-// same reason.
+// random layout it first had. The key is what the sharing options say
+// (`random_options`, internal.hpp) - hashed (FNV-1a) into the mantissa of a
+// double. Deterministic on purpose: the render goldens are byte-compared and
+// `Math.random` is seeded for the same reason.
 [[nodiscard]] double random_base(std::string_view options, const length_context & ctx) {
-    std::string name;
-    std::string ua;
-    bool element_scoped = false;
-    bool property_scoped = false;
-    bool property_index_scoped = false;
-    for (const std::string_view word : split_top_level(options, " \t\n\r\f")) {
-        if (word.starts_with("--")) {
-            name = std::string{word};
-        } else if (ascii_istarts_with(word, "ua-")) {
-            ua = ascii_lower_copy(word);
-        } else if (ascii_iequals(word, "element-scoped")) {
-            element_scoped = true;
-        } else if (ascii_iequals(word, "property-scoped")) {
-            property_scoped = true;
-        } else if (ascii_iequals(word, "property-index-scoped")) {
-            property_index_scoped = true;
-        }
-    }
-    if (property_scoped) {
-        ua = "ua-" + std::string{ctx.property};
-    } else if (property_index_scoped) {
-        ua = "ua-" + std::string{ctx.property} + '-' + std::to_string(ctx.random_index + 1);
-    } else if (name.empty() && ua.empty() && !element_scoped) {
-        ua = "ua-" + std::string{ctx.property} + '-' + std::to_string(ctx.random_index + 1);
-        element_scoped = true;
-    }
-    std::string key = name + '|' + ua;
-    if (element_scoped) { key += '|' + std::to_string(ctx.element_key); }
+    const random_key sharing = random_options(options, ctx.property, ctx.random_index);
+    std::string key = sharing.name + '|' + sharing.ua;
+    if (sharing.element_scoped) { key += '|' + std::to_string(ctx.element_key); }
     std::uint64_t hash = 14695981039346656037ull;
     for (const char c : key) {
         hash ^= static_cast<unsigned char>(c);
@@ -1299,6 +1263,34 @@ private:
 }
 
 namespace detail {
+
+random_key random_options(std::string_view options, std::string_view property, std::size_t index) {
+    random_key out;
+    bool property_scoped = false;
+    bool property_index_scoped = false;
+    for (const std::string_view word : split_top_level(options, " \t\n\r\f")) {
+        if (word.starts_with("--")) {
+            out.name = std::string{word};
+        } else if (ascii_istarts_with(word, "ua-")) {
+            out.ua = ascii_lower_copy(word);
+        } else if (ascii_iequals(word, "element-scoped")) {
+            out.element_scoped = true;
+        } else if (ascii_iequals(word, "property-scoped")) {
+            property_scoped = true;
+        } else if (ascii_iequals(word, "property-index-scoped")) {
+            property_index_scoped = true;
+        }
+    }
+    if (property_scoped) {
+        out.ua = "ua-" + std::string{property};
+    } else if (property_index_scoped) {
+        out.ua = "ua-" + std::string{property} + '-' + std::to_string(index + 1);
+    } else if (out.name.empty() && out.ua.empty() && !out.element_scoped) {
+        out.ua = "ua-" + std::string{property} + '-' + std::to_string(index + 1);
+        out.element_scoped = true;
+    }
+    return out;
+}
 
 // One expression with NO bases at all - which is what a specified value is
 // written against - and its answer as a term rather than as a `calc_result`,

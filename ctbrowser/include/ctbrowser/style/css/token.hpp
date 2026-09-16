@@ -110,6 +110,19 @@ struct token_stream {
     }
 };
 
+// §4.2's name code points. Anything >= 0x80 counts: a UTF-8 lead or
+// continuation byte is a name code point, which is what lets `.café` tokenize
+// byte-wise with no decoding. The one definition for every "is this still the
+// identifier" test in the front end - a function-name boundary, `var(` at a
+// boundary, a family name that needs no quotes.
+[[nodiscard]] constexpr bool is_name_start(char c) noexcept {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
+           static_cast<unsigned char>(c) >= 0x80;
+}
+[[nodiscard]] constexpr bool is_name(char c) noexcept {
+    return is_name_start(c) || (c >= '0' && c <= '9') || c == '-';
+}
+
 // §4.3.1. Never fails: every input is a sequence of tokens, and the error cases
 // are tokens too (bad_string, bad_url). A trailing `eof` token is always present
 // so a parser can look ahead one without a bounds check on every read.

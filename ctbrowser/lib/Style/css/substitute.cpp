@@ -299,19 +299,6 @@ struct item {
     return std::string{std::string_view{s.pool}.substr(a.text, b.text + b.length - a.text)};
 }
 
-[[nodiscard]] std::string number_of(double value) {
-    calc_result n;
-    n.px = value;
-    n.is_number = true;
-    n.type = numeric_type::number;
-    return serialize_calc(n);
-}
-
-[[nodiscard]] bool is_wide_keyword(std::string_view word) {
-    return ascii_iequals_any(word,
-                             {"initial", "inherit", "unset", "revert", "revert-layer", "default"});
-}
-
 // One item against one type, serialised on a match: a dimension with its unit
 // lowercased, a number in its shortest form, and a function as written - the
 // cascade folds a `calc()` afterwards exactly as it folds one the author wrote.
@@ -337,30 +324,30 @@ struct item {
             if (answer.outcome == math_outcome::resolved && answer.value.type != family) {
                 return std::nullopt;
             }
-            return number_of(t.number) + ascii_lower_copy(s.unit_of(t));
+            return serialize_number(t.number) + ascii_lower_copy(s.unit_of(t));
         }
         return math_fits([family](const calc_result & v) {
             return !v.is_number && v.type == family && !v.has_percent;
         });
     };
     if (type == "number") {
-        if (single && t.type == token_type::number) { return number_of(t.number); }
+        if (single && t.type == token_type::number) { return serialize_number(t.number); }
         return math_fits([](const calc_result & v) { return v.is_number; });
     }
     if (type == "integer") {
         if (single && t.type == token_type::number && (t.flags & flag_integer) != 0) {
-            return number_of(t.number);
+            return serialize_number(t.number);
         }
         return math_fits([](const calc_result & v) { return v.is_number; });
     }
     if (type == "percentage") {
-        if (single && t.type == token_type::percentage) { return number_of(t.number) + "%"; }
+        if (single && t.type == token_type::percentage) { return serialize_number(t.number) + "%"; }
         return math_fits([](const calc_result & v) { return v.has_percent && v.px == 0; });
     }
     if (type == "length" || type == "length-percentage") {
         if (single && t.type == token_type::number && t.number == 0) { return "0px"; }
         if (type == "length-percentage" && single && t.type == token_type::percentage) {
-            return number_of(t.number) + "%";
+            return serialize_number(t.number) + "%";
         }
         if (single && t.type == token_type::dimension) {
             return dimension_of(numeric_type::length);
@@ -380,7 +367,9 @@ struct item {
         return std::nullopt;
     }
     if (type == "custom-ident") {
-        if (single && t.type == token_type::ident && !is_wide_keyword(s.text_of(t))) {
+        // ...that is not a CSS-wide keyword or `default`, CSS Values 4 §4.2.
+        if (single && t.type == token_type::ident && !is_wide_keyword(s.text_of(t)) &&
+            !ascii_iequals(s.text_of(t), "default")) {
             return text;
         }
         return std::nullopt;
@@ -509,10 +498,7 @@ public:
     // otherwise merge, and so does every engine's serialisation of a custom
     // property (if-conditionals).
     static void join(std::string & left, std::string_view right) {
-        const auto name_char = [](char c) {
-            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                   c == '-' || c == '_' || c == '.' || c == '%';
-        };
+        const auto name_char = [](char c) { return is_name(c) || c == '.' || c == '%'; };
         if (!left.empty() && !right.empty() && name_char(left.back()) && name_char(right.front())) {
             left += "/**/";
         }
@@ -805,7 +791,7 @@ private:
             const std::vector<item> parts = items_of(v, 0);
             if (parts.size() == 1 && parts.front().first == parts.front().last &&
                 v.tokens[parts.front().first].type == token_type::number) {
-                const std::string number = number_of(v.tokens[parts.front().first].number);
+                const std::string number = serialize_number(v.tokens[parts.front().first].number);
                 if (unit == "number") {
                     value = number;
                 } else if (unit == "%" || evaluate_math(number + unit, length_context{}).outcome !=
@@ -872,7 +858,7 @@ private:
                 continue;
             }
             if (t.type == token_type::number && (t.flags & flag_integer) != 0) {
-                made += number_of(t.number);
+                made += serialize_number(t.number);
                 continue;
             }
             if (t.type == token_type::function) {
@@ -885,7 +871,7 @@ private:
                 }
                 // An <integer> slot rounds a math function's answer (CSS
                 // Values 4 §10.10): `ident("a" random(1, 300000))` is a name.
-                made += number_of(std::floor(answer.value.px + 0.5));
+                made += serialize_number(std::floor(answer.value.px + 0.5));
                 i = close - 1;
                 continue;
             }
@@ -1550,16 +1536,12 @@ private:
 } // namespace
 
 bool may_have_var(std::string_view value) noexcept {
-    const auto name_char = [](char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-               c == '-' || c == '_';
-    };
     for (std::size_t i = 0; i + 3 <= value.size(); ++i) {
         if (i + 4 <= value.size() && ascii_iequals(value.substr(i, 4), "var(")) { return true; }
         if (i + 5 <= value.size() && ascii_iequals(value.substr(i, 5), "attr(")) { return true; }
         // `if(` and `ident(` at an identifier boundary: `notif(` and `--diff(`
         // are not it.
-        const bool boundary = i == 0 || !name_char(value[i - 1]);
+        const bool boundary = i == 0 || !is_name(value[i - 1]);
         if (boundary && ascii_iequals(value.substr(i, 3), "if(")) { return true; }
         if (boundary && i + 6 <= value.size() && ascii_iequals(value.substr(i, 6), "ident(")) {
             return true;
@@ -1575,7 +1557,7 @@ bool may_have_var(std::string_view value) noexcept {
         // above is one too; what it is not is an `if()`.
         if (boundary && value.substr(i, 2) == "--") {
             std::size_t j = i + 2;
-            while (j < value.size() && name_char(value[j])) { ++j; }
+            while (j < value.size() && is_name(value[j])) { ++j; }
             if (j > i + 2 && j < value.size() && value[j] == '(') { return true; }
         }
     }

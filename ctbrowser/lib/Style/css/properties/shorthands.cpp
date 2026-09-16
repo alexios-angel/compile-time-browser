@@ -21,13 +21,6 @@ using namespace detail;
 
 namespace {
 
-constexpr std::array<std::string_view, 5> wide_keywords{"inherit", "initial", "unset", "revert",
-                                                        "revert-layer"};
-
-[[nodiscard]] bool is_wide_keyword(std::string_view text) {
-    return ascii_iequals_any(text, wide_keywords);
-}
-
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
 enum class shape : std::uint8_t {
     sides,  // 1-4 values: top, right, bottom, left, in `margin`'s way

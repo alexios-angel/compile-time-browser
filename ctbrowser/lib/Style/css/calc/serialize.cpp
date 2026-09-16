@@ -159,4 +159,12 @@ std::string serialize_calc(const calc_result & value) {
            std::string{canonical_unit(value.type)} + ")";
 }
 
+std::string serialize_number(double value) {
+    calc_result number;
+    number.px = value;
+    number.is_number = true;
+    number.type = numeric_type::number;
+    return serialize_calc(number);
+}
+
 } // namespace ctbrowser::style::css

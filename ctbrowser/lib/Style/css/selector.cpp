@@ -293,13 +293,9 @@ constexpr std::string_view functional_pseudo_elements_named[] = {
     const auto tok = [&](const component_value & v) -> const css_token & {
         return sheet.tokens[v.token];
     };
-    const auto is_ws = [&](const component_value & v) {
-        return v.kind == cv_kind::token && tok(v).type == token_type::whitespace;
-    };
     // Trim, then read: an optional namespace prefix, the name, then optionally an
     // operator and a value, then optionally a flag.
-    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
-    while (!inner.empty() && is_ws(inner.back())) { inner = inner.subspan(0, inner.size() - 1); }
+    inner = sheet.trimmed(inner);
     const auto is_delim = [&](std::size_t at, std::string_view what) {
         return at < inner.size() && inner[at].kind == cv_kind::token &&
                tok(inner[at]).type == token_type::delim && sheet.text_of(tok(inner[at])) == what;
@@ -335,7 +331,7 @@ constexpr std::string_view functional_pseudo_elements_named[] = {
     out.name = atoms.intern_lower(sheet.text_of(tok(inner.front())));
     out.name_exact = atoms.intern(sheet.text_of(tok(inner.front())));
     inner = inner.subspan(1);
-    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    while (!inner.empty() && sheet.is_space(inner.front())) { inner = inner.subspan(1); }
     if (inner.empty()) {
         out.op = attr_op::present;
         return true;
@@ -367,7 +363,7 @@ constexpr std::string_view functional_pseudo_elements_named[] = {
         }
         inner = inner.subspan(2);
     }
-    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    while (!inner.empty() && sheet.is_space(inner.front())) { inner = inner.subspan(1); }
     if (inner.empty() || inner.front().kind != cv_kind::token) { return false; }
     // The value is a string or an ident. `[href$=.pdf]` is legal unquoted, and
     // arrives as a dimension-ish run rather than one ident - so anything that is
@@ -382,7 +378,7 @@ constexpr std::string_view functional_pseudo_elements_named[] = {
     }
     inner = inner.subspan(1);
     // An `i` or `s` flag. `s` is the default, so only `i` changes anything.
-    while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
+    while (!inner.empty() && sheet.is_space(inner.front())) { inner = inner.subspan(1); }
     if (!inner.empty()) {
         if (inner.size() != 1 || inner.front().kind != cv_kind::token ||
             tok(inner.front()).type != token_type::ident) {

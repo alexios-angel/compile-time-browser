@@ -72,8 +72,6 @@ struct node {
     return std::nullopt;
 }
 
-[[nodiscard]] std::string number_text(double value);
-
 // Recursive descent over the tokens of one <calc-sum>, CSS Values 4 §10.1.
 // `ok` latches false at the first token that is not arithmetic.
 class reader {
@@ -190,7 +188,7 @@ private:
             // carry keeps the author's unit.
             if (context_free_unit(unit)) {
                 if (const std::optional<term> fixed = canonical_term(tok.number, unit, {});
-                    fixed && std::stod(number_text(fixed->value)) == fixed->value) {
+                    fixed && std::stod(serialize_number(fixed->value)) == fixed->value) {
                     out.value = fixed->value;
                     out.unit = std::string{canonical_unit(fixed->type())};
                 }
@@ -376,14 +374,6 @@ private:
     }
 }
 
-[[nodiscard]] std::string number_text(double value) {
-    calc_result number;
-    number.px = value;
-    number.is_number = true;
-    number.type = numeric_type::number;
-    return serialize_calc(number);
-}
-
 // §10.13.
 [[nodiscard]] std::string serialize(const node & root);
 
@@ -394,9 +384,9 @@ private:
     // `1 / sign(...)`.
     const std::string sign = v == 0.0 && std::signbit(v) ? "-" : "";
     switch (leaf.what) {
-    case node::kind::number: return sign + number_text(v);
-    case node::kind::percent: return sign + number_text(v) + "%";
-    case node::kind::dimension: return sign + number_text(v) + leaf.unit;
+    case node::kind::number: return sign + serialize_number(v);
+    case node::kind::percent: return sign + serialize_number(v) + "%";
+    case node::kind::dimension: return sign + serialize_number(v) + leaf.unit;
     default: return leaf.text;
     }
 }
