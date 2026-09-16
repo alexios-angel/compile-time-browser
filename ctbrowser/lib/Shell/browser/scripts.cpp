@@ -153,163 +153,56 @@ void browser::run_scripts() {
     install_embedder_natives();
     script_error_.clear();
 
-    // ONE ENTRY PER CLASSIC <script>, NOT ONE STRING FOR THE PAGE. Gluing them
-    // together made the page's compiled form one artefact, so a two-line sketch
-    // and the 4.5 MB library beside it shared a cache key and an edit to either
-    // threw away both. It also made the page's scripts one PROGRAM, which is a
-    // deviation the split fixes on the way past: per the HTML specification each
-    // classic <script> is its own Script Record, so a parse error or an uncaught
-    // throw in one does not stop the next. Measured before and after - the first
-    // of two scripts failing to parse used to silence the second, and does not
-    // now.
+    // THE PAGE IS PARSED FROM HERE, WITH ITS SCRIPTS RUN AS THE PARSER REACHES
+    // THEM - HTML 13.2.6.4.8 and 8.4, in bindings/document/write.cpp. Each
+    // classic <script> is its own program (one Script Record each, per the
+    // specification: a parse error or an uncaught throw in one does not stop
+    // the next), compiled here so the image cache, the packager's prepared
+    // hook and `script_sources()` stay the browser's. What the split costs is
+    // the one thing concatenation bought: a call in an EARLIER script to a
+    // function declared in a LATER one. Chrome makes that a ReferenceError;
+    // this engine used to make it work.
     //
-    // What it costs is the one thing concatenation bought: a call in an EARLIER
-    // script to a function declared in a LATER one. Chrome makes that a
-    // ReferenceError; this engine used to make it work.
-    std::vector<std::string> classic_scripts;
-    std::vector<node_id> classic_elements; // beside each, for document.currentScript
-    // MODULES ARE COLLECTED SEPARATELY AND RUN SEPARATELY, because that is the
-    // one thing they cannot share with a classic script: its top level is the
-    // global scope and theirs is not. Concatenating them all - which is what
-    // this did, and what makes the classic path cheap and correct - would put
-    // every module's declarations on the global object and let them overwrite
-    // each other. See docs/plans/modules.md.
-    // WITH A SPECIFIER EACH, because the specifier is the registry key and two
-    // module scripts sharing one means the second is taken for a module already
-    // loaded and never runs at all. It also decides what `./dep.js` INSIDE the
-    // script means: a `src`'d module resolves against its own URL, an inline
-    // one against the page.
-    std::vector<std::pair<std::string, std::string>> modules;
-    {
-        const auto txn = doc_->read();
-        const atom script_tag = atoms_.intern_lower("script");
-        const atom type_attribute = atoms_.intern("type");
-        const auto walk = [&](auto && self, node_id at) -> void {
-            // HTML's <script> AND SVG's - an inline `<svg><script>` in an HTML
-            // document runs as the page's script (SVG 2 §15.3, and
-            // Document.currentScript.html's "script-svg" names the element).
-            // The two intern to the same atom and differ in where an external
-            // source is named: `src` on one, `href` (or the legacy
-            // `xlink:href`) on the other.
-            const bool is_svg = txn.element_ns(at) == ctbrowser::node_ns::svg;
-            if (txn.tag(at).value_or(atom{}) == script_tag &&
-                (txn.element_ns(at) == ctbrowser::node_ns::html || is_svg)) {
-                // `<script src>` FIRST, then the element's own text - which is
-                // what the spec says (a src'd script ignores its content, and
-                // an element has one or the other in practice) and what any
-                // page carrying a library expects.
-                //
-                // It goes through the asset registry like every other load, so
-                // a test seeds it in memory and a page beside a file finds it
-                // on disk. Nothing here fetches over the network: a script that
-                // is not in the registry and not beside the page is a page that
-                // silently loses a library, so the miss is RECORDED rather than
-                // passed over.
-                // `type="module"` is the whole difference. Any other value -
-                // absent, "text/javascript", "application/json" - is not one;
-                // the spec is a fixed string here rather than a MIME match.
-                const bool is_module = txn.attribute_value(at, type_attribute) == "module";
-                std::string module_text;
-                std::string classic_text;
-                std::string * into = is_module ? &module_text : &classic_text;
-                // THE SPECIFIER A MODULE SCRIPT IS KNOWN BY. `src` gives it a
-                // real one; an inline module gets a distinct synthetic one -
-                // distinct because it is the registry key, and shared keys made
-                // the second inline module on a page silently not run.
-                std::string specifier =
-                    is_module ? "<inline:" + std::to_string(modules.size()) + ">" : std::string{};
-
-                std::string_view src =
-                    txn.attribute_value(at, atoms_.intern(is_svg ? "href" : "src"));
-                if (is_svg && src.empty()) {
-                    src = txn.attribute_value(at, atoms_.intern("xlink:href"));
-                }
-                if (!src.empty()) {
-                    const std::string url{src};
-                    const std::vector<std::byte> bytes = assets_.load(url);
-                    if (bytes.empty()) {
-                        script_error_ = "<script src=\"" + url + "\"> not found";
-                    } else {
-                        into->append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
-                        *into += '\n';
-                    }
-                    if (is_module) { specifier = url; }
-                }
-                // HTML "execute the script element": `load` at the element
-                // when it came from a file or is a module, `error` when the
-                // file was not there - and nothing at all for an inline
-                // classic script. Announced after run_scripts, so every one
-                // of them has run by the time a listener hears it.
-                if (!src.empty() || is_module) {
-                    note_resource_load(at, src.empty() || !into->empty());
-                }
-                for (const node_id child : txn.children(at)) { *into += txn.text(child); }
-                *into += '\n';
-                if (is_module) {
-                    modules.emplace_back(std::move(module_text), std::move(specifier));
-                } else if (src.empty() && classic_text.size() <= 1) {
-                    // EMPTY, SO NEVER STARTED: "prepare" returns before it sets
-                    // the flag when there is no src and no source text, and
-                    // text a script appends later runs it (HTML 4.12.1).
-                    bindings_->note_unstarted_script(at);
-                } else if (classic_text.find_first_not_of(" \t\r\n\f\v") != std::string::npos) {
-                    // A CONTRIBUTION THAT IS ONLY THE NEWLINES THIS WALK ADDED
-                    // IS NOT A SCRIPT, and it is dropped HERE rather than
-                    // skipped later so that `script_sources()` lists exactly
-                    // what gets compiled. `<script src=missing.js></script>`
-                    // and `<script></script>` both leave one, and a packager
-                    // that built an image for it would be building one nothing
-                    // will ever look up.
-                    classic_scripts.push_back(std::move(classic_text));
-                    classic_elements.push_back(at);
-                }
-            }
-            for (const node_id child : txn.children(at)) { self(self, child); }
-            // A <template>'s contents are inert: a script in them never ran
-            // and is not `already started`, so a clone of it runs when the
-            // clone connects (HTML 4.12.3). Noted, never run from here.
-            if (const node_id contents = doc_->template_content(at)) {
-                const auto note = [&](auto && again, node_id inert) -> void {
-                    if (txn.tag(inert).value_or(atom{}) == script_tag &&
-                        txn.element_ns(inert) == ctbrowser::node_ns::html) {
-                        bindings_->note_unstarted_script(inert);
-                    }
-                    for (const node_id child : txn.children(inert)) { again(again, child); }
-                };
-                note(note, contents);
-            }
-        };
-        walk(walk, txn.root());
-    }
-    // Kept whether or not any of it is compiled, so a packager can ask what
-    // this page would compile without reproducing the rule itself.
-    script_sources_ = classic_scripts;
-    // AND THE MODULES, so that "this page has scripts no image can cover" is a
-    // question something can ask. Nothing here can package them; the point is
-    // that the packager and the launcher can both SEE them.
+    // MODULES go through load_module, each as its own program in its own
+    // scope, deferred to the end of the parse as the specification says.
+    script_sources_.clear();
     module_sources_.clear();
-    module_sources_.reserve(modules.size());
-    for (const auto & [text, specifier] : modules) { module_sources_.push_back(text); }
     // PER LOAD, because that is the question it answers and what its
     // documentation promises: "zero after a load whose every script was
     // cached". Left to accumulate it could not be read against
     // classic_programs_held(), which is per load, and a second load of a fully
     // cached page would still report the first load's misses.
     scripts_compiled_from_source_ = 0;
-    // A SCRIPT'S OWN FAILURE OUTRANKS A MISSING <script src>, which the walk
-    // above has already written into script_error_. Without this a page with
-    // one unresolvable src reported that and nothing else for the rest of its
-    // life - the first-failure-wins rule below would find the field already
-    // full and never overwrite it, so every later parse error and uncaught
-    // throw was silently discarded.
-    bool a_script_failed = false;
     bindings_->set_current_script(node_id{});
-    // THE PARSER'S SCRIPTS SEE "loading". The document is parsed whole before
-    // any of them runs here, so this is the one point where the state a
-    // parser-inserted script observes can be set.
+    // THE PARSER'S SCRIPTS SEE "loading"; the end of the parse moves it on.
     bindings_->set_ready_state("loading");
-    for (std::size_t index = 0; index < classic_scripts.size(); ++index) {
-        const std::string & text = classic_scripts[index];
+    // A SCRIPT'S OWN FAILURE OUTRANKS A MISSING <script src>: the first
+    // failure is the one `script_error_` reports, and a missing src is
+    // recorded only while nothing has failed yet - without this a page with
+    // one unresolvable src reported that and nothing else for the rest of
+    // its life.
+    const auto runner = [this, a_script_failed = false, running = std::vector<node_id>{}](
+                            const dom_bindings::parser_script & script) mutable {
+        if (script.missing) {
+            if (!a_script_failed) {
+                script_error_ = "<script src=\"" + script.specifier + "\"> not found";
+            }
+            return true;
+        }
+        if (script.module) {
+            module_sources_.push_back(script.source);
+            load_module(script.source, script.specifier);
+            return !pending_load_;
+        }
+        const std::string & text = script.source;
+        if (text.find_first_not_of(" \t\r\n\f\v") == std::string::npos) {
+            // WHITESPACE IS NOT A SCRIPT, and it is dropped here so that
+            // `script_sources()` lists exactly what gets compiled: a packager
+            // that built an image for it would be building one nothing will
+            // ever look up.
+            return true;
+        }
+        script_sources_.push_back(text);
         // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
         // percent of a page load; loading the same program from bytes is four
         // times faster on every corpus measured. Two things make it safe, and
@@ -331,30 +224,65 @@ void browser::run_scripts() {
             ++scripts_compiled_from_source_;
             compiled = std::make_unique<script::program>(script::compiler::compile(text));
         }
-
         // KEPT BEFORE IT RUNS, because running it is what creates the closures
         // that point into it - a function declared at a script's top level holds
         // a `const function_proto *` into this program, and a timer or a
-        // listener dereferences it long after run_scripts returned.
-        //
-        // The reference survives the push_back, and it is worth saying why
-        // rather than leaving it to look wrong: the vector holds unique_ptrs, so
-        // a reallocation moves POINTERS. The program itself never moves.
+        // listener dereferences it long after run_scripts returned. The vector
+        // holds unique_ptrs, so a reallocation moves POINTERS; the program
+        // itself never moves.
         // THE EMBEDDER'S TURN, BEFORE THE SCRIPT RUNS. A packaged application
         // stamps its compiled bodies onto this program here; nothing else can
         // reach it. See browser::set_script_prepared_hook.
         if (script_prepared_hook_) { script_prepared_hook_(*compiled, text); }
-        const script::program & running = *compiled;
+        const script::program & running_program = *compiled;
         classic_programs_.push_back(std::move(compiled));
-        bindings_->set_current_script(classic_elements[index]);
-        const script::run_result result = script_->run(running);
+        // `document.currentScript` is this element while it runs - and while
+        // its error is reported - and the outer script's again afterwards,
+        // when a written <script> ran inside the one that wrote it.
+        // NESTED WHEN SCRIPT IS ALREADY ON THE STACK - a written <script>
+        // runs inside the `document.write` that wrote it - and `run()` is the
+        // top-level entry that clears the frames of whoever is running. The
+        // nested path is run_inserted_scripts' (document/entry.cpp): the
+        // entry function as a closure behind a fence, its throw reported
+        // here rather than unwound into the writer.
+        const bool nested = !running.empty() || !script_->current_stack().empty();
+        running.push_back(script.element);
+        bindings_->set_current_script(script.element);
+        script::run_result result;
+        if (!nested) {
+            result = script_->run(running_program);
+        } else {
+            for (const std::string & name : running_program.hoisted_vars) {
+                if (!script_->has_global(name)) {
+                    script_->define_global(name, value::undefined());
+                }
+            }
+            auto * entry = script_->allocate<script::closure_object>(&running_program.functions[0]);
+            entry->owner = &running_program;
+            bool threw = false;
+            value thrown = value::undefined();
+            (void)script_->call_fenced(value::object(entry), {}, script_->global_this(), threw,
+                                       thrown);
+            result.ok = !threw && !script_->failed();
+            if (!result.ok) {
+                const script::context::rooted keep_thrown{*script_, thrown};
+                result.error =
+                    script_->failed()
+                        ? script_->take_error()
+                        : "uncaught " +
+                              (thrown.is_object()
+                                   ? script_->to_string(script_->lookup_property(thrown, "message"))
+                                   : script_->to_string(thrown));
+            }
+        }
         // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
-        // belongs to a document that is being replaced, so it does not run -
+        // belongs to a document that is being replaced, so the parser stops -
         // and the replacement happens in load_html, after this returns, rather
         // than under our feet.
         if (pending_load_) {
+            running.clear();
             bindings_->set_current_script(node_id{});
-            return;
+            return false;
         }
         // THE FIRST FAILURE IS THE ONE REPORTED, and the rest of the page still
         // runs. That is what the specification says: a script that throws or
@@ -390,20 +318,79 @@ void browser::run_scripts() {
             // asserts by id.
             (void)bindings_->dispatch_error(result.error);
         }
-        bindings_->set_current_script(node_id{});
+        running.pop_back();
+        bindings_->set_current_script(running.empty() ? node_id{} : running.back());
+        return true;
+    };
+    bindings_->set_script_runner(runner);
+
+    if (source_kind_ != source_kind::xml) {
+        parse_result parsed = bindings_->parse_document(source_html_);
+        // An inline <svg>'s source came from the parse rather than from a
+        // file, but from here on the two are the same thing: a graphic to
+        // rasterise at whatever size its box turns out to be.
+        for (const auto & [id, source] : parsed.svg_sources) { svg_.set_source(id, source); }
+        return;
     }
 
-    // MODULES RUN AFTER THE CLASSIC SCRIPTS, each as its own program in its own
-    // scope. Deferred is what the specification says a module script is - it
-    // waits for the document rather than running where it sits - and running
-    // them last is the shape that will still be right when the loader arrives
-    // and they have to wait for their dependencies too.
-    //
-    // ONE PROGRAM EACH, kept alive: a module's top-level declarations live in
-    // its frame, and its functions close over them.
-    for (const auto & [module_source, specifier] : modules) {
-        load_module(module_source, specifier);
+    // AN XHTML DOCUMENT'S SCRIPTS. XML has no parser-driven insertion point
+    // and no document.write (both throw InvalidStateError there), so the
+    // whole tree was built first (lifecycle.cpp) and every <script> in it
+    // runs afterwards, in document order - classic scripts as they come,
+    // modules after them, through the same runner.
+    std::vector<dom_bindings::parser_script> classic;
+    std::vector<dom_bindings::parser_script> modules;
+    {
+        const auto txn = doc_->read();
+        const atom script_tag = atoms_.intern_lower("script");
+        const atom type_attribute = atoms_.intern("type");
+        const auto walk = [&](auto && self, node_id at) -> void {
+            const bool is_svg = txn.element_ns(at) == ctbrowser::node_ns::svg;
+            if (txn.tag(at).value_or(atom{}) == script_tag &&
+                (txn.element_ns(at) == ctbrowser::node_ns::html || is_svg)) {
+                dom_bindings::parser_script script{at, {}, {}, false, false};
+                script.module = txn.attribute_value(at, type_attribute) == "module";
+                std::string_view src =
+                    txn.attribute_value(at, atoms_.intern(is_svg ? "href" : "src"));
+                if (is_svg && src.empty()) {
+                    src = txn.attribute_value(at, atoms_.intern("xlink:href"));
+                }
+                if (!src.empty()) {
+                    const std::vector<std::byte> bytes = assets_.load(std::string{src});
+                    if (bytes.empty()) {
+                        script.missing = true;
+                    } else {
+                        script.source.assign(reinterpret_cast<const char *>(bytes.data()),
+                                             bytes.size());
+                        script.source += '\n';
+                    }
+                    script.specifier = std::string{src};
+                    note_resource_load(at, !script.missing);
+                }
+                for (const node_id child : txn.children(at)) { script.source += txn.text(child); }
+                script.source += '\n';
+                if (script.module && script.specifier.empty()) {
+                    script.specifier = "<inline:" + std::to_string(modules.size()) + ">";
+                }
+                if (script.module) {
+                    modules.push_back(std::move(script));
+                } else if (src.empty() && script.source.size() <= 1) {
+                    bindings_->note_unstarted_script(at);
+                } else {
+                    classic.push_back(std::move(script));
+                }
+            }
+            for (const node_id child : txn.children(at)) { self(self, child); }
+        };
+        walk(walk, txn.root());
     }
+    std::function<bool(const dom_bindings::parser_script &)> run = runner;
+    for (const std::vector<dom_bindings::parser_script> * batch : {&classic, &modules}) {
+        for (const dom_bindings::parser_script & script : *batch) {
+            if (!run(script)) { return; }
+        }
+    }
+    bindings_->set_ready_state("interactive");
 }
 
 // LOAD A MODULE AND EVERYTHING IT NEEDS: instantiate the whole graph, then

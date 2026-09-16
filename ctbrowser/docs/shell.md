@@ -82,6 +82,39 @@ table section inference, foster parenting, and the adoption agency. **The engine
 no longer uses `external/compile-time-html`**. ctjs remains its script parser;
 ctcss is retained only as the comparison implementation in `bench_style`.
 
+**THE DOCUMENT IS PARSER-DRIVEN (2026-09-16).** A page used to be parsed
+whole and its scripts run afterwards, with `document.write` appending a
+fragment to the body - the one thing that is well-defined without a parser,
+and the one thing html/webappapis/dynamic-markup-insertion is written to tell
+from the real thing. Now `browser::run_scripts` builds the context and the
+bindings first and `dom_bindings::parse_document` (bindings/document/write.cpp)
+runs the tree builder over the page: at every `</script>` the parser stops
+(HTML 13.2.6.4.8), the script runs against the tree built so far - a `<script>`
+in `<head>` sees `document.body === null`, as in every browser - and
+`document.write` from it inserts into the parser's INPUT STREAM at the
+insertion point, just past that `</script>`, where the tokenizer reads it
+before the rest of the file. So `document.write("<i>")` leaves the `<i>` open
+across the remaining markup, two half-writes (`"<i id="`, `"'x'>"`) are one
+tag, and a written `<script>` runs before its writer's next statement, nested
+(`html::tree_builder::run_script` keeps a stack of insertion points; the
+tokenizer's view is cut at the top one and a token the cut halves comes back
+`token_kind::incomplete`, to be re-read once more text arrives - see
+`tokenizer::set_input`). `document.open()` erases the listeners, empties the
+document and starts a script-created parser whose stream `close()` ends;
+"the end" sets `readyState` to `interactive`, runs the `defer` and module
+scripts, and queues DOMContentLoaded / `complete` / `load` (the browser's
+tick for the page load, a timer task for a script-created one). A frame's
+document (`frames.cpp`) is the same bindings without a script runner, which
+is what lets the html5lib fixtures - `contentDocument.open(); write(input);
+close()` - build their trees. "Prepare the script element" (4.12.1.1) decides
+what runs when: classic inline and parser-blocking external scripts now,
+`defer` and modules at the end in order, `async` as soon as fetched (which,
+with a synchronous asset registry, is also the end), data blocks and
+`nomodule` never. Text is inserted per 13.2.6.1 - onto the Text node before
+the insertion point - so `write("a"); write("b")` is one node, and an implied
+`<head>` exists on every parsed page. The gate for all of it is
+`unittests/unit/document_write`.
+
 **Form controls and canvas 2D work.** `ctbrowser.shell:forms` holds control
 state (value, caret, selection, checked) keyed by node_id — NOT on the node,
 which is what left the previous engine's `node` carrying thirty UI-only fields.
