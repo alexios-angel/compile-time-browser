@@ -128,6 +128,10 @@ void dom_bindings::prepare_parser_script(node_id script) {
             note_unstarted_script(script);
             return;
         }
+        // PLUS A NEWLINE, as the walk this replaced added: a trailing `//`
+        // comment terminates, and a packager's image is keyed by the hash of
+        // exactly this text (ctcompile's AppBundle pins it).
+        if (!prepared.source.empty()) { prepared.source += '\n'; }
         // Step 8, the type: `type` when present and non-empty, else
         // `language` as `text/<language>`, else JavaScript.
         const std::string_view type_attr = txn.attribute_value(script, atoms_->intern("type"));
@@ -218,9 +222,6 @@ void dom_bindings::prepare_parser_script(node_id script) {
 // script-created parser queues that task here.
 void dom_bindings::parser_finished(bool initial) {
     mutated();
-    if (auto * doc = document_object(); doc != nullptr && cx_ != nullptr) {
-        doc->set("compatMode", cx_->string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
-    }
     set_ready_state("interactive");
     // Steps 3-6: the deferred scripts in the order they were seen, still in
     // the parser's task; then the async ones, whose tasks were queued when
@@ -314,7 +315,6 @@ void dom_bindings::document_open(context & cx) {
     // Step 12: no-quirks mode - and the parser decides again from what is
     // written: a doctype keeps it, anything else first puts it in quirks.
     doc_->set_quirks(false);
-    if (auto * doc = document_object()) { doc->set("compatMode", cx.string("CSS1Compat")); }
     // Steps 13-16: "loading", and a new, script-created parser whose insertion
     // point is the end of its (empty) input stream.
     set_ready_state("loading");

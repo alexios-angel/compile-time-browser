@@ -203,6 +203,15 @@ void browser::run_scripts() {
             return true;
         }
         script_sources_.push_back(text);
+        // THE SHEETS BEFORE IT, APPLIED. A <style> or <link> the parser has
+        // already inserted is in effect when this script runs (HTML "update a
+        // style block" at the end tag), so its getComputedStyle and its
+        // offsetWidth read the styled page - and the sheets that follow it
+        // are not, which is what a browser answers too. The first script
+        // latches `author_sheet_loaded_`; every later read goes through
+        // refresh_author_styles, which re-collects the text the parse has
+        // added since.
+        load_author_styles();
         // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
         // percent of a page load; loading the same program from bytes is four
         // times faster on every corpus measured. Two things make it safe, and
@@ -245,7 +254,11 @@ void browser::run_scripts() {
         // nested path is run_inserted_scripts' (document/entry.cpp): the
         // entry function as a closure behind a fence, its throw reported
         // here rather than unwound into the writer.
-        const bool nested = !running.empty() || !script_->current_stack().empty();
+        // NOT `current_stack().empty()`: a first script that hit the call-stack
+        // ceiling leaves its frames behind, and the second script would have
+        // been run as if nested - through call_fenced, which does not clear
+        // the handler stack `run` clears (shell_basics' dead-script case).
+        const bool nested = !running.empty() || script_->in_native();
         running.push_back(script.element);
         bindings_->set_current_script(script.element);
         script::run_result result;

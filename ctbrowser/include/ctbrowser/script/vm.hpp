@@ -458,6 +458,12 @@ public:
     }
     // Every global, for a window that enumerates itself.
     [[nodiscard]] const string_flat_map<value> & globals() const noexcept { return globals_; }
+    // WHETHER SCRIPT IS RUNNING RIGHT NOW - a native called from the
+    // interpreter is on the C++ stack. `frames_` cannot answer this: a
+    // VM-level raise (the call-stack ceiling) returns out of the loop without
+    // unwinding, so the frames of a script that is OVER stay behind until the
+    // next top-level `run` clears them.
+    [[nodiscard]] bool in_native() const noexcept { return native_depth_ > 0; }
 
     // WHAT AN UNDECLARED NAME MEANS, when the embedder has an answer. HTML
     // 7.3.3: an element with an `id` is reachable as a bare identifier, and
