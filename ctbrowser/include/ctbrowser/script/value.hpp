@@ -664,17 +664,26 @@ struct accessor_entry {
 };
 
 struct accessor_table {
+    // Insertion-ordered - readers walk it - and READ THROUGH `index` past a
+    // handful: a computed style declaration carries an accessor per property,
+    // both spellings, and finding one of 800 by a linear scan made
+    // getComputedStyle quadratic in the table it publishes.
     std::vector<accessor_entry> entries;
+    string_flat_map<std::uint32_t> index;
     // Empty on the overwhelming majority of objects, so this bool is what keeps
     // property lookup as fast as it was.
     bool any = false;
 
     [[nodiscard]] accessor_entry * find(std::string_view name) {
         if (!any) { return nullptr; }
-        for (accessor_entry & entry : entries) {
-            if (entry.key == name) { return &entry; }
+        if (entries.size() <= 8) {
+            for (accessor_entry & entry : entries) {
+                if (entry.key == name) { return &entry; }
+            }
+            return nullptr;
         }
-        return nullptr;
+        const auto it = index.find(name);
+        return it == index.end() ? nullptr : &entries[it->second];
     }
     void define(std::string_view name, value getter, value setter, std::uint32_t after = 0,
                 std::uint8_t attrs = attr_enumerable | attr_configurable) {
@@ -686,12 +695,29 @@ struct accessor_table {
         }
         entries.push_back(accessor_entry{std::string{name}, getter, setter, after, attrs});
         any = true;
+        if (entries.size() > 8) {
+            if (index.empty()) {
+                for (std::uint32_t i = 0; i < entries.size(); ++i) {
+                    index.emplace(entries[i].key, i);
+                }
+            } else {
+                index.emplace(entries.back().key, static_cast<std::uint32_t>(entries.size() - 1));
+            }
+        }
     }
     bool erase(std::string_view name) {
         for (std::size_t i = 0; i < entries.size(); ++i) {
             if (entries[i].key == name) {
                 entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i));
                 any = !entries.empty();
+                // The positions after it moved: rebuilt, since an erase is rare
+                // (a data property redefining an accessor) and a scan is not.
+                index.clear();
+                if (entries.size() > 8) {
+                    for (std::uint32_t k = 0; k < entries.size(); ++k) {
+                        index.emplace(entries[k].key, k);
+                    }
+                }
                 return true;
             }
         }
