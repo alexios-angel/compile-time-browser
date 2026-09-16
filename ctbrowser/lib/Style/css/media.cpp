@@ -304,11 +304,19 @@ constexpr feature_entry container_features[] = {
             if (!px) { return 0; }
             f.value = *px;
             // calc/ answers a resolution as dppx and a length as px alike;
-            // the unit inside says which it was.
-            w = text.find("dp") != std::string_view::npos ||
-                        text.find('x') != std::string_view::npos
-                    ? written::resolution
-                    : written::length;
+            // the unit inside says which it was: `dpi`/`dpcm`/`dppx`, or an
+            // `x` that follows a number - the one in `px` does not.
+            const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+            const auto word = [&](char c) {
+                return digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
+            };
+            bool resolution = text.find("dp") != std::string_view::npos;
+            for (std::size_t k = 1; !resolution && k < text.size(); ++k) {
+                resolution = (text[k] == 'x' || text[k] == 'X') &&
+                             (digit(text[k - 1]) || text[k - 1] == '.') &&
+                             (k + 1 == text.size() || !word(text[k + 1]));
+            }
+            w = resolution ? written::resolution : written::length;
             return 1;
         }
         return 0;
