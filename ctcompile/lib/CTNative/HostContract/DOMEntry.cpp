@@ -681,9 +681,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
                     (hasKind(unary.getOperand(), Kind::optionalString) ||
                      hasKind(unary.getOperand(), Kind::string) ||
-                     hasKind(unary.getOperand(), Kind::null))) {
+                     hasKind(unary.getOperand(), Kind::null) ||
+                     hasKind(unary.getOperand(), Kind::json))) {
                     if (!spend()) { return false; }
                     values[unary.getResult()] = Kind::string;
+                    // JSON's "object" includes null and arrays; only the optional
+                    // String carrier supplies a two-way narrowing predicate.
                     if (hasKind(unary.getOperand(), Kind::optionalString)) {
                         typeQueries[unary.getResult()] = unary.getOperand();
                     }

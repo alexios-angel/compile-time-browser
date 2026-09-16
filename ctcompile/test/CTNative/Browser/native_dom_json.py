@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Original M's primitive prefix and JSON.parse(decodeURIComponent(t)) as native C++.
+"""Original M's normalization and Config's JSON typeof observation as native C++.
 
 The decode and parse calls become nested invokes on one success path; either
-failure returns the original String. Native results are ctbrowser::json_value
-from the shared public Core parser, compared against Node and the VM.
+failure returns the original String. Normalization owns ctbrowser::json_value;
+typeof returns String or Boolean observations, compared against Node and the VM.
 """
 
 import argparse
@@ -69,6 +69,14 @@ ATTRIBUTE_CASES = {
     + BODY,
     "json_bootstrap_m": BOOTSTRAP_M + f"\nreturn M({GET});",
     "json_bootstrap_attribute": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "config");',
+    "json_attribute_typeof": ATTRIBUTE_HELPERS
+    + 'return typeof H.getDataAttribute(element, "config");',
+    "json_config_typeof_direct": ATTRIBUTE_HELPERS
+    + 'return "object" == typeof H.getDataAttribute(element, "config");',
+    # Preserve the former refusal body, including its earlier DOM observation.
+    "json_config_typeof": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
+    + ATTRIBUTE_HELPERS
+    + 'const parsed = H.getDataAttribute(element, "config"); return "object" == typeof parsed;',
     # Preserve the former refusal body, including its earlier DOM observation.
     "json_nullable_join": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
     + NULLABLE_JOIN,
@@ -116,8 +124,8 @@ def check_oracles(args):
     for name in SOURCES:
         inputs = INPUTS if name in ATTRIBUTE_CASES else (None, "")
         trace = "get:data-bs-config" if name in ATTRIBUTE_CASES else "has:good"
-        if name == "json_nullable_join":
-            trace = "has:good|get:x"
+        if name in ("json_nullable_join", "json_config_typeof"):
+            trace = "has:good|" + ("get:x" if name == "json_nullable_join" else trace)
         for value in inputs:
             label = f"jsonObservation{len(names):03}"
             names.append(label)
@@ -252,12 +260,18 @@ def client(name, entry, owned):
     earlier_read = ""
     if name == "json_nullable_join":
         attribute = "x"
+    if name in ("json_nullable_join", "json_config_typeof"):
         earlier_read = """
                 const auto good = doc.atoms().intern("good");
                 if (input) { assert(doc.set_attribute(node, good, "")); }
                 else { assert(doc.remove_attribute(node, good)); }
 """
-    result_type = "bool" if name == "json_number_not" else "json_value"
+    result_type = {
+        "json_number_not": "bool",
+        "json_attribute_typeof": "std::string",
+        "json_config_typeof_direct": "bool",
+        "json_config_typeof": "bool",
+    }.get(name, "json_value")
     return f"""
     {{
         std::vector<json_value> survivors;
@@ -286,8 +300,11 @@ def client(name, entry, owned):
 
 
 REFUSALS = {
-    "json_config_typeof": ATTRIBUTE_HELPERS
-    + 'const parsed = H.getDataAttribute(element, "config"); return "object" == typeof parsed;',
+    "json_typeof_members": ATTRIBUTE_HELPERS
+    + 'const parsed = H.getDataAttribute(element, "config"); '
+    + 'if ("object" == typeof parsed) return parsed.saved; return null;',
+    "json_typeof_replaced": ATTRIBUTE_HELPERS
+    + 'JSON.parse = element; return typeof H.getDataAttribute(element, "config");',
     "json_matching_key": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "Config");',
     "json_live_key": ATTRIBUTE_HELPERS
     + 'return H.getDataAttribute(element, element.getAttribute("key"));',
@@ -339,6 +356,9 @@ def main():
         "json_number_not": ["Number"],
         "json_bootstrap_m": intrinsics,
         "json_bootstrap_attribute": intrinsics,
+        "json_attribute_typeof": intrinsics,
+        "json_config_typeof_direct": intrinsics,
+        "json_config_typeof": intrinsics,
     }
     prepared = [
         (
@@ -488,6 +508,7 @@ def main():
             ["Number", "Number", "decodeURIComponent", "JSON"],
         ),
     }
+    premises["json_config_typeof_direct"] = premises["json_bootstrap_m"]
     for name, variants in premises.items():
         _, ir, contract = next(row for row in prepared if row[0] == name)
         for index, names in enumerate(variants):

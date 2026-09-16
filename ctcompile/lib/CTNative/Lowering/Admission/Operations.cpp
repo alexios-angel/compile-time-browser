@@ -24,6 +24,11 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto unary = llvm::dyn_cast<UnaryOp>(o);
+            unary && unary.getKind() == UnaryKind::TypeOf &&
+            carrierOf(typeOf(unary.getOperand())) == carrier::json) {
+            return true;
+        }
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
             load && domEntry->isInitialIntrinsic(load)) {
             return true;

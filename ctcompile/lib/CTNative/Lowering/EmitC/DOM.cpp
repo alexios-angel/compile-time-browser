@@ -246,6 +246,31 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true;
     }
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+    if (needsDOMJSON && unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
+        unary.getOperand().getType() == carrierType(context, carrier::json)) {
+        const auto stringType = carrierType(context, carrier::string);
+        const auto dataType = ec::OpaqueType::get(context, "decltype(ctbrowser::json_value::data)");
+        // Deferred member emission names the original tree's field, without a copy.
+        auto data = ec::MemberOp::create(at, where, dataType, "data", unary.getOperand());
+        auto expression =
+            ec::ExpressionOp::create(at, where, stringType, mlir::ValueRange{data}, false);
+        expression.createBody();
+        mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&expression.getRegion().front());
+        mlir::Value result = stringConstant(inside, where, "object");
+        // Null, array and object alternatives share JavaScript's object tag.
+        for (auto [type, tag] :
+             {std::pair{"bool", "boolean"}, {"double", "number"}, {"std::string", "string"}}) {
+            auto holds = callWithConstValueOperands(
+                inside, where, mlir::TypeRange{inside.getI1Type()},
+                inside.getStringAttr(std::string("std::holds_alternative<") + type + ">"),
+                mlir::ValueRange{expression.getRegion().front().getArgument(0)});
+            result = ec::ConditionalOp::create(inside, where, stringType, holds.getResult(0),
+                                               stringConstant(inside, where, tag), result);
+        }
+        ec::YieldOp::create(inside, where, result);
+        swap(expression.getResult());
+        return true;
+    }
     if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
         unary.getOperand().getType() == optionalString) {
         auto present = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::ne,
