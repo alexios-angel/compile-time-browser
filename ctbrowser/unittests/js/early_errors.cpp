@@ -46,6 +46,36 @@ void refused(std::string_view source) {
     }
 }
 
+// THE SAME TWO, COMPILED AS A MODULE. `import` and `export` are in no other
+// grammar, and a module's top level carries rules a script's does not, so
+// these cannot be asked with compile() alone. Only the compile is checked:
+// running a module wants the loader, which is test/corpus/modules' subject.
+void module_refused(std::string_view source) {
+    using namespace ctbrowser::script;
+    const program prog = compiler::compile(source, script_kind::module_);
+    if (prog.ok) {
+        std::printf("FAIL     accepted as a module, and must not: %s\n",
+                    std::string{source}.c_str());
+        ++ctbrowser_test_failures;
+        return;
+    }
+    if (!prog.error.starts_with("parse error:")) {
+        std::printf("FAIL     refused as a gap rather than a SyntaxError: %s\n  -> %s\n",
+                    std::string{source}.c_str(), prog.error.c_str());
+        ++ctbrowser_test_failures;
+    }
+}
+
+void module_accepted(std::string_view source) {
+    using namespace ctbrowser::script;
+    const program prog = compiler::compile(source, script_kind::module_);
+    if (!prog.ok) {
+        std::printf("FAIL     refused as a module, and must not: %s\n  -> %s\n",
+                    std::string{source}.c_str(), prog.error.c_str());
+        ++ctbrowser_test_failures;
+    }
+}
+
 // Source that must compile AND run. Running matters: half the near-misses below
 // are about scope, and a scope rule can be got wrong in a way that compiles to
 // the wrong register rather than to no program at all.
@@ -546,6 +576,33 @@ int main() {
     refused("'use strict'; (function () { function inner(a, a) {} })();");
     // A directive is only one at the top of the body.
     accepted("var before = 1; 'use strict'; function f(a, a) {}");
+
+    // --- modules (16.2.1): an ImportDeclaration and an ExportDeclaration are
+    // ModuleItems. Not statements - so nowhere but a module's own top level -
+    // and a script's grammar has neither at all.
+    refused("export var x = 1;");
+    refused("import x from './m.js';");
+    module_refused("{ export default null; }");
+    module_refused("() => { import v from './m.js'; };");
+    module_refused("function f() { export var x; }");
+    module_refused("if (true) export default null;");
+    module_accepted("export var x = 1; export default 42;");
+    module_accepted("import x from './m.js'; export { x as y };");
+    // An exported name may not be exported twice, and an exported BINDING
+    // must be one this module declares - unless it came `from` another.
+    module_refused("var x; export { x }; export { x };");
+    module_refused("var x, y; export default x; export { y as default };");
+    module_refused("export function f() {} export class f {}");
+    module_refused("export { Number };");
+    module_accepted("var x; export { x }; export { x as other };");
+    module_accepted("export { Number } from './m.js';");
+    module_accepted("let a = 1; function b() {} export { a, b };");
+    // A module's top-level function declarations are LEXICAL, so two of a
+    // name are a redeclaration where a script allows them.
+    accepted("function x() {} function x() {}");
+    module_refused("function x() {} function x() {}");
+    module_refused("var x; function x() {}");
+    module_accepted("function x() {} function y() {}");
 
     REPORT("early_errors");
 }
