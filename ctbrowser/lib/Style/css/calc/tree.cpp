@@ -15,6 +15,9 @@
 
 #include "internal.hpp"
 
+#include <charconv>
+#include <system_error>
+
 namespace ctbrowser::style::css::detail {
 
 namespace {
@@ -187,8 +190,17 @@ private:
             // (signs-abs-computed). A conversion the printed number cannot
             // carry keeps the author's unit.
             if (context_free_unit(unit)) {
+                // from_chars, not stod: stod is strtod, which reads the locale's
+                // decimal point, and it throws on a text no number can round-trip.
+                const auto round_trips = [](double value) {
+                    const std::string text = serialize_number(value);
+                    double back = 0;
+                    const auto [end, ec] =
+                        std::from_chars(text.data(), text.data() + text.size(), back);
+                    return ec == std::errc{} && end == text.data() + text.size() && back == value;
+                };
                 if (const std::optional<term> fixed = canonical_term(tok.number, unit, {});
-                    fixed && std::stod(serialize_number(fixed->value)) == fixed->value) {
+                    fixed && round_trips(fixed->value)) {
                     out.value = fixed->value;
                     out.unit = std::string{canonical_unit(fixed->type())};
                 }
