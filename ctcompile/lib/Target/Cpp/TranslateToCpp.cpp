@@ -174,7 +174,7 @@ struct CppEmitter {
       : CppEmitter(os, parent.declareVariablesAtTop, parent.fileId) {
     readableLiterals = parent.readableLiterals;
     numericAlias = parent.numericAlias;
-    valueCount = parent.valueCount;
+    valueBase = valueCount = parent.valueCount;
   }
 
   /// Emits attribute or returns failure.
@@ -397,6 +397,9 @@ private:
 
   /// Emitter-level count of created values to enable unique identifiers.
   unsigned int valueCount{0};
+  /// Where a FunctionScope resets the counter to: 0 at top level, the
+  /// parent's count inside a nested callable body.
+  unsigned int valueBase{0};
 
   /// State of the current expression being emitted.
   SmallVector<int> emittedExpressionPrecedence;
@@ -2262,7 +2265,7 @@ LogicalResult CppEmitter::emitTupleType(Location loc, ArrayRef<Type> types) {
   return success();
 }
 
-void CppEmitter::resetValueCounter() { valueCount = 0; }
+void CppEmitter::resetValueCounter() { valueCount = valueBase; }
 
 void CppEmitter::increaseLoopNestingLevel() { loopNestingLevel++; }
 
