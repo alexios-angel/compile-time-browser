@@ -22,7 +22,7 @@
 // RUN: not %t/wrong-state
 
 //--- valid.mlir
-module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.numeric_alias} {
+module attributes {ctnative.const_bindings, ctnative.numeric_alias} {
   emitc.include <"string">
   emitc.include <"vector">
   emitc.include <"memory">

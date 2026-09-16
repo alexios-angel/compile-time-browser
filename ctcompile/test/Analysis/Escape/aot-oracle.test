@@ -1,0 +1,12 @@
+# A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
+# Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
+# allowing their uninstrumented allocations to join native escape claims: the
+# reserved compiled PC stays an ordinary numeric coordinate in format v2, so
+# the existing checker reads it as UNCLAIMED without a parser change. The
+# second executable observes the real boxed emitter's normalized return value,
+# retaining the compiled sentinel coordinate rather than inventing a source site.
+#
+# RUN: ctcompile-test-escape-oracle-aot --out %t.rec
+# RUN: python3 %{monorepo}/tools/check/escape-oracle.py --recording %t.rec --infer all-escapes --name aot-unchecked --expect-unclaimed 4 --expect-violations 0 --expect-sound 0
+# RUN: ctcompile-test-escape-oracle-aot-return --out %t.return.rec
+# RUN: python3 %{monorepo}/tools/check/escape-oracle.py --recording %t.return.rec --infer all-escapes --name aot-return --expect-unclaimed 5 --expect-violations 0 --expect-sound 0

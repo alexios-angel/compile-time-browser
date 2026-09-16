@@ -5,12 +5,19 @@ Both compilers are required, not whichever is found: a gate that silently drops
 one passes vacuously (test/cmake/Native.cmake says the same for the CMake half).
 """
 
+from pathlib import Path
 import re
 import shutil
 import subprocess
 
+# THE RUNTIME HEADER'S INCLUDE DIRECTORY. Every generated program includes
+# ctcompile/CTNative/Runtime/ctnative.hpp, so every compile of one needs
+# ctcompile/include on its path - and nothing else of the compiler's.
+RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
+
 FLAGS = [
     "-std=c++23",
+    RUNTIME_INCLUDE,
     "-O2",
     "-Wall",
     "-Wextra",

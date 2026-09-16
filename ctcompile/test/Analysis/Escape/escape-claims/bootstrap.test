@@ -1,0 +1,6 @@
+# PHASE 55 CLOSED: the escape claims over one corpus (escape-claims/check.py
+# says what is asserted). Budgets follow 25-escape-analysis.md §5: unlimited on
+# the fixture and bootstrap, bounded on the two big bundles, where every frame
+# pop otherwise costs a full mark.
+# RUN: cat %{monorepo}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js > %t.js && echo >> %t.js && cat %S/../../Types/bootstrap-driver.js >> %t.js
+# RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t.js --work %t --name bootstrap

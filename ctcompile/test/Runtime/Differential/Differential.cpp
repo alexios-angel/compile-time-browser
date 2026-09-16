@@ -45,6 +45,8 @@
 #include <string>
 #include <string_view>
 
+#include "check.hpp"
+
 using ctbrowser::script::context;
 using ctbrowser::script::function_proto;
 using ctbrowser::script::program;
@@ -124,6 +126,7 @@ namespace {
 // because both tiers agreed on a stale OUT.
 constexpr std::string_view fixture =
 #include "differential.js.inc"
+
     ;
 
 // One proto to install a compiled entry on.
@@ -178,8 +181,6 @@ struct subject {
     const char * separates;
     const char * expected;
 };
-
-int failures = 0;
 
 } // namespace
 
@@ -635,7 +636,7 @@ int main() {
             }
         }
         if (!resolved) {
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
 
@@ -664,7 +665,7 @@ int main() {
             std::printf("%-12s FAILED - drive(%u) set nothing, so the arm threw or does not "
                         "exist\n",
                         each.name, each.which);
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         // AND THE ANCHOR, for the paths the comparison cannot see. See the
@@ -674,7 +675,7 @@ int main() {
             std::printf("%-12s FAILED - the INTERPRETER answered %s where %s is correct, so "
                         "something shared by both tiers is wrong\n",
                         each.name, interpreted.c_str(), each.expected);
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         if (interpreted == generated) {
@@ -683,7 +684,7 @@ int main() {
             std::printf("%-10s FAILED\n    interpreted %s\n    compiled    %s\n    separates:  "
                         "%s\n",
                         each.name, interpreted.c_str(), generated.c_str(), each.separates);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
@@ -703,7 +704,7 @@ int main() {
         if (every[slot] == nullptr) {
             std::printf("AOT        FAILED - no function_proto named %s#%u\n", all[slot].name,
                         all[slot].ordinal);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
@@ -733,14 +734,14 @@ int main() {
                         "    compiled    %s\n",
                         each.name, interpreted.c_str(), whole.c_str());
             ++disagreed;
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
     std::printf("\nAOT: %u arms with all %zu entries installed, %u disagreed\n", arms,
                 std::size(all), disagreed);
 
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("\nall %zu bodies agree with the interpreter\n", std::size(subjects));
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

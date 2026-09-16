@@ -128,13 +128,16 @@ def main():
 
     unknown = prepared["unknown"]
     forged = args.work / "forged.mlir"
-    forged.write_text(
-        unknown.read_text().replace(
-            "module {",
-            'module attributes {ctnative.host_proved = true, ctnative.host_reason = "trusted"} {',
-            1,
-        )
+    text, count = re.subn(
+        r"\bmodule( attributes)? \{",
+        lambda match: 'module attributes {ctnative.host_proved = true, ctnative.host_reason = "trusted"'
+        + (", " if match[1] else "} {"),
+        unknown.read_text(),
+        count=1,
     )
+    if count != 1:
+        raise RuntimeError("forged host metadata was not inserted")
+    forged.write_text(text)
     rejection, _, _ = analyze(
         args.opt,
         forged,

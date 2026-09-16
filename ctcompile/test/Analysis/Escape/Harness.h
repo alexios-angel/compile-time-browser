@@ -65,12 +65,12 @@
 #include <utility>
 #include <vector>
 
+#include "check.hpp"
+
 namespace ctcompile::test::escape {
 
 using namespace ctcompile::ctnative;
 namespace ctjs = ctcompile::ctjs;
-
-inline int failures = 0;
 
 // One row. `body` OWNS its text (TypeInference.cpp says why: a `const char *`
 // into a concatenation temporary dangles) and INCLUDES its terminator, since
@@ -172,7 +172,7 @@ inline std::string roleThroughInterface(ctjs::EscapeEffectOpInterface roles, uns
 
 inline void fail(const row & r, const std::string & message) {
     std::printf("FAIL %s\n  %s\n", r.what, message.c_str());
-    ++failures;
+    ++ctbrowser_test_failures;
 }
 
 inline std::string labelledAliases(const AliasValue & aliases) {

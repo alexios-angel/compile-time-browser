@@ -56,6 +56,8 @@
 #include <string_view>
 #include <vector>
 
+#include "check.hpp"
+
 using ctcompile::ctnative::CTNativeDialect;
 using ctcompile::ctnative::kDefaultStringEncoding;
 using ctcompile::ctnative::kMaxVariantAlternatives;
@@ -66,12 +68,11 @@ using mlir::Type;
 namespace {
 
 int checks = 0;
-int failures = 0;
 
 void check(const char * what, bool ok) {
     ++checks;
     if (!ok) {
-        ++failures;
+        ++ctbrowser_test_failures;
         std::printf("FAILED  %s\n", what);
     }
 }
@@ -390,13 +391,13 @@ int main() {
         const Type b = parse(context, row.b);
         const Type expected = parse(context, row.expected);
         if (!a || !b || !expected) {
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         const Type got = meet(a, b);
         ++checks;
         if (got != expected) {
-            ++failures;
+            ++ctbrowser_test_failures;
             std::printf("FAILED  meet(%s, %s)\n            expected %s\n            got      %s\n"
                         "            because  %s\n",
                         row.a, row.b, row.expected, show(got).c_str(), row.why);
@@ -406,7 +407,7 @@ int main() {
         // alternative order.
         ++checks;
         if (meet(b, a) != expected) {
-            ++failures;
+            ++ctbrowser_test_failures;
             std::printf("FAILED  meet(%s, %s) is not meet(%s, %s)\n", row.b, row.a, row.a, row.b);
         }
     }
@@ -416,7 +417,7 @@ int main() {
     for (const char * text : kSampleTypes) {
         const Type parsed = parse(context, text);
         if (!parsed) {
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         sample.push_back(parsed);
@@ -606,9 +607,10 @@ int main() {
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 
-    std::printf("%s: %d checks, %d failures\n", failures == 0 ? "ok" : "FAILED", checks, failures);
-    return failures == 0 ? 0 : 1;
+    std::printf("%s: %d checks, %d failures\n", ctbrowser_test_failures == 0 ? "ok" : "FAILED",
+                checks, ctbrowser_test_failures);
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -6,10 +6,14 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
+#include "DOMDataset.h"
+#include "DOMJSON.h"
 #include "DOMNullable.h"
 #include "DOMNumbers.h"
 #include "DOMURI.h"
 #include "Fingerprint.h"
+
+#include "check.hpp"
 
 using namespace ctcompile::test::host_contract;
 
@@ -838,9 +842,11 @@ int main() {
     checkFingerprint(context);
     checkDOMEntry(context);
     checkDOMNumbers(context);
+    checkDOMDataset(context);
     checkDOMURI(context);
+    checkDOMJSON(context);
     checkDOMNullable(context);
     checkSessionProvider(context);
-    if (failures == 0) { std::puts("host contract live proof queries passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::puts("host contract live proof queries passed"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -1,0 +1,3 @@
+# PHASE 55O - the escape oracle's two checkers compared, the same discipline as
+# the type oracle's (Analysis/Types/check-oracle.py, under --escape).
+# RUN: python3 %S/../Types/check-oracle.py --escape --exe ctcompile-test-type-oracle --script %{monorepo}/tools/check/escape-oracle.py --recording %t.rec

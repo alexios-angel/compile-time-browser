@@ -45,6 +45,15 @@ import_result import_program(const program & from, llvm::StringRef program_id,
     context->getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     mlir::OpBuilder builder(context);
     out.module = mlir::ModuleOp::create(builder.getUnknownLoc());
+    if (from.kind == script_kind::classic && !from.hoisted_vars.empty()) {
+        llvm::SmallVector<mlir::Attribute> declarations;
+        for (const std::string & name : from.hoisted_vars) {
+            declarations.push_back(builder.getStringAttr(name));
+        }
+        // Declaration instantiation binds these names before the entry runs;
+        // it preserves existing globals, so it supplies no initial value.
+        (*out.module)->setAttr("ctjs.hoisted_vars", builder.getArrayAttr(declarations));
+    }
 
     for (std::size_t index = 0; index < from.functions.size(); ++index) {
         const function_proto & proto = from.functions[index];
@@ -90,7 +99,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         state.lines = lines_or_null;
         for (std::size_t slot = 0; slot < proto.param_count; ++slot) {
             entry->getArgument(static_cast<unsigned>(implicit_arguments + slot))
-                .setLoc(state.names.location(state.location_for(0), slot, 0));
+                .setLoc(state.location_for(0));
         }
         into.setInsertionPointToStart(entry);
 
@@ -317,14 +326,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 state.block_at(static_cast<std::int64_t>(at)) != nullptr) {
                 auto land = ctjs::CatchLandOp::create(into, state.location_for(at),
                                                       into.getI32Type(), value_type);
-                state.assign(landed->second, land.getThrown(), at);
+                state.write(landed->second, land.getThrown());
             }
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
             const auto reg = [&](std::uint16_t slot) -> mlir::Value {
                 return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
             };
-            const auto set = [&](std::uint16_t slot, mlir::Value v) { state.assign(slot, v, at); };
+            const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
 
             // THE REGISTER FILE AS OF THE THROW, SNAPSHOT BEFORE THE
             // INSTRUCTION RUNS. It is what the handler block will be given, and

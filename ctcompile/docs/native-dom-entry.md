@@ -49,6 +49,38 @@ translation. The existing host-contract and prefix analyses for
 `closed-source-v1` remain separate. The DOM provider uses the native lowering
 entry and a fresh live source proof, never printed proof attributes.
 
+## Dataset key snapshots
+
+`Object.keys(element.dataset)` returns an owning `std::vector<std::string>`.
+The manifest must declare `"initial_intrinsics": ["Object"]` and an ordered,
+distinct `"dataset_parameters": [0]` subset of `element_parameters`. These are
+HTML/SVG inputs; every declared input is checked before source effects. MathML
+and other namespace URIs remain in Shell and are not covered by this public
+node-handle contract.
+
+The generated helper projects keys from public `ctbrowser::dataset_entries`.
+Keys preserve attribute order, including numeric names. Current public DOM behavior
+excludes namespaced attributes and unsupported uppercase names. An empty dataset
+returns an empty vector. The result owns its bytes after attribute mutation and document destruction.
+No DOMStringMap object, VM value or collector is created.
+
+The complete source proof requires the original Object/keys identity and receiver.
+A saved dataset alias is accepted only when no DOM mutation intervenes before
+its enumeration. Returning a saved key vector after a mutation and rereading
+`element.dataset` for a fresh snapshot are supported. Dataset/value writes,
+vector mutation or identity, dynamic value reads, callback filtering and loops
+remain refused. Missing dataset values need an Undefined/prototype proof separate
+from getAttribute's String-or-null result.
+
+The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
+Proxy. Chromium independently confirms attribute order and live saved-dataset
+keys. Shell's current binding instead refills an ordinary proxy target on dataset
+lookup; its numeric sorting and stale saved enumeration are a separate runtime
+boundary, not evidence from those source-double comparisons. A further Chromium
+witness includes namespaced `data-hidden` and `p:data-other` attributes; the shared
+DOM core skips them. Native retains that platform limitation. The fixture
+expectations must change when the core gains namespace support.
+
 The emitted translation unit exports the selected function without a launcher.
 Local helpers with structured `if`/`else` bodies may be expanded at their original
 call sites. Their exact closure identities, direct-call targets, unused implicit
@@ -103,7 +135,8 @@ Only a checked inert declaration or the proved initialization above may be omitt
 Skipped source, additional initialization effects, calls to the entry from JavaScript,
 mutable entry bindings, borrowed returns, handle retention, prototype or method writes,
 unknown receivers, loops and unstructured control flow refuse. Current operations are
-strict element identity, Boolean negation, Number/Boolean/String/undefined constants and returns,
+strict element identity, Boolean/Number negation, and Number/Boolean/String/undefined
+constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
@@ -152,20 +185,22 @@ function canonicalAttribute(element) {
 
 Number accepts one proved String, null or optional String with an undefined call
 receiver; standard Number `toString` accepts its exact Number receiver and no
-arguments. Number results may be returned or joined with other Numbers. The
-compiler checks the whole entry and both branch arms before erasing builtin reads.
+arguments. Number results may be returned, tested for truthiness or joined with
+other Numbers. Truthiness preserves NaN and signed-zero behavior. The owning JSON
+joins below also accept Numbers. The compiler checks the whole entry and both
+branch arms before erasing builtin reads.
 Replacement, prototype writes, callable escapes, unknown coercions, script reentry,
-radix arguments and stale source fingerprints refuse. Number and decodeURIComponent
-are the only optional initial intrinsic names supported by these DOM providers;
-each must be declared independently.
+radix arguments and stale source fingerprints refuse. Number, decodeURIComponent
+and JSON are the optional initial intrinsic names supported by these DOM providers;
+each must be declared independently, without duplicates.
 
 Emission calls public Core `string_to_number` and `number_to_string` with ordinary
 `double` and owning `std::string` values. Missing attributes convert to positive
 zero; saved attribute strings remain independent of later DOM changes. The shared
 Core implementation preserves the VM's current numeric behavior, including its
 known numeric-text limitations; this is not a claim of arbitrary-string ECMAScript
-equivalence. Original M's guarded URI/JSON calls, error continuations and mixed
-return values still need separate proofs.
+equivalence. Original M's complete prefix uses the separately authorized URI/JSON
+chain and mixed-result ownership described below.
 
 DOM manifests may also supply `"initial_intrinsics": ["decodeURIComponent"]`.
 The supplied binding must be the standard own global data binding. Number authority
@@ -181,15 +216,18 @@ function decodeAttributeText(element) {
 }
 ```
 
-The complete original acyclic entry must contain one checked ordinary URI call,
-with an undefined receiver and one proved definite String input. Both success and
+With URI authority alone, the complete original acyclic entry must contain one
+checked ordinary URI call, with an undefined receiver and one proved definite
+String input. Both success and
 failure continuations return owning Strings. The catch payload must be unused;
 reading, returning, storing or rethrowing it refuses. Local String assignments
 before the call are preserved, and a failed assignment retains the previous value.
 Protected preparation and both tails currently admit only inert bookkeeping,
-constants and the proved global loads. Other protected calls, DOM writes and
-sequential failures refuse. Prefix branches and early returns retain their source
-order. This recovery does not yet compose with local helper expansion.
+constants and the proved global loads. Other protected calls and DOM writes
+refuse; the explicitly authorized JSON chain below adds a second fallible call.
+Prefix branches and early returns retain their source order. Supported local
+helpers are normalized before expansion, and the complete DOM proof checks the
+inlined result again.
 
 Normalization inspects the original handler and every pre-call register, proves
 every discarded status edge, and constructs continuations in a private module.
@@ -221,32 +259,97 @@ inside that branch, retaining independent ownership for catch and later return.
 Both arms must pass the complete source proof. Refused or incomplete proofs
 publish no partial refinements; supplied attributes never grant authority.
 
-Original M still needs helper/exception composition, its full prefix, JSON identity
-and evaluation order, two fallible calls and mixed-result ownership. The shared
-Core JSON parser alone grants no native admission.
+DOM manifests may supply `"initial_intrinsics": ["decodeURIComponent", "JSON"]`
+to compile the protected body from original M:
+
+```javascript
+function parsedConfig(element) {
+  const text = element.hasAttribute('good') ? '%7B%22active%22%3Atrue%7D' : '%';
+  try { return JSON.parse(decodeURIComponent(text)); }
+  catch (ignored) { return text; }
+}
+```
+
+JSON authority binds the initial global JSON object and its original own-data
+`parse` property. The proof preserves the member lookup before URI argument
+evaluation, the exact JSON receiver, one definite String argument and two checked
+calls on one success path. Either failure retains its original catch snapshot;
+the payload remains unobserved. Supported local helpers may contain this chain.
+
+Emission calls public Core `ctbrowser::parse_json`, tests its
+`std::expected<ctbrowser::json_value, std::size_t>`, and moves the tree only on
+success. The result owns its strings, arrays and object members and may outlive
+the document. String failure arms become owning `ctbrowser::json_value` strings.
+No Script value, VM context, collector or second JSON parser is involved. Core's
+existing numeric, Unicode and nesting behavior remains the same as the VM parser.
+
+Replacement or shadowing of JSON, another method, a changed receiver, a reviver,
+reversed or additional calls, observed catch payloads and missing or duplicate
+intrinsic declarations refuse. A JSON result may join with a definite String,
+Boolean, Number, null or optional String. Each alternative becomes an owning
+`ctbrowser::json_value`; optional Strings copy their bytes only in the selected
+present arm, while absence becomes JSON null. Undefined, borrowed and callable
+alternatives still refuse. Under the complete DOM proof, `typeof` observes the
+owning variant and returns an owning String: Boolean, Number and String alternatives
+report their scalar tags; null, arrays and objects all report `"object"`. The tag
+supports existing String equality but never narrows JSON to object-only members.
+JSON truthiness, equality, coercion and property observations remain refused.
+
+With all three initial intrinsics (`Number`, `decodeURIComponent`, `JSON`), the
+complete original M helper and `H.getDataAttribute(element, "config")` compile.
+M retains its Boolean/Number/null prefix, saved nullable guard, original lookup
+order and failure snapshots. H reuses the existing proof for F's original
+regexp/callback replacement when the constant key has no match, then calls the
+public DOM attribute core. Matching or live F keys remain refused. Config's
+`"object" == typeof parsed` observation and the original following spread compile:
+
+```javascript
+const i = H.getDataAttribute(element, "config");
+return {..."object" == typeof i ? i : {}};
+```
+
+The object tag proves only null/array/object alternatives. Null contributes no
+properties; arrays contribute indices without `length`; objects preserve their
+own data keys. Fresh `{}` constructs the explicit object alternative of
+`ctbrowser::json_value`. Ordered spreads overwrite values without moving ordinary
+keys, sort array-index keys first, and retain `__proto__` as an own data key.
+This is distinct from assignment through its inherited setter.
+
+Every mutable target must be a direct fresh local allocation, with all writes in
+its source block before any branch yield, source spread or return can copy it.
+No descendant property access, identity observation, capture or later mutation is
+admitted. These complete-use restrictions make the owning value result equivalent
+to JavaScript's shallow spread without introducing a shared object graph. Parsed
+nested trees retain the public Core representation. Immutable saved cells may be
+read inside structured branches only when their initialization precedes the whole
+branch; conditional and late assignments refuse. Generic JSON/String spreads,
+parsed/branch-result targets and dataset/config dynamic writes remain unsupported.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
 observation. Every operation in both arms is checked, including nested arms;
 values must dominate their uses and frame bookkeeping stays in the entry block.
-Joins carry Numbers, Booleans, definite Strings, or owning `std::optional<std::string>` for
-String/null alternatives. Incompatible alternatives and borrowed or callable
-joins refuse. Strings widen to optionals at the existing region boundary, while
+Joins carry Numbers, Booleans, definite Strings, owning `std::optional<std::string>`
+for String/null alternatives, or owning `ctbrowser::json_value` for JSON and the
+supported primitive alternatives above. Incompatible alternatives and borrowed or
+callable joins refuse.
+Strings widen to optionals at the existing region boundary, while
 source effects remain inside their selected arm. Work uses the existing host
 budget, and nesting reaching 64 branches refuses. **755af20b** applies complete
 arm/operand/yield proof to local helpers before expansion. Simple early returns
 that lift to `scf.if` are accepted when both arms have matching frame state;
 checked frame bookkeeping disappears while cloning, and branch-local immutable
-capture loads bind at each invocation. Callable/cell/object identities and local
-helper calls inside branch arms remain refused. **83da7d42** additionally proves
+capture loads bind at each invocation. Callable/cell identities and local helper
+calls inside branch arms remain refused; fresh data objects have the separate
+complete JSON-spread proof above. **83da7d42** additionally proves
 acyclic completion dispatch: a bounded private rewrite carries exact yields into
 each branch continuation and selects only constant completion tags. Every original
 operation must be visited, and observing an inactive poison value refuses. Source
 effects and frame exits remain in their original paths; the unchanged proof checks
 the resulting branches. Three/four-return helpers and captured String snapshots
 compile; unknown selectors, unvisited arms, invalid frame exits, loops and
-general exceptions remain refused. The bounded URI case above has its own
-complete source proof; original M needs the remaining builtin and ownership proofs.
+general exceptions remain refused. The bounded URI/JSON cases above have their own
+complete source and ownership proofs.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified
@@ -279,7 +382,10 @@ Template concatenation also reuses ordinary owning String addition when both
 operands are proved Strings. Original Bootstrap H `setDataAttribute` and
 `removeDataAttribute` compose with captured F, including a factory-exported entry
 table. Nullable values, objects, Numbers and Booleans do not gain implicit template
-conversion. H's live M normalization and dataset enumeration remain unproved.
+conversion. H's `getDataAttribute` composes with original M for a proved constant
+no-match key such as `"config"`. Matching/live keys and the full dataset filtering
+and iteration in `getDataAttributes` remain unproved; dataset key snapshots have
+the separate complete proof above.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private

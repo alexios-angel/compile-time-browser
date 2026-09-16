@@ -12,23 +12,16 @@
 #include <string>
 #include <string_view>
 
+#include "check.hpp"
+
 namespace {
-
-int failures = 0;
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
-    }
-}
 
 void escapes(std::string_view input, std::string_view expect) {
     const std::string got = ctcompile::json_string(input);
     if (got != expect) {
         std::printf("FAIL <<%.*s>> became <<%s>>, not <<%.*s>>\n", static_cast<int>(input.size()),
                     input.data(), got.c_str(), static_cast<int>(expect.size()), expect.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -126,6 +119,8 @@ int main() {
         }
     }
 
-    if (failures == 0) { std::printf("ok manifest (%zu bytes of document)\n", json.size()); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) {
+        std::printf("ok manifest (%zu bytes of document)\n", json.size());
+    }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

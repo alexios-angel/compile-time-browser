@@ -5,7 +5,6 @@ namespace ctcompile::ctnative::lowering_detail {
 
 void lowering::prepareExceptions(ctjs::FuncOp fn) {
     fn.walk([&](ctjs::TryOp attempt) {
-        needsExceptions = true;
         mlir::OpBuilder before(attempt);
         auto & storage = exceptionSlots[attempt];
         const auto variable = [&](mlir::Type type) -> mlir::Value {

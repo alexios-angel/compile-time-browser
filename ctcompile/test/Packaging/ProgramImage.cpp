@@ -19,6 +19,8 @@
 #include <string_view>
 #include <vector>
 
+#include "check.hpp"
+
 using ctbrowser::script::compiler;
 using ctbrowser::script::image_option;
 using ctbrowser::script::image_source_hash;
@@ -28,15 +30,6 @@ using ctbrowser::script::script_kind;
 using ctbrowser::script::write_image;
 
 namespace {
-
-int failures = 0;
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
-    }
-}
 
 // Deliberately saturated: a field nobody serialized comes back at its default
 // and fails here. Generators, arrows in methods, accessors, a BigInt literal,
@@ -79,20 +72,20 @@ std::vector<std::byte> round_trip(const program & from, std::string_view what,
         std::printf("FAIL %.*s: the writer refused: %.*s\n", static_cast<int>(what.size()),
                     what.data(), static_cast<int>(ctbrowser::script::write_error().size()),
                     ctbrowser::script::write_error().data());
-        ++failures;
+        ++ctbrowser_test_failures;
         return bytes;
     }
     const auto back = load_image(bytes);
     if (!back.ok) {
         std::printf("FAIL %.*s: the loader refused: %s\n", static_cast<int>(what.size()),
                     what.data(), back.error.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
         return bytes;
     }
     if (const auto diff = ctcompile::js::compare(from, back.value)) {
         std::printf("FAIL %.*s: %s: %s\n", static_cast<int>(what.size()), what.data(),
                     diff->where.c_str(), diff->what.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
     return bytes;
 }
@@ -106,7 +99,7 @@ void must_refuse(std::string_view what, std::vector<std::byte> bytes,
     const auto back = load_image(bytes);
     if (back.ok) {
         std::printf("FAIL the loader accepted: %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -122,14 +115,14 @@ void must_refuse_saying(std::string_view what, std::vector<std::byte> bytes,
     const auto back = load_image(bytes);
     if (back.ok) {
         std::printf("FAIL the loader accepted: %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     if (back.error.find(expected) == std::string::npos) {
         std::printf("FAIL %.*s was refused as \"%s\", which does not mention \"%.*s\"\n",
                     static_cast<int>(what.size()), what.data(), back.error.c_str(),
                     static_cast<int>(expected.size()), expected.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -253,13 +246,13 @@ void hash_case(std::string_view what, std::string_view a, std::string_view b,
     if (image_source_hash(a) == image_source_hash(b)) {
         std::printf("FAIL %.*s: the source hash COLLIDES\n", static_cast<int>(what.size()),
                     what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
     if (blinded(a) != blinded(b)) {
         std::printf("FAIL %.*s: %.*s does not collide either, so this case proves nothing\n",
                     static_cast<int>(what.size()), what.data(),
                     static_cast<int>(blinded_name.size()), blinded_name.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -505,7 +498,7 @@ int main() {
                     if (one.bx() >= wide.functions.size()) {
                         std::printf("FAIL an op::closure names function %u of %zu\n", one.bx(),
                                     wide.functions.size());
-                        ++failures;
+                        ++ctbrowser_test_failures;
                         break;
                     }
                 }
@@ -743,14 +736,14 @@ int main() {
                             static_cast<int>(v.what.size()), v.what.data(),
                             static_cast<unsigned long long>(image_source_hash(v.input)),
                             static_cast<unsigned long long>(v.expect));
-                ++failures;
+                ++ctbrowser_test_failures;
             }
         }
     }
 
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("ok program_image (%zu functions, %zu byte image)\n", rich.functions.size(),
                     bytes.size());
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

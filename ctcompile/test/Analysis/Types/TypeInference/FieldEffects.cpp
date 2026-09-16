@@ -16,7 +16,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         if (stale.assigned != assigned || rebuilt.assigned != assigned || stale.exhausted ||
             rebuilt.exhausted) {
             std::printf("FAIL %s: stale/fresh field effect proof disagrees\n", what);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     };
 
@@ -28,7 +28,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         prologue() + body + "  ctjs.return %observed\n}\n", &context);
     if (!unused) {
         std::printf("FAIL unused Map method effect fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
     } else {
         ctcompile::ctjs::GetPropertyOp lookup;
         ctcompile::ctjs::ConstantOp changedKey;
@@ -43,7 +43,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         });
         if (!lookup || !lookup->use_empty() || !lookup->hasAttr("ctnative.map_method")) {
             std::printf("FAIL unused Map method effect fixture lost its marked lookup\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             checkBoth(*unused, "unused standard Map lookup before mutation", true);
             const auto name = changedKey.getValue();
@@ -67,7 +67,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         prologue() + constructorBody + "  ctjs.return %observed\n}\n", &context);
     if (!constructor) {
         std::printf("FAIL stale Map constructor effect fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
     } else {
         ctcompile::ctjs::ConstructOp changed;
         constructor->walk([&](ctcompile::ctjs::ConstructOp made) {
@@ -75,7 +75,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         });
         if (!changed || !changed.getArgs().empty() || !changed->hasAttr("ctnative.map_site")) {
             std::printf("FAIL stale Map constructor effect fixture lost its marked constructor\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             checkBoth(*constructor, "standard Map constructor before live mutation", true);
             const auto callee = changed.getCallee();
@@ -109,7 +109,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         prologue() + environmentBody + "  ctjs.return %observed\n}\n", &context);
     if (!environment) {
         std::printf("FAIL scalar field environment mutation fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     ctcompile::ctjs::ConstantOp changedKey;
@@ -122,7 +122,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
     });
     if (!changedKey || !ordinary) {
         std::printf("FAIL scalar field environment fixture lost its exact mutations\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     checkBoth(*environment, "closed scalar environment before mutation", true);
@@ -180,7 +180,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
             prologue() + r.body + "  ctjs.return %one\n}\n", &context);
         if (!source) {
             std::printf("FAIL %s: unknown-effect fixture did not parse\n", r.what);
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         mlir::Operation * effect = nullptr;
@@ -197,7 +197,7 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         }
         if (!effect || !target || !effect->getNextNode()) {
             std::printf("FAIL %s: unknown-effect fixture lost its source positions\n", r.what);
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         auto * restoreBefore = effect->getNextNode();

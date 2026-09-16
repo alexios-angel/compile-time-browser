@@ -1,0 +1,15 @@
+# THE CAPTURE CENSUS, AS A GATE - part 24 Phase 59 slice 1b.
+#
+# CTJSOps.td and BytecodeImport.cpp state that 219 of bootstrap's 1,023 capture
+# operands are the importer's `undefined` placeholder carrying an
+# `enclosing_indices` entry (1,021 until the ctjs parser of 2026-09-12 read two
+# more; the 219 did not move). tools/check/capture-census.py counts both over
+# the module the importer actually writes; --expect-indexed is a floor AND a
+# ceiling, so a change that stops writing the attribute and one that starts
+# writing it where a real binding sits are both caught. It measures the
+# IMPORTER ONLY - one pass, no lowering, and no --mlir-print-debuginfo, since
+# the census counts operands and attributes and the location suffixes would
+# only lengthen a textual parse.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %{monorepo}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js -o %t.mlir
+# RUN: python3 %{monorepo}/tools/check/capture-census.py --expect-indexed 219 --expect-operands 1023 %t.mlir

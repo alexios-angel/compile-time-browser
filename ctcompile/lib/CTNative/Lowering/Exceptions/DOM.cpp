@@ -1,3 +1,4 @@
+#include "../../../CTJS/Lowering/Globals/RegisterFlow.h"
 #include "Recovery.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
@@ -23,9 +24,39 @@ struct DOMURI {
     llvm::DenseSet<mlir::Operation *> visited;
     llvm::DenseSet<mlir::Block *> reached;
     mlir::Value copiedFrame;
+    llvm::SmallVector<ctjs::LoadGlobalOp> jsonLoads;
+    // JSON.parse is admitted only when the contract binds the initial JSON.
+    bool json = false;
 
-    DOMURI(ctjs::FuncOp function, unsigned maxSteps)
-        : function(function), remaining(maxSteps), dominance(function) {}
+    DOMURI(ctjs::FuncOp function, unsigned maxSteps, bool json)
+        : function(function), remaining(maxSteps), dominance(function), json(json) {}
+
+    ctjs::CheckOp chained(mlir::Operation * operation) const {
+        for (const auto & [call, check] : source.chain) {
+            if (call == operation) { return check; }
+        }
+        return {};
+    }
+    // The original member lookup precedes both calls: JSON.parse is read once
+    // from the initial JSON object before decodeURIComponent evaluates.
+    bool jsonLookup(mlir::Operation & operation) {
+        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+            return json && load.getName() == "JSON";
+        }
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+        if (!json || !read || ctjs::constantKey(read.getKey()) != "parse") { return false; }
+        // Original check edges carry JSON through the complete register vector.
+        // Every incoming definition must still be the same initial load.
+        for (auto load : jsonLoads) {
+            unsigned used = 0;
+            const bool found = ctjs::globals_detail::registerFlowHasOrigin(
+                read.getObject(), load.getResult(), remaining, &used);
+            if (!spend(used)) { return false; }
+            if (found) { return true; }
+            if (!remaining) { return spend(); }
+        }
+        return false;
+    }
 
     bool refuse(llvm::StringRef message) {
         if (reason.empty()) { reason = message.str(); }
@@ -77,6 +108,14 @@ struct DOMURI {
         for (auto * block : source.normal) {
             if (!spend()) { return false; }
             blocks.insert(block);
+            if (!json) { continue; }
+            for (mlir::Operation & operation : *block) {
+                if (!spend()) { return false; }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
+                    load && load.getName() == "JSON") {
+                    jsonLoads.push_back(load);
+                }
+            }
         }
         for (auto * block : source.caught) {
             if (!spend()) { return false; }
@@ -85,7 +124,7 @@ struct DOMURI {
         for (auto * block : blocks) {
             for (mlir::Operation & operation : *block) {
                 if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
-                if (&operation == source.call ||
+                if (chained(&operation) || jsonLookup(operation) ||
                     llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::PopHandlerOp,
                               ctjs::CatchLandOp, ctjs::CheckOp, ctjs::ReturnOp, mlir::cf::BranchOp>(
                         operation)) {
@@ -103,12 +142,11 @@ struct DOMURI {
         return true;
     }
 
-    mlir::Value invoke(mlir::IRMapping & mapping, mlir::OpBuilder & at, unsigned depth) {
-        if (!spend(uint64_t(8) + source.call->getNumOperands()) || !copyCost(mapping)) {
-            return {};
-        }
+    mlir::Value invoke(mlir::Operation * call, ctjs::CheckOp check, mlir::IRMapping & mapping,
+                       mlir::OpBuilder & at, unsigned depth) {
+        if (!spend(uint64_t(8) + call->getNumOperands()) || !copyCost(mapping)) { return {}; }
         const auto type = ctjs::ValueType::get(function.getContext());
-        mlir::OperationState state(source.call->getLoc(), ctjs::InvokeOp::getOperationName());
+        mlir::OperationState state(call->getLoc(), ctjs::InvokeOp::getOperationName());
         state.addTypes(type);
         for (unsigned index = 0; index != 3; ++index) { state.addRegion(); }
         auto invocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
@@ -119,11 +157,11 @@ struct DOMURI {
         auto payload = caught.addArgument(type, invocation.getLoc());
         mlir::IRMapping callMapping(mapping);
         mlir::OpBuilder callAt = mlir::OpBuilder::atBlockEnd(&body);
-        auto * call = callAt.clone(*source.call, callMapping);
+        auto * copied = callAt.clone(*call, callMapping);
         mlir::OperationState exit(invocation.getLoc(), ctjs::InvokeExitOp::getOperationName());
-        exit.addOperands(call->getResult(0));
+        exit.addOperands(copied->getResult(0));
         callAt.create(exit);
-        visited.insert(source.check);
+        visited.insert(check);
 
         // The original full pre-call vector was inspected before any rewrite.
         // Its SSA values dominate both continuations, so the catch can capture
@@ -134,11 +172,10 @@ struct DOMURI {
             if (failed) {
                 path.map(source.landing.getThrown(), payload);
             } else {
-                path.map(source.call->getResult(0), normal.getArgument(0));
+                path.map(call->getResult(0), normal.getArgument(0));
             }
-            auto * continuation = failed ? source.check.getHandler() : source.check.getCont();
-            auto values =
-                failed ? source.check.getHandlerOperands() : source.check.getContOperands();
+            auto * continuation = failed ? check.getHandler() : check.getCont();
+            auto values = failed ? check.getHandlerOperands() : check.getContOperands();
             if (!transfer(continuation, values, path)) { return {}; }
             mlir::OpBuilder nested = mlir::OpBuilder::atBlockEnd(destination);
             auto result = emit(continuation, path, nested, true, depth + 1);
@@ -165,12 +202,12 @@ struct DOMURI {
         for (mlir::Operation & operation : *block) {
             if (!spend() || !operands(operation, mapping)) { return {}; }
             visited.insert(&operation);
-            if (&operation == source.call) {
+            if (auto check = chained(&operation)) {
                 if (!liveFrame) {
                     refuse("DOM URI call is outside its source frame");
                     return {};
                 }
-                return invoke(mapping, at, depth);
+                return invoke(&operation, check, mapping, at, depth);
             }
             if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
                 if (enter != source.frame || liveFrame || copiedFrame) {
@@ -305,12 +342,16 @@ struct DOMURI {
     }
 
     bool run() {
-        source = inspectSingleInvocationRegion(function, remaining);
+        source = inspectSingleInvocationRegion(function, remaining, json ? 2 : 1);
         remaining -= source.steps;
         if (!source.proved()) { return refuse(source.refusal); }
-        if (!llvm::isa<ctjs::CallOp>(source.call) || !proveTailEffects()) {
-            return refuse("DOM URI requires one original ordinary invocation");
+        for (const auto & [call, check] : source.chain) {
+            (void)check;
+            if (!llvm::isa<ctjs::CallOp>(call)) {
+                return refuse("DOM URI requires original ordinary invocations");
+            }
         }
+        if (!proveTailEffects()) { return false; }
         mlir::Region normalized;
         auto & block = normalized.emplaceBlock();
         mlir::IRMapping mapping;
@@ -361,7 +402,7 @@ llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contr
         return llvm::createStringError(llvm::inconvertibleErrorCode(), "DOM URI entry is missing");
     }
     candidate.getContext()->getOrLoadDialect<mlir::scf::SCFDialect>();
-    DOMURI attempt(target, remaining);
+    DOMURI attempt(target, remaining, llvm::is_contained(contract.initialIntrinsics, "JSON"));
     if (!attempt.run()) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), attempt.reason);
     }

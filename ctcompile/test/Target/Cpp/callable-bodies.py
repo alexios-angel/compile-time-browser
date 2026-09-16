@@ -60,11 +60,17 @@ def main():
         assert "increment(" in function_body(cpp, "inline_target"), cpp
         assert "inline_target(" in function_body(cpp, "direct_caller"), cpp
         assert "ctn_bind_inline(" in function_body(cpp, "unmarked_creation"), cpp
+        # Locals are v<N>: the parameters are whatever the signature says, and
+        # each creation is its own local, distinct from the other.
         anonymous = function_body(cpp, "anonymous_names")
-        assert "capture_seed = ctn_lambda]" in anonymous, anonymous
-        assert "capture_seed = ctn_lambda_1]" in anonymous, anonymous
-        assert "std::invoke(ctn_lambda_2, ctn_lambda_1)" in anonymous, anonymous
-        assert "std::invoke(ctn_lambda_3, ctn_lambda)" in anonymous, anonymous
+        seed, offset = re.search(
+            r"\banonymous_names\(int32_t(?: const)? (v\d+), int32_t(?: const)? (v\d+)\) \{", cpp
+        ).groups()
+        assert f"capture_seed = {seed}]" in anonymous, anonymous
+        assert f"capture_seed = {offset}]" in anonymous, anonymous
+        first = re.search(rf"std::invoke\((v\d+), {offset}\)", anonymous).group(1)
+        second = re.search(rf"std::invoke\((v\d+), {seed}\)", anonymous).group(1)
+        assert first != second, anonymous
         assert "ctn_bind_mutable(" in function_body(cpp, "marked_mutable"), cpp
         for name in ["mutable", "unknown"]:
             forwarded = function_body(cpp, f"ctn_bind_{name}")
@@ -75,26 +81,30 @@ def main():
         assert "&literal_target" in function_body(cpp, "literal_pointer"), cpp
         assert function_body(cpp, "address_target") and function_body(cpp, "literal_target"), cpp
         created = function_body(cpp, "creation_sites")
-        assert created.count("[capture_text = text]") == 2, created
-        assert "std::move(text)" not in created and "[&" not in created, created
+        text = re.search(r"\bcreation_sites\(std::string(?: const)? (v\d+)\) \{", cpp).group(1)
+        assert created.count(f"[capture_text = {text}]") == 2, created
+        assert f"std::move({text})" not in created and "[&" not in created, created
         assert "ctn_bind_string(" not in created and "string_target(" not in created, created
         assert created.count("text_length(capture_text)") == 2, created
-        assert "append_marker(text)" in created, created
+        assert f"append_marker({text})" in created, created
         if label == "callables":
-            assert "int32_t const seed = 40;" in created, created
-            assert "int32_t const offset = 2;" in created, created
-            assert "int32_t const after = seed + offset;" in created, created
-            assert re.search(
-                r"auto const second = ctnative::ctn_env_string\s*[({]", created
-            ), created
+            # The function's own statements sit two spaces in; the inlined
+            # lambda bodies carry their own `= 2` four spaces in.
+            seed = re.search(r"^  int32_t const (v\d+) = 40;$", created, re.M).group(1)
+            offset = re.search(r"^  int32_t const (v\d+) = 2;$", created, re.M).group(1)
+            assert re.search(rf"int32_t const v\d+ = {seed} \+ {offset};", created), created
+            second = re.search(
+                r"auto const (v\d+) = ctnative::ctn_env_string\s*[({]", created
+            ).group(1)
             assert (
-                'CTCOMPILE_PIN(second, "callable-creation.js:4:1", ctnative::ctn_env_string const);'
+                f'CTCOMPILE_PIN({second}, "callable-creation.js:4:1", ctnative::ctn_env_string const);'
                 in created
             ), created
         else:
             assert "constexpr " not in created and "CTCOMPILE_PIN" not in created, created
         nested = function_body(cpp, "nested_creation")
-        assert "[capture_text = text]" in nested, nested
+        text = re.search(r"\bnested_creation\(std::string(?: const)? (v\d+)\) \{", cpp).group(1)
+        assert f"[capture_text = {text}]" in nested, nested
         assert "[capture_text = capture_text]" in nested, nested
         assert "ctn_bind_nested(" not in nested and "ctn_bind_string(" not in nested, nested
         recursive = function_body(cpp, "recursive_creation")
@@ -106,7 +116,9 @@ def main():
             assert "ctn_bind_classified(" not in marked, marked
             unmarked = function_body(cpp, prefix + "_unmarked")
             assert "ctn_bind_classified(" in unmarked, unmarked
-        assert "return ctn_lambda;" in function_body(cpp, "deferred_literal_marked"), cpp
+        # The deferred creation is a named local (v<N> now, ctn_lambda before
+        # source-derived names went), returned by name rather than inlined.
+        assert re.search(r"return v\d+;", function_body(cpp, "deferred_literal_marked")), cpp
         source = args.work / f"{label}.cpp"
         source.write_text(cpp + MAIN)
         for index, compiler in enumerate(compilers):

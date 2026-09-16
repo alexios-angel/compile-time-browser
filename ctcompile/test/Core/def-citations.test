@@ -1,0 +1,8 @@
+# DOES THE ABI TABLE POINT AT CODE THAT EXISTS? Six of aot_helpers.def's
+# DELEGATES TO citations ended up past the end of files that Phases 3-5 shrank.
+# source-citations.py says what this can and cannot catch, and FrameEnds.def
+# (nine exit paths, three hooked; the escape self-test static_asserts its
+# shape) gets the same check for the one class of rot a machine can see.
+#
+# RUN: python3 %S/source-citations.py %{monorepo}/ctbrowser/include/ctbrowser/aot/aot_helpers.def %{monorepo}
+# RUN: python3 %S/source-citations.py %S/../../include/ctcompile/JavaScript/FrameEnds.def %{monorepo}

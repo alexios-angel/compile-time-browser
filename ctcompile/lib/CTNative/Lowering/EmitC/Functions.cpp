@@ -4,10 +4,11 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// THE ONE DECLARATIVE STEP OF THIS PASS, AND WHERE IT HAS TO GO.
+// THE ONE PATTERN-DRIVEN STEP OF THIS PASS, AND WHERE IT HAS TO GO.
 //
-// UnaryPlusIsIdentity.pdll replaces `ctjs.unary plus %x` with `%x`. It runs
-// BEFORE retype() because that is the only window in which a PDL driver can
+// UnaryPlusIsIdentity (a RewritePattern in LoweringSupport.cpp; it was PDLL
+// until 2026-09-15) replaces `ctjs.unary plus %x` with `%x`. It runs BEFORE
+// retype() because that is the only window in which a pattern driver can
 // touch this function at all: retype() sets every value's type to its
 // carrier, and a `ctjs.unary` whose operand is f64 does not satisfy its own
 // ODS (`CTJS_ValueType`), so from that line onwards the function does not
@@ -195,9 +196,12 @@ void lowering::lower(ctjs::FuncOp fn) {
             if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
             if (domParameters.contains(arg)) {
-                callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
-                                           at.getStringAttr("ctnative::require_element"),
-                                           mlir::ValueRange{arg});
+                callWithConstValueOperands(
+                    at, made.getLoc(), mlir::TypeRange{},
+                    at.getStringAttr(domDatasetParameters.contains(arg)
+                                         ? "ctnative::require_dataset_element"
+                                         : "ctnative::require_element"),
+                    mlir::ValueRange{arg});
             }
             auto suppression = callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
                                                           at.getStringAttr("static_cast<void>"),

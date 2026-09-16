@@ -60,6 +60,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "check.hpp"
+
 using ctbrowser::script::context;
 using ctbrowser::script::program;
 using ctbrowser::script::value;
@@ -88,6 +90,7 @@ struct row {
     row{#name_, js_, target_, header_, verdict::verdict_, witness_, why_},
 constexpr row map[] = {
 #include <ctcompile/StdLib/StdLibMap.def>
+
 };
 #undef CT_STDLIB_ROW
 
@@ -344,8 +347,6 @@ const row * find_row(std::string_view name) {
     return nullptr;
 }
 
-int failures = 0;
-
 } // namespace
 
 int main() {
@@ -364,7 +365,7 @@ int main() {
         const row * which = find_row(each.row);
         if (which == nullptr) {
             std::printf("FAILED - the probe for %s names no row in StdLibMap.def\n", each.row);
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         ++probed[static_cast<std::size_t>(which - map)];
@@ -377,13 +378,13 @@ int main() {
             std::printf("FAILED - %.*s is %s and no probe is evidence for it\n",
                         static_cast<int>(map[i].name.size()), map[i].name.data(),
                         map[i].verdict == verdict::exact ? "exact" : "divergent");
-            ++failures;
+            ++ctbrowser_test_failures;
         }
         if (!wanted && probed[i] != 0) {
             std::printf("FAILED - %.*s is refused, which means no witness exists, and %u probes "
                         "claim otherwise\n",
                         static_cast<int>(map[i].name.size()), map[i].name.data(), probed[i]);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
         if (probed[i] != 0) { ++rows_with_probes; }
     }
@@ -391,7 +392,7 @@ int main() {
         static_cast<unsigned>(CT_STDLIB_EXACT_COUNT + CT_STDLIB_DIVERGENT_COUNT)) {
         std::printf("FAILED - %u rows carry a probe where the map has %d that must\n",
                     rows_with_probes, CT_STDLIB_EXACT_COUNT + CT_STDLIB_DIVERGENT_COUNT);
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 
     // ---- and now the answers ---------------------------------------------
@@ -414,7 +415,7 @@ int main() {
                         "    javascript  %s\n    interpreter %s\n    %.*s   %s\n",
                         each.row, each.js, vm.c_str(), static_cast<int>(which->target.size()),
                         which->target.data(), cpp.c_str());
-            ++failures;
+            ++ctbrowser_test_failures;
         } else if (which->verdict == verdict::divergent && same) {
             // A WITNESS THAT STOPPED WITNESSING IS A FAILURE, not a quiet
             // success. Either the target was repaired - in which case the row's
@@ -426,7 +427,7 @@ int main() {
                         "stopped separating them.\n",
                         each.row, vm.c_str(), static_cast<int>(which->target.size()),
                         which->target.data());
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             std::printf("%-16s %-9s %-46s %s\n", each.row,
                         which->verdict == verdict::exact ? "agree" : "DIVERGE", each.js,
@@ -449,8 +450,8 @@ int main() {
                     static_cast<int>(each.target.size()), each.target.data());
     }
 
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("\nthe map agrees with the interpreter everywhere it says it does\n");
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

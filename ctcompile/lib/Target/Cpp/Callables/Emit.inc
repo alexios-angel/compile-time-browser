@@ -154,5 +154,6 @@ static FailureOr<bool> printCallableCreation(CppEmitter & emitter, emitc::CallOp
     if (failed(printFunctionBody(nested, *target, target->getBlocks()))) return failure();
     lambda << "}";
     if (wrap) lambda << "}";
+    emitter.continueValueCounter(nested);
     return true;
 }

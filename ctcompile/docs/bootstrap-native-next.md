@@ -1,41 +1,121 @@
 # What native Bootstrap needs next
 
-## Current boundary, 2026-09-15
+## Current boundary: dataset keys, 2026-09-16
 
-**bb7ba402** compiles the saved nullable attribute guard from original M followed
-by one `decodeURIComponent` try/catch. The exact saved value narrows only inside
-its proved String arm; null/empty String, later DOM mutation and the caught
-pre-call snapshot remain intact. Native output uses `std::optional<std::string>`
-and the public Core decoder. DOM Strings measures **745 Node/VM observations /
-eight GCC-Clang binaries / 1,048 source refusals**. **9517ff21** removes an
-unnecessary IR clone from report-free fingerprinting, measured at **15.56% less
-pass time / 4.45% less command time** on Bootstrap IR. This is not a full-program
-transcompilation measurement. [HANDOFF](HANDOFF.md) records current gates.
+**2dbd73b6 / 3d80df96, 2026-09-16 UTC:** owning HTML/SVG dataset key snapshots
+through public DOM, and exact bounded Number dynamic Add induction. Dataset input
+namespaces and original Object.keys are explicit host premises. Five source-double
+observations, eight native binaries/160 observations, lifetime sanitizer/50 refusals;
+new escape oracle 15/15 sites, 6/8 precision, zero violations. **beb5c1db** replaces
+the stale `i += 2` refusal with executed borrow/identity coverage, while String
+strides still refuse (80 native executions / 24 copy controls / 38 refusals).
+The first full run exposed only that stale expectation; its logs are archived and
+the complete suite was rerun.
+Full **288/288 CTests (2307.84s), 254/254 lit (2039.47s), wrapper 0**;
+1,725 frozen hashes verified. Stable formatting passes; pinned baseline unchanged.
+Bootstrap **19/574, 0/43 globals**, Data **7/7**, Button **4/86**, and all 1,123
+historical escape rows are unchanged. No browser/runtime edits or full-bundle gain.
 
-The next bounded compiler slice is **helper/exception composition**. The selected
-entry may call a helper whose body owns the handler; current lowering chooses
-either URI normalization or helper expansion, based on the selected entry's
-handler. Compose the existing private transformations without erasing source
-calls, changing argument/capture/receiver order or bypassing either complete
-proof. Preserve original handler registers, unused catch payload checks, status
-edges and rollback for every insufficient budget. The direct nullable URI entry
-is now a working control for this next helper case.
+**Next:** original dataset `.filter(t => t.startsWith("bs") &&
+!t.startsWith("bsConfig"))` refuses callback escape in all four modes; prove callback
+and intrinsic identities, including default Array species, over the key snapshot.
+Full H still refuses loop completion.
+Live value reads need Undefined/prototype semantics, then M normalization and dynamic
+writes; `__proto__` assignment differs from own-data spread. Inheritance/defaults,
+retained callbacks and driver remain open. Real Chromium/Shell comparison measured
+numeric-key ordering and stale saved-dataset differences. Chromium also includes
+namespaced data attributes that the shared DOM core skips; native retains that
+platform limitation. All three differences are journaled for Claude.
+Details in HANDOFF and `/tmp/ctcompile-dataset-keys/measured.json`.
 
-Original `H.getDataAttribute -> M` then needs explicit JSON/parse identity,
-the original lookup before URI argument evaluation, two sequential failure
-continuations and mixed primitive/JSON ownership. Both failures return the
-original input. **c9c2e37b** already provides the shared public Core JSON parser
-and owning tree; use it rather than implementing another parser or calling Script.
-Its existing numeric/Unicode/depth limits remain those of the VM oracle.
+## Previous boundary: guarded Config spread, 2026-09-16
 
-Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, DOM Data **7/7**,
-Button **4/86**, with 22 Node observations and its separately recorded VM
-inheritance failure. Complete **606/606 CTests (1454.14s) / 177/177 lit
-(962.95s) PASS**. Original M and the isolated nullable URI helper both
-refuse all four provider/policy combinations at the complete helper source-shape
-check. M retains 24 nine-slot blocks and its handler at ^bb12. No full-bundle
-admission gain is claimed. Full H/dataset, initialization/inheritance, retained
-config/callbacks and the application driver remain unfinished.
+**fcd4a0c2 / 344b514d: guarded Config spreads and negated finite guards,
+2026-09-16 UTC.** Recovered the abandoned 09:15:56 drafts before new work.
+Original one/two-spread Config slices now own their JSON results, preserving
+own-key order, overwrites and source failure snapshots. Complete fresh-target and
+no-later-mutation proofs gate copying; no generic JSON member/capture authority.
+Negated inclusive array guards preserve bounded Number, retention and budget proof.
+Focused **4/4 CTests and 4/4 lit**; JSON covers **18 sources / 486 observations /
+eight binaries / 260 refusals**, with lifetime sanitization. New escape oracle:
+**15/15 sites, 6/8 precision, zero violations**; array rows **567/118/100**.
+Full **288/288 CTests (2305.41s), 252/252 lit
+(2029.51s), wrapper 0**, 1,721 frozen hashes verified. Stable formatter
+passes; pinned 26-diagnostic baseline unchanged. Bootstrap **19/574, 0/43 globals**;
+Data **7/7**; Button **4/86**; all **1,123 historical escape rows** unchanged.
+No browser/VM changes or full-bundle gain. Evidence `/tmp/ctcompile-spread-resume/`; details in HANDOFF.
+
+**Exact next native boundary:** original `H.getDataAttributes(e)` refuses in all
+four provider/policy combinations at `DOM helper completion requires acyclic
+structured source`. Its loop, `Object.keys(t.dataset).filter(...)`, dynamic key
+normalization and per-key `M(t.dataset[n])` reads remain intact. Public
+`dom/dataset.hpp` already supplies owning `dataset_entries` and `dataset_value`;
+no browser extraction is needed for those reads. Prove the original iteration and
+Object identity, namespace eligibility, key snapshot versus live reads, missing-key
+semantics and dynamic writes. Its `e["__proto__"] = value` assignment has setter
+semantics, unlike spread's own-data definition. Full Config additionally needs
+`r(e)`, inherited defaults/initialization, retained callbacks and the driver.
+Matching/live F keys remain refused. The independent plan25 continuation is bounded
+Number `i += 1` induction: the shared latch recognizer still requires
+`BinaryStaticOp`, although dynamic Add already uses `boundedNumberSum`.
+
+
+## Previous boundary, 2026-09-16
+
+**c127ba96** compiles Config's original
+`"object" == typeof H.getDataAttribute(element, "config")` and the String tag.
+Original M/H retain their nullable guards, source lookup order and both failure
+snapshots. Emitted C++ observes an owning `ctbrowser::json_value` through standard
+variant alternatives and returns an owning String. Null, arrays and objects all
+report `"object"`; this does not prove object-only member access.
+
+Focused **3/3 proof CTests (3.88s) / 3/3 lit (55.27s) PASS**. JSON covers **15 sources /
+342 Node-VM observations / 8 GCC-Clang binaries / 172 refusals**, both
+providers/policies/layouts and post-document lifetime sanitization.
+Integrated build and **288/288 CTests (2252.04s) / 251/251 lit (1973.33s) PASS**, wrapper
+exit **0**. All **1,720 frozen source/submodule hashes** match the devbox and integrated
+**4c4f8e7b**; documentation changed afterward.
+The gate includes Claude's **28878c6c / 0b1e0911** EmitC audit and its shared plain
+C++ helper header. [The DOM contract](native-dom-entry.md) describes admission;
+[HANDOFF](HANDOFF.md) records integration and evidence.
+
+**Exact next native boundary:** adding Config's following spread
+`{..."object" == typeof parsed ? parsed : {}}` refuses in all four modes at
+`DOM helper branch contains an unproved local identity`. The branch-local empty
+object reaches `DOMSource.cpp` before the final `copy_props` proof. Preparation
+currently rejects the nested constructor; its later object census also assumes
+every top-level constructor is a callable method holder and erases it. Preserve
+proved data constructors through both stages, then require complete entry proof
+of the spread and ownership. Null contributes no entries, arrays contribute indexed
+entries, and the object tag alone grants no member proof. The existing escape
+`CopyProps` certificate covers fresh fixed own-data objects, not runtime JSON keys
+or enumeration order; generic native lowering has no `CopyPropsOp` case. Reuse
+`carrier::json` ownership, explicitly constructing its object alternative for `{}`
+(default `json_value{}` is null), and prove key order and overwrite behavior.
+Spread is shallow: copying or moving an owning tree also needs a proof that surviving
+aliases cannot distinguish it. Preserve numeric/duplicate/`__proto__` keys, array
+indices without `length`, fallback inputs and post-document ownership in source tests.
+Then compose dataset/config merging through the existing public `dom/dataset.hpp`.
+Original M still has **24 nine-register blocks / handler ^bb12** before preparation.
+Matching/live F keys, inherited static/object-valued defaults, initialization,
+retained callbacks and the application driver remain open. Pending browser/runtime
+branches remain Claude-owned and require fresh differential validation when landed.
+
+**42a2bd80** independently extends the existing array induction proof to
+`length > index`, preserving strictness, source evaluation order and all ownership
+checks. Fifteen CFG/SCF cases and an original-source recorder/claims oracle pass;
+the new oracle reports 9/9 observed sites, 3/5 precision and zero violations.
+
+**40f1f3ef** already supplies the hoisted-declaration prerequisite for retiring
+Claude's temporary bare-var write restoration in **7ad52ce2**. Runtime changes
+remain Claude-owned.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
+observations and the unchanged VM inheritance failure. Their measured reports and
+all **1,123 escape rows** are identical to `/tmp/ctcompile-m-gate/`; historical
+escape precision remains **40/172**, with zero violations. No full-bundle gain
+is claimed.
 
 The earlier milestones below are historical context, not alternative next steps.
 

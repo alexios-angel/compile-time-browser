@@ -4,7 +4,6 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 mlir::Value lowering::absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull) {
-    needsNullable = true;
     return ec::ConstantOp::create(
         b, where, carrierType(context, carrier::nullable),
         ec::OpaqueAttr::get(context, isNull ? "ctnative::nullable_scalar::null()"
@@ -25,14 +24,41 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     if (target == ec::OpaqueType::get(context, kDOMOptionalStringType) &&
         value.getType() == carrierType(context, carrier::string)) {
         helper = kDOMOptionalStringType;
+    } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
+               (value.getType() == carrierType(context, carrier::string) ||
+                llvm::isa<mlir::Float64Type>(value.getType()) || value.getType().isInteger(1))) {
+        // Primitive arms keep their exact alternatives in the owning tree.
+        helper = kDOMJSONType;
+    } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
+               value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
+        auto expression =
+            ec::ExpressionOp::create(b, where, target, mlir::ValueRange{value}, false);
+        expression.createBody();
+        mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&expression.getRegion().front());
+        auto optional = expression.getRegion().front().getArgument(0);
+        auto present = ec::MemberCallOpaqueOp::create(
+            inside, where, mlir::TypeRange{inside.getI1Type()}, optional,
+            inside.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto text = ec::MemberCallOpaqueOp::create(
+            inside, where, mlir::TypeRange{carrierType(context, carrier::string)}, optional,
+            inside.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto string = ec::CallOpaqueOp::create(inside, where, mlir::TypeRange{target},
+                                               inside.getStringAttr(kDOMJSONType),
+                                               mlir::ValueRange{text.getResult(0)});
+        auto null = ec::ConstantOp::create(inside, where, target,
+                                           ec::OpaqueAttr::get(context, "ctbrowser::json_value{}"));
+        // The member access is inside the conditional expression's selected arm.
+        auto joined = ec::ConditionalOp::create(inside, where, target, present.getResult(0),
+                                                string.getResult(0), null);
+        ec::YieldOp::create(inside, where, joined);
+        return expression.getResult();
     } else if (isBooleanStringCarrier(target)) {
-        needsBooleanString = true;
         helper = kBooleanStringType;
     } else if (isNullableStringCarrier(target)) {
-        needsNullableString = true;
         helper = "ctnative::to_nullable_string";
     } else if (isNullableStringCarrier(value.getType())) {
-        needsNullableString = true;
         if (target == carrierType(context, carrier::string)) {
             helper = "ctnative::string_text";
         } else if (llvm::isa<mlir::IntegerType>(target)) {
@@ -47,10 +73,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         needsObjectValue = true;
         helper = "ctnative::object_truthy";
     } else if (isNullableCarrier(target)) {
-        needsNullable = true;
         helper = "ctnative::to_nullable";
     } else if (isNullableCarrier(value.getType())) {
-        needsNullable = true;
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
@@ -76,8 +100,6 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
         const auto c = carrierOf(type);
         if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c)) { return {}; }
         needsObjectValue |= c == carrier::objectValue;
-        needsNullable |= c == carrier::nullable;
-        needsNullableString |= c == carrier::nullableString;
         return carrierType(context, c);
     };
     for (ctjs::FuncOp fn : accepted) {
@@ -111,7 +133,8 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
             fn.getBody().walk([&](ctjs::ReturnOp ret) {
                 if (domStringResults.contains(ret.getValue())) {
                     domResult = carrierType(context, carrier::string);
-                    needsString = true;
+                } else if (carrierOf(typeOf(ret.getValue())) == carrier::json) {
+                    domResult = carrierType(context, carrier::json);
                 }
             });
         }
@@ -164,7 +187,8 @@ void lowering::convertBoundaries(ctjs::FuncOp fn) {
             for (unsigned i = 3; i < op->getNumOperands(); ++i) {
                 convert(i, loop->getResult(i - 3).getType());
             }
-        } else if (llvm::isa<mlir::scf::YieldOp>(op)) {
+        } else if (llvm::isa<mlir::scf::YieldOp, ctjs::InvokeYieldOp>(op)) {
+            // A proved invoke's String failure arm widens into its json result.
             mlir::Operation * parent = op->getParentOp();
             for (unsigned i = 0; i < op->getNumOperands(); ++i) {
                 auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);

@@ -1,5 +1,7 @@
 #include "Tests.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::host_contract_seeded_maps;
 
 int main() {
@@ -12,6 +14,8 @@ int main() {
     checkLeafObjectPayloads(context, shared);
     checkNestedMapResults(context, shared);
     checkSeededMapResults(context, shared);
-    if (failures == 0) { std::puts("host contract seeded Map result proofs passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) {
+        std::puts("host contract seeded Map result proofs passed");
+    }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

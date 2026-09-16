@@ -6,6 +6,351 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Dataset key snapshots and dynamic Add induction, 2026-09-16 UTC
+
+Continued **c5682b0f** and the **10:24:07 AGENT-SYNC** next-boundary journal.
+The starting tree was clean; both histories and unmerged branches were checked.
+Earlier interrupted work was already landed or explicitly superseded. Three agents
+were delegated independent work; service limits stopped their drafts before edits.
+Root implemented and gated both concerns. Two agents later reviewed the proofs;
+one found a dominance flaw in a negative test, corrected before the final gate.
+
+**2dbd73b6** compiles `Object.keys(element.dataset)` into an owning
+`std::vector<std::string>` through public `ctbrowser::dataset_entries`. The explicit
+`dataset_parameters` subset contracts HTML/SVG inputs, validated before source
+effects; original Object/keys identity and receiver are mandatory. Attribute order,
+numeric keys, current public DOM namespace/uppercase exclusions, saved snapshots
+after mutation and post-document ownership pass. A saved dataset alias cannot
+cross a DOM mutation before enumeration. No Script/VM/GC, DOMStringMap implementation or new dependency
+is emitted. MathML namespace URIs remain in Shell, outside this contract.
+
+**3d80df96** accepts dynamic Add latches (`i += 1`) under the same exact bounded
+Number start, positive stride, final-update and retention proof as static Add.
+String/BigInt/unknown operands, zero stride and unsupported updates remain refused.
+The new original-source oracle reports **15/15 sites, 6/8 precision, zero violations**;
+the historical fixture remains **40/172 precision**, zero violations. Array suites
+cover **567 dense / 131 induction / 103 structured rows**, with **21,925 / 10,077 /
+5,979** conservative budget cutoffs.
+
+Focused **2/2 proof/runtime CTests (0.33s), 2/2 lit (81.59s) PASS**.
+Dataset: **five Node/VM source-double observations, eight GCC/Clang binaries,
+160 native observations, lifetime sanitizer and 50 refusals**, both providers,
+policies and layouts, HTML and SVG. JSON remains **18 sources / 486 observations /
+eight binaries / 260 refusals**. Every insufficient dataset proof budget withholds
+all evidence. The source-double uses a DOMStringMap-shaped `ownKeys` Proxy.
+
+**Real-browser witness:** Chromium preserves `[bsZ,10,2,01,"",__proto__]` and
+adds `later` when enumerating a saved dataset after mutation. Existing Shell/VM
+sorts that prefix to `[2,10,bsZ,01,"",__proto__]` and omits `later`. Both differences
+were measured with Playwright and the existing ctdrive, and journaled for Claude.
+A further Chromium witness includes namespaced `data-hidden` and `p:data-other`
+attributes in HTML/SVG dataset keys. Existing public DOM `dataset_entries` and
+`dataset_value` skip namespaced attributes; Shell delegates to that same core.
+Native retains this shared platform limitation. Its fixture expectations must move
+with a future core fix; namespace-witness.html/log/json records the discrepancy.
+No browser/runtime source or expectations changed; full WPT/test262 was not rerun.
+
+The first full run found one stale refusal in `array_borrow.py`: bounded `i += 2`
+now passes the same induction proof. **beb5c1db** executes that source with
+Node/VM/native observations and copy controls; a String stride remains refused.
+The repaired borrow suite passes **80 native executions / 24 copy controls /
+38 refusals**, with **1/1 array CTest (0.84s) and 2/2 lit (56.21s)**. Initial
+**287/288 CTests (2325.81s), 253/254 lit (2049.19s), wrapper 8** are archived as
+`full-failed-1.*`; compiler code was unchanged. The complete suite was rerun.
+
+Complete build, **288/288 CTests (2307.84s), 254/254 lit
+(2039.47s) PASS**, wrapper **0**. All **1,725 frozen input hashes**
+match local and devbox sources before this documentation update. Stable formatter
+23.1.1 passes **832 C++ / 104 Python / 105 web**; required pinned formatter retains
+the byte-identical **nine-file / 26-diagnostic** baseline. Evidence:
+`/tmp/ctcompile-dataset-keys/` (logs/exits, manifests, measured.json, generated C++,
+next source probes and browser-witness.json).
+
+Fresh full Bootstrap stays **19/574 native / 0 of 43 globals**, without skipping or
+pruning. DOM Data stays **7/7**; Button **4/86**, with 22 Node observations and its
+known VM inheritance failure. Those reports and all **1,123 historical escape rows**
+are byte-identical to the prior gate. No full-bundle improvement is claimed.
+
+**Exact next native boundary:** the original
+`Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))`
+refuses all four provider/policy modes at **DOM helper callable escapes or its call
+shape is unsupported**. Prove the original `Array.prototype.filter` and
+`String.prototype.startsWith` identities, default Array species, and callback use
+over the owning key snapshot without exporting the callback.
+Full `H.getDataAttributes` still first refuses **DOM helper completion requires
+acyclic structured source**, even with Object and dataset_parameters supplied.
+Then prove original iteration, dynamic key normalization, live dataset value reads
+(Undefined/prototype semantics), M composition and dynamic writes (`__proto__`
+assignment is a setter, unlike spread). Original M retains **24 nine-register
+blocks / handler ^bb12**. Matching/live F keys, r(e), inherited defaults and
+initialization, retained callbacks and the application driver remain open.
+
+Earlier entries below are historical checkpoints.
+
+## Guarded Config spreads and recovered escape work, 2026-09-16 UTC
+
+Resumed the interrupted 09:13/09:15 Config-spread and negated-guard drafts,
+found as six dirty files plus `negated-guard.test` and the abandoned 09:15:56
+AGENT-SYNC loop. Both histories/unmerged branches were checked; September 7 WIP
+was already an ancestor. Three agents recovered regressions, checked proof
+soundness and surveyed the next independent boundaries. No browser/VM source changed.
+
+**fcd4a0c2** compiles original Config's guarded JSON spread, including two ordered
+spreads. Preparation preserves fresh data objects and immutable branch cell reads;
+writer locality is checked before source-order comparisons. The complete DOM proof
+requires object-tagged JSON (null, arrays or objects), fresh direct targets and all
+writes before any copying observation. Members, identity, captures and later/alias
+mutation remain refused. Output owns `ctbrowser::json_value`, explicitly constructs
+empty objects, and uses standard C++ for own-key order and overwrites. Numeric keys,
+duplicate keys, `__proto__`, array indices, fallbacks and post-document lifetime pass.
+Core JSON parser behavior, including nested object storage order, is unchanged.
+
+**344b514d** proves equivalent `!(index >= length)` / `!(length <= index)` array
+guards only for the existing bounded Number induction. Source order, retained
+children, immutable length and complete-budget requirements survive. The new oracle
+observes **15/15 sites, 6/8 precision, zero violations**. Array suites cover
+**567 dense / 118 induction / 100 structured rows**, with **21,925 / 9,090 / 5,843**
+conservative budget cutoffs. The source's negations remain in imported IR.
+
+Focused **4/4 proof/runtime CTests (3.91s) / 4/4 lit (80.02s) PASS**. JSON covers
+**18 sources / 486 Node-VM observations / eight GCC-Clang binaries / 260 refusals**,
+both providers/policies/layouts and lifetime sanitization. Complete build and
+**288/288 CTests (2305.41s) / 252/252 lit (2029.51s) PASS**,
+wrapper **0**; all **1,721 frozen input hashes** match local and devbox sources
+before docs. Stable formatter 23.1.1 passes **831 C++ / 103 Python / 105 web**;
+required pinned formatter retains its unchanged **nine-file / 26-diagnostic** baseline.
+Evidence: `/tmp/ctcompile-spread-resume/` (`measured.json`, full/focused logs and exits,
+manifests, generated C++, source probes). Initial mixed-upload and emitter/preparation
+failures are archived and superseded by the final frozen gate.
+
+Full Bootstrap remains **19/574 native / 0 of 43 globals** without skips/pruning;
+DOM Data **7/7**, Button **4/86** with 22 Node observations and its known VM
+inheritance failure. These reports and all **1,123 historical escape rows** are
+byte-identical to the previous integrated gate; precision remains **40/172**, zero
+violations. No full-bundle gain is claimed. H, Config typeof and Config spread each
+compile in all four modes; original M retains **24 nine-register blocks / handler
+^bb12** before preparation.
+
+**Exact next native boundary:** original `H.getDataAttributes(e)` refuses in all
+four provider/policy combinations at `DOM helper completion requires acyclic
+structured source`. Its loop, `Object.keys(t.dataset).filter(...)`, dynamic key
+normalization and per-key `M(t.dataset[n])` reads remain intact. Public
+`dom/dataset.hpp` already supplies owning `dataset_entries` and `dataset_value`;
+no browser extraction is needed for those reads. Prove the original iteration and
+Object identity, namespace eligibility, key snapshot versus live reads, missing-key
+semantics and dynamic writes. Its `e["__proto__"] = value` assignment has setter
+semantics, unlike spread's own-data definition. Full Config additionally needs
+`r(e)`, inherited defaults/initialization, retained callbacks and the driver.
+Matching/live F keys remain refused. The independent plan25 continuation is bounded
+Number `i += 1` induction: the shared latch recognizer still requires
+`BinaryStaticOp`, although dynamic Add already uses `boundedNumberSum`.
+
+Earlier entries below are historical checkpoints.
+
+## Config JSON tags and reversed array guards, 2026-09-16 UTC
+
+Continued the exact Config `typeof` boundary recorded in **cb002682**, HANDOFF,
+plan00 and the 07:09:54 AGENT-SYNC journal. The starting tree was clean; both
+commit histories and unmerged branches confirmed the interrupted September 7
+and JSON-chain work were already resolved. Three agents split native regressions,
+proof review and an independent escape-analysis increment. Root recovered two
+service-limited test drafts, reviewed them and ran the gates. No browser/VM source
+was changed by this work.
+
+**c127ba96** compiles `"object" == typeof H.getDataAttribute(element, "config")`
+and the String tag itself. The complete DOM proof authorizes the observation;
+generic JsonType and JSON member access remain refused. Emission reads the owning
+`json_value.data` with standard `holds_alternative`, without a variant copy at
+the observation. Null, arrays and objects all report `"object"`. The original M/H
+source, nullable guard, lookup order and both failure snapshots remain intact.
+Two initial emitter gate failures are archived; the final form reuses ordinary
+deferred member emission before the conditional expression, with no printer change.
+
+**42a2bd80** accepts the equivalent strict array guard `length > index` through
+the shared CFG/SCF induction proof. It preserves source operand order, Number,
+start/stride, array stability, retained children and complete-budget requirements.
+Fifteen CFG/SCF cases and one original-source oracle were added. The new oracle
+observes **9/9 sites, 3/5 precision and zero violations**; it keeps the returned
+child escaping and the inclusive guard conservative. Array suites now cover
+**567 dense / 102 induction / 90 structured rows**, with **21,925 / 8,211 / 5,414**
+conservative budget cutoffs respectively.
+
+Focused **3/3 proof CTests (3.88s) / 3/3 lit (55.27s) PASS**. JSON covers **15 sources /
+342 Node-VM observations / 8 GCC-Clang binaries / 172 refusals**, both
+providers/policies/layouts and post-document lifetime sanitization.
+
+Claude integrated **28878c6c / 0b1e0911** during the first full gate, followed by
+the **4c4f8e7b** documentation update. The audit centralizes plain C++ helpers in
+`ctcompile/CTNative/Runtime/ctnative.hpp`, removes source-name provenance and
+requires combined drivers to hoist `CTNATIVE_` defines with includes. JSON `typeof`
+now keys on its carrier; the removed flag controlled include selection.
+Independent integration review found no Script/VM/AOT dependency or ownership
+change. The pre-audit build and 288/288 CTests (253 lit) passed, but the final
+source check detected the concurrent merge and the wrapper exited **1**. Its
+results in `/tmp/ctcompile-config-typeof/` are not a gate for the current tip.
+
+Integrated build and **288/288 CTests (2252.04s) / 251/251 lit (1973.33s) PASS**, wrapper
+exit **0**. All **1,720 frozen source/submodule hashes** match the devbox and integrated
+**4c4f8e7b**; documentation changed afterward.
+Stable formatter 23.1.1 passes **831 C++ / 103 Python / 105 web**. The required
+pinned formatter retains the existing **nine-file / 26-diagnostic** baseline.
+Evidence: `/tmp/ctcompile-config-integrated/` (`gate.log`, `gate.exit`, manifests,
+`full-last-test.log`, `native-json.cpp`, `next-measured.json`, `measured.json`).
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
+observations and the unchanged VM inheritance failure. Their measured reports and
+all **1,123 escape rows** are identical to `/tmp/ctcompile-m-gate/`; historical
+escape precision remains **40/172**, with zero violations. No full-bundle gain
+is claimed.
+
+**Exact next native boundary:** adding Config's following spread
+`{..."object" == typeof parsed ? parsed : {}}` refuses in all four modes at
+`DOM helper branch contains an unproved local identity`. The branch-local empty
+object reaches `DOMSource.cpp` before the final `copy_props` proof. Preparation
+currently rejects the nested constructor; its later object census also assumes
+every top-level constructor is a callable method holder and erases it. Preserve
+proved data constructors through both stages, then require complete entry proof
+of the spread and ownership. Null contributes no entries, arrays contribute indexed
+entries, and the object tag alone grants no member proof. The existing escape
+`CopyProps` certificate covers fresh fixed own-data objects, not runtime JSON keys
+or enumeration order; generic native lowering has no `CopyPropsOp` case. Reuse
+`carrier::json` ownership, explicitly constructing its object alternative for `{}`
+(default `json_value{}` is null), and prove key order and overwrite behavior.
+Spread is shallow: copying or moving an owning tree also needs a proof that surviving
+aliases cannot distinguish it. Preserve numeric/duplicate/`__proto__` keys, array
+indices without `length`, fallback inputs and post-document ownership in source tests.
+Then compose dataset/config merging through the existing public `dom/dataset.hpp`.
+Original M still has **24 nine-register blocks / handler ^bb12** before preparation.
+Matching/live F keys, inherited static/object-valued defaults, initialization,
+retained callbacks and the application driver remain open. Pending browser/runtime
+branches remain Claude-owned and require fresh differential validation when landed.
+The entries below are historical checkpoints.
+
+## Original Bootstrap attribute normalization, 2026-09-16 UTC
+
+Resumed **codex-m-finish's four dirty M-prefix files**, identified through the
+04:52 AGENT-SYNC journal, the abandoned 04:53:42 loop and **e7c14d27**. Started
+at **5e3d3b86**, with the test-registry audit merged. Three agents split tests,
+declaration metadata and review; root recovered service-limited drafts and
+completed integration. The old September 7 and JSON-chain threads were already
+resolved. No other branch or browser/runtime source was changed.
+
+**32032893** compiles the byte-pinned original M and
+`H.getDataAttribute(element, "config")`. Number truthiness reuses the existing
+NaN/zero-aware conversion. Boolean, Number, null and optional-String alternatives
+join the existing owning `ctbrowser::json_value`; optional bytes are copied only
+inside the selected present arm. Original lookup order, nullable guards and both
+failure snapshots survive. Emitted C++ calls public Core/DOM APIs and uses ordinary
+RAII, without Script/VM/GC dependencies. The API is documented in **a1bc655d**.
+F's constant-key no-match proof already existed and is reused; do not reimplement
+that slice.
+
+**40f1f3ef** independently imports classic-script `program::hoisted_vars` into
+fingerprinted module metadata. Shared host validation rejects malformed names and
+absent-binding contradictions. Prefix identity proof recognizes a declaration
+without an Undefined store, while its value, callability and intrinsic authority
+remain unknown. Regressions remove only bare declaration stores to simulate
+Claude's pending runtime correction. This supplies the compiler prerequisite for
+removing the temporary compatibility restoration in **7ad52ce2**; the runtime
+change remains Claude-owned.
+
+Focused **2/2 proof CTests (3.73s) / 4/4 lit cases (33.94s) PASS**. JSON now covers
+**12 sources / 219 Node-VM observations / 8 GCC-Clang binaries / 144 refusals**,
+both providers/policies/layouts and a post-document lifetime sanitizer. Independent
+reviews of the proof and generated C++ found no material issue. Complete
+**375-step build / 288/288 CTests (2339.80s) / 252/252 lit
+(2056.50s) PASS**, wrapper exit **0**. All **1,742 frozen source/submodule
+inputs** match the devbox and
+implementation commit **32032893**; documentation changed afterward. Formatting
+23.1.1 passes **844 C++ / 105 Python / 106 web**; the required pinned formatter
+retains the existing **nine-file / 26-diagnostic** baseline. The audit moved many
+CTest registrations into lit, so totals differ from the previous 605/177 registry.
+Evidence: `/tmp/ctcompile-m-gate/`, including full logs/exits, manifests,
+`native-json.cpp`, `next-measured.json` and the final measured report.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
+observations and the unchanged VM inheritance failure. All **1,123 escape rows**
+match the current pinned baseline. Reports are unchanged except for Button's test
+path after the lit migration. No full-bundle gain is claimed.
+
+**Exact next native boundary:** original `_mergeConfigObj` performs
+`"object" == typeof H.getDataAttribute(element, "config")`. The attribute call now
+compiles to one native function in all four provider/policy combinations; adding
+that JSON-result `typeof` still refuses at **`ctjs.unary`**. Original M's imported
+**24 nine-register blocks / handler ^bb12** remain intact before preparation.
+Prove that JSON observation next: the object tag includes null and arrays, so it
+must not narrow to object members alone. Then come JSON object spreads and
+dataset/config merging; public `dom/dataset.hpp` already
+provides the dataset core. Matching/live F keys remain refused separately.
+Inherited static/object-valued defaults, initialization, retained callbacks and the
+application driver remain unfinished. Claude's pending runtime/audit branches
+remain his to land and require fresh differential validation when integrated.
+The entries below are historical checkpoints.
+
+## Native JSON chain recovered and gated, 2026-09-16 UTC
+
+Resumed **efe8daa8**, identified in the previous handoff and AGENT-SYNC, by
+replaying its draft over the audit landings in `codex-json-resume-20260916`.
+**53b9f68a** and **0a7c0302** finish that thread; the old `claude-json-chain`
+draft is superseded. Three agents split recovery review, native regressions and
+the Bootstrap boundary survey. September 7 WIP is already an ancestor.
+
+**53b9f68a** recovers bounded checked-call chains in source order. JSON member
+origins follow complete register flow; both failure paths retain the exact saved
+input. Zero-call limits, every insufficient budget and failed proofs publish no
+partial evidence or source mutation. **0a7c0302** adds explicit original JSON/parse
+identity, reuses the existing `JsonType` only behind a complete DOM proof, and
+emits public `ctbrowser::parse_json` with owning `ctbrowser::json_value` results.
+Success moves from `std::expected`; String failure arms own their bytes. No Script,
+VM, collector, generic JSON fallback or second parser is emitted. **47d6e275**
+documents the contract in [native DOM entries](native-dom-entry.md).
+
+Focused gates passed **2/2 proof tests (3.92s)** and **3/3 DOM drivers (178.24s)**.
+JSON covers **7 sources / 14 Node-VM observations / 8 GCC-Clang binaries / 72
+refusals**, both providers, policies and layouts, plus a lifetime sanitizer after
+document destruction. DOM Strings now reports **775 Node-VM observations / 8
+binaries / 1,060 source refusals**, with its separate provenance/budget checks.
+Complete **310-step build / 605/605 CTests (1706.00s) / 177/177 lit (1305.06s)
+PASS**; full wrapper exit **0**. All **1,561 frozen input files / 113 submodule
+files** match the devbox and implementation commit **0a7c0302**; API and checkpoint
+docs were updated afterward. Evidence: `/tmp/ctcompile-json-resume/`, including
+`full.log`, `full.exit`, `full-last-test.log`, manifests and measured JSON reports.
+
+**a244a2f9** fixes remote sync with `rsync --checksum --no-times`: changed older
+worktree contents invalidate Ninja, while identical files keep their timestamps.
+Standalone rsync/shell checks pass. The first candidate run mixed stale objects
+and is invalid; the fresh compile's const-MLIR-handle test error was fixed before
+the green gates. The integrated **09341902** baseline also passed **604/604 CTests
+(1503.00s)**. Formatting with 23.1.1 passes **844 C++ / 95 Python / 106 web**;
+the required pinned formatter retains the same nine-file/26-diagnostic baseline.
+
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, without
+skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node lifecycle
+observations and the unchanged VM inheritance failure. Those reports are identical
+to the preceding measurements. All **1,123 escape rows match the current pinned
+baseline**; only the already-landed audit program hash differs from the older
+pre-format evidence. No browser/runtime or escape-analysis source changed.
+
+**Exact next native boundary:** original `H.getDataAttribute -> M` now reaches the
+complete typed DOM proof and refuses at **`ctjs.unary`**, under all four
+provider/policy combinations. Original M retains **24 nine-register blocks** and
+its handler at **^bb12**. Start with its Number truthiness (`!0`/`!1`), then prove
+the full Boolean/Number/null prefix and mixed JSON result ownership, including the
+saved optional-String guard. F's original regexp/callback key conversion and H's
+attribute-key construction follow. Full dataset/config, initialization/inheritance,
+retained callbacks and the application driver remain open; no full-bundle gain
+is claimed.
+
+**Independent next compiler task:** Claude's 2026-09-16T03:53 journal records a
+temporary restoration of top-level `var x;` writes in **7ad52ce2** to satisfy
+`bootstrap-host-prefix.py`'s wrapper proof. Import and prove the existing
+`program::hoisted_vars` declaration metadata instead of depending on those writes;
+keep runtime semantics as the oracle. The CTJS importer currently carries no such
+metadata. Claude's pending runtime/audit branches remain his to land. Earlier
+sections below are historical checkpoints.
+
 ## Helper/URI composition, the JSON chain draft and the audit, 2026-09-15 UTC
 
 **7a337ee2** composes helper expansion with URI normalization: every
@@ -20,23 +365,8 @@ Focused gate: `ctcompile_native_dom_strings` PASS 133.48 s; the full gate on
 that tip was 605/606 with `ctcompile_native_dom_entry` at its 300 s cap under
 `-j8` (223 s in the previous green run) — both DOM driver caps are 900 s now.
 
-**Next native boundary, drafted but UNBUILT:** branch `claude-json-chain`
-(efe8daa8, worktree `~/Downloads/claude/wt/claude-json-chain`) carries original
-M's protected body `JSON.parse(decodeURIComponent(t))` as a two-call chain:
-`inspectSingleInvocationRegion(fn, steps, maxCalls)` accepts checked calls on one
-success path, `normalizeDOMURI` emits nested invokes when the contract binds the
-initial `JSON`, `DOMEntryAnalysis` gains `jsonIntrinsic`/`jsonParse`/`json` kinds
-with `HostDOMMethod::jsonParse`, the lattice's existing `JsonType` gets
-`carrier::json = ctbrowser::json_value` (String arms convert with
-`ctbrowser::json_value(text)`), the emitter lowers the parse invoke to
-`ctbrowser::parse_json` with `std::expected` moves, and
-`test/CTNative/Browser/native_dom_json.py` (5 sources / 6 refusals, Node + VM
-oracles) is registered as `ctcompile_native_dom_json`. It predates the audit
-merges below and must be rebased (EmitC/Types.cpp, ScalarConversions.cpp,
-LowerToEmitC.cpp and DOMEntry.cpp all moved) before its first devbox build.
-After it: M's remaining prefix (`'true'`/`'false'`/`Number(t).toString()`/
-`''`/`'null'` arms joining into `json_value`), then H.getDataAttribute's
-`data-bs-${F(key)}` template.
+The **efe8daa8** JSON draft at this checkpoint has been recovered and gated as
+**53b9f68a / 0a7c0302**, described above. Do not resume the old draft again.
 
 **Operator-directed ponytail audit** (this session, all by locked merge, each
 branch gated in its own devbox dir): `41d0185a` tools/cmake (mingw builders in
@@ -57,14 +387,20 @@ preference deleted). `24eeb654`/`7662b763`/`3c50bc67` format the test
 JS/HTML/CSS and repin what that moved (`escape-claims/Initialize.cmake` hashes,
 `expected.txt` program row; `Exports/boundary.js` stays byte-exact under
 js-beautify ignore markers because 27 pinned hashes derive from it).
-Two audit branches were still in their final gates at hand-over —
-`audit-ctcompile-emit` (nine string-literal helper headers → compiled
-`include/ctcompile/CTNative/Runtime/ctnative.hpp`; source-name provenance for
-emitted identifiers removed, locals are `v<N>`) and `audit-ctcompile-tests`
-(24 `cmake -P` checks and 7 driver registrations → lit, ~320 CTests → ~250 lit
-tests; `check()` copies → `ctbrowser/test/support/check.hpp`) — see AGENT-SYNC
-for who lands them. The integrated tip had NOT had one combined full gate yet;
-run `tools/remote-build.sh` first. Sanitizer findings outside the audit, not
+The last two audit branches landed on 2026-09-16: **5e3d3b86**
+`audit-ctcompile-tests` (24 `cmake -P` checks, the eight Browser drivers and
+`native_owned_global_maps` are lit tests; `ctcompile_` CTest registrations
+424 → 106, lit 177 → 251, `ctcompile_lit` cap 5400 s; test C++ uses
+`ctbrowser/test/support/check.hpp`; escape-claims hash pins live in
+`escape-claims/check.py`) and **28878c6c** `audit-ctcompile-emit` (nine
+string-literal helper headers → the compiled
+`include/ctcompile/CTNative/Runtime/ctnative.hpp` behind `#define
+CTNATIVE_ORDERED_MAPS`/`CTNATIVE_DOM`, with `style/engine.hpp` included only by
+programs that take a style parameter; every `needs*` flag is gone — **0b1e0911**
+removed the `needsDOMJSON` guard c127ba96 had just added; source-name
+provenance deleted, locals are `v<N>`, captures `capture_<i>`/`argument_<i>`).
+Each passed 288/288 (251 lit) in its own devbox dir; the merged tip compiles
+(304 steps) and awaits its combined ctest. The integrated **09341902** baseline has since passed the combined gate above. Sanitizer findings outside the audit, not
 fixed: `Script/builtins/collections/keyed.cpp:593` UAF,
 `Style/css/calc/units.cpp:36` UAF, `Core/number_format.cpp:194` UB cast.
 

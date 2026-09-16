@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import find_compilers
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers
 
 spec = importlib.util.spec_from_file_location(
     "representation", Path(__file__).with_name("map-representation.py")
@@ -145,7 +145,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
             ]
         )
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
-        assert "struct nullable_string" in cpp
+        assert '#include "ctcompile/CTNative/Runtime/ctnative.hpp"' in cpp
         assert carrier in cpp
         assert "ctbrowser::script" not in cpp
         if symbol == "mixedNullableRead":
@@ -158,6 +158,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
                 [
                     compiler,
                     "-std=c++23",
+                    RUNTIME_INCLUDE,
                     "-O2",
                     "-Wall",
                     "-Wextra",
@@ -244,7 +245,7 @@ def main():
             key_carrier = "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
             assert f"ctnative::number_map<{key_carrier}>" in cpp
             assert f"ctnative::map_storage<{key_carrier}, ctnative::object_value>" in cpp
-            assert ("struct map_storage" in cpp) == ordered
+            assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered
             out = args.work / f"{name}-{label}.cpp"
             out.write_text(number_object_lifetime(cpp, ordered))
             for index, compiler in enumerate(compilers):
@@ -253,6 +254,7 @@ def main():
                     [
                         compiler,
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -273,6 +275,7 @@ def main():
                     [
                         compilers[1],
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O1",
                         "-g",
                         "-fno-omit-frame-pointer",

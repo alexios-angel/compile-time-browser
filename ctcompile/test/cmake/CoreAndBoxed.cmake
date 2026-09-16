@@ -34,13 +34,6 @@ target_link_libraries(ctcompile-test-importer-coverage PRIVATE ctcompile::suppor
 ctcompile_target(ctcompile-test-importer-coverage)
 add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
 
-if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-importer-source-names CTJS/Import/SourceNames.cpp)
-  target_link_libraries(ctcompile-test-importer-source-names PRIVATE ctcompile::ctjs-import)
-  ctcompile_target(ctcompile-test-importer-source-names)
-  add_test(NAME ctcompile_importer_source_names COMMAND ctcompile-test-importer-source-names)
-endif()
-
 # THE STUB HAS TO RUN. Phase -1's gate says ctcompile builds an executable, and
 # an executable that builds and then dies on a missing symbol has passed a
 # compile and failed the gate. This runs it.
@@ -65,14 +58,8 @@ set_tests_properties(ctcompile_help PROPERTIES
 add_test(NAME ctcompile_rejects_nonsense COMMAND ctcompile-tool --not-an-option)
 set_tests_properties(ctcompile_rejects_nonsense PROPERTIES WILL_FAIL TRUE)
 
-# DOES THE ABI TABLE POINT AT CODE THAT EXISTS? Six of its DELEGATES TO
-# citations ended up past the end of files that Phases 3-5 shrank. See the
-# header of source-citations.cmake for what this can and cannot catch.
-add_test(NAME ctcompile_def_citations
-         COMMAND ${CMAKE_COMMAND}
-                 -DDEF=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include/ctbrowser/aot/aot_helpers.def
-                 -DROOT=${CTBROWSER_MONOREPO_ROOT}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/source-citations.cmake)
+# DOES THE ABI TABLE POINT AT CODE THAT EXISTS? Core/def-citations.test, over
+# Core/source-citations.py, which says what it can and cannot catch.
 
 # THE COMPARATOR THAT ACCEPTS PHASE 16A, and the negative cases that stop it
 # from accepting anything. A comparator too lenient does not fail to catch a
@@ -119,37 +106,15 @@ target_link_libraries(ctcompile-test-app_bundle PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-app_bundle)
 # THE BINARY DIRECTORY IS AN ARGUMENT because two of its cases cannot be run
 # here: they are bundles the LAUNCHER has to refuse, and the guard that refuses
-# them lives behind a window. It writes them out and roundtrip.cmake below
+# them lives behind a window. It writes them out and Packaging/roundtrip.test
 # feeds them to the real ctrun.
 add_test(NAME ctcompile_app_bundle
          COMMAND ctcompile-test-app_bundle ${CMAKE_CURRENT_BINARY_DIR})
 
-# AND THE WHOLE THING, THE WAY SOMEONE USES IT: a directory in, an executable
-# out, and that executable started from somewhere else entirely. It is the only
-# test here that runs the compiler, the launcher and the engine together, and
-# the only one that could catch them disagreeing.
-#
-# A pass means more than "exit 0" - `run_bundle` sets require_script_images, so
-# the packaged application refuses to start if any of its scripts had to be
-# compiled from source. See the header of roundtrip.cmake.
-#
-# NOT GUARDED WITH if(TARGET). ctcompile is configured after ctbrowser's tools,
-# so the launcher is always there - and a guard would turn "the launcher stopped
-# being built" into a test that quietly stops existing, which is the failure
-# this file is least able to notice.
-add_test(NAME ctcompile_package
-         COMMAND ${CMAKE_COMMAND}
-                 -DCTCOMPILE=$<TARGET_FILE:ctcompile-tool>
-                 -DLAUNCHER=$<TARGET_FILE:ctbrowser-tool-ctrun>
-                 -DAPP=${CMAKE_CURRENT_SOURCE_DIR}/Packaging/app
-                 -DOUT=${CMAKE_CURRENT_BINARY_DIR}/packaged-fixture
-                 -DREFUSALS=${CMAKE_CURRENT_BINARY_DIR}
-                 -DBROWSE=$<TARGET_FILE:ctbrowser-tool-ctbrowse>
-                 -DFONTS=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/resources/fonts
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Packaging/roundtrip.cmake)
-# ORDER, not a mere preference: the two bundles the launcher must refuse are
-# written by the test above.
-set_tests_properties(ctcompile_package PROPERTIES DEPENDS ctcompile_app_bundle)
+# AND THE WHOLE THING, THE WAY SOMEONE USES IT - a directory in, an executable
+# out, started from somewhere else entirely, and the four refusals - is
+# Packaging/roundtrip.test, which runs ctcompile-test-app_bundle itself for the
+# two bundles the launcher must refuse.
 
 # mlir-translate is LLVM's, and it is part of the backend rather than a
 # convenience: it is the stage that turns EmitC into C++.

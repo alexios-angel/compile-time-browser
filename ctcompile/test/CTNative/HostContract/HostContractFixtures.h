@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <string>
 
+#include "check.hpp"
+
 namespace ctcompile::test::host_contract {
 
 namespace ctjs = ctcompile::ctjs;
@@ -80,14 +82,6 @@ module {
   }
 }
 )MLIR";
-
-inline int failures = 0;
-
-inline void check(bool value, const char * message) {
-    if (value) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 
 inline HostContract contractFor(mlir::ModuleOp module) {
     HostContract contract;

@@ -36,7 +36,7 @@
 // MIXED: error: 'ctnative.cpp_try' op requires each protected throw to match the homogeneous catch payload
 
 //--- valid.mlir
-module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.numeric_alias} {
+module attributes {ctnative.const_bindings, ctnative.numeric_alias} {
   emitc.include <"string">
   emitc.include <"vector">
   emitc.include <"new">

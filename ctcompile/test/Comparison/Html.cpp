@@ -15,21 +15,14 @@
 #include <cstdio>
 #include <string_view>
 
+#include "check.hpp"
+
 using ctbrowser::atom_table;
 using ctbrowser::document;
 using ctbrowser::node_id;
 using ctbrowser::node_ns;
 
 namespace {
-
-int failures = 0;
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
-    }
-}
 
 // Each document gets its OWN atom table, which is the point: ids are handed out
 // in first-interning order at run time, so two tables spell the same tag with
@@ -68,7 +61,7 @@ void must_notice(std::string_view what, void (*mutate)(document &)) {
     if (!diff) {
         std::printf("FAIL the comparator did not notice: %.*s\n", static_cast<int>(what.size()),
                     what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -83,7 +76,7 @@ int main() {
         if (diff) {
             std::printf("FAIL two parses of the same source differ at %s: %s\n",
                         diff->where.c_str(), diff->what.c_str());
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
@@ -187,6 +180,6 @@ int main() {
         check(diff.has_value(), "one node attached in two places, with every child count matching");
     }
 
-    if (failures == 0) { std::printf("ok html_comparator\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("ok html_comparator\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

@@ -149,6 +149,36 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const std::string reversed =
+        replace(original, "compare lt %index, %length", "compare gt %length, %index");
+    rows.push_back({.what = "structured reversed strict guards preserve reordered aliases",
+                    .body = reversed,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured reversed strict guards preserve zero-trip starts",
+                    .body = replace(replace(reversed, "  ctjs.append %y to %a\n", ""),
+                                    "%index = %zero", "%index = %one"),
+                    .arrays = "a:[x]",
+                    .exit = "zero -> {}"});
+    const std::string negated =
+        replace(replace(original, "compare lt %index, %length", "compare ge %index, %length"),
+                "    %continue = ctjs.truthy %less",
+                "    %negated = ctjs.unary not %less\n    %continue = ctjs.truthy %negated");
+    const std::string negatedReversed =
+        replace(negated, "compare ge %index, %length", "compare le %length, %index");
+    for (const std::string & source : {negated, negatedReversed}) {
+        rows.push_back({.what = "structured negated guards preserve reordered aliases",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured negated guards preserve zero-trip starts",
+                        .body = replace(replace(source, "  ctjs.append %y to %a\n", ""),
+                                        "%index = %zero", "%index = %one"),
+                        .arrays = "a:[x]",
+                        .exit = "zero -> {}"});
+    }
     const std::string computedStart = prefix + "  %start = ctjs.unary plus %zero\n" +
                                       replace(loop, "%index = %zero", "%index = %start") +
                                       "  ctjs.return %result\n";
@@ -417,14 +447,46 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(computedUnit, makeUnit, ""), "    %step =", makeUnit + "    %step ="));
     reject("a structured inclusive guard does not prove an own index",
            replace(original, "compare lt", "compare le"));
+    reject("a structured reversed inclusive guard does not prove an own index",
+           replace(reversed, "compare gt", "compare ge"));
+    reject("a negated structured greater-than guard remains inclusive",
+           replace(negated, "compare ge", "compare gt"));
+    reject("a negated structured reversed less-than guard remains inclusive",
+           replace(negatedReversed, "compare le", "compare lt"));
+    reject("a structured negated guard cannot use a dynamic bound",
+           replace(negated, "compare ge %index, %length", "compare ge %index, %p"));
+    reject("a structured negated guard cannot invert a NaN comparison",
+           replace(negated, "#ctjs.number<0>", "#ctjs.number<9221120237041090560>"));
+    reject("a structured negated guard cannot hide a bound change",
+           replace(negated, "    %read =",
+                   "    %name = ctjs.constant #ctjs.string<\"length\">\n"
+                   "    ctjs.set_property %base[%name], %zero\n    %read ="));
+    reject("a structured typeof guard is not logical negation",
+           replace(negated, "unary not %less", "unary typeof %less"));
+    reject("a structured greater-than guard still requires length on the left",
+           replace(reversed, "compare gt %length, %index", "compare gt %index, %length"));
+    reject("a structured reversed strict guard cannot hide a bound change",
+           replace(reversed, "    %read =",
+                   "    %name = ctjs.constant #ctjs.string<\"length\">\n"
+                   "    ctjs.set_property %base[%name], %zero\n    %read ="));
     reject("a structured guard must read the current array length",
            replace(original, "compare lt %index, %length", "compare lt %index, %one"));
     reject("a structured loop cannot start with an unknown Number",
            replace(original, "%index = %zero", "%index = %p"));
     reject("a structured zero step does not prove termination",
            replace(original, "binary_static add %i, %one", "binary_static add %i, %zero"));
-    reject("a structured dynamic step does not borrow static Number induction",
-           replace(original, "binary_static add %i, %one", "binary add %i, %one"));
+    const auto dynamic = replace(original, "binary_static add %i, %one", "binary add %i, %one");
+    rows.push_back({.what = "structured dynamic Add retains the exact returned child",
+                    .body = dynamic,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject("structured dynamic Add cannot concatenate a String stride",
+           replace(dynamic, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"));
+    reject("structured dynamic Add cannot borrow an unknown stride",
+           replace(dynamic, "binary add %i, %one", "binary add %i, %p"));
+    reject("structured dynamic Add still excludes zero strides",
+           replace(dynamic, "binary add %i, %one", "binary add %i, %zero"));
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
     reject("a structured array backedge must preserve its certified formal",
@@ -472,6 +534,12 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    rows.push_back(
+        {.what = "reversed strict guards also support direct structured array aliases",
+         .body = replace(direct, "compare lt %index, %length", "compare gt %length, %index"),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
     rows.push_back({.what = "direct-array structured induction preserves a nonzero start",
                     .body = replace(direct, "%index = %zero", "%index = %one"),
                     .arrays = "a:[x,y]",

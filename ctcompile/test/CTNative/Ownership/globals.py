@@ -9,13 +9,14 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import find_compilers
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers
 from CTNative.Exports import boundary
 
 host = boundary.host
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
 FLAGS = [
     "-std=c++23",
+    RUNTIME_INCLUDE,
     "-O2",
     "-Wall",
     "-Wextra",

@@ -7,6 +7,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -43,16 +44,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         refusal = "DOM entry source contains unimported functions";
         return;
     }
+    llvm::StringSet<> intrinsicNames;
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 2 ||
-        llvm::any_of(
-            contract.initialIntrinsics,
-            [](const auto & name) { return name != "Number" && name != "decodeURIComponent"; }) ||
-        (contract.initialIntrinsics.size() == 2 &&
-         contract.initialIntrinsics[0] == contract.initialIntrinsics[1]) ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 4 ||
+        llvm::any_of(contract.initialIntrinsics,
+                     [&](const auto & name) {
+                         return (name != "Object" && name != "Number" &&
+                                 name != "decodeURIComponent" && name != "JSON") ||
+                                !intrinsicNames.insert(name).second;
+                     }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
         refusal = "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
@@ -112,11 +115,27 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         provedElements.push_back(targetBlock.getArgument(index + ctjs::implicit_arguments));
     }
 
+    std::vector<mlir::BlockArgument> provedDatasetElements;
+    for (unsigned index : contract.datasetParameters) {
+        if (!spend()) { return; }
+        if (index >= provedElements.size() ||
+            (!provedDatasetElements.empty() &&
+             index + ctjs::implicit_arguments <= provedDatasetElements.back().getArgNumber())) {
+            refusal = "DOM dataset_parameters must be an ordered element subset";
+            return;
+        }
+        provedDatasetElements.push_back(provedElements[index]);
+    }
+
     enum class Kind {
         implicit,
         element,
         nullableElement,
         tokenList,
+        dataset,
+        objectIntrinsic,
+        objectKeys,
+        stringVector,
         toggle,
         attribute,
         getAttribute,
@@ -129,6 +148,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         closest,
         numberIntrinsic,
         uriIntrinsic,
+        jsonIntrinsic,
+        jsonParse,
+        json,
+        jsonAggregate, // The typeof object alternatives: null, array or object.
         numberToString,
         number,
         string,
@@ -136,11 +159,14 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         null,
         undefined
     };
-    std::vector<ctjs::GetPropertyOp> provedTokens;
-    std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics;
+    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets;
+    std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
+        provedJSONIntrinsics, provedObjectIntrinsics;
     std::vector<ctjs::InvokeOp> provedInvocations;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
+    std::vector<ctjs::CreateObjectOp> provedJSONObjects;
+    std::vector<ctjs::CopyPropsOp> provedJSONCopies;
     std::vector<mlir::Value> provedOptionalStrings;
     std::vector<HostDOMStringRefinement> provedRefinements;
     std::vector<mlir::Value> provedStrings;
@@ -153,6 +179,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
     const bool suppliedNumber = llvm::is_contained(contract.initialIntrinsics, "Number");
     const bool suppliedURI = llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent");
+    const bool suppliedObject = llvm::is_contained(contract.initialIntrinsics, "Object");
+    const bool suppliedJSON = llvm::is_contained(contract.initialIntrinsics, "JSON");
     if (declaration) {
         for (ctjs::StoreGlobalOp store :
              declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
@@ -166,6 +194,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     {
         auto & block = target.getBody().front();
         llvm::DenseMap<mlir::Value, Kind> values;
+        unsigned mutationEpoch = 0;
+        llvm::DenseMap<mlir::Value, unsigned> datasetEpochs;
         struct Predicate {
             mlir::Value optional;
             bool stringOnTrue;
@@ -234,21 +264,26 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         if (!spend()) { return false; }
                         const bool first = &region == &branch.getThenRegion();
                         mlir::Value refined;
+                        Kind previous = Kind::implicit;
                         const auto restore = llvm::make_scope_exit([&] {
                             if (!refined) { return; }
                             // Look up by key: recursive visits can rehash both maps.
-                            values[refined] = Kind::optionalString;
+                            values[refined] = previous;
                             activeRefinements.erase(refined);
                         });
                         if (auto predicate = predicates.find(branch.getCondition());
                             predicate != predicates.end() &&
-                            hasKind(predicate->second.optional, Kind::optionalString)) {
+                            (hasKind(predicate->second.optional, Kind::optionalString) ||
+                             hasKind(predicate->second.optional, Kind::json))) {
                             // Reserve save/restore and the new evidence before visiting.
                             if (!spend() || !spend() || !spend()) { return false; }
                             refined = predicate->second.optional;
+                            previous = values[refined];
                             const bool present = first == predicate->second.stringOnTrue;
-                            values[refined] = present ? Kind::string : Kind::null;
-                            if (present) {
+                            values[refined] = previous == Kind::json
+                                                  ? (present ? Kind::jsonAggregate : Kind::json)
+                                                  : (present ? Kind::string : Kind::null);
+                            if (present && previous == Kind::optionalString) {
                                 activeRefinements[refined] = provedRefinements.size();
                                 provedRefinements.push_back({&region.front(), refined, {}});
                             }
@@ -270,7 +305,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             const Kind kind = found->second;
                             if (kind != Kind::boolean && kind != Kind::number &&
                                 kind != Kind::string && kind != Kind::null &&
-                                kind != Kind::optionalString && kind != Kind::undefined) {
+                                kind != Kind::optionalString && kind != Kind::undefined &&
+                                kind != Kind::json && kind != Kind::jsonAggregate) {
                                 refusal =
                                     "DOM entry branch cannot carry a borrowed or callable value";
                                 return false;
@@ -280,6 +316,21 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 continue;
                             }
                             if (joined[index] == kind) { continue; }
+                            const auto json = [](Kind k) {
+                                return k == Kind::json || k == Kind::jsonAggregate;
+                            };
+                            const auto jsonScalar = [](Kind k) {
+                                return k == Kind::string || k == Kind::boolean ||
+                                       k == Kind::number || k == Kind::null ||
+                                       k == Kind::optionalString;
+                            };
+                            // Primitive arms become owning JSON alternatives. Undefined
+                            // and borrowed browser values have no JSON representation.
+                            if ((json(joined[index]) && (json(kind) || jsonScalar(kind))) ||
+                                (jsonScalar(joined[index]) && json(kind))) {
+                                joined[index] = Kind::json;
+                                continue;
+                            }
                             const auto stringOrNull = [](Kind k) {
                                 return k == Kind::string || k == Kind::null ||
                                        k == Kind::optionalString;
@@ -307,7 +358,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     continue;
                 }
                 if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
-                    if (invocation->getParentOfType<ctjs::InvokeOp>() ||
+                    // A nested invoke may only continue the enclosing success.
+                    auto parent = invocation->getParentOfType<ctjs::InvokeOp>();
+                    if ((parent && (!llvm::is_contained(provedInvocations, parent) ||
+                                    invocation->getParentRegion() != &parent.getNormalBody())) ||
                         invocation.getNumResults() != 1 || !invocation.getBody().hasOneBlock() ||
                         !invocation.getNormalBody().hasOneBlock() ||
                         !invocation.getUnwindBody().hasOneBlock()) {
@@ -330,25 +384,35 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         !llvm::isa<ctjs::ValueType>(invocation.getResult(0).getType()) ||
                         !llvm::isa<ctjs::ValueType>(call.getResult().getType()) ||
                         !caught.getArgument(0).use_empty() ||
-                        !hasKind(call.getCallee(), Kind::uriIntrinsic)) {
+                        (!hasKind(call.getCallee(), Kind::uriIntrinsic) &&
+                         !hasKind(call.getCallee(), Kind::jsonParse))) {
                         refusal = "DOM URI invocation requires exact call and unused catch payload";
                         return false;
                     }
+                    const bool parses = hasKind(call.getCallee(), Kind::jsonParse);
+                    // Reserve before nested invokes look this parent up.
+                    provedInvocations.push_back(invocation);
                     if (!self(self, called, depth + 1, frame)) { return false; }
-                    values[normal.getArgument(0)] = Kind::string;
+                    values[normal.getArgument(0)] = parses ? Kind::json : Kind::string;
+                    Kind result = Kind::string;
                     for (mlir::Block * continuation : {&normal, &caught}) {
                         if (!self(self, *continuation, depth + 1, frame)) { return false; }
                         auto yielded =
                             llvm::dyn_cast<ctjs::InvokeYieldOp>(continuation->getTerminator());
-                        if (!yielded || yielded.getValues().size() != 1 ||
-                            !hasKind(yielded.getValues().front(), Kind::string)) {
+                        const bool string = yielded && yielded.getValues().size() == 1 &&
+                                            hasKind(yielded.getValues().front(), Kind::string);
+                        const bool tree = yielded && yielded.getValues().size() == 1 &&
+                                          hasKind(yielded.getValues().front(), Kind::json);
+                        if (!string && !tree) {
                             refusal = "DOM URI continuations must both return owning Strings";
                             return false;
                         }
+                        if (tree) { result = Kind::json; }
                     }
-                    values[invocation.getResult(0)] = Kind::string;
-                    provedInvocations.push_back(invocation);
-                    provedStrings.push_back(invocation.getResult(0));
+                    values[invocation.getResult(0)] = result;
+                    if (result == Kind::string) {
+                        provedStrings.push_back(invocation.getResult(0));
+                    }
                     continue;
                 }
                 if (llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(operation)) {
@@ -387,6 +451,23 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     }
                     continue;
                 }
+                if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
+                    values[object.getResult()] = Kind::jsonAggregate;
+                    provedJSONObjects.push_back(object);
+                    continue;
+                }
+                if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(operation)) {
+                    auto target = copy.getTarget().getDefiningOp<ctjs::CreateObjectOp>();
+                    if (!target || target->getBlock() != copy->getBlock() ||
+                        copy.getTarget() == copy.getSource() ||
+                        !hasKind(copy.getSource(), Kind::jsonAggregate)) {
+                        refusal = "DOM JSON spread requires a fresh local target and an "
+                                  "object-tagged JSON source";
+                        return false;
+                    }
+                    provedJSONCopies.push_back(copy);
+                    continue;
+                }
                 if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
                     if (depth || entered) {
                         refusal = "DOM entry has more than one shadow frame";
@@ -417,7 +498,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                          !hasKind(result.getValue(), Kind::boolean) &&
                          !hasKind(result.getValue(), Kind::number) &&
                          !hasKind(result.getValue(), Kind::string) &&
-                         !hasKind(result.getValue(), Kind::optionalString))) {
+                         !hasKind(result.getValue(), Kind::optionalString) &&
+                         !hasKind(result.getValue(), Kind::json) &&
+                         !hasKind(result.getValue(), Kind::jsonAggregate) &&
+                         !hasKind(result.getValue(), Kind::stringVector))) {
                         refusal =
                             "DOM entry return must be a scalar with no borrowed browser handle";
                         return false;
@@ -442,9 +526,36 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedNumberIntrinsics.push_back(load);
                         continue;
                     }
+                    if (suppliedObject && load.getName() == "Object") {
+                        values[load.getResult()] = Kind::objectIntrinsic;
+                        provedObjectIntrinsics.push_back(load);
+                        continue;
+                    }
+                    if (suppliedJSON && load.getName() == "JSON") {
+                        values[load.getResult()] = Kind::jsonIntrinsic;
+                        provedJSONIntrinsics.push_back(load);
+                        continue;
+                    }
                 }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     const auto key = ctjs::constantKey(read.getKey());
+                    if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
+                        llvm::is_contained(provedDatasetElements, read.getObject())) {
+                        values[read.getResult()] = Kind::dataset;
+                        datasetEpochs[read.getResult()] = mutationEpoch;
+                        provedDatasets.push_back(read);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::objectIntrinsic) && key == "keys") {
+                        values[read.getResult()] = Kind::objectKeys;
+                        provedMethods.emplace_back(read, HostDOMMethod::datasetKeys);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::jsonIntrinsic) && key == "parse") {
+                        values[read.getResult()] = Kind::jsonParse;
+                        provedMethods.emplace_back(read, HostDOMMethod::jsonParse);
+                        continue;
+                    }
                     if (suppliedNumber && hasKind(read.getObject(), Kind::number) &&
                         key == "toString") {
                         values[read.getResult()] = Kind::numberToString;
@@ -513,6 +624,20 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         values[invoke.getResult()] = Kind::string;
                         continue;
                     }
+                    if (hasKind(invoke.getCallee(), Kind::jsonParse)) {
+                        auto parent = llvm::dyn_cast<ctjs::InvokeOp>(invoke->getParentOp());
+                        auto method = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!parent || invoke->getParentRegion() != &parent.getBody() || !method ||
+                            method.getObject() != invoke.getReceiver() || arguments.size() != 1 ||
+                            !hasKind(arguments[0], Kind::string)) {
+                            refusal = "JSON.parse call requires the initial JSON receiver, one "
+                                      "String and preserved failure continuation";
+                            return false;
+                        }
+                        provedCalls.push_back({invoke, HostDOMMethod::jsonParse, arguments[0]});
+                        values[invoke.getResult()] = Kind::json;
+                        continue;
+                    }
                     if (hasKind(invoke.getCallee(), Kind::numberIntrinsic)) {
                         if (!hasKind(invoke.getReceiver(), Kind::undefined) ||
                             arguments.size() != 1 ||
@@ -531,6 +656,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     if (!method || method.getObject() != invoke.getReceiver()) {
                         refusal = "DOM call does not preserve its proved method receiver";
                         return false;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::objectKeys) && arguments.size() == 1 &&
+                        hasKind(arguments[0], Kind::dataset)) {
+                        if (datasetEpochs.lookup(arguments[0]) != mutationEpoch) {
+                            refusal = "DOM dataset enumeration crosses a source mutation";
+                            return false;
+                        }
+                        auto dataset = arguments[0].getDefiningOp<ctjs::GetPropertyOp>();
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::datasetKeys, dataset.getObject()});
+                        values[invoke.getResult()] = Kind::stringVector;
+                        continue;
                     }
                     if (hasKind(invoke.getCallee(), Kind::numberToString) && arguments.empty()) {
                         provedCalls.push_back(
@@ -559,6 +696,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                          (arguments.size() == 2 && (hasKind(arguments[1], Kind::boolean) ||
                                                     hasKind(arguments[1], Kind::undefined)))) &&
                         hasKind(arguments[0], Kind::string)) {
+                        ++mutationEpoch;
                         const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
                         auto element = classes ? invoke.getReceiver()
                                                      .getDefiningOp<ctjs::GetPropertyOp>()
@@ -599,6 +737,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 return false;
                             }
                         }
+                        ++mutationEpoch;
                         provedCalls.push_back(
                             {invoke,
                              sets ? HostDOMMethod::setAttribute : HostDOMMethod::removeAttribute,
@@ -622,10 +761,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
                     (hasKind(unary.getOperand(), Kind::optionalString) ||
                      hasKind(unary.getOperand(), Kind::string) ||
-                     hasKind(unary.getOperand(), Kind::null))) {
+                     hasKind(unary.getOperand(), Kind::null) ||
+                     hasKind(unary.getOperand(), Kind::json) ||
+                     hasKind(unary.getOperand(), Kind::jsonAggregate))) {
                     if (!spend()) { return false; }
                     values[unary.getResult()] = Kind::string;
-                    if (hasKind(unary.getOperand(), Kind::optionalString)) {
+                    // JSON's object tag includes null and arrays, never member
+                    // authority. It permits only their own-data spread.
+                    if (hasKind(unary.getOperand(), Kind::optionalString) ||
+                        hasKind(unary.getOperand(), Kind::json)) {
                         typeQueries[unary.getResult()] = unary.getOperand();
                     }
                     continue;
@@ -654,9 +798,13 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             if (!spend()) { return false; }
                             const auto found = typeQueries.find(query);
                             const auto name = ctjs::constantKey(literal);
-                            if (found != typeQueries.end() &&
-                                (name == "string" || name == "object")) {
-                                predicates[compare.getResult()] = {found->second, name == "string"};
+                            if (found != typeQueries.end()) {
+                                const bool json = hasKind(found->second, Kind::json);
+                                if ((!json && (name == "string" || name == "object")) ||
+                                    (json && name == "object")) {
+                                    predicates[compare.getResult()] = {found->second,
+                                                                       json || name == "string"};
+                                }
                             }
                         }
                         values[compare.getResult()] = Kind::boolean;
@@ -665,6 +813,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
                     truth && (hasKind(truth.getValue(), Kind::boolean) ||
+                              hasKind(truth.getValue(), Kind::number) ||
                               hasKind(truth.getValue(), Kind::string) ||
                               hasKind(truth.getValue(), Kind::optionalString) ||
                               hasKind(truth.getValue(), Kind::null))) {
@@ -679,6 +828,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                     unary && unary.getKind() == ctjs::UnaryKind::Not &&
                     (hasKind(unary.getOperand(), Kind::boolean) ||
+                     hasKind(unary.getOperand(), Kind::number) ||
                      hasKind(unary.getOperand(), Kind::optionalString) ||
                      hasKind(unary.getOperand(), Kind::string) ||
                      hasKind(unary.getOperand(), Kind::null))) {
@@ -705,6 +855,26 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         };
         if (!visit(visit, block, 0, {})) { return; }
     }
+    // Joins and source spreads copy trees by value. A mutable target must
+    // finish every write before any such observation can snapshot it. No
+    // member/identity observation or descendant mutation passed the census,
+    // so the final single owning result cannot distinguish shallow aliases.
+    for (ctjs::CopyPropsOp copy : provedJSONCopies) {
+        for (mlir::OpOperand & use : copy.getTarget().getUses()) {
+            if (!spend()) { return; }
+            auto * user = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+            if (llvm::isa<ctjs::CopyPropsOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
+                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+                continue;
+            }
+            if (!dominance.properlyDominates(copy, user)) {
+                refusal = "DOM JSON target is observed before its final spread write";
+                return;
+            }
+        }
+    }
     optionalStrings = std::move(provedOptionalStrings);
     refinements = std::move(provedRefinements);
     strings = std::move(provedStrings);
@@ -712,11 +882,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     checkedWrapper = declaration;
     elements = std::move(provedElements);
     tokenLists = std::move(provedTokens);
+    datasets = std::move(provedDatasets);
+    datasetElements = std::move(provedDatasetElements);
+    objectIntrinsics = std::move(provedObjectIntrinsics);
     numberIntrinsics = std::move(provedNumberIntrinsics);
     uriIntrinsics = std::move(provedURIIntrinsics);
+    jsonIntrinsics = std::move(provedJSONIntrinsics);
     invocations = std::move(provedInvocations);
     methods = std::move(provedMethods);
     calls = std::move(provedCalls);
+    jsonObjects = std::move(provedJSONObjects);
+    jsonCopies = std::move(provedJSONCopies);
 }
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {
@@ -734,12 +910,22 @@ bool DOMEntryAnalysis::isTokenList(mlir::Value value) const {
                         [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
 }
 
+bool DOMEntryAnalysis::isDataset(mlir::Value value) const {
+    return llvm::any_of(datasets,
+                        [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
+}
+
+bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
+    return llvm::is_contained(datasetElements, value);
+}
+
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
     return llvm::is_contained(numberIntrinsics, load);
 }
 
 bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
-    return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load);
+    return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load) ||
+           llvm::is_contained(jsonIntrinsics, load) || llvm::is_contained(objectIntrinsics, load);
 }
 
 bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {
@@ -758,6 +944,14 @@ const HostDOMCall * DOMEntryAnalysis::call(ctjs::CallOp operation) const {
         if (call.operation == operation) { return &call; }
     }
     return nullptr;
+}
+
+bool DOMEntryAnalysis::jsonObject(ctjs::CreateObjectOp operation) const {
+    return llvm::is_contained(jsonObjects, operation);
+}
+
+bool DOMEntryAnalysis::jsonCopy(ctjs::CopyPropsOp operation) const {
+    return llvm::is_contained(jsonCopies, operation);
 }
 
 } // namespace ctcompile::ctnative

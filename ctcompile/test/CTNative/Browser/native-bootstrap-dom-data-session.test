@@ -1,0 +1,2 @@
+# Gate the pinned Bootstrap Data program with three document-owned input keys.
+# RUN: python3 %S/native_bootstrap_dom_data_session.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference

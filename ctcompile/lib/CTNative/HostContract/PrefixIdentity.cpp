@@ -6,6 +6,10 @@
 namespace ctcompile::ctnative::host_detail {
 
 bool prefixAnalysis::initializedGlobal(ctjs::LoadGlobalOp load) {
+    // With the contract's ordinary initial global bindings, source declarations
+    // close the lookup's identity boundary, not its value. A bare `var`
+    // preserves any preexisting global and need not emit a store.
+    if (declaredGlobals.contains(load.getName())) { return true; }
     if (llvm::is_contained(contract.initialIntrinsics, load.getName()) ||
         llvm::is_contained(contract.realmOwnDataProperties, load.getName()) ||
         (contract.realmGlobalThis && load.getName() == "globalThis")) {

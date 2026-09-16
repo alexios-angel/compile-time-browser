@@ -7,6 +7,13 @@ namespace ctcompile::ctnative::lowering_detail {
 
 bool admission::function(ctjs::FuncOp fn) {
     mlir::Block & entry = fn.getBody().front();
+    const auto unsupported = [&](mlir::Value value) {
+        const auto storage = carrierOf(typeOf(value));
+        // JsonType also describes widened lattice facts. Only the complete DOM
+        // proof establishes a parsed tree with owning, identity-free contents.
+        return storage == carrier::none ||
+               (storage == carrier::json && (!domEntry || domEntry->entry() != fn));
+    };
     // THE RECEIVER IS A PARAMETER when the lift said so, and %arg0 is then
     // the one implicit argument that HAS a carrier: the generated class of
     // the shape every call site passes. The lift proved every use of it is
@@ -86,7 +93,7 @@ bool admission::function(ctjs::FuncOp fn) {
             return refuse(which +
                           " needs a supported concrete signature, not a Bool/String temporary");
         }
-        if (carrierOf(t) == carrier::none) {
+        if (unsupported(entry.getArgument(i))) {
             // Distinguish an unknown parameter from a proved type this
             // tier cannot represent, such as an optional string. The
             // latter needs a carrier even when every caller is known.
@@ -130,7 +137,8 @@ bool admission::function(ctjs::FuncOp fn) {
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
             read && domEntry &&
-            (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {
+            (domEntry->method(read) || domEntry->isTokenList(read.getResult()) ||
+             domEntry->isDataset(read.getResult()))) {
             return;
         }
         if (o->getName().getStringRef() == "ub.poison") { return; }
@@ -145,7 +153,7 @@ bool admission::function(ctjs::FuncOp fn) {
         // EVERY JAVASCRIPT VALUE THIS OPERATION DEFINES OR CARRIES has a
         // carrier - including scf results and region arguments.
         for (mlir::Value r : o->getResults()) {
-            if (llvm::isa<ctjs::ValueType>(r.getType()) && carrierOf(typeOf(r)) == carrier::none) {
+            if (llvm::isa<ctjs::ValueType>(r.getType()) && unsupported(r)) {
                 ok = refuse(("a value of type " + printed(typeOf(r)) + " from `" +
                              o->getName().getStringRef() + "`")
                                 .str());
@@ -161,8 +169,7 @@ bool admission::function(ctjs::FuncOp fn) {
                         a.use_empty()) {
                         continue; // No native value represents the unobserved semantic payload.
                     }
-                    if (llvm::isa<ctjs::ValueType>(a.getType()) &&
-                        carrierOf(typeOf(a)) == carrier::none) {
+                    if (llvm::isa<ctjs::ValueType>(a.getType()) && unsupported(a)) {
                         ok = refuse("a loop-carried value of type " + printed(typeOf(a)));
                         return;
                     }

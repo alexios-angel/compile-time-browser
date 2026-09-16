@@ -49,9 +49,6 @@ from .driver_map_sizes import (
     check_one_size_observations,
     check_zero_size_observations,
 )
-from .driver_object_keys import (
-    check_object_argument_observations,
-)
 from .driver_object_maps import (
     PRIMITIVE_ABSENCE_CARRIERS,
     check_comparison_identity_observations,
@@ -635,7 +632,6 @@ def check_source_observations(args, node, reference, positives):
     check_delete_size_observations(args, node, reference)
     check_join_size_observations(args, node, reference)
     check_mutation_size_observations(args, node, reference)
-    check_object_argument_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))

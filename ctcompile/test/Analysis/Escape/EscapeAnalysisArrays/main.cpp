@@ -6,6 +6,8 @@
 #include "PrimitiveBinary.h"
 #include "Structured.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::escape;
 using namespace ctcompile::test::escape::arrays;
 
@@ -58,8 +60,8 @@ int main() {
     checkArrayConditionals(context);
     checkContainerSwitches(context);
 
-    if (failures != 0) {
-        std::printf("\n%d check(s) failed\n", failures);
+    if (ctbrowser_test_failures != 0) {
+        std::printf("\n%d check(s) failed\n", ctbrowser_test_failures);
         return 1;
     }
     return 0;

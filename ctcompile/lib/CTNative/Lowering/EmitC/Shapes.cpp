@@ -165,8 +165,6 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
             fields.emplace_back(entry.getKey().str(), entry.getValue());
         }
     }
-    needsNullable |=
-        llvm::any_of(fields, [](const auto & field) { return isNullableCarrier(field.second); });
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             const auto key = accessKey.find(user);
@@ -189,6 +187,7 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     std::vector<std::set<std::string>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+            if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
             if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) {
                 return;
             }
@@ -319,7 +318,6 @@ std::string lowering::provenanceOf(const family & f) const {
 // still lowered: a constant can also be used as ordinary string data.
 // A key used only by erased accesses is removed by the final sweep.
 void lowering::collectVector(mlir::Value array) {
-    needsVector = true;
     for (mlir::Operation * user : array.getUsers()) {
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
             if (ctjs::constantKey(set.getKey()) == "length") {

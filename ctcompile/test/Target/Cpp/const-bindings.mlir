@@ -10,12 +10,12 @@
 // RUN: FileCheck %s --check-prefix=ISOLATION < %t/isolation.cpp
 // RUN: python3 %S/const-bindings.py --fixtures %t --work %t.executables
 
-// Explicit types, deduction, source names and exact pins share qualification.
-// BINDINGS: double scalar(double const catalog);
-// BINDINGS: double scalar(double const catalog) {
-// BINDINGS-NEXT: auto const answer = catalog + 2.0;
-// BINDINGS-NEXT: CTCOMPILE_PIN(answer, "const-bindings.js:2:1", double const);
-// BINDINGS-NEXT: return answer;
+// Explicit types, deduction and exact pins share qualification.
+// BINDINGS: double scalar(double const [[CATALOG:v[0-9]+]]);
+// BINDINGS: double scalar(double const [[CATALOG]]) {
+// BINDINGS-NEXT: auto const [[ANSWER:v[0-9]+]] = [[CATALOG]] + 2.0;
+// BINDINGS-NEXT: CTCOMPILE_PIN([[ANSWER]], "const-bindings.js:2:1", double const);
+// BINDINGS-NEXT: return [[ANSWER]];
 // BINDINGS: int32_t safe_call(int32_t const [[READ_ARG:[A-Za-z_][A-Za-z_0-9]*]]) {
 // BINDINGS-NEXT: int32_t const [[READ_RESULT:[A-Za-z_][A-Za-z_0-9]*]] = read_only([[READ_ARG]]);
 // BINDINGS-NEXT: return [[READ_RESULT]];
@@ -79,17 +79,17 @@
 
 // Hoisted locals are declared without initialization and assigned later.
 // Parameters still initialize on entry and can remain const.
-// HOISTED: double scalar(double const catalog) {
-// HOISTED-NEXT: double answer;
-// HOISTED-NEXT: answer = catalog + 2.0;
-// HOISTED-NEXT: return answer;
+// HOISTED: double scalar(double const [[CATALOG:v[0-9]+]]) {
+// HOISTED-NEXT: double [[ANSWER:v[0-9]+]];
+// HOISTED-NEXT: [[ANSWER]] = [[CATALOG]] + 2.0;
+// HOISTED-NEXT: return [[ANSWER]];
 // HOISTED: int32_t pointer_mutation(int32_t* const [[POINTER:[A-Za-z_][A-Za-z_0-9]*]]) {
 // HOISTED-NEXT: int32_t* [[POINTER_COPY:[A-Za-z_][A-Za-z_0-9]*]];
 // HOISTED: [[POINTER_COPY]] = (int32_t*) [[POINTER]];
 // HOISTED: int32_t loop_total(size_t const [[LIMIT:[A-Za-z_][A-Za-z_0-9]*]]) {
 // HOISTED: for (size_t [[ITERATOR:[A-Za-z_][A-Za-z_0-9]*]] = 0; [[ITERATOR]] < [[LIMIT]]; [[ITERATOR]] += 1) {
 
-// The nearest module must carry the UnitAttr. Names/deduced policy markers,
+// The nearest module must carry the UnitAttr. Deduced policy markers,
 // a parent's marker, and a non-unit attribute do not enable const bindings.
 // ISOLATION: int32_t ordinary_before(int32_t v1) {
 // ISOLATION-NEXT: return v1;
@@ -101,15 +101,15 @@
 // ISOLATION-NEXT: return v1;
 // ISOLATION: int32_t wrong_marker(int32_t v1) {
 // ISOLATION-NEXT: return v1;
-// ISOLATION: int32_t names_only(int32_t catalog) {
-// ISOLATION-NEXT: return catalog;
+// ISOLATION: int32_t names_only(int32_t v1) {
+// ISOLATION-NEXT: return v1;
 // ISOLATION: int32_t ordinary_after(int32_t v1) {
 // ISOLATION-NEXT: return v1;
 
 //--- bindings.mlir
-#catalog = loc(fused<{ctnative.source_name = "catalog"}>["const-bindings.js":1:1])
-#answer = loc(fused<{ctnative.source_name = "answer"}>["const-bindings.js":2:1])
-module attributes {ctnative.const_bindings, ctnative.readable_names} {
+#catalog = loc("const-bindings.js":1:1)
+#answer = loc("const-bindings.js":2:1)
+module attributes {ctnative.const_bindings} {
   emitc.include "const-fixture.h"
   emitc.declare_func @scalar
   emitc.func @scalar(%input: f64 loc(#catalog)) -> f64 {
@@ -239,8 +239,8 @@ module {
       emitc.return %value : i32
     }
   }
-  module @named attributes {ctnative.readable_names} {
-    emitc.func @names_only(%value: i32 loc(fused<{ctnative.source_name = "catalog"}>["const-bindings.js":20:1])) -> i32 {
+  module @named attributes {} {
+    emitc.func @names_only(%value: i32 loc("const-bindings.js":20:1)) -> i32 {
       emitc.return %value : i32
     }
   }

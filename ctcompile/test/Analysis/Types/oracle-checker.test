@@ -1,0 +1,2 @@
+# PHASE 54B - the type oracle's two checkers compared (check-oracle.py).
+# RUN: python3 %S/check-oracle.py --exe ctcompile-test-type-oracle --script %{monorepo}/tools/check/type-oracle.py --recording %t.rec

@@ -1,13 +1,12 @@
 # === PHASE 62½-D: the native gate ===
 #
-# THE TEST THAT DEFINES "NATIVE" - part 24 §1.2 and Phase 62½-D. One block,
-# appended, per part 23's Appendix A.3. Everything it needs is its own file:
-# native-fixture.js (the program), native-fixture.emitc.mlir (the hand-written
-# EmitC module the Phase 62½-C lowering is expected to produce for it - the
-# specification of that lowering's output shape), NativeReference.cpp (the
-# interpreter's answers, printed the same way), NativeVmLinked.cpp (the
-# negative control for the symbol check) and check-native-unit.cmake (the
-# gate: emit, compile standalone, nm, run, compare).
+# THE TEST THAT DEFINES "NATIVE" - part 24 §1.2 and Phase 62½-D - is a lit
+# test since 2026-09-15: CTNative/Checks/compilation-unit.py (emit, compile
+# standalone, nm, run, compare), driven by the RUN lines in each fixture's
+# .test or hand-written .emitc.mlir. What CMake still owns is what needs the
+# BUILD: the interpreter reference, the two VM-linked negative controls, the
+# nm and the clean-compile toolchains lit is told about (Lit.cmake), and the
+# pipeline modules every fixture .test reads out of the build tree.
 #
 # THE REFERENCE NEEDS NO MLIR. It is the interpreter's opinion of a JavaScript
 # file, built wherever the type oracle is: the answer side of the gate should
@@ -16,6 +15,16 @@
 add_executable(ctcompile-test-native-reference Runtime/Reference/Interpreter.cpp)
 target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-native-reference)
+
+# THE RUNTIME HEADER, COMPILED BY THE BUILD. include/ctcompile/CTNative/Runtime/
+# ctnative.hpp is what every native program includes, and nothing else here
+# compiles it under -Werror - a header only generated programs compile is the
+# string literal it replaced. Needs no MLIR, like the reference above; needs
+# ctbrowser for its DOM section.
+add_executable(ctcompile-test-native-runtime Runtime/NativeRuntime.cpp)
+target_link_libraries(ctcompile-test-native-runtime PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-native-runtime)
+add_test(NAME ctcompile_native_runtime COMMAND ctcompile-test-native-runtime)
 
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
   # nm, the one CMake found beside the compiler at configure time (llvm-nm for
@@ -26,99 +35,51 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     find_program(_native_nm NAMES llvm-nm nm)
   endif()
   if(NOT _native_nm)
-    # FATAL, not WARNING: `ctcompile_add_native_unit` guards ~20 tests, and a
-    # skip here unregisters all of them while ctest still reports green - a
-    # suite green on nothing, which is what the comment above forbids. The
-    # Phase 63 Step 7 block below treats a missing compiler the same way.
-    message(FATAL_ERROR "ctcompile: no nm found - the Phase 62½-D native gate cannot be registered, and it IS the definition of native")
-  else()
-    # ONE FUNCTION, so a second fixture is one line: the module, the program,
-    # and any of the driver's negative-proof switches after them.
-    function(ctcompile_add_native_unit name module js)
-      add_test(NAME ctcompile_native_unit_${name}
-               COMMAND ${CMAKE_COMMAND}
-                       -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-                       -DMODULE=${module}
-                       -DJS=${js}
-                       -DCXX=${CMAKE_CXX_COMPILER}
-                       -DNM=${_native_nm}
-                       -DREFERENCE=$<TARGET_FILE:ctcompile-test-native-reference>
-                       -DVM_LINKED=$<TARGET_FILE:ctcompile-test-type-oracle>
-                       -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                       -DNAME=${name}
-                       ${ARGN}
-                       -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/compilation-unit.cmake)
-    endfunction()
-
-    set(_native_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
-    set(_native_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js")
-
-    # THE GATE.
-    ctcompile_add_native_unit(fixture "${_native_module}" "${_native_js}")
-
-    # NEGATIVE PROOF 1: one global off by one must FAIL, naming the global. The
-    # driver runs itself and passes only if the child failed with that name in
-    # its output - see EXPECT_FAILURE in the driver for why not WILL_FAIL.
-    ctcompile_add_native_unit(fixture_off_by_one "${_native_module}" "${_native_js}"
-      -DMUTATE=fib20 "-DEXPECT_FAILURE=global 'fib20' differs")
-
-    # NEGATIVE PROOF 2: the same C++, plus one object that reaches the
-    # interpreter, linked against the engine - must FAIL the symbol check. The
-    # C++ is emitted at build time by the same emitter the gate uses, so this
-    # binary is the fixture's program in every respect but the one that matters.
-    set(_native_cpp "${CMAKE_CURRENT_BINARY_DIR}/native-fixture.generated.cpp")
-    add_custom_command(
-      OUTPUT "${_native_cpp}"
-      COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_native_module}" -o "${_native_cpp}"
-      DEPENDS "${_native_module}" ctjs-translate
-      COMMENT "Emitting native-fixture.emitc.mlir to C++ for the VM-linked control"
-      VERBATIM)
-    add_executable(ctcompile-test-native-vm-linked Runtime/Reference/VmLinked.cpp "${_native_cpp}")
-    target_link_libraries(ctcompile-test-native-vm-linked PRIVATE ctbrowser::ctbrowser)
-    target_compile_features(ctcompile-test-native-vm-linked PRIVATE cxx_std_23)
-    # THE GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under
-    # the same compile the gate performs, plus one object and one library.
-    target_compile_options(ctcompile-test-native-vm-linked PRIVATE
-      -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
-    ctcompile_add_native_unit(fixture_vm_linked "${_native_module}" "${_native_js}"
-      -DPREBUILT=$<TARGET_FILE:ctcompile-test-native-vm-linked>
-      "-DEXPECT_FAILURE=reaches the interpreter")
+    message(FATAL_ERROR "ctcompile: no nm found - the Phase 62½-D native gate cannot run, and it IS the definition of native")
   endif()
+
+  # NEGATIVE PROOF 2 (functions.emitc.mlir's VM-LINKED RUN line): the same C++,
+  # plus one object that reaches the interpreter, linked against the engine -
+  # must FAIL the symbol check. The C++ is emitted at build time by the same
+  # emitter the gate uses, so this binary is the fixture's program in every
+  # respect but the one that matters.
+  set(_native_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
+  set(_native_cpp "${CMAKE_CURRENT_BINARY_DIR}/native-fixture.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_native_cpp}"
+    COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_native_module}" -o "${_native_cpp}"
+    DEPENDS "${_native_module}" ctjs-translate
+    COMMENT "Emitting native-fixture.emitc.mlir to C++ for the VM-linked control"
+    VERBATIM)
+  add_executable(ctcompile-test-native-vm-linked Runtime/Reference/VmLinked.cpp "${_native_cpp}")
+  target_link_libraries(ctcompile-test-native-vm-linked PRIVATE ctbrowser::ctbrowser)
+  target_compile_features(ctcompile-test-native-vm-linked PRIVATE cxx_std_23)
+  # THE GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under
+  # the same compile the gate performs, plus one object and one library.
+  target_compile_options(ctcompile-test-native-vm-linked PRIVATE
+    -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
 endif()
 
 # === PHASE 62½-C+D: JavaScript through the native pipeline and the gate ===
 #
-# The programs that go all the way. native-pipeline.cmake runs the closed
-# world, the lift and the lowering over a JavaScript file and refuses to write
-# a module while any function carries a diagnostic; the gate then compiles it
-# with no ctbrowser library, runs it, and compares every numeric global with
-# the interpreter. One function, one line per program.
-if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
-   AND COMMAND ctcompile_add_native_unit)
+# The programs that go all the way. pipeline.cmake runs the closed world, the
+# lift and the lowering over a JavaScript file and refuses to write a module
+# while any function carries a diagnostic; the fixture's .test then compiles
+# the module with no ctbrowser library, runs it, and compares every numeric
+# global with the interpreter (and its deduced twin, the two-toolchain clean
+# compile and the printing gate - see CTNative/Fixtures/*/*.test). One
+# function, one line per program: the module, its printing-policy twin and
+# the pin mutation are built here because lit cannot, and
+# docs/refactor-goldens.md measures a refactor against the same files.
+if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   # PHASE 63 STEP 7: the generated file compiles clean on BOTH toolchains the
-  # plan names, and every definition carries a provenance comment. Two
-  # compilers are required, not "whatever is found": a gate that silently
-  # drops a compiler passes vacuously (check-compile-clean.cmake).
+  # plan names (compile-clean.py). Two compilers are required, not "whatever
+  # is found": a gate that silently drops a compiler passes vacuously.
   find_program(CTCOMPILE_CLEAN_GXX NAMES g++-13 g++)
   find_program(CTCOMPILE_CLEAN_CLANGXX NAMES clang++-18 clang++)
   if(NOT CTCOMPILE_CLEAN_GXX OR NOT CTCOMPILE_CLEAN_CLANGXX)
     message(FATAL_ERROR "Phase 63 Step 7 needs both g++ and clang++ on PATH; found g++='${CTCOMPILE_CLEAN_GXX}' clang++='${CTCOMPILE_CLEAN_CLANGXX}'")
   endif()
-  function(ctcompile_add_compile_clean name module)
-    add_test(NAME ctcompile_compile_clean_${name}
-             COMMAND ${CMAKE_COMMAND}
-                     -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-                     -DMODULE=${module}
-                     "-DCOMPILERS=${CTCOMPILE_CLEAN_GXX},${CTCOMPILE_CLEAN_CLANGXX}"
-                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                     -DNAME=${name}
-                     ${ARGN}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/compile-clean.cmake)
-  endfunction()
-  # the hand-written fixture module, and the negative proof
-  ctcompile_add_compile_clean(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
-  ctcompile_add_compile_clean(fixture_unused_variable "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir"
-    -DMUTATE=1 "-DEXPECT_FAILURE=refused the generated file")
   function(ctcompile_add_native_pipeline name js)
     set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
     cmake_parse_arguments(_pipeline "PARTIAL_EVALUATE;PRECOMPUTE;SPECIALIZE;SUPERCOMPILE;DEFOREST;PRUNE_UNREACHABLE;NO_DEFAULT_OPTIMIZATIONS" "" "" ${ARGN})
@@ -146,34 +107,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
               -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
       DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake" ctjs-translate ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")
-    add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}")
-    ctcompile_add_native_unit(pipeline_${name} "${_module}" "${js}")
-    # AND THE NEGATIVE PROOF, when the caller names a global to break.
-    #
-    # Every gate here asserts that a GENERATED module agrees with the
-    # interpreter; none of them asserted that the comparison can still fail.
-    # It could not be registered before 2026-09-03: check-native-unit.cmake
-    # anchored its off-by-one on the literal `std::printf(`, which only the
-    # hand-written native-fixture.emitc.mlir emits, so -DMUTATE aborted at
-    # generate time on every pipeline program. That abort is a FATAL_ERROR
-    # rather than a red test, which is why the absence read as a gate nobody
-    # had got round to rather than as a driver that could not do it.
-    #
-    # The global must be one the printing prelude loads AFTER the first
-    # printf; the driver checks that itself and says so, because a mutation
-    # inserted after the load is invisible and would pass for the wrong
-    # reason.
-    if(_pipeline_UNPARSED_ARGUMENTS)
-      list(GET _pipeline_UNPARSED_ARGUMENTS 0 _mutate_global)
-      ctcompile_add_native_unit(pipeline_${name}_off_by_one "${_module}" "${js}"
-        -DMUTATE=${_mutate_global}
-        "-DEXPECT_FAILURE=global '${_mutate_global}' differs")
-    endif()
-    # PHASE 62½-E: the same module with the printing policy applied goes
-    # through the same gate (62½-D stays green), and the printing gate proves
-    # the rest: auto and pins pair up, the two files differ only in spelling,
-    # the byte counts are reported, and the pin mutation fails the build
-    # naming the JavaScript site (check-print-deduced.cmake).
+    # PHASE 62½-E: the same module with the printing policy applied, and with
+    # the pass's mutation - one pin turned wrong, which print-deduced.py shows
+    # fails the build naming the JavaScript site.
     set(_deduced "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.deduced.emitc.mlir")
     set(_mutated "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.mutated.emitc.mlir")
     add_custom_command(
@@ -186,65 +122,27 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       COMMAND $<TARGET_FILE:ctjs-opt> "--ctnative-print-deduced=mutate=1" "${_module}" --mlir-print-debuginfo -o "${_mutated}"
       DEPENDS "${_module}" ctjs-opt
       COMMENT "Mutating one pin in ${name}")
-    add_custom_target(ctcompile-native-deduced-${name} ALL DEPENDS "${_deduced}" "${_mutated}")
-    ctcompile_add_native_unit(pipeline_${name}_deduced "${_deduced}" "${js}")
-    ctcompile_add_compile_clean(pipeline_${name} "${_module}")
-    ctcompile_add_compile_clean(pipeline_${name}_deduced "${_deduced}")
-    add_test(NAME ctcompile_print_deduced_${name}
-             COMMAND ${CMAKE_COMMAND}
-                     -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-                     -DPLAIN=${_module}
-                     -DDEDUCED=${_deduced}
-                     -DMUTATED=${_mutated}
-                     -DCXX=${CMAKE_CXX_COMPILER}
-                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                     -DNAME=${name}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/print-deduced.cmake)
+    add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}" "${_deduced}" "${_mutated}")
+    set_property(GLOBAL APPEND PROPERTY CTCOMPILE_NATIVE_PIPELINES ctcompile-native-pipeline-${name})
   endfunction()
   # numbers and booleans, no functions
-  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/globals.js" total)
+  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/globals.js")
   # the gate's own eight functions: recursion, loops, a boolean predicate
-  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" sum100)
+  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js")
   # Phase 56: object literals with closed shapes, on the stack
-  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/struct.js" swap_answer)
+  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/struct.js")
   # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
-  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array.js" sum)
+  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array.js")
   # Current own-contents evidence permits only bounded local Number overwrites.
-  ctcompile_add_native_pipeline(array_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved)
-  ctcompile_add_native_pipeline(array_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" saved NO_DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_pipeline(array_read_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js" value)
-  ctcompile_add_native_pipeline(array_read_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js" value NO_DEFAULT_OPTIMIZATIONS)
-  ctcompile_add_native_pipeline(array_shrink "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js" shortened)
-  ctcompile_add_native_pipeline(array_shrink_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js" shortened NO_DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_pipeline(array_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js")
+  ctcompile_add_native_pipeline(array_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite.js" NO_DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_pipeline(array_read_overwrite "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js")
+  ctcompile_add_native_pipeline(array_read_overwrite_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-read-overwrite.js" NO_DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_pipeline(array_shrink "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js")
+  ctcompile_add_native_pipeline(array_shrink_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-shrink.js" NO_DEFAULT_OPTIMIZATIONS)
   ctcompile_add_native_pipeline(array_overwrite_loop "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js")
   ctcompile_add_native_pipeline(array_overwrite_loop_unoptimized "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/array-overwrite-loop.js" NO_DEFAULT_OPTIMIZATIONS)
-
-  add_test(NAME ctcompile_native_optimization_defaults
-           COMMAND ${CMAKE_COMMAND}
-                   -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-                   -DOPT=$<TARGET_FILE:ctjs-opt>
-                   -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/default-optimizations.js
-                   -DCXX=${CMAKE_CXX_COMPILER}
-                   -DNM=${_native_nm}
-                   -DREFERENCE=$<TARGET_FILE:ctcompile-test-native-reference>
-                   -DVM_LINKED=$<TARGET_FILE:ctcompile-test-type-oracle>
-                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/optimization-defaults.cmake)
 endif()
-
-# === PART 24 §3.3: the deduction probe ===
-#
-# What the two devbox compilers accept, measured every build rather than
-# tabulated once: constrained auto parameters, templated lambdas, aggregate
-# CTAD, a visited variant, static_assert pins over deduced declarations, and
-# the absence of two C++23 library features. Phases 56 to 62½ plan against
-# this file. One appended block, per Appendix A.3.
-add_test(NAME ctcompile_deduction_probe
-         COMMAND ${CMAKE_COMMAND}
-                 -DPROBE=${CMAKE_CURRENT_SOURCE_DIR}/../probes/deduction.cpp
-                 "-DCOMPILERS=/usr/bin/g++;/usr/bin/clang++;${CMAKE_CXX_COMPILER}"
-                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/deduction-probe.cmake)
 
 # === PHASE 63 STEPS 2 AND 3: the claimed set, per corpus ===
 # ============================================================================
@@ -279,102 +177,18 @@ add_test(NAME ctcompile_deduction_probe
 # and those were never claimed. It now reads --ctjs-resolve-globals' own
 # counters, and prints the per-name refusal reasons as the roadmap for them.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
-  # The DOM public API needs C++23 std::expected, unavailable in the older
-  # Clang/libstdc++ pair used by the standalone scalar printing tests.
+  # THE BROWSER DRIVERS - CTNative/Browser/*.py and Ownership/native_data_session.py
+  # - are lit tests beside their sources since 2026-09-15, like the seventeen
+  # drivers that already were. The one thing they need that lit cannot find is
+  # the compiler for the DOM's public API, which needs C++23 std::expected -
+  # unavailable in the older Clang/libstdc++ pair the standalone scalar tests
+  # use - so it is chosen here and handed to lit.cfg.py as %dom_clang.
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(_native_dom_clang ${CMAKE_CXX_COMPILER})
   else()
     find_program(_native_dom_clang NAMES clang++-23 clang++
                  HINTS ${CTBROWSER_MONOREPO_ROOT}/tools/clang-std-embed/bin REQUIRED)
   endif()
-  add_test(NAME ctcompile_native_dom_entry
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-entry
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_entry PROPERTIES TIMEOUT 900)
-  add_test(NAME ctcompile_native_dom_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-session
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_session PROPERTIES TIMEOUT 300)
-  file(GLOB _session_node_bins LIST_DIRECTORIES TRUE "$ENV{HOME}/tools/node-*/bin")
-  find_program(_session_node NAMES node nodejs HINTS ${_session_node_bins} REQUIRED)
-  add_test(NAME ctcompile_native_dom_strings
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_strings.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-strings
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_strings PROPERTIES TIMEOUT 900)
-  add_test(NAME ctcompile_native_dom_data_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_dom_data_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-dom-data-session
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_dom_data_session PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_bootstrap_dom_data_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_bootstrap_dom_data_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --clang ${_native_dom_clang}
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --build ${CMAKE_BINARY_DIR}
-                   --include ${CTBROWSER_MONOREPO_ROOT}/ctbrowser/include
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-bootstrap-dom-data-session
-                   --nm ${_native_nm})
-  set_tests_properties(ctcompile_native_bootstrap_dom_data_session PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_bootstrap_button_probe
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Browser/native_bootstrap_button_probe.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-bootstrap-button-probe)
-  set_tests_properties(ctcompile_native_bootstrap_button_probe PROPERTIES TIMEOUT 300)
-  add_test(NAME ctcompile_native_data_session
-           COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                   ${Python3_EXECUTABLE}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Ownership/native_data_session.py
-                   --translate $<TARGET_FILE:ctjs-translate>
-                   --opt $<TARGET_FILE:ctjs-opt>
-                   --node ${_session_node}
-                   --reference $<TARGET_FILE:ctcompile-test-native-reference>
-                   --work ${CMAKE_CURRENT_BINARY_DIR}/native-data-session)
-  set_tests_properties(ctcompile_native_data_session PROPERTIES TIMEOUT 300)
   # `resolved` and `direct` are floors under the closed world. They are 0 on
   # the three real corpora, and THE REASON WRITTEN HERE WAS WRONG. It said all
   # three are open programs - "bootstrap's UMD header passes `globalThis`/

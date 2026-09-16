@@ -55,14 +55,18 @@ struct HostContract {
     // The provider starts with the standard undefined binding. The complete
     // source proof excludes replacement and external script reentry.
     std::vector<unsigned> elementParameters;
+    // Explicit subset whose namespace is HTML or SVG, checked at native entry.
+    // Other namespaces need public namespace URI ownership before admission.
+    std::vector<unsigned> datasetParameters;
     std::vector<HostRootRequest> roots;
     std::vector<std::string> observations;
     std::vector<std::string> absentBindings;
     std::vector<std::string> undefinedBindings;
     // Explicit identities supplied by the embedding, not effect summaries.
     // Closed-source providers accept Map/Array and the class helper. DOM entry
-    // providers accept Number and decodeURIComponent as standard own global
-    // data bindings, including the unmodified Number.prototype.toString chain. Source
+    // providers accept Object, Number, decodeURIComponent and JSON as standard own global
+    // data bindings, including the unmodified Number.prototype.toString and
+    // Object.keys and JSON.parse own data properties. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
@@ -98,7 +102,9 @@ enum class HostDOMMethod {
     closest,
     number,
     numberToString,
-    decodeURIComponent
+    decodeURIComponent,
+    jsonParse,
+    datasetKeys
 };
 
 struct HostDOMCall {
@@ -108,14 +114,17 @@ struct HostDOMCall {
     mlir::Value element;
     [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
     [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
+    [[nodiscard]] bool returnsStringVector() const { return kind == HostDOMMethod::datasetKeys; }
     [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
+    // An owning ctbrowser::json_value tree, from the shared public Core parser.
+    [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
     [[nodiscard]] bool returnsString() const {
         return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent;
     }
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
-               !returnsString() && kind != HostDOMMethod::setAttribute &&
-               kind != HostDOMMethod::removeAttribute;
+               !returnsString() && !returnsJSON() && !returnsStringVector() &&
+               kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
     }
     [[nodiscard]] bool usesStyle() const {
         return kind == HostDOMMethod::matches || kind == HostDOMMethod::closest;
@@ -154,10 +163,13 @@ public:
     // Validated parameters or nullable closest results, for equality only.
     [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
+    [[nodiscard]] bool isDataset(mlir::Value value) const;
+    [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
-    // Exactly one URI call and two owning String continuations; the implicit
-    // error payload is proved unused. This is fresh provider evidence.
+    // One URI or JSON.parse call with owning String/json_value continuations;
+    // the implicit error payload is proved unused. A parse invoke may nest in
+    // the decode success continuation. This is fresh provider evidence.
     [[nodiscard]] bool invocation(ctjs::InvokeOp operation) const;
     [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
         return optionalStrings;
@@ -170,21 +182,28 @@ public:
     [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return strings; }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
+    // Fresh owning data objects and guarded spreads, after the complete use
+    // census excludes observable aliases and mutation after a value copy.
+    [[nodiscard]] bool jsonObject(ctjs::CreateObjectOp operation) const;
+    [[nodiscard]] bool jsonCopy(ctjs::CopyPropsOp operation) const;
 
 private:
     std::string refusal;
     ctjs::FuncOp checkedEntry;
     ctjs::FuncOp checkedWrapper;
     std::vector<mlir::BlockArgument> elements;
-    std::vector<ctjs::GetPropertyOp> tokenLists;
+    std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
+    std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> uriIntrinsics;
+    std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics;
     std::vector<ctjs::InvokeOp> invocations;
     std::vector<mlir::Value> optionalStrings;
     std::vector<HostDOMStringRefinement> refinements;
     std::vector<mlir::Value> strings;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;
+    std::vector<ctjs::CreateObjectOp> jsonObjects;
+    std::vector<ctjs::CopyPropsOp> jsonCopies;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

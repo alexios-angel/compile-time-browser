@@ -66,6 +66,8 @@
 #include <string_view>
 #include <vector>
 
+#include "check.hpp"
+
 using ctbrowser::script::function_observation;
 using ctbrowser::script::heap_kind;
 using ctbrowser::script::obs_heap;
@@ -78,27 +80,12 @@ namespace {
 using ctcompile::test::oracle::escape_probe;
 using ctcompile::test::oracle::oracle_probe;
 
-int failures = 0;
-
-void check(bool ok, const char * what) {
-    if (!ok) {
-        std::printf("FAIL %s\n", what);
-        ++failures;
-    }
-}
-
 template <typename T> void check_eq(T got, T want, const char * what) {
     if (got != want) {
         std::printf("FAIL %s: got %llu, want %llu\n", what, static_cast<unsigned long long>(got),
                     static_cast<unsigned long long>(want));
-        ++failures;
+        ++ctbrowser_test_failures;
     }
-}
-
-[[nodiscard]] std::string read_file(const std::filesystem::path & path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) { return {}; }
-    return std::string{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
 }
 
 // --- THE FIXTURE -------------------------------------------------------------
@@ -338,12 +325,12 @@ int self_test(const char * out_path) {
     if (out_path != nullptr) {
         if (!rec.write(out_path)) {
             std::printf("FAIL cannot write %s\n", out_path);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
-    if (failures == 0) { std::printf("ok type_oracle\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("ok type_oracle\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }
 
 // =============================================================================
@@ -367,6 +354,7 @@ struct row {
 constexpr row table[] = {
 #define CT_FRAME_END(name_, where_, hooked_, note_) row{#name_, where_, hooked_, note_},
 #include <ctcompile/JavaScript/FrameEnds.def>
+
 #undef CT_FRAME_END
 };
 constexpr std::size_t rows = std::size(table);
@@ -439,7 +427,7 @@ void expect_row(const type_recorder & rec, const std::vector<std::vector<site_ob
     std::string what = std::string{fn} + " " + std::string{ctbrowser::script::site_kind_name(kind)};
     if (i == rec.functions().size()) {
         std::printf("FAIL %s: no such function in the recording\n", what.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     const kind_sum got = sum_kind(all[i], kind);
@@ -763,12 +751,12 @@ int self_test_escape(const char * out_path) {
     if (out_path != nullptr) {
         if (!bounded.write(out_path)) {
             std::printf("FAIL cannot write %s\n", out_path);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
-    if (failures == 0) { std::printf("ok escape_oracle\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("ok escape_oracle\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }
 
 // --- corpus recording --------------------------------------------------------

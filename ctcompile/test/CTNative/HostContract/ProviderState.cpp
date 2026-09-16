@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "check.hpp"
+
 namespace {
 namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::host_detail::providerMapProvenance;
@@ -26,12 +28,6 @@ module {
 }
 )MLIR";
 
-int failures = 0;
-void check(bool value, const char * message) {
-    if (value) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 constexpr auto unlimited = [](unsigned) { return true; };
 
 bool same(providerValue a, providerValue b) {
@@ -438,6 +434,6 @@ int main() {
     keySnapshots(context, provenance);
     graphAndRefusals(context, provenance);
     budgets(context, provenance);
-    if (failures == 0) { std::puts("private provider Map state queries passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::puts("private provider Map state queries passed"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

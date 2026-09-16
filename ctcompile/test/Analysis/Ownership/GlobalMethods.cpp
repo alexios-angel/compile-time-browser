@@ -8,6 +8,8 @@
 
 #include "GlobalMethodsFixtures.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::owned_global_methods;
 
 namespace {
@@ -563,8 +565,8 @@ int main() {
     OwnedGlobalRoots observed(*module, changedContract);
     check(!observed.proved() && empty(*module, observed),
           "driver observations cannot expose the owning root as a scalar");
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("owned global method proof and all %u incomplete budgets passed\n", completion);
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

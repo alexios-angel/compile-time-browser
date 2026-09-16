@@ -306,15 +306,29 @@ struct DOMSource {
             return refuse("DOM helper capture cell is mutable or escapes");
         }
         auto write = captureCellWrite(cell);
+        if (write && (write->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(write))) {
+            return refuse("DOM helper capture cell has nonlocal or unordered uses");
+        }
         llvm::SmallVector<ctjs::CellGetOp> reads;
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             if (!step()) { return false; }
             auto * operation = use.getOwner();
-            if (operation->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(operation)) {
+            auto * position = operation;
+            if (llvm::isa<ctjs::CellGetOp, ctjs::RootOp>(operation)) {
+                // Immutable snapshots may be read in a selected branch. The
+                // initialization must precede the entire enclosing branch;
+                // writes and callable scheduling still stay in the source block.
+                while (position->getBlock() != cell->getBlock() &&
+                       llvm::isa_and_nonnull<mlir::scf::IfOp>(position->getParentOp())) {
+                    if (!step()) { return false; }
+                    position = position->getParentOp();
+                }
+            }
+            if (position->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(position)) {
                 return refuse("DOM helper capture cell has nonlocal or unordered uses");
             }
             if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation)) {
-                if (write && !write->isBeforeInBlock(read)) {
+                if (write && !write->isBeforeInBlock(position)) {
                     return refuse("DOM helper capture assignment does not precede its read");
                 }
                 reads.push_back(read);
@@ -325,6 +339,24 @@ struct DOMSource {
         for (ctjs::CellGetOp read : reads) {
             read.getResult().replaceAllUsesWith(value);
             read.erase();
+        }
+        return true;
+    }
+
+    bool dataObject(ctjs::CreateObjectOp object) {
+        // Preserve fresh data allocations for the complete DOM proof. Unlike
+        // callable holders, their constructors and uses must not be erased here.
+        for (mlir::Operation * use : object.getResult().getUsers()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp, ctjs::ReturnOp, mlir::scf::YieldOp, ctjs::CopyPropsOp>(
+                    use)) {
+                continue;
+            }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(use);
+                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+                continue;
+            }
+            return false;
         }
         return true;
     }
@@ -872,11 +904,11 @@ struct DOMSource {
                 } else {
                     values.insert(operation.getResults().begin(), operation.getResults().end());
                 }
-                // Local ownership/call scheduling still requires a single source
-                // block. Branches carry only values checked by the final DOM proof.
-                if (depth &&
-                    llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::CreateObjectOp>(
-                        operation)) {
+                // Callable/capture scheduling still requires a single source
+                // block. Fresh data objects remain for the complete DOM proof.
+                auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
+                if (depth && (llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp>(operation) ||
+                              (object && !dataObject(object)))) {
                     return refuse("DOM helper branch contains an unproved local identity");
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
@@ -924,7 +956,7 @@ struct DOMSource {
         if (!foldNoMatchReplacements(function)) { return false; }
         auto & block = function.getBody().front();
         llvm::SmallVector<ctjs::CreateClosureOp> closures;
-        llvm::SmallVector<ctjs::CreateObjectOp> objects;
+        llvm::SmallVector<ctjs::CreateObjectOp> methodObjects;
         llvm::SmallVector<ctjs::CreateCellOp> localCells;
         for (mlir::Operation & operation : block) {
             if (!step()) { return false; }
@@ -935,7 +967,10 @@ struct DOMSource {
                 localCells.push_back(cell);
             }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
-                objects.push_back(object);
+                if (!dataObject(object)) {
+                    if (!reason.empty()) { return false; }
+                    methodObjects.push_back(object);
+                }
             }
         }
         // Capturing children must be leaves before the shared capture query.
@@ -953,7 +988,7 @@ struct DOMSource {
         // ponytail: bounded rescans of local capture dependencies; index the
         // worklist if large helper graphs exhaust the existing work budget.
         while (!closures.empty() || !localCells.empty() ||
-               resolvedObjects.size() != objects.size()) {
+               resolvedObjects.size() != methodObjects.size()) {
             if (!step()) { return false; }
             bool progress = false;
             for (ctjs::CreateCellOp & cell : localCells) {
@@ -977,7 +1012,7 @@ struct DOMSource {
                 cell = {};
                 progress = true;
             }
-            for (ctjs::CreateObjectOp object : objects) {
+            for (ctjs::CreateObjectOp object : methodObjects) {
                 if (!step()) { return false; }
                 if (resolvedObjects.contains(object)) { continue; }
                 bool held = false;
@@ -1167,7 +1202,7 @@ struct DOMSource {
             llvm::erase_if(localCells, [](auto cell) { return !cell; });
             if (!progress) { return refuse("DOM helper capture graph is cyclic or escapes"); }
         }
-        for (ctjs::CreateObjectOp object : objects) {
+        for (ctjs::CreateObjectOp object : methodObjects) {
             while (!object.getResult().use_empty()) {
                 if (!step()) { return false; }
                 auto root = llvm::dyn_cast<ctjs::RootOp>(*object.getResult().getUsers().begin());

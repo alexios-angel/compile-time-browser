@@ -1,7 +1,6 @@
 #include "Strategies.h"
 
-#include "../Lowering/EmitC/NativeMapHelpers.h"
-#include "RuntimeHelpers.h"
+#include "../Lowering/EmitC/Runtime.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -31,23 +30,21 @@ struct CTNativeDeforestPass : impl::CTNativeDeforestBase<CTNativeDeforestPass> {
             }
         });
         // Reserved helper names alone are not a proof. Require the exact
-        // runtime contract emitted after native Map admission; an arbitrary
-        // opaque call with a familiar name does not license this rewrite.
-        ec::VerbatimOp runtime;
-        bool helpersPresent = false;
+        // runtime contract emitted after native Map admission - the runtime
+        // include with the ordered-storage define in front of it; an
+        // arbitrary opaque call with a familiar name does not license this
+        // rewrite.
+        bool runtime = false;
         bool orderedStorage = false;
-        bool snapshotHelpers = false;
-        for (ec::VerbatimOp text : module.getOps<ec::VerbatimOp>()) {
-            if (text.getFmtArgs().empty() && text.getValue() == kNativeMapHelpers) {
-                runtime = text;
+        for (mlir::Operation & op : module.getBody()->getOperations()) {
+            if (auto include = llvm::dyn_cast<ec::IncludeOp>(op)) {
+                runtime |= include.getInclude() == kRuntimeHeader;
+            } else if (auto text = llvm::dyn_cast<ec::VerbatimOp>(op)) {
+                orderedStorage |=
+                    text.getFmtArgs().empty() && text.getValue() == kOrderedMapsDefine;
             }
-            orderedStorage |=
-                text.getFmtArgs().empty() && text.getValue() == kNativeOrderedMapStorage;
-            snapshotHelpers |=
-                text.getFmtArgs().empty() && text.getValue() == kNativeMapSnapshotHelpers;
-            helpersPresent |= text.getValue() == kProjectionHelpers;
         }
-        if (!orderedStorage || !snapshotHelpers) { runtime = {}; }
+        runtime &= orderedStorage;
         llvm::SmallVector<strategy> strategies;
         unsigned inspected = 0;
         mlir::OpBuilder builder(module.getContext());
@@ -69,7 +66,6 @@ struct CTNativeDeforestPass : impl::CTNativeDeforestBase<CTNativeDeforestPass> {
                 producer->setAttr("ctnative.deforest_reason", builder.getStringAttr(reason));
             }
         }
-        unsigned projections = 0;
         for (strategy & chosen : strategies) {
             builder.setInsertionPoint(chosen.consumer);
             llvm::SmallVector<mlir::Value> args{chosen.producer.getOperand(0)};
@@ -92,12 +88,6 @@ struct CTNativeDeforestPass : impl::CTNativeDeforestBase<CTNativeDeforestPass> {
             });
             for (mlir::Operation * op : chosen.forwarding) { op->erase(); }
             chosen.producer.erase();
-            if (index) { ++projections; }
-        }
-        if (projections && !helpersPresent) {
-            builder.setInsertionPointAfter(runtime);
-            ec::VerbatimOp::create(builder, module.getLoc(),
-                                   builder.getStringAttr(kProjectionHelpers));
         }
         if (report) {
             module.emitRemark() << "deforestation: " << strategies.size()

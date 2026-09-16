@@ -15,6 +15,13 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
       followProviderCallbacks(followProviderCallbacks),
       followProviderObjects(followProviderObjects), dominance(module) {
     refusal = initialBindingProblem(module, contract);
+    if (!refusal.empty()) { return; }
+    if (auto declarations = module->getAttrOfType<mlir::ArrayAttr>("ctjs.hoisted_vars")) {
+        for (mlir::Attribute declaration : declarations) {
+            if (!step()) { return; }
+            declaredGlobals.insert(llvm::cast<mlir::StringAttr>(declaration).getValue());
+        }
+    }
     module.walk([&](ctjs::StoreGlobalOp store) {
         if (step()) { initializers[store.getName()].push_back(store); }
     });

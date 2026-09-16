@@ -59,6 +59,9 @@ def main():
             counted.replace("guard = [0, 0, 0]", "guard = [" + ", ".join(["0"] * trips) + "]")
         )
         positives[f"counted-{trips}"] = (source, "counted_1", {"observed": expected})
+    source = args.work / "counted-stride.js"
+    source.write_text(counted.replace("++i", "i += 2"))
+    positives["counted-stride"] = (source, "counted_1", {"observed": 312935})
     compilers = find_compilers()
     checked = 0
     mutations = 0
@@ -167,7 +170,7 @@ def main():
     refusals = 0
     negatives = {
         "loop-bound": counted.replace("i < guard.length", "i < 3"),
-        "loop-step": counted.replace("++i", "i += 2"),
+        "loop-step": counted.replace("++i", 'i += "2"'),
         "loop-mutation": counted.replace("var saved = left;", "left[0] = 7; var saved = left;"),
         "loop-region": counted.replace("left = right;", "left = [7, 8];"),
         "loop-mixed": counted.replace("b = [3, 4, 5]", 'b = ["three", "four", "five"]'),

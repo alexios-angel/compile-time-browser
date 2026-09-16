@@ -1,0 +1,92 @@
+# PACKAGE AN APPLICATION, THEN RUN IT. The one test that exercises the whole
+# feature the way a user does: a directory in, an executable out, and that
+# executable started from somewhere that is not the application directory and
+# told nothing about where it came from. Everything else in Packaging/ tests a
+# piece. Every RUN line runs from lit's output directory, which is deliberately
+# NOT the fixture: an application that only starts next to its own source
+# files has not packaged anything.
+#
+# WHAT A PASS ACTUALLY PROVES, which is more than "it exited 0": run_bundle
+# sets require_script_images, so the launcher REFUSES TO START if any of the
+# page's scripts had to be compiled from source - the failure this whole
+# project treats as the worst one because nothing else reports it. The
+# blinded arms are the second half: the same launcher with nothing appended,
+# handed an HTML file, and handed the two bundles ctcompile will not produce
+# and a future packager might (ctcompile-test-app_bundle writes them) must all
+# refuse - the guard is in run_app, behind a window, and nothing else in the
+# suite gets that far.
+#
+# RUN: rm -rf %t && mkdir -p %t && ctcompile-test-app_bundle %t
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctcompile %S/app --entry index.html --launcher ctrun -o %t/app --verbose --fonts %{monorepo}/ctbrowser/resources/fonts --manifest %t/app.json 2>&1 | FileCheck %s --check-prefix=PACKAGED
+# RUN: test -x %t/app
+#
+# IT SAID WHAT IT DID, and the numbers are checked rather than the phrasing:
+# two scripts is the count that matters, because a packager that quietly
+# packed one produces an application that starts and is refused for a reason
+# pointing at the launcher. greeting.js and app.css are named by the document,
+# not by the command line, and late.json is the one a script asked for AFTER
+# the page was up: fetch queues its request and it is drained from a tick, so
+# this name exists only if the packager let the page RUN before asking what it
+# wanted - the difference between packaging a document and an application.
+# PACKAGED-DAG: 2 scripts compiled
+# PACKAGED-DAG: asset  greeting.js
+# PACKAGED-DAG: asset  app.css
+# PACKAGED-DAG: asset  late.json
+#
+# Opening a file is not proof that its bytes reached the destination. Linux's
+# full device deterministically rejects the write/close while permitting open.
+# RUN: not ctcompile %S/app --entry index.html --fonts %{monorepo}/ctbrowser/resources/fonts --bundle -o /dev/full 2>&1 | FileCheck %s --check-prefix=FULL
+# RUN: not ctcompile %S/app --entry index.html --fonts %{monorepo}/ctbrowser/resources/fonts --bundle -o %t/failed.ctapp --manifest /dev/full 2>&1 | FileCheck %s --check-prefix=FULL
+# FULL: cannot write{{.*}}/dev/full
+#
+# THE MANIFEST, PARSED RATHER THAN MATCHED: a grep for a field name would pass
+# on a document no parser accepts, so json.tool reads it first and FileCheck
+# reads json.tool's normalised output. The faces are under a name of the
+# compiler's own, not the build machine's path; and every program id distinct,
+# because two scripts sharing one could not be told apart at lookup.
+# RUN: python3 -m json.tool %t/app.json | FileCheck %s --check-prefix=MANIFEST
+# MANIFEST-DAG: "entry": "index.html"
+# MANIFEST-DAG: "font_directory": "fonts"
+# RUN: python3 -c 'import json, sys; s = json.load(open(sys.argv[1]))["scripts"]; sys.exit(len(s) != 2 or s[0]["program_id"] == s[1]["program_id"])' %t/app.json
+# RUN: test $(stat -c %%s %t/app) -gt $(stat -c %%s ctrun)
+#
+# ---- run it, from somewhere that is not the application directory ----------
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 %t/app
+# A PACKAGED APPLICATION CAN SAY WHAT IT IS: --info prints its manifest and
+# does not start the application, which is what it used to do with any argument.
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy %t/app --info | python3 -m json.tool | FileCheck %s --check-prefix=INFO
+# INFO: "entry": "index.html"
+#
+# ---- the blinded arms -------------------------------------------------------
+# RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctrun
+# RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctrun %S/app/index.html 2>&1 | FileCheck %s --check-prefix=NOT-A-BUNDLE
+# NOT-A-BUNDLE: not a ctbrowser application bundle
+#
+# ---- and it must look the SAME as the page it came from ---------------------
+# THE CHECK THAT CAUGHT THE FONTS. A packaged application is sealed - it answers
+# from what it carries and never from the disk - and the vendored faces are
+# loaded THROUGH the asset registry, so the first sealed build silently dropped
+# to the built-in bitmap font: it exited 0, it rendered, and it just looked
+# worse. So the SAME page is rendered twice with real fonts - once from source
+# with CTBROWSER_FONT_PATH, once packaged with NO font path and a working
+# directory that is not the application's, which is the only way this can see
+# the bundle doing the work - and the bytes compared. It is deliberately last,
+# because a byte comparison of two renders catches anything the packaging
+# lost, not only fonts. It proves less on a build without TTF support: both
+# arms fall back and match.
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONT_PATH=%{monorepo}/ctbrowser/resources/fonts CTBROWSER_SCREENSHOT=%t/from-source.ppm ctbrowse %S/app/index.html
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_SCREENSHOT=%t/packaged.ppm %t/app
+# RUN: cmp %t/from-source.ppm %t/packaged.ppm
+#
+# ---- what the compiler must refuse to package -------------------------------
+# A PAGE OF MODULE SCRIPTS. Nothing here can compile one ahead of time, so
+# packaging it would produce an application whose only property is that it is
+# exactly as slow as it was before, every count in the packager reading a
+# truthful zero - the silent failure this tool exists to avoid.
+# RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctcompile %S/app-module --entry index.html --launcher ctrun -o %t/app-module 2>&1 | FileCheck %s --check-prefix=MODULE
+# MODULE: module script
+#
+# ---- and what the launcher must refuse to run -------------------------------
+# RUN: test -f %t/no-images.ctapp && test -f %t/module-page.ctapp
+# RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctrun %t/no-images.ctapp
+# RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctrun %t/module-page.ctapp

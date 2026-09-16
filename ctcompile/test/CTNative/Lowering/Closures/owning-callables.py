@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
 
 
 def main():
@@ -54,7 +54,6 @@ def main():
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
             assert "std::function<js_num(js_num)>" in cpp, cpp
-            assert "#include <functional>" in cpp, cpp
             if fixture == "fallback":
                 assert "std::tuple<js_num>" in cpp and "std::make_tuple(" in cpp, cpp
                 assert "std::get<0>" in cpp, cpp
@@ -67,25 +66,27 @@ def main():
             )
             assert lambdas, cpp
             assert "ctn_bind_" not in cpp, cpp
-            assert any(name == "ctn_lambda" for name, *_ in lambdas), cpp
+            # Locals are v<N>; a capture is capture_<index>, a lambda parameter
+            # argument_<index>, and the created callable is an ordinary local.
             for name, captures, parameters, result in lambdas:
+                assert re.fullmatch(r"v\d+", name), name
                 assert "&" not in captures and "mutable" not in parameters, captures
                 for capture in captures.split(", ") if captures else []:
-                    assert re.fullmatch(r"capture_\w+ = [A-Za-z_]\w*", capture), capture
+                    assert re.fullmatch(r"capture_\d+ = v\d+", capture), capture
             if fixture == "owning":
-                assert "capture_state = state" in cpp, cpp
-                assert "js_num const argument_delta" in cpp, cpp
-                assert re.search(r"const state = ctnative::", cpp), cpp
+                assert re.search(r"capture_0 = v\d+", cpp), cpp
+                assert "js_num const argument_0" in cpp, cpp
+                assert re.search(r"const v\d+ = ctnative::", cpp), cpp
                 # The original source body now lives inside the owning lambda;
                 # neither a forwarding call nor an unused lifted definition remains.
                 assert not re.search(r"\bfn_2\s*\(", cpp), cpp
-                assert "ctnative::map_get(capture_state," in cpp, cpp
-                assert "static_cast<void>(capture_state)" not in cpp, cpp
-                assert "static_cast<void>(argument_delta)" not in cpp, cpp
+                assert "ctnative::map_get(capture_0," in cpp, cpp
+                assert "static_cast<void>(capture_0)" not in cpp, cpp
+                assert "static_cast<void>(argument_0)" not in cpp, cpp
             elif fixture == "scalar-string":
                 assert "std::function<std::string(std::string)>" in cpp, cpp
-                assert "capture_template = js_template" in cpp, cpp
-                assert "js_num const argument_concept" in cpp, cpp
+                assert re.search(r"capture_0 = v\d+", cpp), cpp
+                assert "js_num const argument_0" in cpp, cpp
             decisions.append(lambdas)
             source = args.work / f"{fixture}-{label}.cpp"
             source.write_text(cpp)
@@ -96,6 +97,7 @@ def main():
                     [
                         compiler,
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -125,6 +127,7 @@ def main():
             [
                 compilers[1],
                 "-std=c++23",
+                RUNTIME_INCLUDE,
                 "-O1",
                 "-g",
                 "-Wall",

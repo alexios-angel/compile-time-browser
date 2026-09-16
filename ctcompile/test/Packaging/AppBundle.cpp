@@ -27,6 +27,8 @@
 #include <system_error>
 #include <vector>
 
+#include "check.hpp"
+
 using ctbrowser::shell::app_bundle;
 using ctbrowser::shell::append_bundle_to;
 using ctbrowser::shell::browser;
@@ -37,15 +39,6 @@ using ctbrowser::shell::read_bundle;
 using ctbrowser::shell::write_bundle;
 
 namespace {
-
-int failures = 0;
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
-    }
-}
 
 std::vector<std::byte> raw(std::string_view text) {
     return {reinterpret_cast<const std::byte *>(text.data()),
@@ -62,11 +55,11 @@ void must_refuse(std::vector<std::byte> bytes, std::string_view what) {
     const auto loaded = read_bundle(bytes);
     if (loaded.ok) {
         std::printf("FAIL %.*s - it was ACCEPTED\n", static_cast<int>(what.size()), what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     } else if (loaded.error.empty()) {
         std::printf("FAIL %.*s - refused without saying why\n", static_cast<int>(what.size()),
                     what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -194,7 +187,7 @@ int main(int argc, char ** argv) {
         if (read_bundle(cut).ok) {
             std::printf("FAIL a bundle truncated to %zu of %zu bytes was accepted\n", n,
                         bytes.size());
-            ++failures;
+            ++ctbrowser_test_failures;
             break;
         }
     }
@@ -284,7 +277,7 @@ int main(int argc, char ** argv) {
                     static_cast<unsigned long long>(ctbrowser::script::image_source_hash(text)),
                     text.c_str());
             }
-            ++failures;
+            ++ctbrowser_test_failures;
         }
         check(packaged.script_error().empty(), "and the page ran cleanly");
 
@@ -383,9 +376,9 @@ int main(int argc, char ** argv) {
         emit("module-page.ctapp", module_page);
     }
 
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("ok app_bundle (%zu byte bundle, round trip, %zu truncations refused)\n",
                     bytes.size(), bytes.size());
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

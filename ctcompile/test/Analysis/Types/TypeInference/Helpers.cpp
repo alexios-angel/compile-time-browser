@@ -1,8 +1,8 @@
 #include "Tests.h"
 
-namespace ctcompile::test::type_inference {
+#include "check.hpp"
 
-int failures = 0;
+namespace ctcompile::test::type_inference {
 
 std::string prologue() {
     return std::string{kPrologue};
@@ -27,7 +27,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected,
     solver.load<TypeInference>(owner);
     if (failed(solver.initializeAndRun(module))) {
         std::printf("FAIL %s: the solver did not converge\n", what);
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
 
@@ -37,7 +37,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected,
     });
     if (marked == nullptr || marked->getNumResults() != 1) {
         std::printf("FAIL %s: no single-result operation carried `check`\n", what);
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
 
@@ -51,7 +51,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected,
     }
     if (got != expected) {
         std::printf("FAIL %s\n  expected %s\n  got      %s\n", what, expected, got.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -61,7 +61,7 @@ void check(mlir::MLIRContext & context, const row & r) {
         mlir::parseSourceString<mlir::ModuleOp>(text, &context);
     if (!module) {
         std::printf("FAIL %s: the module did not parse\n%s\n", r.what, text.c_str());
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     check(*module, r.what, r.expected);
@@ -74,7 +74,7 @@ void check(mlir::MLIRContext & context, const row & r) {
         if (proof.exhausted || proof.assigned != (r.fieldAssigned != 0)) {
             std::printf("FAIL %s: live field presence=%d exhausted=%d\n", r.what,
                         static_cast<int>(proof.assigned), static_cast<int>(proof.exhausted));
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 }

@@ -21,7 +21,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/entries.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ENTRIES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=COMPUTED
 
-// NATIVE: emitc.include <"memory">
+// NATIVE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NATIVE: emitc.func @main() -> i32
 // NATIVE-DAG: call_opaque "ctnative::make_number_map<double>"
 // NATIVE-DAG: call_opaque "ctnative::make_string_to_number_map"

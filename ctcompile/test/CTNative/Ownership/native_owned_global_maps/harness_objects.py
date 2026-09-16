@@ -1,5 +1,6 @@
 from .harness_scalar_maps import (
     LEAF_COMPARISON_CASES,
+    inline_runtime,
     LEAF_OBJECT_FIELDS,
     host,
     leaf_object_sources,
@@ -52,7 +53,7 @@ def leaf_object_observer_source(source, name):
 
 
 def instrument_leaf_objects(cpp, allocations=1):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("leaf object observer needs exactly one entry")
     changed = (

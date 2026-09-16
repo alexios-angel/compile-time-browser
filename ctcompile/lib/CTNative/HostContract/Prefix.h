@@ -3,6 +3,7 @@
 #include "Analysis.h"
 #include "ProviderState.h"
 #include "ctcompile/CTNative/Analysis/HostPrefix.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::ctnative::host_detail {
 
@@ -71,6 +72,7 @@ struct prefixAnalysis {
     llvm::DenseSet<mlir::Operation *> visited;
     llvm::DenseSet<mlir::Operation *> pendingNewTarget;
     llvm::StringMap<prefixValue> globals;
+    llvm::StringSet<> declaredGlobals;
     llvm::StringMap<llvm::SmallVector<ctjs::StoreGlobalOp>> initializers;
     mlir::DominanceInfo dominance;
     llvm::DenseMap<mlir::Value, prefixValue> observedValues;

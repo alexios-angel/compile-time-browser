@@ -1,5 +1,7 @@
 #include "Tests.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::type_inference;
 
 int main() {
@@ -427,7 +429,7 @@ int main() {
             overwritePrefix + overwrite + overwriteRead, &context);
         if (!module) {
             std::printf("FAIL live array overwrite mutation fixture did not parse\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             check(*module, "own overwrite before live mutation", "!ctnative.num<i32>");
             ctcompile::ctjs::SetPropertyOp store;
@@ -627,7 +629,7 @@ int main() {
             invokeModule(numericCompletion, "%returned", true), &context);
         if (!module) {
             std::printf("FAIL invocation normal-flow mutation fixture did not parse\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             check(*module, "invoke normal flow before live mutation", "!ctnative.num<i32>");
             auto helper = module->lookupSymbol<ctcompile::ctjs::FuncOp>("helper");
@@ -661,12 +663,12 @@ int main() {
             mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         if (module) {
             std::printf("FAIL ctjs.binary_static sub verified, and the helper has no arm for it\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
-    if (failures != 0) {
-        std::printf("\n%d row(s) failed\n", failures);
+    if (ctbrowser_test_failures != 0) {
+        std::printf("\n%d row(s) failed\n", ctbrowser_test_failures);
         return 1;
     }
     std::printf("type inference: every row agrees with JavaScript\n");

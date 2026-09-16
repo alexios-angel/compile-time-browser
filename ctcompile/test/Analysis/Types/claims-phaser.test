@@ -1,0 +1,21 @@
+# THE ORACLE, CLOSED - Phase 54A checked by Phase 54B. Three steps over ONE
+# corpus, and steps 1 and 2 never meet until step 3: the INTERPRETER runs the
+# corpus with a recorder installed and writes what every register actually
+# held; the COMPILER imports the same corpus, runs the inference, and writes
+# what it claims every register will hold; tools/check/type-oracle.py compares
+# the two. ZERO SOUNDNESS VIOLATIONS IS THE GATE; precision is reported, never
+# gated ("soundness failing is a defect; precision being low is a backlog").
+# The vacuous pass is guarded: `observed` must be positive, and so must
+# `beat-boxed` - an inference that fell back to `boxed` everywhere is sound the
+# way a stopped clock is right. A VALUE IN A LIVE BLOCK THE SOLVER NEVER
+# VISITED is an analysis gap the emitter hides behind `boxed`, so its count is
+# asserted at zero. The oracle's own self-test runs first.
+#
+# RUN: ctcompile-test-type-oracle
+# RUN: ctcompile-test-type-oracle --script %{monorepo}/ctbrowser/vendor/phaser/phaser.js --out %t.rec
+# RUN: ctcompile-test-type-claims --script %{monorepo}/ctbrowser/vendor/phaser/phaser.js --out %t.claims 2>&1 | FileCheck %s --check-prefix=CLAIMS
+# CLAIMS: {{[^0-9]}}0 unvisited live values boxed
+# RUN: python3 %{monorepo}/tools/check/type-oracle.py --recording %t.rec --claims %t.claims --name phaser --max-report 0 --expect-violations 0 | FileCheck %s
+# CHECK: observed registers {{[1-9][0-9]*}}
+# CHECK: SOUNDNESS violations 0{{[^0-9]}}
+# CHECK: PRECISION beat-boxed {{[1-9][0-9]*}}/{{[0-9]+}} = {{[0-9.]+}}%

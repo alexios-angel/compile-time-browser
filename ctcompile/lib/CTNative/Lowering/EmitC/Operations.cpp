@@ -130,7 +130,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }
                 use.set(emptyString);
             } else if (isNullableStringCarrier(expected)) {
-                needsNullableString = true;
                 if (!emptyNullableString) {
                     emptyNullableString = ec::ConstantOp::create(
                         b, where, carrierType(context, carrier::nullableString),
@@ -268,7 +267,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (vectorIndexReads.contains(o)) {
-        needsNullable = true;
         const auto resultType = o->getResult(0).getType();
         // Only a proved Number drops absence. String snapshots use their own
         // vec_at overload and retain that overload's nullable String carrier.
@@ -374,18 +372,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         case UnaryKind::Neg:
             swap(ec::UnaryMinusOp::create(b, where, f64, number(b, where, u.getOperand())));
             return;
-        // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity.pdll in
+        // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity in
         // applyDeclarativeRules() above. This arm is not dead code and it
-        // is not llvm_unreachable: PDL has NO DIAGNOSTIC ON A NON-MATCH, so
-        // a pattern that silently stopped firing - a rename in CTJSOps.td,
-        // a guard the constraint gets wrong, a driver that never ran - would
-        // otherwise reach the default arm and abort with a message blaming
-        // admission. Naming the file that owed the rewrite is the whole
-        // difference between a bug report and a wild goose chase.
+        // is not llvm_unreachable: a pattern driver has NO DIAGNOSTIC ON A
+        // NON-MATCH, so a pattern that silently stopped firing - a rename in
+        // CTJSOps.td, a guard the match gets wrong, a driver that never ran -
+        // would otherwise reach the default arm and abort with a message
+        // blaming admission. Naming the pattern that owed the rewrite is the
+        // whole difference between a bug report and a wild goose chase.
         case UnaryKind::Plus:
             if (u.getOperand().getType() == f64) {
                 llvm::report_fatal_error("ctnative lowering: numeric unary plus survived "
-                                         "UnaryPlusIsIdentity.pdll");
+                                         "UnaryPlusIsIdentity");
             }
             swap(number(b, where, u.getOperand()));
             return;
@@ -400,8 +398,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             } else if (isIdentityCarrier(u.getOperand().getType())) {
                 swap(stringConstant(b, where, "object"));
             } else if (isNullableCarrier(u.getOperand().getType())) {
-                needsNullable = true;
-                needsString = true;
                 swap(callWithConstValueOperands(
                          b, where, mlir::TypeRange{carrierType(context, carrier::string)},
                          b.getStringAttr("ctnative::scalar_typeof"),
@@ -438,7 +434,6 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         }
         if (equality && (isNullableCarrier(left.getType()) || isNullableCarrier(right.getType()) ||
                          left.getType() != right.getType())) {
-            needsNullable = true;
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::scalar_equal"
                                                                  : "ctnative::scalar_strict_equal";
             swap(callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),

@@ -15,19 +15,12 @@
 #include <cstdio>
 #include <string_view>
 
+#include "check.hpp"
+
 using ctbrowser::atom_table;
 using ctbrowser::style::engine;
 
 namespace {
-
-int failures = 0;
-
-void check(bool ok, std::string_view what) {
-    if (!ok) {
-        std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
-        ++failures;
-    }
-}
 
 constexpr std::string_view sheet = "p { color: red; margin: 0 }"
                                    ".lead { font-size: 20px !important }"
@@ -51,13 +44,13 @@ void must_notice(std::string_view what, std::string_view css, std::uint8_t origi
     if (a.e.selector_count() != b.e.selector_count() || a.e.rule_count() != b.e.rule_count()) {
         std::printf("FAIL the case is not the intended one - counts already differ: %.*s\n",
                     static_cast<int>(what.size()), what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     if (!ctcompile::css::compare(a.e, b.e)) {
         std::printf("FAIL the comparator did not notice: %.*s\n", static_cast<int>(what.size()),
                     what.data());
-        ++failures;
+        ++ctbrowser_test_failures;
     }
 }
 
@@ -71,7 +64,7 @@ int main() {
         if (diff) {
             std::printf("FAIL two compiles of the same sheet differ at %s: %s\n",
                         diff->where.c_str(), diff->what.c_str());
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
@@ -156,6 +149,6 @@ int main() {
                 "@media (min-width: 100px) { p { color: green } }"
                 "@font-face { font-family: \"Fira\"; src: url(\"other.ttf\") }");
 
-    if (failures == 0) { std::printf("ok css_comparator\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("ok css_comparator\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

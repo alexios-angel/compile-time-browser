@@ -61,15 +61,17 @@ concrete callable carrier set keep the previous owning `std::tuple` representati
 direct lifted calls.
 
 The body remains EmitC IR until final C++ emission. It shares the ordinary
-function printer's source names, const/constexpr analysis, structured control,
-hoisting and deduced-type pins. Nested lambdas use independent printer state, so
+function printer's const/constexpr analysis, structured control, hoisting and
+deduced-type pins. (The sample above predates 2026-09-15: locals are now
+upstream's `v<N>` and a capture is `capture_<index>`, since source-derived
+identifiers were retired - the host compiler never read them.) Nested lambdas use independent printer state, so
 their names and analysis facts cannot replace those of the enclosing function.
 Explicit declarations initialize the callable alias directly; forced deduction
 and expression operands construct that exact alias around the lambda.
 Captures from deferred literals or inline expressions retain the binder's
 implicit conversion to the declared carrier type through a typed value-copy
 lambda. For example, an f64 literal spelled `1` still captures a double. Ordinary
-typed SSA bindings keep the direct `[capture_state = state]` spelling.
+typed SSA bindings keep the direct `[capture_0 = v2]` spelling.
 If another emitted call or address references the lifted function, that
 definition remains available too. If the final use
 analysis requires a writable captured binding, the lambda forwards to the lifted
@@ -139,7 +141,7 @@ for named owning lambdas. Its checker compares nine observations in ordinary
 and deduced output under GCC and Clang, and repeats both with Clang ASan/UBSan
 and stack-use-after-return detection. It covers retained factory results,
 forwarded aliases, independent Maps, external Map mutation, strings exceeding
-small-string storage, structured loops and C++ keyword source names. A separate scalar/string
+small-string storage and structured loops. A separate scalar/string
 translation unit checks that callables request their own standard headers. A
 third unit combines a tuple-backed closure accepting a callable parameter with
 a scalar callable, checking that the prior representation remains available.

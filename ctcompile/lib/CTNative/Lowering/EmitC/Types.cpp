@@ -29,8 +29,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
+            v.setType(ec::LValueType::get(carrierType(context, carrier::json)));
+            return;
+        }
         if (domStringResults.contains(v)) {
-            needsString = true;
             v.setType(carrierType(context, carrier::string));
             return;
         }
@@ -51,16 +54,19 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (auto call = domCalls.find(v.getDefiningOp());
             call != domCalls.end() && !call->second.returnsBoolean() &&
             !call->second.returnsElement() && !call->second.returnsNumber() &&
-            !call->second.returnsString()) {
+            !call->second.returnsString() && !call->second.returnsJSON() &&
+            !call->second.returnsStringVector()) {
             // The proof requires this result to be unused, and the effect is
             // emitted as a void call. This placeholder never reaches C++.
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
+        if (auto call = domCalls.find(v.getDefiningOp());
+            call != domCalls.end() && call->second.returnsStringVector()) {
+            v.setType(ec::OpaqueType::get(context, kStringVectorType));
+            return;
+        }
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
-        needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
-        needsBooleanString |= carrierOf(typeOf(v)) == carrier::booleanString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
             v.setType(found->second);
@@ -68,7 +74,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.
-        if (admission::isClosedObject(v)) { return; }
+        if (admission::isClosedObject(v) && carrierOf(typeOf(v)) != carrier::json) { return; }
         // PHASE 59 SLICE 2 STEP 2: A SHARED BINDING IS NOT ITS CARRIER, it
         // is a PLACE holding one. The box in the owning frame becomes an
         // `emitc.lvalue` - the type an emitc.variable has, which load and
@@ -78,12 +84,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         // along. Both are asked BEFORE the scalar row below, because the
         // lattice type of either is the carrier of what is INSIDE.
         if (admission::isCarriedCell(v.getDefiningOp())) {
-            needsString |= carrierOf(typeOf(v)) == carrier::string;
             v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
             return;
         }
         if (admission::isCellParameter(v)) {
-            needsString |= carrierOf(typeOf(v)) == carrier::string;
             v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
             return;
         }
@@ -103,10 +107,6 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
-            needsMap = true;
-            needsNullableString |= mapNeedsNullableString(map);
-            needsNullableMapKeys |= mapNeedsNullableStringKey(map);
-            needsString |= mapNeedsString(map);
             needsObjectValue |= mapNeedsObjectValues(map);
             v.setType(mapCarrierType(map));
             return;
@@ -115,12 +115,10 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        needsString |= isStringCarrier(c);
         // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
         // scalars carrierType() can spell: an owning vector in this frame,
         // or an SCF-carried address whose owners outlive every use.
         if (isVectorCarrier(c)) {
-            needsStringVector |= c == carrier::stringVector;
             auto owner =
                 llvm::cast<ec::LValueType>(vectorCarrierType(context, c == carrier::stringVector));
             const bool borrowed =
@@ -212,6 +210,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     // every OTHER site in the program - so here each object only takes the
     // type of its own site.
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+        if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));

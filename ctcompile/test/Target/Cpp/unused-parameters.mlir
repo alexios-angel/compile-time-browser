@@ -9,10 +9,10 @@
 // callees, malformed markers and non-parameter values retain their behavior.
 
 //--- parameters.mlir
-#input = loc(fused<{ctnative.source_name = "input"}>["unused-parameters.js":1:1])
-#ignored = loc(fused<{ctnative.source_name = "ignored"}>["unused-parameters.js":2:1])
-#answer = loc(fused<{ctnative.source_name = "answer"}>["unused-parameters.js":3:1])
-module attributes {ctnative.readable_names, ctnative.const_bindings} {
+#input = loc("unused-parameters.js":1:1)
+#ignored = loc("unused-parameters.js":2:1)
+#answer = loc("unused-parameters.js":3:1)
+module attributes {ctnative.const_bindings} {
   emitc.include "parameter-fixture.h"
   emitc.func @used(%input: i32 loc(#input)) -> i32 {
     emitc.call_opaque "static_cast<void>"(%input) {ctnative.parameter_suppression, ctnative.const_operands = array<i32: 0>} : (i32) -> ()

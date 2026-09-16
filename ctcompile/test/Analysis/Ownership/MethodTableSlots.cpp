@@ -7,6 +7,8 @@
 
 #include <cstdio>
 
+#include "check.hpp"
+
 namespace {
 namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::OwnedMethodTableSlots;
@@ -30,12 +32,6 @@ module {
 }
 )MLIR";
 
-int failures = 0;
-void check(bool value, const char * message) {
-    if (value) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 } // namespace
 
 int main() {
@@ -141,6 +137,8 @@ int main() {
     returned->setOperand(0, originalResult);
     check(complete(OwnedMethodTableSlots(*module)), "removing the escape restores both slots");
 
-    if (failures == 0) { std::puts("owned method-table slot budget and live-query checks passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) {
+        std::puts("owned method-table slot budget and live-query checks passed");
+    }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

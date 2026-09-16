@@ -9,6 +9,8 @@ import os
 import re
 import subprocess
 
+from CTNative.harness import inline_runtime
+
 from .sources import (
     methods,
     owned,
@@ -330,7 +332,7 @@ def nullable_observer_source(source, name):
 
 
 def nullable_identity_cpp(cpp, name):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("nullable identity observer needs exactly one entry")
     changed += "\nint main() {\n    if (ctnative_test_entry() != 0) { return 90; }\n"
@@ -414,7 +416,7 @@ def resolve_getter(args, ir):
 
 
 def lifetime(args, cpp, name, mode, value, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("lifetime harness needs exactly one entry")
     # Observe the real runtime Map allocation without adding a strong owner.
@@ -514,7 +516,7 @@ int main() {
 
 
 def shared_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("shared lifetime harness needs exactly one entry")
     changed = (
@@ -649,7 +651,7 @@ def string_payload_lifetime(args, cpp, name, mode, compiler):
         "shortcircuit_string_saved",
     }
     initial_size = 2 if joined else 1
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("string lifetime harness needs exactly one entry")
     changed = (
@@ -765,7 +767,7 @@ int main() {
 
 
 def nullable_payload_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("nullable lifetime harness needs exactly one entry")
     changed = (
@@ -873,7 +875,7 @@ int main() {
 
 
 def nullable_key_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("nullable key lifetime harness needs exactly one entry")
     changed = (
@@ -983,7 +985,7 @@ int main() {
 
 
 def nullable_stored_payload_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("nullable stored-payload harness needs exactly one entry")
     changed = (

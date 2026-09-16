@@ -38,16 +38,10 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                 }
                 const auto type = typeOf(captured);
                 switch (carrierOf(type)) {
-                case carrier::nullable:
-                    needsNullable = true;
-                    definition += kNullableType;
-                    break;
+                case carrier::nullable: definition += kNullableType; break;
                 case carrier::number: definition += "js_num"; break;
                 case carrier::boolean: definition += "bool"; break;
-                case carrier::string:
-                    needsString = true;
-                    definition += "std::string";
-                    break;
+                case carrier::string: definition += "std::string"; break;
                 case carrier::objectValue:
                     needsObjectValue = true;
                     definition += kObjectValueType;
@@ -57,9 +51,7 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                     definition += kObjectIdentityType;
                     break;
                 case carrier::map: {
-                    needsMap = true;
                     const auto map = llvm::cast<MapType>(type);
-                    needsString |= mapNeedsString(map);
                     needsObjectValue |= mapNeedsObjectValues(map);
                     definition += llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue();
                     break;

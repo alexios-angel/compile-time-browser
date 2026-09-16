@@ -1,5 +1,7 @@
 #include "Tests.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::exception_recovery;
 
 int main(int argc, char ** argv) {
@@ -85,5 +87,5 @@ var normal = guarded(false);
     testSelectedActuals(context);
     testEffects(context);
     testGuardedTail(context);
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

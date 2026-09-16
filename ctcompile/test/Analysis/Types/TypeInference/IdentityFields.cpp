@@ -198,7 +198,7 @@ module {
         &context);
     if (!module) {
         std::printf("FAIL identity own-field live mutation fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     ctcompile::ctjs::SetPropertyOp stored;
@@ -209,7 +209,7 @@ module {
     module->walk([&](ctcompile::ctjs::CreateObjectOp op) { objects.push_back(op); });
     if (!stored || !observed || objects.size() != 2) {
         std::printf("FAIL identity own-field live mutation fixture lost its exact operations\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     const auto liveAndFresh = [&](const char * what, const char * expected, bool assigned) {
@@ -217,7 +217,7 @@ module {
         const auto proof = ctcompile::ctnative::queryNativeObjectFieldPresence(observed);
         if (proof.assigned != assigned || proof.exhausted) {
             std::printf("FAIL %s: stale source retained the wrong field presence\n", what);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
         mlir::OwningOpRef<mlir::ModuleOp> fresh{llvm::cast<mlir::ModuleOp>(module->clone())};
         check(*fresh, what, expected);
@@ -226,7 +226,7 @@ module {
         const auto freshProof = ctcompile::ctnative::queryNativeObjectFieldPresence(freshRead);
         if (freshProof.assigned != assigned || freshProof.exhausted) {
             std::printf("FAIL %s: fresh source retained the wrong field presence\n", what);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     };
     liveAndFresh("identity field presence before live mutation", "!ctnative.num<i32>", true);
@@ -313,7 +313,7 @@ void checkFieldBudgets(mlir::ModuleOp module, const char * what, bool assigned) 
     const auto complete = ctcompile::ctnative::queryNativeObjectFieldPresence(read);
     if (complete.assigned != assigned || complete.exhausted || complete.work == 0) {
         std::printf("FAIL %s: complete field-presence budget fixture disagrees\n", what);
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     for (uint64_t limit = 0; limit < complete.work; ++limit) {
@@ -322,14 +322,14 @@ void checkFieldBudgets(mlir::ModuleOp module, const char * what, bool assigned) 
             std::printf("FAIL %s: field presence survived work cutoff %llu of %llu\n", what,
                         static_cast<unsigned long long>(limit),
                         static_cast<unsigned long long>(complete.work));
-            ++failures;
+            ++ctbrowser_test_failures;
             return;
         }
     }
     const auto exact = ctcompile::ctnative::queryNativeObjectFieldPresence(read, complete.work);
     if (exact.assigned != assigned || exact.exhausted || exact.work != complete.work) {
         std::printf("FAIL %s: exact field-presence budget did not reproduce the proof\n", what);
-        ++failures;
+        ++ctbrowser_test_failures;
     }
     std::printf("field presence %s: %llu exhaustive work cutoffs\n", what,
                 static_cast<unsigned long long>(complete.work));
@@ -436,7 +436,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
     if (!module) {
         std::printf("FAIL saved Map own-field preparation fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     ctcompile::ctnative::prepareNativeMaps(*module);
@@ -444,7 +444,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     auto observed = checkedField(*module);
     if (!observed || ctcompile::ctnative::nativeObjectFieldGroup(observed) < 0) {
         std::printf("FAIL saved Map own-field fixture did not receive a live object schema\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     check(*module, "actual native preparation retains a saved object's initialized field",
@@ -464,7 +464,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     module->walk([&](ctcompile::ctjs::SetPropertyOp op) { fieldStore = op; });
     if (puts.size() != 2 || !saved || !fieldStore) {
         std::printf("FAIL saved Map live mutation fixture lost exact source operations\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     const auto liveAndFresh = [&](const char * what, const char * expected, bool assigned) {
@@ -477,7 +477,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
         if (stale.assigned != assigned || rebuilt.assigned != assigned || stale.exhausted ||
             rebuilt.exhausted) {
             std::printf("FAIL %s: live/fresh Map field presence disagrees\n", what);
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     };
     const auto original = puts[0].getArgs()[1];
@@ -517,7 +517,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
             prologue() + body + "  ctjs.return %one\n}\n", &context);
         if (!scoped) {
             std::printf("FAIL own-field cross-scope fixture did not parse\n");
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         auto scopeRead = checkedField(*scoped);
@@ -528,7 +528,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
         if (!scopeRead || !inside ||
             !ctcompile::ctnative::queryNativeObjectFieldPresence(scopeRead).assigned) {
             std::printf("FAIL own-field cross-scope fixture lacks its initial live proof\n");
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         const auto receiver = scopeRead.getObject();
@@ -537,12 +537,12 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
         if (ctcompile::ctnative::queryNativeObjectFieldPresence(scopeRead).assigned ||
             ctcompile::ctnative::queryNativeObjectFieldPresence(checkedField(*fresh)).assigned) {
             std::printf("FAIL own-field initialization crossed an invalid SSA scope\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         }
         scopeRead->setOperand(0, receiver);
         if (!ctcompile::ctnative::queryNativeObjectFieldPresence(scopeRead).assigned) {
             std::printf("FAIL own-field initialization did not recover after a scope repair\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
@@ -552,7 +552,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
         &context);
     if (!absentModule) {
         std::printf("FAIL absent own-field budget fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
     } else {
         checkFieldBudgets(*absentModule, "different allocation refusal", false);
     }
@@ -561,7 +561,7 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
         prologue() + rows[12].body + "  ctjs.return %observed\n}\n", &context);
     if (!branchModule) {
         std::printf("FAIL branch own-field budget fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
     } else {
         checkFieldBudgets(*branchModule, "both-arm alias writes", true);
     }
