@@ -83,6 +83,60 @@ did not ask for a reset, `Range` was not under `AbstractRange`, and
 hit the call-stack ceiling made the second run as if nested; and five unit
 expectations that the spec parser proved wrong (`ee0e3862`).
 
+### And the wide corpus at the same SHA
+
+**2,162 of the 5,156 that ran (41.9%); subtests 180,098 PASS, 78,842 FAIL**
+- from 1,924 (37.3%) and 171,486 / 79,395 at `e29e197f` (round two, the
+run of 13:31 UTC this day, which is the "before" of every round-three
+agent): **+240 files, -2**. The eight top directories of
+`tools/wpt/fetch-wpt.sh`'s corpus; `encoding` is dropped from the wide
+run since this day - its 1,261 files time out one by one (TextDecoder is
+not implemented) and held the box for 90 minutes. The css rows are
+unchanged from `e29e197f` (round three touched no CSS) and are tabulated
+against the 2026-09-13 run in `docs/css-conformance.md` §2-wide; the
+rest, with the round-three deltas:
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+| `css/compositing` | **10** (+0) | 1 | 0 | 0 | 0 | 0 | 11 | 90 / 2 |
+| `custom-elements` | **9** (+0) | 161 | 0 | 0 | 10 | 13 | 193 | 2,175 / 1,847 |
+| `dom/abort` | **0** (+0) | 5 | 0 | 0 | 1 | 3 | 9 | 5 / 18 |
+| `dom/collections` | **6** (+0) | 4 | 0 | 0 | 0 | 1 | 11 | 43 / 10 |
+| `dom/events` | **71** (+0) | 17 | 3 | 0 | 2 | 85 | 178 | 651 / 54 |
+| `dom/lists` | **2** (+0) | 3 | 0 | 0 | 0 | 0 | 5 | 172 / 17 |
+| `dom/nodes` | **244** (+0) | 45 | 16 | 2 | 2 | 53 | 362 | 12,054 / 734 |
+| `dom/ranges` | **24** (+1) | 37 | 1 | 0 | 3 | 8 | 73 | 34,349 / 7,014 |
+| `dom/traversal` | **14** (+6) | 4 | 0 | 0 | 0 | 0 | 18 | 1,579 / 29 |
+| `domparsing` | **10** (+0) | 48 | 0 | 0 | 11 | 3 | 72 | 231 / 1,341 |
+| `html/dom` | **147** (+12) | 73 | 11 | 0 | 8 | 137 | 376 | 60,498 / 150 |
+| `html/semantics/forms` | **138** (+100) | 165 | 21 | 1 | 8 | 315 | 648 | 2,824 / 1,789 |
+| `html/syntax` | **28** (+10) | 236 | 3 | 0 | 1 | 43 | 311 | 2,657 / 6,034 |
+| `html/webappapis` | **122** (+82) | 114 | 61 | 1 | 11 | 40 | 349 | 620 / 378 |
+| `selection` | **0** (+0) | 46 | 2 | 0 | 48 | 87 | 183 | 17 / 280 |
+| `shadow-dom` | **49** (+3) | 110 | 11 | 0 | 12 | 163 | 345 | 350 / 8,410 |
+| `url` | **22** (+21) | 25 | 1 | 0 | 1 | 0 | 49 | 5,400 / 4,534 |
+| **total** | **2162** | 2514 | 154 | 4 | 322 | 2439 | 7595 | 180,098 / 78,842 |
+
+Agent F is `html/semantics/forms` 38 -> 138 and `dom/traversal` 8 -> 14;
+D is `html/webappapis` 40 -> 122 (dynamic-markup-insertion: `document.
+open/write/close`, the parser stopping at every `</script>`) and
+`html/syntax` 18 -> 28 (236 of its 311 files still FAIL - the html5lib
+`parsing/` variants, one file per fixture group, where any case failing
+fails the file; the tree builder itself passes 1,723 of the 1,842 fixture
+cases in `unittests/unit/html5lib_fixtures`); U is `url` 1 -> 22 (the
+`urlsearchparams-*.any.js` files, `url-constructor`, `url-origin`,
+`url-tojson`; the 27 still failing are the `<a>`/`<area>` half -
+`a-element*` and `url-setters-a-area*`, whose `href`/`username`/`origin`
+do not go through the URL record yet - `IdnaTestV2` (1,276 subtests, the
+rest of UTS #46), four files on `iterator.next is not a function` over a
+URLSearchParams iterator handed to `new URLSearchParams`, and
+`TextEncoder`/`XMLHttpRequest` being undefined). The two lost:
+`domparsing/DOMParser-parseFromString-html.html` ("must be parsed with
+scripting disabled, so noscript works": the new tree builder parses a
+DOMParser document with scripting ON, so `<noscript>` content is raw text
+where the test wants a `<p>` child - 13.2.6.4.4's scripting flag needs to
+follow the document, not the process) and `viewport-units-invalidation`
+(above).
+
 ## The baseline — 2026-09-16, the five suites after the round-one merges
 
 **740 of the 1,102 that ran (67.2%); subtests 45,822 PASS, 2,025 FAIL** -

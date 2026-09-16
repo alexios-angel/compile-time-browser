@@ -43,6 +43,98 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
+## 2-wide. Every CSS module, measured — 2026-09-16, after rounds two and three
+
+The same instrument as the 2026-09-13 table below (devbox, 4 workers,
+`CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, corpus `3f6b09ae3e`),
+engine at `273773cd` - `7f9211d0` plus the round-one, round-two (A
+animations, G properties, L layout, C cascade) and round-three branches;
+the css rows did not move between `e29e197f` and `273773cd`. Deltas are
+against `7f9211d0`:
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **10** (+7) | 1 | 0 | 0 | 0 | 0 | 11 | 90 / 2 |
+| `css/css-align` | **43** (+22) | 14 | 0 | 0 | 0 | 0 | 57 | 1,094 / 227 |
+| `css/css-anchor-position` | **3** (+3) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **8** (-2) | 34 | 0 | 0 | 0 | 1 | 43 | 297 / 293 |
+| `css/css-backgrounds` | **50** (+18) | 57 | 0 | 0 | 0 | 45 | 152 | 3,696 / 2,349 |
+| `css/css-box` | **26** (+1) | 14 | 0 | 0 | 0 | 0 | 40 | 450 / 477 |
+| `css/css-break` | **16** (+8) | 6 | 0 | 0 | 0 | 0 | 22 | 374 / 166 |
+| `css/css-cascade` | **47** (+22) | 46 | 1 | 0 | 0 | 60 | 154 | 1,002 / 141 |
+| `css/css-color` | **28** (+17) | 36 | 0 | 0 | 0 | 257 | 321 | 9,420 / 3,200 |
+| `css/css-color-adjust` | **1** (+0) | 6 | 0 | 0 | 0 | 0 | 7 | 108 / 39 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **4** (-1) | 36 | 1 | 0 | 172 | 204 | 417 | 948 / 848 |
+| `css/css-contain` | **4** (+3) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+1) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+1) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **23** (+0) | 11 | 0 | 0 | 0 | 1 | 35 | 753 / 236 |
+| `css/css-fonts` | **47** (+23) | 53 | 0 | 0 | 0 | 0 | 100 | 2,257 / 2,022 |
+| `css/css-forced-color-adjust` | **3** (+2) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (-4) | 60 | 0 | 0 | 0 | 2 | 76 | 356 / 3,790 |
+| `css/css-grid` | **19** (+6) | 55 | 0 | 0 | 0 | 3 | 77 | 1,612 / 2,098 |
+| `css/css-images` | **20** (+12) | 11 | 0 | 0 | 0 | 0 | 31 | 3,000 / 216 |
+| `css/css-inline` | **10** (+4) | 10 | 0 | 0 | 0 | 0 | 20 | 214 / 119 |
+| `css/css-link-params` | **1** (+1) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **6** (-2) | 19 | 0 | 0 | 0 | 0 | 25 | 332 / 166 |
+| `css/css-logical` | **32** (+3) | 30 | 0 | 0 | 0 | 0 | 62 | 620 / 146 |
+| `css/css-masking` | **19** (+9) | 29 | 0 | 0 | 0 | 1 | 49 | 822 / 5,261 |
+| `css/css-multicol` | **24** (+13) | 15 | 0 | 0 | 0 | 0 | 39 | 1,123 / 347 |
+| `css/css-nesting` | **11** (+10) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **13** (+1) | 23 | 0 | 0 | 0 | 0 | 36 | 227 / 152 |
+| `css/css-overscroll-behavior` | **2** (+1) | 2 | 0 | 0 | 0 | 0 | 4 | 54 / 13 |
+| `css/css-page` | **5** (+1) | 7 | 0 | 0 | 0 | 0 | 12 | 39 / 34 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** (+0) | 11 | 0 | 0 | 0 | 0 | 32 | 822 / 239 |
+| `css/css-properties-values-api` | **3** (+3) | 62 | 0 | 0 | 4 | 0 | 69 | 82 / 160 |
+| `css/css-pseudo` | **0** (+0) | 4 | 0 | 0 | 1 | 0 | 5 | 109 / 174 |
+| `css/css-rhythm` | **12** (+7) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **6** (+2) | 3 | 0 | 0 | 0 | 0 | 9 | 36 / 11 |
+| `css/css-scroll-anchoring` | **4** (+3) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **22** (+15) | 4 | 0 | 0 | 0 | 0 | 26 | 412 / 61 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **5** (-2) | 16 | 0 | 0 | 0 | 0 | 21 | 191 / 2,160 |
+| `css/css-size-adjust` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 156 / 59 |
+| `css/css-sizing` | **11** (+0) | 26 | 0 | 0 | 0 | 0 | 37 | 2,149 / 1,085 |
+| `css/css-syntax` | **17** (+2) | 22 | 0 | 0 | 1 | 8 | 48 | 298 / 131 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **58** (+22) | 39 | 0 | 0 | 0 | 0 | 97 | 1,093 / 839 |
+| `css/css-text-decor` | **18** (+6) | 17 | 0 | 0 | 0 | 0 | 35 | 418 / 774 |
+| `css/css-transforms` | **24** (+17) | 42 | 0 | 0 | 0 | 27 | 93 | 1,591 / 3,744 |
+| `css/css-transitions` | **6** (-3) | 24 | 0 | 0 | 0 | 0 | 30 | 530 / 379 |
+| `css/css-ui` | **24** (+3) | 28 | 0 | 0 | 0 | 0 | 52 | 995 / 399 |
+| `css/css-values` | **163** (+5) | 96 | 7 | 0 | 5 | 237 | 508 | 7,293 / 2,773 |
+| `css/css-variables` | **26** (+6) | 34 | 1 | 0 | 0 | 186 | 247 | 439 / 146 |
+| `css/css-view-transitions` | **6** (+3) | 6 | 0 | 0 | 0 | 0 | 12 | 323 / 701 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **2** (+1) | 2 | 0 | 0 | 0 | 0 | 4 | 161 / 11 |
+| `css/css-writing-modes` | **13** (+3) | 3 | 0 | 0 | 0 | 0 | 16 | 46 / 6 |
+| `css/cssom` | **151** (+4) | 41 | 0 | 0 | 0 | 29 | 221 | 2,821 / 738 |
+| `css/cssom-view` | **26** (-18) | 173 | 5 | 0 | 13 | 22 | 239 | 412 / 1,559 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **13** (+9) | 15 | 0 | 0 | 0 | 0 | 28 | 358 / 2,052 |
+| `css/mediaqueries` | **9** (+4) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **7** (+0) | 36 | 0 | 0 | 0 | 4 | 47 | 1,276 / 3,672 |
+| `css/selectors` | **121** (+16) | 75 | 7 | 0 | 8 | 313 | 524 | 4,447 / 1,038 |
+
+**Across the 65 css modules: 1,276 files PASS of the 2,925 that ran, from
+988 at `7f9211d0` - +389 files gained, 117 lost; 56,473 subtests PASS.**
+The gains are the four round-two agents' (`docs/plans/wpt-next.md` §3):
+css-align +22, css-backgrounds +18, css-cascade +22, css-color +17,
+css-fonts +23, css-text +22, css-transforms +17, css-scroll-snap +15,
+selectors +15, css-multicol +13, css-images +12, css-nesting +10,
+filter-effects +9. Of the 117 lost, 53 are `*-invalid.html` parsing files
+(G: a property that was an expando refused everything, and its real
+grammar accepts some invalid forms - G2 in the plan), 28 are
+`promise_test` files that were the instrument's false pass (`docs/wpt.md`,
+the `9c70aaa0` row, point 1: 21 of them `cssom-view`'s smooth-scroll
+files), and the rest are single files under css-values (12), css-cascade
+(7), cssom (6), css-overflow (6), selectors (5), css-grid (5), css-gaps
+(5).
+
 ## 2-wide. Every CSS module, measured — 2026-09-13
 
 The corpus grew on 2026-09-13 to every CSS module's `parsing/` tests,
