@@ -214,7 +214,7 @@ constexpr expectation expected[] = {
     {"namespace-sensitivity", 1, 0},
     {"pending-spec-changes", 3, 0},
     {"pending-spec-changes-plain-text-unsafe", 1, 0},
-    {"plain-text-unsafe", 25, 12},
+    {"plain-text-unsafe", 27, 10},
     {"processing-instructions", 123, 0},
     {"quirks01", 4, 0},
     {"ruby", 21, 0},

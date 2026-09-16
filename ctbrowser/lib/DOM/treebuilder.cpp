@@ -1982,17 +1982,20 @@ void tree_builder::mode_after_after_frameset(const token & t) {
 void tree_builder::process_foreign(const token & t) {
     switch (t.kind) {
     case token_kind::character: {
-        // NUL is U+FFFD here; a non-whitespace character clears frameset-ok.
+        // NUL is U+FFFD here - by its own rule, which leaves frameset-ok
+        // alone; any other non-whitespace character clears it.
         std::string data;
+        bool other = false;
         for (const char c : t.data) {
             if (c == '\0') {
                 data += "\xEF\xBF\xBD";
             } else {
                 data += c;
+                if (!is_whitespace(c)) { other = true; }
             }
         }
         insert_text(data);
-        if (!all_whitespace(data)) { frameset_ok_ = false; }
+        if (other) { frameset_ok_ = false; }
         return;
     }
     case token_kind::comment:
