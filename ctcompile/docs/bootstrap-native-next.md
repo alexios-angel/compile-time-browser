@@ -2,38 +2,42 @@
 
 ## Current boundary, 2026-09-16
 
-**53b9f68a / 0a7c0302** recover and compile original M's protected body,
-`JSON.parse(decodeURIComponent(t))`, through explicit initial JSON/parse and URI
-identities. Lookup precedes decoding; both checked calls retain their original
-failure snapshots. Native C++ calls the public Core parser and owns a
-`ctbrowser::json_value`; String failure arms own their bytes. The recovered
-`efe8daa8` draft is superseded. [The DOM contract](native-dom-entry.md) describes
-the proof and refusals; [HANDOFF](HANDOFF.md) records the gate and evidence.
+**32032893** compiles original M and
+`H.getDataAttribute(element, "config")` through the public Core/DOM APIs. Number
+truthiness, Boolean/Number/null branches, the saved optional-String guard and
+URI/JSON failure snapshots retain source behavior. Results own their JSON trees
+and bytes, with ordinary RAII and no Script/VM/GC dependency. Original F's
+constant-key no-match proof already existed and is reused.
 
-The JSON gate passes **7 sources / 14 Node-VM observations / 8 GCC-Clang binaries /
-72 refusals**, both providers/policies/layouts and post-document lifetime
-sanitizers. Complete **605/605 CTests (1706.00s) / 177/177 lit (1305.06s) PASS**,
-with wrapper exit **0** and frozen implementation hashes checked.
+The JSON gate passes **12 sources / 219 Node-VM observations / 8 GCC-Clang binaries /
+144 refusals**, both providers/policies/layouts and a post-document lifetime
+sanitizer. Focused **2/2 proof CTests / 4/4 lit PASS**; complete **375-step build / 288/288 CTests (2339.80s) / 252/252 lit
+(2056.50s) PASS**, wrapper exit **0**.
+Frozen implementation hashes match. [The DOM contract](native-dom-entry.md)
+describes the supported operations; [HANDOFF](HANDOFF.md) records measurements.
 
-The exact original `H.getDataAttribute -> M` probe now reaches the typed DOM
-proof and refuses at **`ctjs.unary`**, in all four provider/policy combinations.
-M still has **24 nine-register blocks**, with its handler at **^bb12**. The next
-slice starts with original `!0`/`!1` Number truthiness, then the full
-Boolean/Number/null prefix joining the parsed JSON or original String. The saved
-optional-String guard and every source effect must survive that composition.
-After M, preserve F's original regexp/callback key conversion and H's
-`data-bs-${F(key)}` construction before the DOM read.
+**Next: Config's JSON-result `typeof`.** The original `_mergeConfigObj` performs
+`"object" == typeof H.getDataAttribute(element, "config")`. H now compiles to one
+native function in all four provider/policy modes, but adding that observation
+still refuses at `ctjs.unary`. Preserve null/array/object behavior in the proof.
+Original M retains 24 nine-register blocks and handler ^bb12 before preparation.
 
-Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, DOM Data **7/7**,
-and Button **4/86**, with its 22 Node lifecycle observations and existing VM
-inheritance failure. Reports are unchanged; all **1,123 escape rows** match the
-current pinned baseline. Full dataset/config, initialization/inheritance,
-retained callbacks and the application driver remain unfinished.
+After that, prove JSON object spreads and dataset/config merging. Public
+`ctbrowser/dom/dataset.hpp` already supplies the dataset implementation; extend
+the native boundary to call it. Matching/live F keys remain refused separately.
+Inherited static/object-valued defaults, initialization, retained callbacks and
+the application driver remain open.
 
-A separate compiler workflow can import and prove `program::hoisted_vars` instead
-of relying on top-level `var x;` writes in the host-prefix wrapper proof. Claude's
-03:53 UTC journal and **7ad52ce2** identify that temporary runtime compatibility
-restore; preserve the source declaration without requiring the runtime write.
+**40f1f3ef** completes the independent hoisted-declaration prerequisite recorded
+in Claude's 03:53 journal: host-prefix proofs no longer need the synthetic
+Undefined write for `var x;`. Declarations establish binding identity, never an
+initial value or intrinsic authority. Runtime changes remain Claude-owned.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
+observations and the unchanged VM inheritance failure. All **1,123 escape rows**
+match the current pinned baseline. Reports are unchanged except for Button's test
+path after the lit migration. No full-bundle gain is claimed.
 
 The earlier milestones below are historical context, not alternative next steps.
 

@@ -6,6 +6,68 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original Bootstrap attribute normalization, 2026-09-16 UTC
+
+Resumed **codex-m-finish's four dirty M-prefix files**, identified through the
+04:52 AGENT-SYNC journal, the abandoned 04:53:42 loop and **e7c14d27**. Started
+at **5e3d3b86**, with the test-registry audit merged. Three agents split tests,
+declaration metadata and review; root recovered service-limited drafts and
+completed integration. The old September 7 and JSON-chain threads were already
+resolved. No other branch or browser/runtime source was changed.
+
+**32032893** compiles the byte-pinned original M and
+`H.getDataAttribute(element, "config")`. Number truthiness reuses the existing
+NaN/zero-aware conversion. Boolean, Number, null and optional-String alternatives
+join the existing owning `ctbrowser::json_value`; optional bytes are copied only
+inside the selected present arm. Original lookup order, nullable guards and both
+failure snapshots survive. Emitted C++ calls public Core/DOM APIs and uses ordinary
+RAII, without Script/VM/GC dependencies. The API is documented in **a1bc655d**.
+F's constant-key no-match proof already existed and is reused; do not reimplement
+that slice.
+
+**40f1f3ef** independently imports classic-script `program::hoisted_vars` into
+fingerprinted module metadata. Shared host validation rejects malformed names and
+absent-binding contradictions. Prefix identity proof recognizes a declaration
+without an Undefined store, while its value, callability and intrinsic authority
+remain unknown. Regressions remove only bare declaration stores to simulate
+Claude's pending runtime correction. This supplies the compiler prerequisite for
+removing the temporary compatibility restoration in **7ad52ce2**; the runtime
+change remains Claude-owned.
+
+Focused **2/2 proof CTests (3.73s) / 4/4 lit cases (33.94s) PASS**. JSON now covers
+**12 sources / 219 Node-VM observations / 8 GCC-Clang binaries / 144 refusals**,
+both providers/policies/layouts and a post-document lifetime sanitizer. Independent
+reviews of the proof and generated C++ found no material issue. Complete
+**375-step build / 288/288 CTests (2339.80s) / 252/252 lit
+(2056.50s) PASS**, wrapper exit **0**. All **1,742 frozen source/submodule
+inputs** match the devbox and
+implementation commit **32032893**; documentation changed afterward. Formatting
+23.1.1 passes **844 C++ / 105 Python / 106 web**; the required pinned formatter
+retains the existing **nine-file / 26-diagnostic** baseline. The audit moved many
+CTest registrations into lit, so totals differ from the previous 605/177 registry.
+Evidence: `/tmp/ctcompile-m-gate/`, including full logs/exits, manifests,
+`native-json.cpp`, `next-measured.json` and the final measured report.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
+observations and the unchanged VM inheritance failure. All **1,123 escape rows**
+match the current pinned baseline. Reports are unchanged except for Button's test
+path after the lit migration. No full-bundle gain is claimed.
+
+**Exact next native boundary:** original `_mergeConfigObj` performs
+`"object" == typeof H.getDataAttribute(element, "config")`. The attribute call now
+compiles to one native function in all four provider/policy combinations; adding
+that JSON-result `typeof` still refuses at **`ctjs.unary`**. Original M's imported
+**24 nine-register blocks / handler ^bb12** remain intact before preparation.
+Prove that JSON observation next: the object tag includes null and arrays, so it
+must not narrow to object members alone. Then come JSON object spreads and
+dataset/config merging; public `dom/dataset.hpp` already
+provides the dataset core. Matching/live F keys remain refused separately.
+Inherited static/object-valued defaults, initialization, retained callbacks and the
+application driver remain unfinished. Claude's pending runtime/audit branches
+remain his to land and require fresh differential validation when integrated.
+The entries below are historical checkpoints.
+
 ## Native JSON chain recovered and gated, 2026-09-16 UTC
 
 Resumed **efe8daa8**, identified in the previous handoff and AGENT-SYNC, by
