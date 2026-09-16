@@ -43,6 +43,35 @@ void install_symbol(context & cx) {
     method(cx, symbol_proto, "valueOf", 0, [this_symbol](context & c, std::span<value>) {
         return this_symbol(c, "Symbol.prototype.valueOf");
     });
+    // 20.4.3.2 get Symbol.prototype.description: the [[Description]], which
+    // is UNDEFINED for `Symbol()` and "" for `Symbol("")` - told apart by the
+    // key, see the constructor.
+    {
+        auto * getter = detail::method_native(
+            cx, "get description", [this_symbol](context & c, std::span<value>) {
+                const value self = this_symbol(c, "Symbol.prototype.description");
+                if (!self.is_kind(heap_kind::symbol)) { return value::undefined(); }
+                auto * sym = static_cast<symbol_object *>(self.as_heap());
+                if (sym->key.starts_with(symbol_key_prefix) &&
+                    sym->key.find(':', symbol_key_prefix.size()) == std::string::npos) {
+                    return value::undefined();
+                }
+                return c.string(sym->description);
+            });
+        detail::install_arity(cx, getter, 0);
+        symbol_proto->define_accessor("description", value::object(getter), value::undefined(),
+                                      attr_configurable);
+    }
+    // 20.4.3.5 Symbol.prototype[@@toPrimitive]: thisSymbolValue, whatever the
+    // hint. { false, false, true }, length 1.
+    {
+        auto * exotic = detail::method_native(
+            cx, "[Symbol.toPrimitive]", [this_symbol](context & c, std::span<value>) {
+                return this_symbol(c, "Symbol.prototype[Symbol.toPrimitive]");
+            });
+        detail::install_arity(cx, exotic, 1);
+        symbol_proto->define("@@toPrimitive", value::object(exotic), attr_configurable);
+    }
     // 20.4.3.6: { false, false, true }, and what Object.prototype.toString
     // reads for a Symbol wrapper.
     symbol_proto->define("@@toStringTag", cx.string("Symbol"), attr_configurable);
@@ -52,22 +81,43 @@ void install_symbol(context & cx) {
     // ordinary uses, which is why a native carries a property table now.
     auto * symbol =
         cx.allocate<native_object>("Symbol", [counter](context & c, std::span<value> a) {
-            const std::string description = a.empty() ? std::string{} : c.to_string(a[0]);
-            const std::string key =
-                std::string{symbol_key_prefix} + std::to_string((*counter)++) + ":" + description;
+            // 20.4.1.1 step 1: `new Symbol()` is a TypeError - there is no
+            // Symbol wrapper to construct (Object(sym) is how one is made).
+            if (detail::constructing_this(c.current_this())) {
+                c.throw_error("TypeError", "Symbol is not a constructor");
+                return value::undefined();
+            }
+            // Step 3: an undefined description stays UNDEFINED, which the
+            // `description` getter can tell from "" only by the key:
+            // `@@sym:<n>` carries no second colon, `@@sym:<n>:` carries an
+            // empty one. Anything else is ToString'd, and a symbol refuses.
+            const bool described = !arg_at(a, 0).is_undefined();
+            if (described && !stringable_arg(c, a[0])) { return value::undefined(); }
+            const std::string description = described ? c.to_string(a[0]) : std::string{};
+            if (c.throw_pending()) { return value::undefined(); }
+            std::string key = std::string{symbol_key_prefix} + std::to_string((*counter)++);
+            if (described) { key += ":" + description; }
             return value::object(c.allocate<symbol_object>(description, key));
         });
+    // It KEEPS [[Construct]] (20.4.1: `new Symbol()` is a TypeError from the
+    // body, not "not a constructor" - IsConstructor(Symbol) is true).
     // { false, false, false } - a well-known symbol is not writable and not
     // configurable (20.4.2), and enumerable would put `iterator` in
-    // `Object.keys(Symbol)`.
+    // `Object.keys(Symbol)`. Its [[Description]] is "Symbol.iterator" (the
+    // table in 6.1.5.1), which is what key_value rebuilds too.
     const auto well_known = [&](const char * name, const char * key) {
-        symbol->define(name, value::object(cx.allocate<symbol_object>(name, key)), attr_none);
+        symbol->define(
+            name, value::object(cx.allocate<symbol_object>(std::string{"Symbol."} + name, key)),
+            attr_none);
     };
     well_known("iterator", "@@iterator");
     well_known("asyncIterator", "@@asyncIterator");
     well_known("hasInstance", "@@hasInstance");
     well_known("toPrimitive", "@@toPrimitive");
     well_known("toStringTag", "@@toStringTag");
+    well_known("unscopables", "@@unscopables");   // read by `with` (compile/with.cpp)
+    well_known("dispose", "@@dispose");           // DisposableStack, Iterator.prototype
+    well_known("asyncDispose", "@@asyncDispose"); // AsyncDisposableStack
     // EVERY ONE OF THESE FIVE IS CONSULTED, which is the bar for being here:
     // a well-known symbol that no operation reads is a promise the engine does
     // not keep. IsRegExp (7.2.8) reads @@match to decide whether `includes`,
@@ -109,7 +159,8 @@ void install_symbol(context & cx) {
     const value registry = cx.make_array();
     auto * symbol_for =
         cx.allocate<native_object>("for", [keys, registry](context & c, std::span<value> a) {
-            const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
+            const std::string d = str_at(c, a, 0);
+            if (c.throw_pending()) { return value::undefined(); }
             auto * held = static_cast<array_object *>(registry.as_heap());
             for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {
                 if ((*keys)[i] == d) { return held->items[i]; }
@@ -121,12 +172,17 @@ void install_symbol(context & cx) {
         });
     symbol_for->retained.push_back(registry);
     symbol_for->is_constructor = false;
+    detail::install_arity(cx, symbol_for, 1);
     symbol->define("for", value::object(symbol_for), attr_builtin);
     // The inverse: the key a registered symbol was made under, or undefined for
     // one that never went through the registry.
     auto * symbol_key_for =
         cx.allocate<native_object>("keyFor", [keys, registry](context & c, std::span<value> a) {
             const value want = arg_at(a, 0);
+            if (!want.is_kind(heap_kind::symbol)) {
+                c.throw_error("TypeError", "Symbol.keyFor: argument is not a symbol");
+                return value::undefined();
+            }
             auto * held = static_cast<array_object *>(registry.as_heap());
             for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {
                 if (held->items[i] == want) { return c.string((*keys)[i]); }
@@ -135,10 +191,12 @@ void install_symbol(context & cx) {
         });
     symbol_key_for->retained.push_back(registry);
     symbol_key_for->is_constructor = false;
+    detail::install_arity(cx, symbol_key_for, 1);
     symbol->define("keyFor", value::object(symbol_key_for), attr_builtin);
     // `Symbol.prototype` is reachable from the constructor, like every other
-    // built-in's - a page that walks it found undefined.
+    // built-in's - a page that walks it found undefined. 20.4.2.10: length 0.
     detail::constant(symbol, "prototype", value::object(symbol_proto));
+    link_constructor(cx, symbol_proto, "Symbol", 0, value::object(symbol));
     cx.define_global("Symbol", value::object(symbol));
 
     // --- BigInt --------------------------------------------------------------

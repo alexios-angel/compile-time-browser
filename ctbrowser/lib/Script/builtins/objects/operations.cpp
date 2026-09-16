@@ -40,7 +40,8 @@ namespace {
         return value::object(cx.allocate<symbol_object>(key.substr(6), key));
     }
     if (key.starts_with("@@")) {
-        return value::object(cx.allocate<symbol_object>(key.substr(2), key));
+        // A well-known symbol's [[Description]] is "Symbol.iterator" (6.1.5.1).
+        return value::object(cx.allocate<symbol_object>("Symbol." + key.substr(2), key));
     }
     return cx.string(key);
 }
@@ -231,7 +232,41 @@ namespace {
 // two contradictory ways at once.
 [[nodiscard]] value prototype_of(context & cx, value of) {
     if (of.is_kind(heap_kind::proxy)) {
-        return prototype_of(cx, static_cast<proxy_object *>(of.as_heap())->target);
+        // 10.5.1 [[GetPrototypeOf]] of a proxy: the `getPrototypeOf` trap,
+        // checked against a non-extensible target; a revoked proxy is a
+        // TypeError. GetMethod reads through the handler's chain, which
+        // context::proxy_trap (own keys only) does not.
+        auto * p = static_cast<proxy_object *>(of.as_heap());
+        if (!p->handler.is_object_like()) {
+            cx.throw_error("TypeError",
+                           "Cannot perform 'getPrototypeOf' on a proxy that has been revoked");
+            return value::null();
+        }
+        const value trap = cx.lookup_property(p->handler, "getPrototypeOf");
+        if (cx.throw_pending()) { return value::null(); }
+        if (trap.is_nullish()) { return prototype_of(cx, p->target); }
+        if (!trap.is_callable()) {
+            cx.throw_error("TypeError", "proxy trap 'getPrototypeOf' is not a function");
+            return value::null();
+        }
+        const value args[1] = {p->target};
+        const value answered = cx.call(trap, args, p->handler);
+        if (cx.throw_pending()) { return value::null(); }
+        if (!answered.is_object_like() && !answered.is_null()) {
+            cx.throw_error("TypeError", "'getPrototypeOf' on proxy: trap returned neither object "
+                                        "nor null");
+            return value::null();
+        }
+        if (cx.is_extensible(p->target)) { return answered; }
+        const value real = prototype_of(cx, p->target);
+        if (cx.throw_pending()) { return value::null(); }
+        if (!real.strict_equals(answered)) {
+            cx.throw_error("TypeError", "'getPrototypeOf' on proxy: proxy target is "
+                                        "non-extensible but the trap did not return its "
+                                        "actual prototype");
+            return value::null();
+        }
+        return answered;
     }
     const auto table = [&](context::proto_kind kind) {
         object_object * found = cx.prototype(kind);
@@ -294,6 +329,34 @@ namespace {
 // cyclic, and Object.prototype's own [[Prototype]] is immutable (10.4.7).
 [[nodiscard]] bool set_prototype_of(context & cx, value of, value proto) {
     if (!of.is_object_like()) { return true; }
+    if (of.is_kind(heap_kind::proxy)) {
+        // 10.5.2 [[SetPrototypeOf]] of a proxy: the `setPrototypeOf` trap's
+        // boolean, and a true over a non-extensible target must be the truth.
+        // THE CONTRACT IS THE CALLER'S THROW: Object.setPrototypeOf and the
+        // __proto__ setter turn false into their TypeError, so the two
+        // refusals 10.5.2 spells as TypeErrors (a revoked proxy, a trap
+        // lying about a non-extensible target) answer false rather than
+        // throwing here and again there - a throw this native raises has
+        // landed by the time the caller raises its own, which is then
+        // uncaught. Reflect.setPrototypeOf checks the revoked case itself.
+        auto * p = static_cast<proxy_object *>(of.as_heap());
+        if (!p->handler.is_object_like()) { return false; }
+        const value trap = cx.lookup_property(p->handler, "setPrototypeOf");
+        if (cx.throw_pending()) { return false; }
+        if (trap.is_nullish()) { return set_prototype_of(cx, p->target, proto); }
+        if (!trap.is_callable()) {
+            cx.throw_error("TypeError", "proxy trap 'setPrototypeOf' is not a function");
+            return false;
+        }
+        const value args[2] = {p->target, proto};
+        const bool ok = context::truthy(cx.call(trap, args, p->handler));
+        if (cx.throw_pending()) { return false; }
+        if (!ok) { return false; }
+        if (cx.is_extensible(p->target)) { return true; }
+        const value real = prototype_of(cx, p->target);
+        if (cx.throw_pending()) { return false; }
+        return real.strict_equals(proto);
+    }
     if (prototype_of(cx, of) == proto) { return true; } // step 4: the same one is always fine
     if (of.is_object() && of.as_heap() == cx.prototype(context::proto_kind::object)) {
         return false;

@@ -849,6 +849,16 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
                                    value & thrown, value & returned) {
     thrown = value::undefined();
     returned = value::undefined();
+    // ROOTED ACROSS THE FENCE'S COMPILE. The first listener a fresh context
+    // fires compiles the fence through run_nested, which can collect - and
+    // the event, the callback and the receiver live only in these C++
+    // locals until `call` roots them. settle_read's event object was freed
+    // exactly there once install_builtins allocated enough for the heap to
+    // cross its first collection threshold inside the page's first handler
+    // (image_basics' FileReader test, 2026-09-12).
+    const context::rooted keep_callback{cx, callback};
+    const context::rooted keep_receiver{cx, receiver};
+    const context::rooted keep_args{cx, args};
     compile_listener_fence(cx);
     if (listener_fence_.is_callable() && listener_invoke_.is_callable()) {
         const value passed[4] = {listener_invoke_, callback, receiver, args};
