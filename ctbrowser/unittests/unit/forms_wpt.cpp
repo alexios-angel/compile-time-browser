@@ -271,6 +271,14 @@ void test_output_and_textarea() {
        "out.push(ta.textContent);"
        " return out.join(); })()",
        "out,out,output,v,out,v,v,d,textarea,4,text,zz");
+    // progress.window.js and meter.html: the clamped current values.
+    is("(function () { var p = document.createElement('progress'); var o = [p.value, p.position];"
+       " p.value = 2; o.push(p.value, p.position); p.max = 4; o.push(p.value, p.position);"
+       " var m = document.createElement('meter'); m.value = 5; o.push(m.value, m.max, m.min, "
+       "m.optimum);"
+       " m.min = 2; m.max = 10; m.low = 1; m.high = 20; o.push(m.value, m.low, m.high, m.optimum);"
+       " return o.join(); })()",
+       "0,-1,1,1,2,0.5,1,1,0,0.5,5,2,10,6");
 }
 
 } // namespace
