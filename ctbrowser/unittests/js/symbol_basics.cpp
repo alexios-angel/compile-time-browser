@@ -89,10 +89,11 @@ int main() {
     js_expect("(function(){try{return Symbol(\"x\")+1}catch(e){return \"THROWS \"+e.name}})()",
               "Symbol(x)1"); // V8: THROWS TypeError
 
-    // --- KNOWN WRONG ----------------------------------------------------------
-    // An ABSENT description is undefined, an empty one is "". This engine
-    // stores a plain std::string and cannot tell them apart.
-    js_expect("Symbol().description", ""); // V8: undefined
+    // An ABSENT description is undefined, an empty one is "" (20.4.3.2 -
+    // the prototype's getter tells them apart by the key).
+    js_expect("Symbol().description", "undefined");
+    js_expect("typeof Symbol('').description + ',' + Symbol('x').description", "string,x");
+    js_expect("Symbol('x').hasOwnProperty('description')", "false");
 
     REPORT("symbol_basics");
 }

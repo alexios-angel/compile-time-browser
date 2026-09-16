@@ -426,12 +426,16 @@ value context::lookup_property(value target, const std::string & name) {
         return from_object_prototype(target, name);
     }
     if (target.is_kind(heap_kind::symbol)) {
-        auto * sym = static_cast<symbol_object *>(target.as_heap());
-        if (name == "description") { return string(sym->description); }
+        // Symbol.prototype's own table, accessors included - `description`
+        // is its getter (20.4.3.2), which knows that Symbol() has none - then
+        // Object.prototype behind it.
         if (object_object * table = prototype(proto_kind::symbol)) {
             if (value * found = table->find(name)) { return *found; }
+            if (accessor_entry * entry = table->find_accessor(name)) {
+                return call_getter(*this, *entry, target);
+            }
         }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
