@@ -213,6 +213,13 @@ struct color_context {
                                                       std::string_view specified,
                                                       const color_context & ctx, float box_width,
                                                       float box_height);
+// THE COMPUTED VALUE OF A background-* OR mask-* LAYER LIST (CSS
+// Backgrounds 4, Masking 1): a size's lengths in pixels and its second
+// `auto` written, a position's keywords as percentages. Empty for a
+// property or value this does not model.
+[[nodiscard]] std::string computed_background_list(std::string_view property,
+                                                   std::string_view specified,
+                                                   const color_context & ctx);
 // The same colour as sRGB, unclamped, for whoever paints it.
 struct srgb_color {
     float r = 0, g = 0, b = 0, a = 1;

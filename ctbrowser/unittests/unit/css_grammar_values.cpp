@@ -263,6 +263,50 @@ void test_shadows() {
     bad("text-shadow", "1px 2px 3px 4px");
 }
 
+void test_background_layers() {
+    ok("background-repeat", "repeat no-repeat", "repeat-x");
+    ok("background-repeat", "no-repeat repeat", "repeat-y");
+    ok("background-repeat", "repeat space, round no-repeat, repeat-x",
+       "repeat space, round no-repeat, repeat-x");
+    bad("background-repeat", "repeat repeat-x");
+    ok("background-size", "1px", "1px auto");
+    ok("background-size", "auto auto", "auto");
+    ok("background-size", "auto 1px, 2% 3%, contain", "auto 1px, 2% 3%, contain");
+    bad("background-size", "-1px");
+    bad("background-size", "1px 2px 3px");
+    ok("background-position-x", "right 10px", "right 10px");
+    ok("background-position-x", "center, left, right", "center, left, right");
+    bad("background-position-x", "20% left");
+    bad("background-position-x", "bottom");
+    ok("background-position", "center right 7%", "right 7% center");
+    ok("background-position", "top 15px center", "center top 15px");
+    ok("background-position", "bottom 10% right 20%", "right 20% bottom 10%");
+    ok("mask-position", "10% 20%, center", "10% 20%, center center");
+    bad("mask-position", "bottom 7% left");
+    ok("background-attachment", "scroll, fixed, local", "scroll, fixed, local");
+    bad("background-attachment", "local, none");
+    ok("background-clip", "text border-area", "border-area text");
+    bad("background-clip", "margin-box");
+    using ctbrowser::style::css::computed_background_list;
+    length_context lengths;
+    lengths.font_size = 40;
+    color_context ctx;
+    ctx.lengths = &lengths;
+    CHECK_EQ(computed_background_list("background-size", "100%", ctx), std::string{"100% auto"});
+    CHECK_EQ(
+        computed_background_list("background-size", "calc(10px + 0.5em) calc(10px - 0.5em)", ctx),
+        std::string{"30px 0px"});
+    CHECK_EQ(computed_background_list("background-position-x",
+                                      "calc(10px - 0.5em), left -20%, right 10px", ctx),
+             std::string{"-10px, -20%, calc(100% - 10px)"});
+    CHECK_EQ(computed_background_list("background-position-y", "bottom -10px", ctx),
+             std::string{"calc(100% + 10px)"});
+    CHECK_EQ(computed_background_list("mask-position", "bottom 10% right 20%", ctx),
+             std::string{"80% 90%"});
+    CHECK_EQ(computed_background_list("background-position", "right 1em center", ctx),
+             std::string{"calc(100% - 40px) 50%"});
+}
+
 void test_filters() {
     ok("filter", "blur()", "blur()");
     ok("filter", "blur(0)", "blur(0px)");
@@ -310,6 +354,7 @@ int main() {
     test_keyword_combinations();
     test_transforms();
     test_shadows();
+    test_background_layers();
     test_filters();
     REPORT("css_grammar_values");
 }

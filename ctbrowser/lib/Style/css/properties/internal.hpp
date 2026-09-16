@@ -139,6 +139,10 @@ struct scan {
 // invalid list.
 [[nodiscard]] bool match_shadow_list(std::string_view property, const token_stream & ts,
                                      const scan & found, std::string & out);
+// The comma-separated layer lists of background-* and mask-*. Defined in
+// backgrounds.cpp; an empty `out` is an invalid list.
+[[nodiscard]] bool match_background_list(std::string_view property, const token_stream & ts,
+                                         const scan & found, std::string & out);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by

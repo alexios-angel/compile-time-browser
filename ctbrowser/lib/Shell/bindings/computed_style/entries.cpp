@@ -930,8 +930,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         const bool transform_property = property == "rotate" || property == "scale" ||
                                         property == "translate" || property == "transform-origin" ||
                                         property == "perspective-origin";
+        const bool layer_property = property == "background-repeat" || property == "mask-repeat" ||
+                                    property == "background-size" || property == "mask-size" ||
+                                    property == "background-position-x" ||
+                                    property == "background-position-y" ||
+                                    property == "mask-position";
         if (is_color_property(property) || image_property || filter_property || grid_property ||
-            transform_property) {
+            transform_property || layer_property) {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -951,6 +956,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             if (image_property) {
                 if (std::string computed = style::css::computed_image(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (layer_property) {
+                if (std::string computed =
+                        style::css::computed_background_list(property, text, ctx);
                     !computed.empty()) {
                     return computed;
                 }

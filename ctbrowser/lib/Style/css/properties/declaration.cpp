@@ -249,6 +249,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // THE BACKGROUND AND MASK LAYER LISTS (backgrounds.cpp).
+    if (ascii_istarts_with(property, "background-") || ascii_istarts_with(property, "mask-")) {
+        std::string serialized;
+        if (match_background_list(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // A SHADOW LIST (shadows.cpp): colour first, lengths, then `inset`.
     if (p->kind == k::freeform && ascii_iequals_any(property, {"box-shadow", "text-shadow"})) {
         std::string serialized;
