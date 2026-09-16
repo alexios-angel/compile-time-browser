@@ -121,7 +121,10 @@ config.substitutions.append(
 for name, candidates in (("%gxx", ("g++-13", "g++")), ("%clangxx", ("clang++-18", "clang++"))):
     found = next((shutil.which(c) for c in candidates if shutil.which(c)), candidates[-1])
     config.substitutions.append(
-        (name, f"{found} -std=c++23 {runtime_include} -Wall -Wextra -Werror -Wconversion -pedantic")
+        (
+            name,
+            f"{found} -std=c++23 {runtime_include} -I {config.ctbrowser_include} -Wall -Wextra -Werror -Wconversion -pedantic",
+        )
     )
 
 config.substitutions.append(("%node", config.node or shutil.which("node") or "node"))
@@ -129,8 +132,8 @@ config.substitutions.append(("%native_reference", config.native_reference))
 
 # THE NATIVE GATES AS SUBSTITUTIONS, so a fixture's RUN lines name only what
 # differs per fixture: the module, the program, the global to break. The
-# compilation-unit gate takes the HOST compiler bare (no ctbrowser include
-# path: standalone is the point), the same nm CMake found, the interpreter
+# compilation-unit gate takes the HOST compiler (public headers only,
+# no browser library), the same nm CMake found, the interpreter
 # reference and the type oracle as the nm control that links the interpreter.
 # INSERTED AT THE FRONT of the list: lit expands substitutions in order and
 # does not re-scan, so the tool names these expand to (ctjs-translate,

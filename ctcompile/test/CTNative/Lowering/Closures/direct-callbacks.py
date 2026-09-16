@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import RUNTIME_INCLUDE, run
+from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
 NATIVE_PIPELINE = (
@@ -214,6 +214,7 @@ def main():
                         compiler,
                         "-std=c++23",
                         RUNTIME_INCLUDE,
+                        CORE_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",

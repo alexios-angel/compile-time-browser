@@ -12,7 +12,11 @@ by CMake (lit.site.cfg.py.in).
 from pathlib import Path
 import subprocess
 
-from Target.Cpp.harness import RUNTIME_INCLUDE, find_compilers  # noqa: F401  (re-exported)
+from Target.Cpp.harness import (
+    CORE_INCLUDE,
+    RUNTIME_INCLUDE,
+    find_compilers,
+)  # noqa: F401  (re-exported)
 
 RUNTIME_HEADER = (
     Path(__file__).resolve().parents[2] / "include/ctcompile/CTNative/Runtime/ctnative.hpp"

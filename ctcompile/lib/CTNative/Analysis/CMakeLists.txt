@@ -64,3 +64,10 @@ target_include_directories(CTNativeAnalysis
 target_include_directories(CTNativeAnalysis SYSTEM
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
+
+# Provider diagnostics share public Core string semantics. MLIR compiles the
+# sources through its object target, so that target also needs C++23.
+target_compile_features(CTNativeAnalysis PRIVATE cxx_std_23)
+if(TARGET obj.CTNativeAnalysis)
+  target_compile_features(obj.CTNativeAnalysis PRIVATE cxx_std_23)
+endif()

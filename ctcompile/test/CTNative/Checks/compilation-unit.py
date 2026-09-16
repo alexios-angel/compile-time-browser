@@ -10,8 +10,8 @@ ONE EmitC module and the JavaScript program it is the lowering of:
       declare a variable for a `do` loop's condition and never assign it,
       which -Wall -Werror rejects; native functions are single-block and do
       not need it)
-  (b) that C++ is compiled by the configured compiler STANDALONE: no include
-      path into ctbrowser/, no library on the link line, -Wall -Wextra -Werror
+  (b) that C++ is compiled by the configured compiler STANDALONE: public headers only,
+      no library on the link line, -Wall -Wextra -Werror
       -pedantic, and -ffp-contract=off because JavaScript has no fused
       multiply-add and the interpreter's separate opcodes never fuse one
   (c) `nm -C` on the binary shows no `ctbrowser::script::` symbol (nor a
@@ -172,16 +172,21 @@ def main():
         src = work / "unit.cpp"
         src.write_text(cpp)
         exe = str(work / "unit")
-        # NOTHING OF ctbrowser'S ON THIS LINE. No -I into the engine, no -l,
-        # no library: the whole point. The one -I is ctcompile/include, for
-        # the runtime header every native program includes, which names
-        # nothing of ctbrowser's unless the program defines CTNATIVE_DOM
-        # first - and the check above refuses a program that includes
-        # ctbrowser at all. Clean under the same flags as the Phase 63 gate:
-        # a warning here is a ctcompile bug, not something to suppress.
+        # Public Core algorithms are header-only. No browser library is linked;
+        # the symbol gate below still rejects Script and boxed AOT dependencies.
         runtime_include = "-I" + str(Path(__file__).resolve().parents[3] / "include")
+        core_include = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
         compiled = run(
-            [args.cxx, "-std=c++23", runtime_include, "-O2", "-Wall", "-Wextra", "-Werror"]
+            [
+                args.cxx,
+                "-std=c++23",
+                runtime_include,
+                core_include,
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+            ]
             + ["-pedantic", "-Wconversion", "-ffp-contract=off", "-o", exe, str(src)]
         )
         if compiled.returncode != 0:

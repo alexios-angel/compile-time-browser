@@ -13,11 +13,13 @@ import subprocess
 # THE RUNTIME HEADER'S INCLUDE DIRECTORY. Every generated program includes
 # ctcompile/CTNative/Runtime/ctnative.hpp, so every compile of one needs
 # ctcompile/include on its path - and nothing else of the compiler's.
+CORE_INCLUDE = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
 RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
 
 FLAGS = [
     "-std=c++23",
     RUNTIME_INCLUDE,
+    CORE_INCLUDE,
     "-O2",
     "-Wall",
     "-Wextra",

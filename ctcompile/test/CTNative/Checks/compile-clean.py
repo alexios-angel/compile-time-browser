@@ -29,10 +29,12 @@ DEFINITION = re.compile(
     r"|^static [A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]* = "
 )
 # The runtime header every native program includes lives in ctcompile/include.
+CORE_INCLUDE = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
 RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
 FLAGS = [
     "-std=c++23",
     RUNTIME_INCLUDE,
+    CORE_INCLUDE,
     "-O2",
     "-pedantic",
     "-Wall",

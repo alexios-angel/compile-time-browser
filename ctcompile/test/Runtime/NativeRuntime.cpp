@@ -33,6 +33,12 @@ void check(bool value, const char * message) {
 
 int main() {
     using namespace ctnative;
+    const std::string high = "\xED\xA0\xBD", low = "\xED\xB8\x80";
+    CHECK(string_concat(high, low) == "\xF0\x9F\x98\x80");
+    CHECK(string_concat(high, "x") == high + "x");
+    CHECK(string_concat("x", low) == "x" + low);
+    CHECK(string_concat(std::string("a\0", 2), "b") == std::string("a\0b", 3));
+    CHECK(high.size() == 3 && low.size() == 3);
     const std::vector<double> three{10, 20, 30};
     CHECK(vec_at(three, nullable_scalar{-0.5}).value == 10); // the engine truncates
     CHECK(vec_at(three, nullable_scalar{3.0}).tag == nullable_scalar::kind::undefined);

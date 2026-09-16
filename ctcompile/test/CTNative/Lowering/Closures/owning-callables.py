@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 
-from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
 
 
 def main():
@@ -98,6 +98,7 @@ def main():
                         compiler,
                         "-std=c++23",
                         RUNTIME_INCLUDE,
+                        CORE_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -128,6 +129,7 @@ def main():
                 compilers[1],
                 "-std=c++23",
                 RUNTIME_INCLUDE,
+                CORE_INCLUDE,
                 "-O1",
                 "-g",
                 "-Wall",

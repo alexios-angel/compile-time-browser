@@ -150,6 +150,16 @@ def cases():
         ),
         Case("message", [store, call("host.slot.label()", MESSAGE)]),
         Case(
+            "surrogate_message",
+            [call("host.slot.store('\\ude00', 1)", 0), call("host.slot.label()", True)],
+            methods={
+                "label": (
+                    "",
+                    "return '\\ud83d' + Array.from(resource.keys())[0] === '\\ud83d\\ude00';",
+                )
+            },
+        ),
+        Case(
             "diagnostic_arguments_only",
             [store, diagnose, call("host.slot.read('alpha')", 1)],
             completed=1,

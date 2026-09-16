@@ -2,6 +2,8 @@
 
 #include "ProviderCallbacks.h"
 
+#include <ctbrowser/core/algorithms.hpp>
+
 #include <cmath>
 #include <limits>
 
@@ -191,8 +193,9 @@ prefixValue providerDiagnosticState::operation(mlir::Operation * operation,
     if (!a || !b || !chargeText(prefix, a.getValue()) || !chargeText(prefix, b.getValue())) {
         return {};
     }
-    return prefixValue::constant(
-        ctjs::StringAttr::get(prefix.module.getContext(), (a.getValue() + b.getValue()).str()));
+    std::string joined = (a.getValue() + b.getValue()).str();
+    ctbrowser::join_surrogates(joined);
+    return prefixValue::constant(ctjs::StringAttr::get(prefix.module.getContext(), joined));
 }
 
 } // namespace ctcompile::ctnative::host_detail

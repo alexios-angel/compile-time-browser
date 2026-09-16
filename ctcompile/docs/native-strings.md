@@ -20,11 +20,11 @@ Literals use readable ASCII text and explicit byte lengths, for example
 non-ASCII bytes with three-digit octal escapes, preserving embedded NUL and
 lone surrogates without consuming following digits. Quotes and backslashes use
 raw strings when the contents permit it. See [literal printing](native-literals.md).
-Concatenation and equality follow the current interpreter's UTF-8/WTF-8 byte
-semantics. In particular, concatenating
-separately encoded surrogate halves does not normalize them into the bytes
-of a single supplementary character. `split41` records this interpreter
-behavior; it is different from a UTF-16 JavaScript engine's answer.
+Concatenation uses public `ctbrowser::join_surrogates` to normalize adjacent
+WTF-8 surrogate halves, matching the interpreter after `04647239`. The unchanged
+`split41` source now observes equality with the supplementary character. Both
+ordinary and optional String operands use this owning helper; standalone native
+programs need the public Core include directory but link no browser library.
 
 Optional strings now have a tagged owning carrier for the bounded consumers
 described in [native-string-snapshots.md](native-string-snapshots.md).

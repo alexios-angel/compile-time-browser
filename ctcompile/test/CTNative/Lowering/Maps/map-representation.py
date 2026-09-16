@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
 from CTNative.Exports import boundary
 
 NODE_GLOBALS = r"""const fs = require('node:fs');
@@ -191,6 +191,7 @@ def main():
                         compiler,
                         "-std=c++23",
                         RUNTIME_INCLUDE,
+                        CORE_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -218,6 +219,7 @@ def main():
                         compilers[1],
                         "-std=c++23",
                         RUNTIME_INCLUDE,
+                        CORE_INCLUDE,
                         "-O1",
                         "-g",
                         "-Wall",

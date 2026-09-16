@@ -14,13 +14,14 @@
 //                          observable somewhere in the program); otherwise
 //                          lookup is `std::map` with SameValueZero keys
 //   CTNATIVE_DOM           the program is a DOM entry and ctbrowser's public
-//                          DOM headers are on its include path. Off, this
-//                          header names nothing of ctbrowser's, which is what
-//                          keeps the standalone gate standalone.
+//                          DOM headers are on its include path. Off, only
+//                          header-only public Core algorithms are needed.
 //
 // NO ctbrowser::script SYMBOL, ever: Script/ is the interpreter, a dev-time
 // oracle and never a dependency of a native program.
 #pragma once
+
+#include <ctbrowser/core/algorithms.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -59,6 +60,12 @@
 using js_num = double;
 
 namespace ctnative {
+
+inline std::string string_concat(std::string left, std::string_view right) {
+    left += right;
+    ctbrowser::join_surrogates(left);
+    return left;
+}
 
 // --- exceptions --------------------------------------------------------------
 

@@ -24,10 +24,12 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         binary &&
         (binary.getKind() == ctjs::BinaryKind::Add ||
          binary.getKind() == ctjs::BinaryKind::Concat) &&
-        (isNullableStringCarrier(binary.getLhs().getType()) ||
-         isNullableStringCarrier(binary.getRhs().getType()))) {
-        swap(ec::AddOp::create(b, where, string, convertScalar(b, where, binary.getLhs(), string),
-                               convertScalar(b, where, binary.getRhs(), string)));
+        binary.getResult().getType() == string) {
+        swap(callWithConstValueOperands(
+                 b, where, mlir::TypeRange{string}, b.getStringAttr("ctnative::string_concat"),
+                 mlir::ValueRange{convertScalar(b, where, binary.getLhs(), string),
+                                  convertScalar(b, where, binary.getRhs(), string)})
+                 .getResult(0));
         return true;
     }
     llvm::StringRef helper;
