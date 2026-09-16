@@ -322,7 +322,7 @@ constexpr property_syntax table[] = {
     {"transition-property", k::freeform, "", "all", false, false},
     {"transition-timing-function", k::freeform, "", "ease", false, false},
     {"animation", k::freeform, "", "none", false, false, true},
-    {"animation-duration", k::time, "auto", "auto", false, true},
+    {"animation-duration", k::time, "auto", "0s", false, true},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
     // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
