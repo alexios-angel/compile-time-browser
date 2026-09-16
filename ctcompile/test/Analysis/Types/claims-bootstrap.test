@@ -19,6 +19,6 @@
 # RUN: ctcompile-test-type-claims --script %t.js --out %t.claims 2>&1 | FileCheck %s --check-prefix=CLAIMS
 # CLAIMS: {{[^0-9]}}0 unvisited live values boxed
 # RUN: python3 %{monorepo}/tools/check/type-oracle.py --recording %t.rec --claims %t.claims --name bootstrap --max-report 0 --expect-violations 0 | FileCheck %s
-# CHECK: observed registers {{ +[1-9][0-9]*}}
+# CHECK: observed registers {{[1-9][0-9]*}}
 # CHECK: SOUNDNESS violations 0{{[^0-9]}}
 # CHECK: PRECISION beat-boxed {{[1-9][0-9]*}}/{{[0-9]+}} = {{[0-9.]+}}%
