@@ -97,6 +97,36 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
     return out;
 }
 
+// The <slot> a slottable is assigned to, mode-agnostic. Its host is the node's
+// parent; the answer is the first slot in that host's shadow tree whose
+// assigned-nodes list contains the node - the same question `assignedSlot`
+// asks, without the open/closed gate the getter adds on top.
+node_id dom_bindings::assigned_slot_of(node_id slottable) const {
+    const auto txn = doc_->read();
+    const node_id host = txn.parent(slottable);
+    if (!host) { return node_id{}; }
+    const node_id root = shadow_root_of(host);
+    if (!root) { return node_id{}; }
+    if (shadow_tree_of(root) == nullptr) { return node_id{}; }
+    node_id answer;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        for (const node_id child : txn.children(at)) {
+            if (answer) { return; }
+            if (is_slot(txn, child)) {
+                for (const node_id one : assigned_nodes_of(child)) {
+                    if (one == slottable) {
+                        answer = child;
+                        return;
+                    }
+                }
+            }
+            self(self, child);
+        }
+    };
+    walk(walk, root);
+    return answer;
+}
+
 // `<template shadowrootmode=open>` AS A SHADOW ROOT - HTML 13.2.6, "attach a
 // shadow root to the template's parent". `setHTMLUnsafe` runs it over the
 // scratch document its markup was parsed into; `innerHTML` deliberately does
@@ -316,32 +346,15 @@ void dom_bindings::install_shadow_dom(context & cx) {
                       [this](context & c, std::span<value>) {
                           const node_id id = handle_of(c.current_this());
                           if (!id) { return value::null(); }
+                          // NULL FOR A CLOSED TREE, though the assignment is the
+                          // same: assigned_slot_of answers mode-agnostically
+                          // (the event path needs that), so the open gate is
+                          // here.
                           const node_id host = doc_->read().parent(id);
-                          if (!host) { return value::null(); }
-                          const node_id root = doc_->shadow_root_of(host);
+                          const node_id root = host ? doc_->shadow_root_of(host) : node_id{};
                           const document::shadow_tree * tree = shadow_tree_of(root);
                           if (tree == nullptr || !tree->open) { return value::null(); }
-                          // ASKED OF THE SLOTS, not worked out a second way: a
-                          // manual tree's assignment is not a name at all, and
-                          // two answers to one question is how they come to
-                          // disagree.
-                          node_id answer;
-                          const auto txn = doc_->read();
-                          const auto walk = [&](auto && self, node_id at) -> void {
-                              for (const node_id child : txn.children(at)) {
-                                  if (answer) { return; }
-                                  if (is_slot(txn, child)) {
-                                      for (const node_id one : assigned_nodes_of(child)) {
-                                          if (one == id) {
-                                              answer = child;
-                                              return;
-                                          }
-                                      }
-                                  }
-                                  self(self, child);
-                              }
-                          };
-                          walk(walk, root);
+                          const node_id answer = assigned_slot_of(id);
                           return answer ? wrap(c, answer) : value::null();
                       });
     }
@@ -365,15 +378,32 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 return value::undefined();
             },
             script::attr_builtin);
-        // ponytail: `getHTML({serializableShadowRoots, shadowRoots})` answers
-        // what `innerHTML` does - a serializable shadow root is NOT written
-        // out as its `<template shadowrootmode>`. That needs the fragment
-        // serialiser itself to know about shadow roots; see the report.
+        // `getHTML({serializableShadowRoots, shadowRoots})` - HTML fragment
+        // serialisation with a "serializable shadow roots" set: a shadow root
+        // is written out as its `<template shadowrootmode>` when it is in the
+        // `shadowRoots` list, or when `serializableShadowRoots` is true and the
+        // root's own `serializable` is set. With neither it is exactly
+        // `innerHTML`.
         set_method(
             cx, *on, "getHTML",
-            [this](context & c, std::span<value>) {
+            [this](context & c, std::span<value> args) {
                 const node_id id = handle_of(c.current_this());
-                return c.string(id ? inner_html(id) : std::string{});
+                if (!id) { return c.string(std::string{}); }
+                bool serializable = false;
+                std::vector<node_id> roots;
+                const value opts = args.empty() ? value::undefined() : args[0];
+                if (opts.is_object()) {
+                    serializable =
+                        context::truthy(c.lookup_property(opts, "serializableShadowRoots"));
+                    const value list = c.lookup_property(opts, "shadowRoots");
+                    if (list.is_array()) {
+                        for (const value & item :
+                             static_cast<script::array_object *>(list.as_heap())->items) {
+                            if (const node_id r = handle_of(item)) { roots.push_back(r); }
+                        }
+                    }
+                }
+                return c.string(serialize_html(id, false, serializable, roots));
             },
             script::attr_builtin);
     }

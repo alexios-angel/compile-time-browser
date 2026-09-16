@@ -48,6 +48,15 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
         each_name_in_template(
             n.text, [&](std::string_view name) { mentions_[std::string{name}].push_back(inner); });
     }
+    // An object shorthand `{ b }` is an IdentifierReference (13.2.5.5) whose
+    // name lives in the prop node's TEXT, with no ident child - so, like a
+    // template hole, nothing below records it. Missing it left a name captured
+    // ONLY through a shorthand unboxed: is_captured answered false, so no
+    // new_cell was emitted, and the boxing resolve_upvalue then does after the
+    // fact turned every direct read into a cell_get on a plain register -
+    // undefined. `for (const b of xs) { f(() => ({ b })); use(b); }` read
+    // undefined (shadow-dom/attach-shadow-non-html-namespace.html).
+    if (n.kind == vp::nk::prop && n.c == 2) { mentions_[std::string{n.text}].push_back(inner); }
     // An instance field's initialiser compiles into its OWN function - that
     // is what makes each instance get its own value - so anything it
     // mentions is captured exactly as if it had been written inside one.
