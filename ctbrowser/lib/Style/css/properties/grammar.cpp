@@ -135,29 +135,6 @@ constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
     return std::string{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
 }
 
-// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
-// with `"` and `\` escaped and a control character as a hex escape.
-[[nodiscard]] std::string string_text(std::string_view body) {
-    std::string out{"\""};
-    for (const char c : body) {
-        const auto code = static_cast<unsigned char>(c);
-        if (code == 0) {
-            out += "\xEF\xBF\xBD";
-        } else if (code <= 0x1F || code == 0x7F) {
-            static constexpr char digits[] = "0123456789abcdef";
-            out += '\\';
-            if (code >= 16) { out += digits[code >> 4]; }
-            out += digits[code & 0xF];
-            out += ' ';
-        } else {
-            if (c == '"' || c == '\\') { out += '\\'; }
-            out += c;
-        }
-    }
-    out += '"';
-    return out;
-}
-
 // AN ARBITRARY SUBSTITUTION FUNCTION HAS A GRAMMAR AT PARSE TIME even though
 // what it MEANS has none until substitution, and two of them are tested here to
 // the letter (CSS Values 5 §arbitrary-substitution):
@@ -301,6 +278,29 @@ enum class position_axis : std::uint8_t {
 } // namespace
 
 namespace detail {
+
+// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
+// with `"` and `\` escaped and a control character as a hex escape.
+[[nodiscard]] std::string string_text(std::string_view body) {
+    std::string out{"\""};
+    for (const char c : body) {
+        const auto code = static_cast<unsigned char>(c);
+        if (code == 0) {
+            out += "\xEF\xBF\xBD";
+        } else if (code <= 0x1F || code == 0x7F) {
+            static constexpr char digits[] = "0123456789abcdef";
+            out += '\\';
+            if (code >= 16) { out += digits[code >> 4]; }
+            out += digits[code & 0xF];
+            out += ' ';
+        } else {
+            if (c == '"' || c == '\\') { out += '\\'; }
+            out += c;
+        }
+    }
+    out += '"';
+    return out;
+}
 
 // A space-separated keyword set, matched ASCII case-insensitively. Written as
 // one string rather than an array per property because there are ~90 of them

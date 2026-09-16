@@ -345,6 +345,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
     }
 
     if (p->kind == k::position) {
+        // ITS OWN KEYWORDS FIRST: `offset-anchor: auto` and `offset-position:
+        // normal` are not positions, and no component of one is spelled that
+        // way, so the whole-value matcher below can never answer for them.
+        if (found.significant.size() == 1) {
+            const css_token & only = ts.tokens[found.significant.front()];
+            if (only.type == token_type::ident && has_keyword(p->keywords, ts.text_of(only))) {
+                return yes(ascii_lower_copy(ts.text_of(only)));
+            }
+        }
         std::string serialized;
         if (match_position(ts, found, serialized)) { return yes(std::move(serialized)); }
         for (const std::size_t i : found.significant) {

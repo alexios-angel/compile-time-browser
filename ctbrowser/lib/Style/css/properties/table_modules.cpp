@@ -65,8 +65,8 @@ constexpr property_syntax modules[] = {
     {"shape-outside", k::freeform, "", "none", false, false},
     {"shape-image-threshold", k::number_percentage, "", "0", false, false},
     {"offset", k::freeform, "", "normal", false, false, true},
-    {"offset-anchor", k::freeform, "", "auto", false, false},
-    {"offset-position", k::freeform, "", "normal", false, false},
+    {"offset-anchor", k::position, "auto", "auto", false, false},
+    {"offset-position", k::position, "normal auto", "normal", false, false},
     {"offset-rotate", k::freeform, "", "auto", false, false},
     // --- CSS Grid, Box Alignment ----------------------------------------------
     {"grid", k::freeform, "", "none", false, false, true},

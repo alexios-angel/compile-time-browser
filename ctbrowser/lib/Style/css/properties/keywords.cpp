@@ -23,6 +23,15 @@ using namespace detail;
 
 namespace {
 
+// `<custom-ident>` EXCLUDES THE CSS-WIDE KEYWORDS AND `default` (CSS Values 4
+// §identifier-value). `revert-rule` is a CSS-wide keyword of CSS Cascade 6 that
+// nothing else here implements, and it is excluded on the same grounds:
+// `will-change: revert-rule` and `counter-reset: default 0` are two of those
+// parsing files' assertions.
+[[nodiscard]] bool reserved_ident(std::string_view word) {
+    return is_wide_keyword(word) || ascii_iequals_any(word, {"default", "revert-rule"});
+}
+
 struct or_grammar {
     std::string_view property;
     std::string_view alone;                 // words valid only on their own
@@ -131,8 +140,7 @@ constexpr or_grammar or_grammars[] = {
                 if (found.significant.size() != 1) { return std::nullopt; }
                 return "auto";
             }
-            if (is_wide_keyword(word) ||
-                ascii_iequals_any(word, {"will-change", "none", "all", "default"})) {
+            if (reserved_ident(word) || ascii_iequals_any(word, {"will-change", "none", "all"})) {
                 return std::nullopt;
             }
             out += (out.empty() ? "" : ", ") + std::string{word};
@@ -166,7 +174,7 @@ constexpr or_grammar or_grammars[] = {
         bool reversed = false;
         if (t.type == token_type::ident) {
             const std::string_view word = ts.text_of(t);
-            if (is_wide_keyword(word) || ascii_iequals(word, "none")) { return std::nullopt; }
+            if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
             name = std::string{word};
             ++k;
         } else if (t.type == token_type::function && reset &&
@@ -176,7 +184,7 @@ constexpr or_grammar or_grammars[] = {
                 return std::nullopt;
             }
             const std::string_view word = ts.text_of(ts.tokens[at[k + 1]]);
-            if (is_wide_keyword(word) || ascii_iequals(word, "none")) { return std::nullopt; }
+            if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
             name = "reversed(" + std::string{word} + ")";
             reversed = true;
             k += 3;
@@ -287,6 +295,162 @@ constexpr or_grammar or_grammars[] = {
     return std::nullopt;
 }
 
+// `<custom-ident>` PROPERTIES: a word the property does not spell for itself.
+// `keywords` are that property's own words - they are NOT custom idents, so
+// `view-transition-class: foo none` is invalid - and `list` says whether more
+// than one ident may follow. A custom ident KEEPS ITS CASE; a keyword
+// lowercases, like every other keyword here.
+struct ident_grammar {
+    std::string_view property;
+    std::string_view keywords;
+    bool list;
+};
+
+constexpr ident_grammar ident_grammars[] = {
+    {"page", "auto", false},
+    {"view-transition-group", "normal contain nearest none", false},
+    {"view-transition-class", "none", true},
+};
+
+[[nodiscard]] std::optional<std::string> custom_idents(const ident_grammar & g,
+                                                       const token_stream & ts,
+                                                       const scan & found) {
+    std::string out;
+    for (const std::size_t i : found.significant) {
+        const css_token & t = ts.tokens[i];
+        if (t.type != token_type::ident) { return std::nullopt; }
+        const std::string_view word = ts.text_of(t);
+        if (has_keyword(g.keywords, word)) {
+            if (found.significant.size() != 1) { return std::nullopt; }
+            return ascii_lower_copy(word);
+        }
+        if (reserved_ident(word)) { return std::nullopt; }
+        if (!out.empty() && !g.list) { return std::nullopt; }
+        out += (out.empty() ? "" : " ") + std::string{word};
+    }
+    if (out.empty()) { return std::nullopt; }
+    return out;
+}
+
+// `<string>` PROPERTIES: one string, or one of the property's own keywords.
+// `font-language-override` is the one with a rule about WHICH string: CSS Fonts
+// 4 says an OpenType language system tag, which is one to four characters from
+// the printable ASCII range, and its shortest serialisation drops the trailing
+// spaces the tag is padded with (`"ENG "` is `"ENG"`, `" en "` is `" en"`).
+struct string_grammar {
+    std::string_view property;
+    std::string_view keywords;
+    bool opentype_tag;
+};
+
+constexpr string_grammar string_grammars[] = {
+    {"hyphenate-character", "auto", false},
+    {"block-ellipsis", "no-ellipsis ellipsis", false},
+    {"font-language-override", "normal", true},
+};
+
+[[nodiscard]] std::optional<std::string> one_string(const string_grammar & g,
+                                                    const token_stream & ts, const scan & found) {
+    if (found.significant.size() != 1) { return std::nullopt; }
+    const css_token & only = ts.tokens[found.significant.front()];
+    if (only.type == token_type::ident) {
+        const std::string_view word = ts.text_of(only);
+        if (!has_keyword(g.keywords, word)) { return std::nullopt; }
+        return ascii_lower_copy(word);
+    }
+    if (only.type != token_type::string) { return std::nullopt; }
+    const std::string_view quoted = ts.text_of(only);
+    if (quoted.size() < 2) { return std::nullopt; }
+    std::string_view body = quoted.substr(1, quoted.size() - 2);
+    if (g.opentype_tag) {
+        if (body.empty() || body.size() > 4) { return std::nullopt; }
+        for (const char c : body) {
+            const auto code = static_cast<unsigned char>(c);
+            if (code < 0x20 || code > 0x7E) { return std::nullopt; }
+        }
+        while (!body.empty() && body.back() == ' ') { body.remove_suffix(1); }
+        if (body.empty()) { return std::nullopt; }
+    }
+    return string_text(body);
+}
+
+// `normal | [ light | dark | <custom-ident> ]+ && only?` (CSS Color Adjust 1).
+// The `&&` is why `light only dark` is invalid where `only light dark` is not:
+// `only` sits beside the whole list, never inside it, and serialises last.
+[[nodiscard]] std::optional<std::string> color_scheme(std::span<const std::string> words) {
+    if (words.empty()) { return std::nullopt; }
+    if (words.size() == 1 && words.front() == "normal") { return words.front(); }
+    std::string out;
+    bool only = false;
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        const std::string & w = words[i];
+        if (w == "only") {
+            // Only at an end, and once: the list itself has to stay contiguous.
+            if (only || (i != 0 && i + 1 != words.size())) { return std::nullopt; }
+            only = true;
+            continue;
+        }
+        if (w == "normal" || reserved_ident(w)) { return std::nullopt; }
+        out += (out.empty() ? "" : " ") + w;
+    }
+    if (out.empty()) { return std::nullopt; }
+    return only ? out + " only" : out;
+}
+
+// `auto | stable && both-edges?` (CSS Overflow 3): `both-edges` needs `stable`
+// beside it, and the pair serialises in that order however it was written.
+[[nodiscard]] std::optional<std::string> scrollbar_gutter(std::span<const std::string> words) {
+    if (words.size() == 1 && words.front() == "auto") { return words.front(); }
+    if (words.size() == 1 && words.front() == "stable") { return words.front(); }
+    if (words.size() == 2 && ((words[0] == "stable" && words[1] == "both-edges") ||
+                              (words[0] == "both-edges" && words[1] == "stable"))) {
+        return "stable both-edges";
+    }
+    return std::nullopt;
+}
+
+// `none | all | [ digits <integer [2,4]>? ]` (CSS Writing Modes 4).
+[[nodiscard]] std::optional<std::string> text_combine_upright(const token_stream & ts,
+                                                              const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty() || at.size() > 2) { return std::nullopt; }
+    if (ts.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
+    const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[at[0]]));
+    if (at.size() == 1 && (word == "none" || word == "all")) { return word; }
+    if (word != "digits") { return std::nullopt; }
+    if (at.size() == 1) { return word; }
+    const css_token & n = ts.tokens[at[1]];
+    if (n.type != token_type::number || (n.flags & flag_integer) == 0) { return std::nullopt; }
+    if (n.number < 2 || n.number > 4) { return std::nullopt; }
+    return word + " " + serialize_number(n.number);
+}
+
+// `[ auto | reverse ] || <angle>` (CSS Motion 1), the keyword written first.
+[[nodiscard]] std::optional<std::string> offset_rotate(const token_stream & ts,
+                                                       const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.empty() || at.size() > 2) { return std::nullopt; }
+    std::string keyword;
+    std::string angle;
+    for (const std::size_t i : at) {
+        const css_token & t = ts.tokens[i];
+        if (t.type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(t));
+            if (!keyword.empty() || (word != "auto" && word != "reverse")) { return std::nullopt; }
+            keyword = word;
+            continue;
+        }
+        if (t.type != token_type::dimension || !angle.empty()) { return std::nullopt; }
+        const std::string_view unit = ts.unit_of(t);
+        if (!ascii_iequals_any(unit, {"deg", "grad", "rad", "turn"})) { return std::nullopt; }
+        angle = serialize_number(t.number) + ascii_lower_copy(unit);
+    }
+    if (keyword.empty() && angle.empty()) { return std::nullopt; }
+    if (keyword.empty()) { return angle; }
+    if (angle.empty()) { return keyword; }
+    return keyword + " " + angle;
+}
+
 } // namespace
 
 namespace detail {
@@ -319,6 +483,32 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         const std::optional<std::vector<std::string>> words = words_of(ts, found);
         if (words) { answer = scroll_snap(property, *words); }
+    }
+    for (const ident_grammar & g : ident_grammars) {
+        if (handled || !ascii_iequals(g.property, property)) { continue; }
+        handled = true;
+        answer = custom_idents(g, ts, found);
+    }
+    for (const string_grammar & g : string_grammars) {
+        if (handled || !ascii_iequals(g.property, property)) { continue; }
+        handled = true;
+        answer = one_string(g, ts, found);
+    }
+    if (!handled && ascii_iequals_any(property, {"color-scheme", "scrollbar-gutter"})) {
+        handled = true;
+        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        if (words) {
+            answer = ascii_iequals(property, "color-scheme") ? color_scheme(*words)
+                                                             : scrollbar_gutter(*words);
+        }
+    }
+    if (!handled && ascii_iequals(property, "text-combine-upright")) {
+        handled = true;
+        answer = text_combine_upright(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "offset-rotate")) {
+        handled = true;
+        answer = offset_rotate(ts, found);
     }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});

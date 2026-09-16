@@ -290,6 +290,10 @@ struct layer_context {
     if (ascii_iequals(property, "background-origin")) {
         return "border-box padding-box content-box";
     }
+    if (ascii_iequals(property, "background-blend-mode")) {
+        return "normal multiply screen overlay darken lighten color-dodge color-burn "
+               "hard-light soft-light difference exclusion hue saturation color luminosity";
+    }
     if (ascii_iequals(property, "mask-mode")) { return "alpha luminance match-source"; }
     if (ascii_iequals(property, "mask-composite")) { return "add subtract intersect exclude"; }
     if (ascii_iequals(property, "mask-clip")) {
@@ -357,8 +361,8 @@ bool match_background_list(std::string_view property, const token_stream & ts, c
                            {"background-repeat", "mask-repeat", "background-size", "mask-size",
                             "background-position-x", "background-position-y", "background-position",
                             "mask-position", "background-attachment", "background-clip",
-                            "background-origin", "mask-mode", "mask-composite", "mask-clip",
-                            "mask-origin"})) {
+                            "background-origin", "background-blend-mode", "mask-mode",
+                            "mask-composite", "mask-clip", "mask-origin"})) {
         return false;
     }
     out = list(property, ts, found, {}).value_or(std::string{});
