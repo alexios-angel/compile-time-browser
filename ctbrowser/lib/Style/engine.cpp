@@ -2140,11 +2140,26 @@ bool engine::direction_is_rtl(const read_txn & txn, node_id node) const {
     return false;
 }
 
-bool engine::first_strong(const read_txn & txn, node_id node, bool & rtl) {
+bool engine::first_strong(const read_txn & txn, node_id node, bool & rtl) const {
     const node_kind kind = txn.kind(node).value_or(node_kind::comment);
     if (is_text_kind(kind)) { return first_strong_in(txn.text(node), rtl); }
     if (kind != node_kind::element) { return false; }
+    const atom dir_key = atoms_->intern("dir");
     for (const node_id child : txn.children(node)) {
+        // HTML §3.2.6.4: a descendant with a `dir` of its own, a <bdi>, a
+        // <script>, <style> or <textarea> is not part of the text the auto
+        // direction is read from (dir-selector-auto's `div3`).
+        if (txn.kind(child).value_or(node_kind::text) == node_kind::element) {
+            const std::string_view dir = txn.attribute_value(child, dir_key);
+            if (ascii_iequals(dir, "ltr") || ascii_iequals(dir, "rtl") ||
+                ascii_iequals(dir, "auto")) {
+                continue;
+            }
+            const std::string_view tag = atoms_->text(txn.tag(child).value_or(atom{}));
+            if (tag == "bdi" || tag == "script" || tag == "style" || tag == "textarea") {
+                continue;
+            }
+        }
         if (first_strong(txn, child, rtl)) { return true; }
     }
     return false;

@@ -611,7 +611,7 @@ public:
 private:
     // The first character of `node`'s text with a strong direction, depth first.
     // Returns whether one was found, so the walk can stop at it.
-    [[nodiscard]] static bool first_strong(const read_txn & txn, node_id node, bool & rtl);
+    [[nodiscard]] bool first_strong(const read_txn & txn, node_id node, bool & rtl) const;
 
     // The same question of one run of UTF-8: only the code point's VALUE
     // matters, and the right-to-left scripts sit in blocks that a range test
