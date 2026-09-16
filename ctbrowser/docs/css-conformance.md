@@ -43,6 +43,92 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
+## 2-wide. Every CSS module, measured — 2026-09-16, evening: round four (G2)
+
+Round four's agent G2 tightened the value grammars round two's agent G had
+made too permissive. Same instrument as the tables below, engine at
+`6edb7421`, deltas against `273773cd` (`e29e197f`'s css numbers, unchanged
+through round three):
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **11** (+1) | 0 | 0 | 0 | 0 | 0 | 11 | 92 / 0 |
+| `css/css-align` | **43** (+0) | 14 | 0 | 0 | 0 | 0 | 57 | 1,094 / 227 |
+| `css/css-anchor-position` | **3** (+0) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **24** (+16) | 18 | 0 | 0 | 0 | 1 | 43 | 360 / 230 |
+| `css/css-backgrounds` | **52** (+2) | 55 | 0 | 0 | 0 | 45 | 152 | 3,699 / 2,346 |
+| `css/css-box` | **26** (+0) | 14 | 0 | 0 | 0 | 0 | 40 | 450 / 477 |
+| `css/css-break` | **18** (+2) | 4 | 0 | 0 | 0 | 0 | 22 | 376 / 164 |
+| `css/css-cascade` | **47** (+0) | 46 | 1 | 0 | 0 | 60 | 154 | 1,002 / 141 |
+| `css/css-color` | **28** (+0) | 36 | 0 | 0 | 0 | 257 | 321 | 9,420 / 3,200 |
+| `css/css-color-adjust` | **4** (+3) | 3 | 0 | 0 | 0 | 0 | 7 | 131 / 16 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **4** (+0) | 36 | 1 | 0 | 172 | 204 | 417 | 948 / 848 |
+| `css/css-contain` | **4** (+0) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+0) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **23** (+0) | 11 | 0 | 0 | 0 | 1 | 35 | 753 / 236 |
+| `css/css-fonts` | **52** (+5) | 48 | 0 | 0 | 0 | 0 | 100 | 2,273 / 2,006 |
+| `css/css-forced-color-adjust` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (+0) | 60 | 0 | 0 | 0 | 2 | 76 | 356 / 3,790 |
+| `css/css-grid` | **21** (+2) | 53 | 0 | 0 | 0 | 3 | 77 | 1,614 / 2,096 |
+| `css/css-images` | **22** (+2) | 9 | 0 | 0 | 0 | 0 | 31 | 3,017 / 199 |
+| `css/css-inline` | **10** (+0) | 10 | 0 | 0 | 0 | 0 | 20 | 214 / 119 |
+| `css/css-link-params` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **9** (+3) | 16 | 0 | 0 | 0 | 0 | 25 | 335 / 163 |
+| `css/css-logical` | **32** (+0) | 30 | 0 | 0 | 0 | 0 | 62 | 620 / 146 |
+| `css/css-masking` | **20** (+1) | 28 | 0 | 0 | 0 | 1 | 49 | 1,199 / 4,884 |
+| `css/css-multicol` | **25** (+1) | 14 | 0 | 0 | 0 | 0 | 39 | 1,125 / 345 |
+| `css/css-nesting` | **11** (+0) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **19** (+6) | 17 | 0 | 0 | 0 | 0 | 36 | 286 / 93 |
+| `css/css-overscroll-behavior` | **2** (+0) | 2 | 0 | 0 | 0 | 0 | 4 | 54 / 13 |
+| `css/css-page` | **6** (+1) | 6 | 0 | 0 | 0 | 0 | 12 | 43 / 30 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** (+0) | 11 | 0 | 0 | 0 | 0 | 32 | 822 / 239 |
+| `css/css-properties-values-api` | **3** (+0) | 62 | 0 | 0 | 4 | 0 | 69 | 82 / 160 |
+| `css/css-pseudo` | **0** (+0) | 4 | 0 | 0 | 1 | 0 | 5 | 109 / 174 |
+| `css/css-rhythm` | **12** (+0) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **7** (+1) | 2 | 0 | 0 | 0 | 0 | 9 | 41 / 6 |
+| `css/css-scroll-anchoring` | **4** (+0) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **22** (+0) | 4 | 0 | 0 | 0 | 0 | 26 | 412 / 61 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **5** (+0) | 16 | 0 | 0 | 0 | 0 | 21 | 233 / 2,118 |
+| `css/css-size-adjust` | **2** (+1) | 3 | 0 | 0 | 0 | 0 | 5 | 160 / 55 |
+| `css/css-sizing` | **11** (+0) | 26 | 0 | 0 | 0 | 0 | 37 | 2,149 / 1,085 |
+| `css/css-syntax` | **17** (+0) | 22 | 0 | 0 | 1 | 8 | 48 | 298 / 131 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **65** (+7) | 32 | 0 | 0 | 0 | 0 | 97 | 1,159 / 773 |
+| `css/css-text-decor` | **18** (+0) | 17 | 0 | 0 | 0 | 0 | 35 | 418 / 774 |
+| `css/css-transforms` | **25** (+1) | 41 | 0 | 0 | 0 | 27 | 93 | 1,592 / 3,743 |
+| `css/css-transitions` | **12** (+6) | 18 | 0 | 0 | 0 | 0 | 30 | 551 / 358 |
+| `css/css-ui` | **24** (+0) | 28 | 0 | 0 | 0 | 0 | 52 | 995 / 399 |
+| `css/css-values` | **169** (+6) | 91 | 7 | 0 | 4 | 237 | 508 | 7,579 / 2,749 |
+| `css/css-variables` | **26** (+0) | 34 | 1 | 0 | 0 | 186 | 247 | 439 / 146 |
+| `css/css-view-transitions` | **8** (+2) | 4 | 0 | 0 | 0 | 0 | 12 | 337 / 687 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **3** (+1) | 1 | 0 | 0 | 0 | 0 | 4 | 164 / 8 |
+| `css/css-writing-modes` | **15** (+2) | 1 | 0 | 0 | 0 | 0 | 16 | 50 / 2 |
+| `css/cssom` | **151** (+0) | 41 | 0 | 0 | 0 | 29 | 221 | 2,822 / 737 |
+| `css/cssom-view` | **26** (+0) | 173 | 5 | 0 | 13 | 22 | 239 | 412 / 1,559 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **13** (+0) | 15 | 0 | 0 | 0 | 0 | 28 | 358 / 2,052 |
+| `css/mediaqueries` | **9** (+0) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **11** (+4) | 32 | 0 | 0 | 0 | 4 | 47 | 1,366 / 3,582 |
+| `css/selectors` | **121** (+0) | 75 | 7 | 0 | 8 | 313 | 524 | 4,447 / 1,038 |
+
+**1,352 files PASS of the 2,925 that ran, from 1,276 at `273773cd` - +76,
+one lost, 57,583 subtests PASS.** The gains are the `*-invalid.html` parsing
+files whose grammar now refuses what the spec refuses: css-animations +16
+(`animation-range-*`, `animation-timing-function`, and
+`animation-duration`'s initial value 0s), css-text +7, css-transitions +6,
+css-overflow +6 (`line-clamp`, `scrollbar-gutter`, `block-ellipsis`),
+css-fonts +5, css-lists +3, motion +4 (`offset-*`). The math-function
+serialisation of css-values (`sin-cos-tan`, `minmax-angle`,
+`calc-background-position-003`, `signs-abs`) also came back. The one lost is
+`dom/events` (the activation regression, `docs/wpt.md`), not a css file.
+
 ## 2-wide. Every CSS module, measured — 2026-09-16, after rounds two and three
 
 The same instrument as the 2026-09-13 table below (devbox, 4 workers,

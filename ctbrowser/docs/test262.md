@@ -1149,6 +1149,39 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## Measured at `6edb7421` — 2026-09-16, round four (T2: language + annexB)
+
+Round four's agent T2 worked `test/language` and `test/annexB`; the other
+three agents (S, G2, U2) touch no `test262` path, so `test/built-ins` is
+byte-identical to `273773cd`. Same instrument (devbox, 4 workers, 10 s, 2 GB),
+before = `273773cd`; only the two areas that moved plus the total:
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+| `language` | 23,726 | 21766 | **21,904** | +138 | 1,800 | 0/1/0 | 21 |
+| `annexB` | 1,086 | 469 | **776** | +307 | 267 | 1/0/0 | 42 |
+| **total** | **48,624** | 38,730 | **39,175** | | 8,610 | 4/2/0 | 833 |
+
+**39,175 of 48,624 (80.6%); of the 47,791 that ran, 82.0%** - from 38,730
+(79.7%) at `273773cd`: **+445 FAIL -> PASS, 0 PASS -> FAIL** (full PASS-set
+diff, all three areas). `annexB` **469 -> 776** is the whole of it plus 138:
+Annex B.3.3's block-level function declarations, done as the spec's two steps
+(the lexical binding in the block, then the var write to the enclosing scope
+as a DECLARATION's write) - which retired the 232-file "An initialized
+binding is not created" cluster that was the single largest in the corpus.
+`language` **21,766 -> 21,904**: a catch parameter block-scoped in a script,
+`import`/`export` as ModuleItems with a module's own top-level rules, and
+`export default function f(){}` binding `f`.
+
+**BYTECODE SHAPE** (recorded for the native backend, which pins it): `5dddb500`
+- a script's block-level function declaration now binds a local first, so the
+sequence for `{ function f(){} }` at script top level changed. AGENT-SYNC.md
+carries the full JOURNAL line; ctjs gitlink unchanged at `3cb2ef9`.
+
+**Still the biggest holes:** `Temporal` 4,603; `RegExp` ~924; `language`
+1,800 (class/async SameValue clusters, module early errors, `import.source`/
+`import.defer`); `annexB` 267 (the remaining B.3.2 "value is not updated"
+cases, `escape`/`unescape`, the `__defineGetter__` family); `Array` 240.
+
 ## Measured at `273773cd` — 2026-09-16, rounds two and three merged
 
 `docs/plans/wpt-next.md` §3 (round two: A animations, G properties, L
