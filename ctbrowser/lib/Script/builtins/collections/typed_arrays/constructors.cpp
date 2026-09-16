@@ -331,14 +331,7 @@ void typed_array_set(array_object * arr, std::size_t i, double v) {
         view_set(*arr, i, v);
         return;
     }
-    // AN INTEGER KIND HAS NO -0: coerce_element's wrap answers -0 for -0, which
-    // a view's byte store cannot hold and an owning array must not either.
-    double coerced = coerce_element(arr->elements, v);
-    if (coerced == 0 && arr->elements != element_kind::f16 && arr->elements != element_kind::f32 &&
-        arr->elements != element_kind::f64) {
-        coerced = 0;
-    }
-    arr->items[i] = value::number(coerced);
+    arr->items[i] = value::number(coerce_element(arr->elements, v));
 }
 
 bool coerce_for_kind(context & cx, element_kind kind, value v, value & out) {

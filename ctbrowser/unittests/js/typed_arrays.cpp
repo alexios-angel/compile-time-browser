@@ -298,6 +298,17 @@ int main() {
               "1,2|4|2");
     throws("Uint8Array.prototype.toHex.call(new Int8Array(1))", "TypeError");
 
+    // --- the VM's `ta[i] = v` is TypedArraySetElement: ToNumber first ------------
+    js_expect("(() => { const a = new Uint8Array(1); a[0] = {valueOf() { return 7; }}; "
+              "return a[0]; })()",
+              "7");
+    js_expect("(() => { const a = new Int8Array(1); a[0] = -0; return Object.is(a[0], 0); })()",
+              "true");
+    js_expect("(() => { const a = new Int8Array(new ArrayBuffer(1)); a[0] = '5'; "
+              "return a[0]; })()",
+              "5");
+    throws("(() => { const a = new Uint8Array(1); a[0] = Symbol(); })()", "TypeError");
+
     // --- BigInt64Array, BigUint64Array (Table 71): the element is a bigint -----
     js_expect("BigInt64Array.BYTES_PER_ELEMENT + '|' + BigUint64Array.BYTES_PER_ELEMENT", "8|8");
     js_expect("Object.getPrototypeOf(BigInt64Array) === Object.getPrototypeOf(Int8Array)", "true");

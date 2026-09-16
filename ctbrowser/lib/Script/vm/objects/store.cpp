@@ -35,24 +35,24 @@ void context::store_index(value target, value key, value v) {
         // it typed: `pixels[i] = 300` is 255 in a clamped byte array, and a
         // write past the end is DROPPED rather than extending it.
         //
-        // A BigInt kind's coercion is ToBigInt (10.4.5.16 step 1): a Number is
-        // a TypeError, an object's valueOf runs FIRST and the index is checked
-        // after - typed_element_set is that order, in either storage shape.
-        if (is_bigint_kind(arr->elements)) {
-            (void)typed_element_set(*this, *arr, static_cast<std::size_t>(i), v);
-            return;
-        }
-        if (arr->is_view()) {
-            if (i >= 0 && static_cast<std::size_t>(i) < arr->length()) {
-                view_set(*arr, static_cast<std::size_t>(i), to_number(v));
-            }
-            return;
-        }
+        // TypedArraySetElement (10.4.5.16): the coercion FIRST - ToNumber, or
+        // ToBigInt for a BigInt kind, where a Number is a TypeError - then the
+        // index against the length as it is after that. Anything but a
+        // number goes through typed_element_set for that order, because an
+        // object's valueOf can run script; a number, which is what every
+        // pixel and matrix write is, stays on this path.
         if (arr->elements != element_kind::none) {
-            if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
-                arr->items[static_cast<std::size_t>(i)] =
-                    value::number(coerce_element(arr->elements, to_number(v)));
+            if (!v.is_number()) {
+                (void)typed_element_set(*this, *arr, static_cast<std::size_t>(i), v);
+                return;
             }
+            if (i < 0 || static_cast<std::size_t>(i) >= arr->length()) { return; }
+            if (arr->is_view()) {
+                view_set(*arr, static_cast<std::size_t>(i), v.as_number());
+                return;
+            }
+            arr->items[static_cast<std::size_t>(i)] =
+                value::number(coerce_element(arr->elements, v.as_number()));
             return;
         }
         if (i >= 0) {

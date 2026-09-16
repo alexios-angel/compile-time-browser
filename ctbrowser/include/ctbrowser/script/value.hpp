@@ -379,7 +379,9 @@ enum class element_kind : std::uint8_t {
         if (!std::isfinite(x)) { return 0.0; }
         double r = std::fmod(std::trunc(x), modulus);
         if (r < 0) { r += modulus; }
-        return r;
+        // AN INTEGER KIND HAS NO -0: fmod keeps the sign of -0, and ToInt8(-0)
+        // is 0. The `+ 0.0` is what turns -0 into +0 under round-to-nearest.
+        return r + 0.0;
     };
     switch (kind) {
     case element_kind::none:
