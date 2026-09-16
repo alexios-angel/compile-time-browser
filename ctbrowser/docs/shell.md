@@ -115,6 +115,24 @@ the insertion point - so `write("a"); write("b")` is one node, and an implied
 `<head>` exists on every parsed page. The gate for all of it is
 `unittests/unit/document_write`.
 
+**THE TOKENIZER AND TREE BUILDER ARE THE SPECIFICATION'S (2026-09-16).** The
+practical-subset parser gave 748 of the 1713 html5lib tree-construction
+document cases in the WPT checkout (`html/syntax/parsing/resources/*.dat`);
+`lib/DOM/tokenizer.cpp` is now every state of HTML 13.2.5 (the comment and
+DOCTYPE machines, bogus comments, script data escaped/double-escaped, the
+appropriate end tag, the named-reference algorithm with the 106 legacy
+no-semicolon names and the in-attribute rule, the C1 remap) and
+`lib/DOM/treebuilder.cpp` every insertion mode of 13.2.6.4 plus the foreign
+content rules of 13.2.6.5 - with the 2025 select rules (no "in select" mode)
+because the fixtures are. It measures 1601 of 1713 document cases and 120 of
+129 HTML-context fragment cases; `unittests/unit/html5lib_fixtures` pins
+every file's count. What remains is named in the tree builder's header:
+MathML (no namespace in this DOM), the SVG attribute case-adjustment table
+this engine deliberately does not carry, `<selectedcontent>` mirroring, and
+the scripted_* files. `parse_html_fragment(doc, markup, context)` is the
+fragment case with a context element, so a `<tr>` context makes `<td>` a
+cell; `innerHTML` still passes "body" and should pass the element's tag.
+
 **Form controls and canvas 2D work.** `ctbrowser.shell:forms` holds control
 state (value, caret, selection, checked) keyed by node_id — NOT on the node,
 which is what left the previous engine's `node` carrying thirty UI-only fields.
