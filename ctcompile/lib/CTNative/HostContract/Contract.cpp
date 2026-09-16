@@ -341,6 +341,22 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     }
     std::string reason = realmReceiverProblem(contract);
     if (!reason.empty()) { return reason; }
+    if (auto metadata = module->getAttr("ctjs.hoisted_vars")) {
+        auto declarations = llvm::dyn_cast<mlir::ArrayAttr>(metadata);
+        llvm::StringSet<> names;
+        if (!declarations) {
+            return "hoisted global declarations require an array of distinct nonempty names";
+        }
+        for (mlir::Attribute declaration : declarations) {
+            auto name = llvm::dyn_cast<mlir::StringAttr>(declaration);
+            if (!name || name.getValue().empty() || !names.insert(name.getValue()).second) {
+                return "hoisted global declarations require an array of distinct nonempty names";
+            }
+            if (llvm::is_contained(contract.absentBindings, name.getValue())) {
+                return "source declares a fixed absent host binding";
+            }
+        }
+    }
     if (contract.realmGlobalThis &&
         (llvm::is_contained(contract.absentBindings, "globalThis") ||
          llvm::is_contained(contract.undefinedBindings, "globalThis"))) {

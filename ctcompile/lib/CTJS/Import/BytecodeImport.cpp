@@ -45,6 +45,15 @@ import_result import_program(const program & from, llvm::StringRef program_id,
     context->getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     mlir::OpBuilder builder(context);
     out.module = mlir::ModuleOp::create(builder.getUnknownLoc());
+    if (from.kind == script_kind::classic && !from.hoisted_vars.empty()) {
+        llvm::SmallVector<mlir::Attribute> declarations;
+        for (const std::string & name : from.hoisted_vars) {
+            declarations.push_back(builder.getStringAttr(name));
+        }
+        // Declaration instantiation binds these names before the entry runs;
+        // it preserves existing globals, so it supplies no initial value.
+        (*out.module)->setAttr("ctjs.hoisted_vars", builder.getArrayAttr(declarations));
+    }
 
     for (std::size_t index = 0; index < from.functions.size(); ++index) {
         const function_proto & proto = from.functions[index];

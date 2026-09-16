@@ -27,6 +27,134 @@ def specialize(opt, ir, contract, prefix, *, success=True, options=""):
     return json.loads(report.read_text()) if report.exists() else None, output, result
 
 
+def hoisted_declarations(args):
+    wrapper = (
+        "var host = {slot: 42}; "
+        "(function(f) { if (typeof host === 'object') { f(); } })(function() {}); "
+    )
+    sources = {
+        "later_snapshot": "var saved; " + wrapper + "saved = host.slot; var trace = saved;",
+        "unknown_value": "var saved; var host = {}; if (typeof saved === 'undefined') { host.slot = 42; } var trace = 0;",
+        "unknown_global": "var saved; " + wrapper + "var trace = foreign;",
+        "unknown_call": "var saved; "
+        + wrapper.replace("function() {}", "function() { saved(); }")
+        + "var trace = 42;",
+        "unknown_property": "var saved; "
+        + wrapper.replace("function() {}", "function() { saved.slot; }")
+        + "var trace = 42;",
+        "unknown_intrinsic": "var Map; "
+        + wrapper.replace("function() {}", "function() { new Map; }")
+        + "var trace = 42;",
+    }
+    for name, source in sources.items():
+        prefix = args.work / f"hoisted-{name}"
+        js, raw, ir = (prefix.with_suffix(suffix) for suffix in (".js", ".raw.mlir", ".mlir"))
+        js.write_text(source + "\n")
+        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
+        text = raw.read_text()
+        if "ctjs.hoisted_vars = [" not in text:
+            raise RuntimeError("import discarded script declaration metadata")
+        # Simulate the VM's pending bare-var fix without changing the oracle.
+        # Remove only declaration stores: later source assignments stay live.
+        binding = "Map" if name == "unknown_intrinsic" else "saved"
+        store = re.search(rf'^\s*ctjs\.store_global "{binding}", (%\w+)[^\n]*\n', text, re.M)
+        if store and re.search(
+            rf"^\s*{re.escape(store[1])} = ctjs\.constant #ctjs\.undefined\b",
+            text[: store.start()],
+            re.M,
+        ):
+            text = text[: store.start()] + text[store.end() :]
+        raw.write_text(text)
+        host.run(
+            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
+        )
+        contract = host.manifest(args.opt, ir)
+        report, _, _ = specialize(args.opt, ir, contract, args.work / f"hoisted-{name}-check")
+        expected = (1, 1) if name == "later_snapshot" else (0, 0)
+        if (
+            not report["valid"]
+            or (report["selected_branches"], report["resolved_calls"]) != expected
+        ):
+            raise RuntimeError(f"{name}: declaration became a value or callable proof: {report}")
+        if name == "unknown_value":
+            absent = dict(contract, absent_bindings=["saved"])
+            limited, _, result = specialize(
+                args.opt, ir, absent, args.work / "hoisted-absent", success=False
+            )
+            if (
+                limited["valid"]
+                or "source declares a fixed absent host binding" not in result.stderr
+            ):
+                raise RuntimeError("declaration accepted an absent-binding contract")
+            rejected, _, _ = host.analyze(args.opt, ir, absent, args.work / "hoisted-absent-host")
+            if (
+                rejected["proved"]
+                or rejected["reason"] != "source declares a fixed absent host binding"
+            ):
+                raise RuntimeError("host publication proof ignored the declared binding")
+        if name != "later_snapshot":
+            continue
+        original = ir.read_text()
+        declaration = re.search(r"ctjs\.hoisted_vars = \[[^\]]*\]", original)
+        if not declaration:
+            raise RuntimeError("global resolution discarded script declaration metadata")
+        without = prefix.with_suffix(".without.mlir")
+        without.write_text(
+            original[: declaration.start()]
+            + "ctjs.hoisted_vars = []"
+            + original[declaration.end() :]
+        )
+        limited, _, _ = specialize(
+            args.opt, without, host.manifest(args.opt, without), args.work / "hoisted-without"
+        )
+        if limited["selected_branches"] or limited["resolved_calls"]:
+            raise RuntimeError("missing declaration still closed a later snapshot lookup")
+        stale, _, _ = specialize(
+            args.opt, without, contract, args.work / "hoisted-stale", success=False
+        )
+        if stale["valid"] or stale["selected_branches"] or stale["resolved_calls"]:
+            raise RuntimeError("changed declaration metadata reused a manifest")
+        for budget in (0, 1):
+            limited, _, _ = specialize(
+                args.opt,
+                ir,
+                contract,
+                args.work / f"hoisted-budget-{budget}",
+                success=False,
+                options=f"max-steps={budget}",
+            )
+            if limited["valid"] or limited["selected_branches"] or limited["resolved_calls"]:
+                raise RuntimeError("partial declaration census retained a prefix proof")
+        for index, metadata in enumerate(("true", "[true]", '[""]', '["saved", "saved"]')):
+            malformed = prefix.with_suffix(f".malformed-{index}.mlir")
+            malformed.write_text(
+                original[: declaration.start()]
+                + "ctjs.hoisted_vars = "
+                + metadata
+                + original[declaration.end() :]
+            )
+            limited, _, result = specialize(
+                args.opt,
+                malformed,
+                host.manifest(args.opt, malformed),
+                args.work / f"hoisted-malformed-{index}",
+                success=False,
+            )
+            if limited["valid"] or "hoisted global declarations require" not in result.stderr:
+                raise RuntimeError("malformed declaration metadata authorized a proof")
+            rejected, _, _ = host.analyze(
+                args.opt,
+                malformed,
+                host.manifest(args.opt, malformed),
+                args.work / f"hoisted-malformed-host-{index}",
+            )
+            if (
+                rejected["proved"]
+                or "hoisted global declarations require" not in rejected["reason"]
+            ):
+                raise RuntimeError("host publication proof accepted malformed declarations")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate", required=True)
@@ -34,6 +162,7 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
+    hoisted_declarations(args)
     sources = {
         "callback": (
             "var trace = 0; var host = {slot: 42}; (function(f) { if (typeof host === 'object') { f(); } else { host.slot = 0; } })(function() { trace = 42; });",
