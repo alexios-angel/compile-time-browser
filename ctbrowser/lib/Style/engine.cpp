@@ -43,6 +43,7 @@ void engine::clear_origin(std::uint8_t origin) {
     drop(index_.universal);
     // A sheet's @function rules go with its other rules; a registration does not.
     erase_if(functions_, [origin](const auto & entry) { return entry.second.origin == origin; });
+    std::erase_if(keyframes_, [origin](const keyframes_rule & k) { return k.origin == origin; });
     // The @font-face list is not indexed by origin and is not cleared: a face is
     // a resource the browser has already been asked to load, and unloading one
     // because a rule was edited is a different question from unsaying the rule.
@@ -339,6 +340,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     for (std::size_t i = condition_base; i < conditions_.size(); ++i) {
         condition_truth_[i] = condition_holds(i);
     }
+    file_keyframes(sheet, origin, condition_base);
 
     // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
     // declaration): the push is outside the declaration loop, and a selector

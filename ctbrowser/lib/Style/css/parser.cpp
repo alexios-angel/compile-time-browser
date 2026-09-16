@@ -37,6 +37,7 @@ enum class at_kind {
     font_face,
     property,
     function,
+    keyframes,
     statement,
     skip
 };
@@ -63,6 +64,7 @@ enum class at_kind {
     if (ascii_iequals(name, "font-face")) { return at_kind::font_face; }
     if (ascii_iequals(name, "property")) { return at_kind::property; }
     if (ascii_iequals(name, "function")) { return at_kind::function; }
+    if (ascii_iequals(name, "keyframes")) { return at_kind::keyframes; }
     if (ascii_iequals(name, "import") || ascii_iequals(name, "charset") ||
         ascii_iequals(name, "namespace")) {
         return at_kind::statement;
@@ -384,10 +386,99 @@ private:
             (kind == at_kind::property ? sheet_.properties : sheet_.functions).push_back(r);
             return;
         }
-        // @keyframes, @page, @container, @scope, ... Their block is
-        // consumed and discarded. @keyframes is CAPTURED by a later rung - nothing
-        // reads it today, so capturing it now would be storage with no consumer.
+        if (kind == at_kind::keyframes) {
+            const component_value block = consume_component_value();
+            record_keyframes(prelude, block);
+            return;
+        }
+        // @page, @container, @scope, ... Their block is consumed and discarded.
         (void)consume_component_value();
+    }
+
+    // CSS Animations 1 §4. The prelude is one `<keyframes-name>` - a custom
+    // ident or a string - and the block is a list of keyframe blocks, each a
+    // `<keyframe-selector>#` prelude and a declaration block. The rule's
+    // `{...}` was consumed as ONE component value, so its children are the
+    // keyframe preludes' tokens with each keyframe's `{...}` as a nested block:
+    // walked here rather than re-tokenised. A block whose selector list has a
+    // token the grammar refuses is dropped, and only that block.
+    void record_keyframes(const std::vector<component_value> & prelude,
+                          const component_value & block) {
+        keyframes_block made;
+        made.condition = condition_;
+        for (const component_value & v : prelude) {
+            if (v.kind != cv_kind::token) { return; }
+            const css_token & t = sheet_.tokens[v.token];
+            if (t.type == token_type::whitespace) { continue; }
+            if (!made.name.empty()) { return; }
+            if (t.type == token_type::ident) {
+                made.name = std::string{text(t)};
+            } else if (t.type == token_type::string) {
+                made.name = std::string{unquoted(t)};
+            } else {
+                return;
+            }
+        }
+        // `none` and the CSS-wide keywords are not names (§4.2), and neither is
+        // an empty one.
+        if (made.name.empty() || ascii_iequals(made.name, "none") ||
+            ascii_iequals(made.name, "initial") || ascii_iequals(made.name, "inherit") ||
+            ascii_iequals(made.name, "unset") || ascii_iequals(made.name, "revert") ||
+            ascii_iequals(made.name, "revert-layer") || ascii_iequals(made.name, "default")) {
+            return;
+        }
+        // The children are read through a COPY: emit_declarations appends to
+        // sheet_.values, and a span into it would dangle (see emit_declarations).
+        const std::span<const component_value> inner = sheet_.children_of(block);
+        const std::vector<component_value> children{inner.begin(), inner.end()};
+        std::vector<double> offsets;
+        bool bad = false;
+        bool expect_selector = true;
+        for (const component_value & v : children) {
+            if (v.kind == cv_kind::block && v.open == '{') {
+                if (!bad && !offsets.empty() && !expect_selector) {
+                    keyframe_block frame;
+                    frame.offsets = offsets;
+                    frame.first_declaration =
+                        static_cast<std::uint32_t>(sheet_.declarations.size());
+                    emit_declarations(sheet_.children_of(v));
+                    frame.declaration_count =
+                        static_cast<std::uint32_t>(sheet_.declarations.size()) -
+                        frame.first_declaration;
+                    made.frames.push_back(std::move(frame));
+                }
+                offsets.clear();
+                bad = false;
+                expect_selector = true;
+                continue;
+            }
+            if (v.kind != cv_kind::token) {
+                bad = true;
+                continue;
+            }
+            const css_token & t = sheet_.tokens[v.token];
+            if (t.type == token_type::whitespace) { continue; }
+            if (t.type == token_type::comma) {
+                if (expect_selector) { bad = true; }
+                expect_selector = true;
+                continue;
+            }
+            if (!expect_selector) {
+                bad = true;
+                continue;
+            }
+            expect_selector = false;
+            if (t.type == token_type::ident && ascii_iequals(text(t), "from")) {
+                offsets.push_back(0);
+            } else if (t.type == token_type::ident && ascii_iequals(text(t), "to")) {
+                offsets.push_back(1);
+            } else if (t.type == token_type::percentage && t.number >= 0 && t.number <= 100) {
+                offsets.push_back(t.number / 100.0);
+            } else {
+                bad = true;
+            }
+        }
+        sheet_.keyframes.push_back(std::move(made));
     }
 
     // §5.4.7. A block or a function owns its children; a preserved token is one

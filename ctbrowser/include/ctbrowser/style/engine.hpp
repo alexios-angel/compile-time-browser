@@ -101,6 +101,27 @@ struct visited_element {
 
 using style_map = flat_map<std::uint64_t, computed_style_ptr>;
 
+// A `@keyframes` RULE AS THE CASCADE FILED IT - CSS Animations 1 §4 - the form
+// the shell builds a CSSAnimation's KeyframeEffect from (lib/Shell/bindings/
+// animations.cpp). Every keyframe carries LONGHANDS whose values went through
+// the same `check_declaration` the cascade applies to a rule, so a keyframe
+// cannot say something a declaration could not; two keyframes at one offset
+// are merged, later declarations winning (§4.1); the list is sorted by offset.
+struct keyframes_rule {
+    struct keyframe {
+        double offset = 0; // in [0, 1]
+        // `animation-timing-function` / `animation-composition` declared IN the
+        // keyframe (§4.3); empty means the element's own property applies.
+        std::string easing;
+        std::string composite;
+        std::vector<std::pair<std::string, std::string>> values; // css name -> text
+    };
+    std::string name;
+    std::uint8_t origin = 0;
+    std::uint32_t condition = 0; // the engine's condition table; 0 unconditional
+    std::vector<keyframe> keyframes;
+};
+
 class engine {
 public:
     explicit engine(atom_table & atoms)
@@ -183,6 +204,11 @@ public:
         const auto it = registrations_.find(name.id);
         return it == registrations_.end() ? nullptr : &it->second;
     }
+    // THE `@keyframes` RULE A NAME MEANS, or null: the LAST one in document
+    // order whose `@media` holds wins (CSS Animations 1 §4: "the last one in
+    // document order"). Names are case-sensitive, as a <custom-ident> is.
+    [[nodiscard]] const keyframes_rule * keyframes_of(std::string_view name) const;
+
     // A CUSTOM FUNCTION from a sheet's `@function` rule, CSS Functions and
     // Mixins 1 §2, or null. The first rule for a name stands, like @property.
     [[nodiscard]] const css::custom_function * function_of(atom name) const {
@@ -510,6 +536,12 @@ private:
         css::custom_function function;
     };
     flat_map<std::uint32_t, sheet_function> functions_;
+    // The `@keyframes` rules of every sheet, in filing order, and the filing
+    // (lib/Style/css/keyframes.cpp). `condition_base` is where the sheet's
+    // `@media` table landed in `conditions_`, for the rule's condition index.
+    void file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
+                        std::size_t condition_base);
+    std::vector<keyframes_rule> keyframes_;
 
     // Does this text carry a unit that resolves against the element's own font -
     // `em`, `ex`, `ch`, `cap`, `ic`, `lh` - or, on the root, the root's?

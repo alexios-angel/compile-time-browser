@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/style/css/keyframes.hpp>
 #include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/selector.hpp>
@@ -159,6 +160,8 @@ struct stylesheet {
     std::vector<font_face> font_faces;
     std::vector<at_rule_block> properties;
     std::vector<at_rule_block> functions;
+    // Every `@keyframes` rule, in source order (style/css/keyframes.hpp).
+    std::vector<keyframes_block> keyframes;
     // The `@media` conditions this sheet's rules are gated on. Entry 0 is the
     // unconditional one; nesting is a parent index, so truth ANDs up the chain
     // without the tree being flattened.
