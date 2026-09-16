@@ -41,6 +41,27 @@ void engine::clear_origin(std::uint8_t origin) {
     for (auto & [key, rules] : index_.by_class) { drop(rules); }
     for (auto & [key, rules] : index_.by_tag) { drop(rules); }
     drop(index_.universal);
+    // THE LAYER ORDER AND THE SCOPES GO WITH THE RULES that named them, once
+    // no rule of any origin still points at one: a page that rewrites its
+    // sheet from `@layer b, a` to `@layer a, b` has reordered its layers, and
+    // a table that remembered the old first appearance would say otherwise.
+    bool layered = false;
+    bool scoped = false;
+    const auto scan = [&](const std::vector<rule> & rules) {
+        for (const rule & r : rules) {
+            layered = layered || r.layer != 0;
+            scoped = scoped || r.scope != 0;
+        }
+    };
+    for (const auto & [key, rules] : index_.by_id) { scan(rules); }
+    for (const auto & [key, rules] : index_.by_class) { scan(rules); }
+    for (const auto & [key, rules] : index_.by_tag) { scan(rules); }
+    scan(index_.universal);
+    if (!layered) {
+        layer_names_.assign(1, std::string{});
+        layer_rank_.assign(1, 0xFFFFFFFFu);
+    }
+    if (!scoped) { scopes_.assign(1, scope_entry{}); }
     // A sheet's @function rules go with its other rules; a registration does not.
     erase_if(functions_, [origin](const auto & entry) { return entry.second.origin == origin; });
     // The @font-face list is not indexed by origin and is not cleared: a face is
@@ -340,6 +361,46 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         condition_truth_[i] = condition_holds(i);
     }
 
+    // THE SHEET'S LAYERS, merged into the engine's by NAME: `@layer a` in two
+    // sheets is one layer, first declared where it first appeared. An
+    // anonymous layer is nobody else's, so its unnameable name is made unique
+    // to this sheet before the lookup.
+    const std::string serial = std::to_string(++sheet_serial_);
+    std::vector<std::uint16_t> layer_map(sheet.layers.size() + 1, 0);
+    for (std::size_t i = 0; i < sheet.layers.size(); ++i) {
+        std::string name;
+        for (std::size_t at = 0; at <= sheet.layers[i].size();) {
+            const std::size_t dot = sheet.layers[i].find('.', at);
+            const std::size_t end = dot == std::string::npos ? sheet.layers[i].size() : dot;
+            std::string_view segment = std::string_view{sheet.layers[i]}.substr(at, end - at);
+            if (!name.empty()) { name += '.'; }
+            if (segment.starts_with('\x01')) {
+                name += '\x01' + serial + '_';
+                segment.remove_prefix(1);
+            }
+            name += segment;
+            at = end + 1;
+        }
+        auto found = std::ranges::find(layer_names_, name);
+        if (found == layer_names_.end()) {
+            layer_names_.push_back(std::move(name));
+            found = layer_names_.end() - 1;
+        }
+        layer_map[i + 1] = static_cast<std::uint16_t>(found - layer_names_.begin());
+    }
+    if (!sheet.layers.empty()) { rerank_layers(); }
+    // ...AND ITS SCOPES, appended: a scope belongs to its sheet.
+    std::vector<std::uint16_t> scope_map(sheet.scopes.size() + 1, 0);
+    for (std::size_t i = 0; i < sheet.scopes.size(); ++i) {
+        const css::scope_block & s = sheet.scopes[i];
+        scope_entry made;
+        made.parent = scope_map[s.parent];
+        made.roots.assign(sheet.roots_of(s).begin(), sheet.roots_of(s).end());
+        made.limits.assign(sheet.limits_of(s).begin(), sheet.limits_of(s).end());
+        scopes_.push_back(std::move(made));
+        scope_map[i + 1] = static_cast<std::uint16_t>(scopes_.size() - 1);
+    }
+
     // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
     // declaration): the push is outside the declaration loop, and a selector
     // that can never match is never pushed.
@@ -357,12 +418,113 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
                 // and expanded when it is applied, which also keeps its source order:
                 // its longhands land at the shorthand's position in the fold.
                 declarations_.push_back(declaration{d.property, std::string{sheet.text_of(d)}});
-                index_.add(selectors_[sel_index],
-                           rule{sel_index, static_cast<std::uint32_t>(declarations_.size() - 1),
-                                d.order, engine_condition(r.condition), origin, d.important});
+                rule filed;
+                filed.selector = sel_index;
+                filed.declaration = static_cast<std::uint32_t>(declarations_.size() - 1);
+                filed.order = d.order;
+                filed.condition = engine_condition(r.condition);
+                filed.layer = layer_map[r.layer];
+                filed.scope = scope_map[r.scope];
+                filed.origin = origin;
+                filed.important = d.important;
+                index_.add(selectors_[sel_index], filed);
             }
         }
     }
+}
+
+// THE LAYER ORDER, CSS Cascade 5 §6.4.3: layers sort by first appearance,
+// nested layers grouped within their parent and BEFORE the parent's own
+// rules, and unlayered rules after every layer. As paths - `a.b` is [a, a.b]
+// - that is a lexicographic compare on the shared prefix, the longer path
+// earlier when one is a prefix of the other; the unlayered entry is the empty
+// path, a prefix of everything, and so last.
+void engine::rerank_layers() {
+    std::vector<std::vector<std::uint32_t>> paths(layer_names_.size());
+    for (std::size_t i = 1; i < layer_names_.size(); ++i) {
+        const std::string & name = layer_names_[i];
+        for (std::size_t dot = name.find('.');; dot = name.find('.', dot + 1)) {
+            const std::string_view prefix =
+                std::string_view{name}.substr(0, dot == std::string::npos ? name.size() : dot);
+            const auto at = std::ranges::find(layer_names_, prefix);
+            paths[i].push_back(static_cast<std::uint32_t>(at - layer_names_.begin()));
+            if (dot == std::string::npos) { break; }
+        }
+    }
+    std::vector<std::uint32_t> order(layer_names_.size() - 1);
+    for (std::size_t i = 0; i < order.size(); ++i) { order[i] = static_cast<std::uint32_t>(i + 1); }
+    std::ranges::sort(order, [&](std::uint32_t a, std::uint32_t b) {
+        const auto & pa = paths[a];
+        const auto & pb = paths[b];
+        const std::size_t shared = std::min(pa.size(), pb.size());
+        for (std::size_t i = 0; i < shared; ++i) {
+            if (pa[i] != pb[i]) { return pa[i] < pb[i]; }
+        }
+        return pa.size() > pb.size();
+    });
+    layer_rank_.assign(layer_names_.size(), 0xFFFFFFFFu);
+    for (std::size_t rank = 0; rank < order.size(); ++rank) {
+        layer_rank_[order[rank]] = static_cast<std::uint32_t>(rank);
+    }
+}
+
+bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancestors,
+                            std::uint16_t s, std::size_t depth, bool explicit_scope,
+                            std::size_t & root_depth) {
+    // `depth + 1` stands for "no outer root" throughout: the top scope's
+    // `:scope` is the document's, and its candidates run to the tree's top.
+    const std::size_t none = depth + 1;
+    // Is the element at `d` a root of `e` whose scope holds the subject, with
+    // the outer root at `outer` being what `:scope` names in `e`'s roots? A
+    // LIMIT and everything under it is out of scope, the limit itself included
+    // (CSS Cascade 6 §3.1), so any element strictly below the root down to the
+    // subject that matches one ends the candidacy.
+    const auto is_root = [&](const scope_entry & e, std::size_t d, std::size_t outer) {
+        scope_ = outer == none ? node_id{} : levels_[outer][path_[outer]].node;
+        bool any = false;
+        for (const compiled_selector & sel : e.roots) {
+            if (matches_from(txn, ancestors, sel, d, path_[d])) {
+                any = true;
+                break;
+            }
+        }
+        if (!any) { return false; }
+        scope_ = levels_[d][path_[d]].node;
+        for (std::size_t k = d + 1; k <= depth; ++k) {
+            for (const compiled_selector & sel : e.limits) {
+                if (matches_from(txn, ancestors, sel, k, path_[k])) { return false; }
+            }
+        }
+        return true;
+    };
+    // Every root depth of scope `at` that holds the subject, nearest first
+    // under each root of the enclosing scope. An implicit scope - `@scope { }`
+    // with no prelude - is rooted at the sheet's owner node's parent, which
+    // this engine is not told; it has no roots here and matches nothing.
+    using visitor = std::function<void(std::size_t)>;
+    const auto each_root = [&](auto && self, std::uint16_t at, const visitor & f) -> void {
+        if (at == 0) {
+            f(none);
+            return;
+        }
+        const scope_entry & e = scopes_[at];
+        if (e.roots.empty()) { return; }
+        self(self, e.parent, visitor{[&](std::size_t outer) {
+                 for (std::size_t d = depth + 1; d-- > (outer == none ? 0 : outer);) {
+                     if (is_root(e, d, outer)) { f(d); }
+                 }
+             }});
+    };
+    bool found = false;
+    each_root(each_root, s, visitor{[&](std::size_t d) {
+                  // The subject may be its own scoping root only when the rule's selector
+                  // names it - `.a { }` inside `@scope (.a)` is `:where(:scope) .a`.
+                  if (d == depth && !explicit_scope) { return; }
+                  if (!found || d > root_depth) { root_depth = d; }
+                  found = true;
+              }});
+    scope_ = node_id{};
+    return found;
 }
 
 element_facts engine::facts_of(const read_txn & txn, node_id id) const {
@@ -858,6 +1020,10 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
                     const node_id parent = txn.parent(node);
                     const node_id from = sideways && parent ? parent : node;
                     const std::span<const compiled_selector> one{&arg, 1};
+                    // ponytail: the argument's anchor and its `:scope` are one
+                    // compound, so inside a scoped rule `:scope` here is the
+                    // subject rather than the scoping root (Cascade 6 §3.3);
+                    // split the anchor into a bit of its own when a page needs it.
                     if (!has_walker_->select(txn, from, one, true, node).empty()) {
                         any = true;
                         break;
@@ -924,20 +1090,28 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     collect(index_.by_id, self.id, txn, ancestors, depth);
     for (const atom c : self.classes) { collect(index_.by_class, c, txn, ancestors, depth); }
     collect(index_.by_tag, self.tag, txn, ancestors, depth);
-    for (const rule & r : index_.universal) {
-        if (!condition_truth_[r.condition]) { continue; }
-        if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
-    }
+    for (const rule & r : index_.universal) { consider(r, txn, ancestors, depth); }
 
-    // The cascade: origin, then importance, then specificity, then source
-    // order. Sorting ascending and applying in order means the last write
-    // to a property wins, which is exactly the rule.
+    // THE CASCADE, CSS Cascade 5 §6.1: importance, then origin - reversed for
+    // important declarations, where the user agent's beat the author's - then
+    // the layer, whose order is likewise reversed for important declarations
+    // (§6.4), then specificity, then scope proximity (Cascade 6 §6.3, nearer
+    // wins), then source order. Sorting ascending and applying in order means
+    // the last write to a property wins, which is exactly the rule.
     std::ranges::stable_sort(matches_, [this](const rule & a, const rule & b) {
         if (a.important != b.important) { return !a.important; }
-        if (a.origin != b.origin) { return a.origin < b.origin; }
+        if (a.origin != b.origin) {
+            return a.important ? a.origin > b.origin : a.origin < b.origin;
+        }
+        if (a.layer != b.layer) {
+            const std::uint32_t ra = layer_rank_[a.layer];
+            const std::uint32_t rb = layer_rank_[b.layer];
+            return a.important ? ra > rb : ra < rb;
+        }
         const specificity sa = selectors_[a.selector].spec;
         const specificity sb = selectors_[b.selector].spec;
         if (sa != sb) { return sa < sb; }
+        if (a.proximity != b.proximity) { return a.proximity > b.proximity; }
         return a.order < b.order;
     });
 
@@ -956,25 +1130,65 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     //   unset     drop the declaration: for an inherited property the inherited
     //             value then shows through, and for a non-inherited one absence
     //             already means initial, so dropping is correct for both
-    //   revert    treated as `unset`. Doing it properly needs the value the
-    //             PREVIOUS origin would have produced, which means keeping the
-    //             cascade's intermediate states rather than folding as it goes
-    const auto put = [&out, &parent, this](const declaration & d) {
+    //   revert    the value the PREVIOUS ORIGIN would have produced
+    //   revert-layer, revert-rule
+    //             likewise, one layer or one rule back - see rolled_back
+    //
+    // THE ROLLBACKS ARE ANSWERED FROM THE SORTED MATCHES rather than from
+    // intermediate states of the fold: the value with some set of
+    // declarations removed is the last remaining declaration of the property
+    // in cascade order, and the matches are already in that order. `folding`
+    // is the position in it of the rule being applied, or the size for the
+    // style attribute, which every rule precedes.
+    std::size_t folding = matches_.size();
+    // The last declaration of `property` before `limit` that `keep` admits,
+    // or the size when there is none.
+    const auto rolled_back = [this](atom property, std::size_t limit, const auto & keep) {
+        for (std::size_t i = limit; i-- > 0;) {
+            const rule & r = matches_[i];
+            if (keep(r) && declarations_[r.declaration].property == property) { return i; }
+        }
+        return matches_.size();
+    };
+    const auto put = [&out, &parent, &folding, &rolled_back, this](const declaration & d) {
         std::string value = d.value;
         const std::string_view property = atoms_->text(d.property);
-        // `revert` IS THE USER-AGENT ORIGIN'S ANSWER (CSS Cascade 4 §7.3):
-        // the value the cascade would have had with no author declaration
-        // at all, which is the last UA rule that matched and declared this
-        // property - `em { font-style: italic }` under an author
-        // `font-style: revert`. With none it is `unset`. Scanned when it
-        // happens rather than remembered per property: a revert is rare
-        // and the matched rules are a handful (attr-css-wide-keywords).
-        if (value == "revert") {
-            for (const rule & r : matches_) {
-                if (r.origin != 0) { continue; } // 0 is the user-agent origin (ua.hpp)
-                const declaration & ua = declarations_[r.declaration];
-                if (ua.property == d.property) { value = ua.value; }
+        // THE ROLLBACK KEYWORDS, each the cascade with some declarations
+        // struck out (CSS Cascade 5 §7.3): `revert` strikes the author origin,
+        // so the answer is the last user-agent declaration - the whole list,
+        // since important UA rules sort after the author's; `revert-layer`
+        // strikes the current layer of the current origin, the style
+        // attribute counting as a layer above all of them; `revert-rule` (a
+        // Cascade 6 draft) strikes the current rule - the declarations filed
+        // consecutively under one selector. What is found may be a keyword
+        // itself, so this loops, always to an earlier position.
+        std::size_t at = folding;
+        for (int guard = 0; guard < 16; ++guard) {
+            std::size_t found = matches_.size();
+            if (value == "revert") {
+                found = rolled_back(d.property, matches_.size(),
+                                    [](const rule & r) { return r.origin == 0; });
+            } else if (value == "revert-layer") {
+                const rule * self = at < matches_.size() ? &matches_[at] : nullptr;
+                found = rolled_back(d.property, at, [self](const rule & r) {
+                    return self == nullptr || r.origin != self->origin || r.layer != self->layer;
+                });
+            } else if (value == "revert-rule") {
+                const rule * self = at < matches_.size() ? &matches_[at] : nullptr;
+                // add_sheet files one selector copy per block, so the same
+                // selector index is the same block.
+                found = rolled_back(d.property, at, [self](const rule & r) {
+                    return self == nullptr || r.selector != self->selector;
+                });
+            } else {
+                break;
             }
+            if (found == matches_.size()) {
+                value = "unset";
+                break;
+            }
+            at = found;
+            value = declarations_[matches_[found].declaration].value;
         }
         if (value == "inherit") {
             value = std::string{parent ? parent->get(d.property) : std::string_view{}};
@@ -1044,13 +1258,17 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // split into longhands until the var()s are gone.
     const auto fold = [&](const auto & apply) {
         bool spliced = false;
-        for (const rule & r : matches_) {
+        for (std::size_t i = 0; i < matches_.size(); ++i) {
+            const rule & r = matches_[i];
             if (r.important && !spliced) {
+                folding = matches_.size();
                 for (const declaration & d : own.normal) { apply(d); }
                 spliced = true;
             }
+            folding = i;
             apply(declarations_[r.declaration]);
         }
+        folding = matches_.size();
         if (!spliced) {
             for (const declaration & d : own.normal) { apply(d); }
         }

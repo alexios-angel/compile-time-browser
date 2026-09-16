@@ -1,9 +1,11 @@
 #include <ctbrowser/style/css/parser.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -19,12 +21,20 @@
 // a `;` inside `url(...)` is a child of a component value and is never seen by the
 // declaration splitter, and a `}` inside a string is a token rather than a brace.
 //
-// AT-RULES ARE HANDLED EXACTLY AS THE PREVIOUS FRONT END HANDLED THEM, on purpose.
-// @media recurses with its condition IGNORED except for a `print` or `portrait`
-// ident, which is wrong - every breakpoint applies at once and the last in source
-// order wins - but it is the wrong thing the recorded baselines were measured
-// against, and changing two things at once makes a rendering difference
-// unattributable. Real media evaluation is its own rung.
+// A BLOCK'S CONTENTS ARE DECLARATIONS AND RULES, MIXED (CSS Syntax 3 §5.4.4,
+// the nesting revision): a style rule's block may hold nested style rules and
+// nested conditional groups, and a conditional group's block may hold bare
+// declarations that belong to the enclosing style rule. So every block goes
+// through one walk, `consume_block_contents`, and what it may hold is decided
+// by the context it runs in - a style rule's selectors, an `@scope`, or
+// nothing at all at the top level.
+//
+// THE CONDITIONAL GROUPS: `@media` records a condition the engine evaluates
+// against the environment as it changes; `@supports` is decided HERE, once,
+// since what a property table accepts does not change with the window; and
+// `@container` is deferred to the engine, which is the only thing that can ask
+// layout for the container's size. `@layer` names a cascade layer and `@scope`
+// a scoping root, both of which the cascade reads back off the rule.
 
 namespace ctbrowser::style::css {
 namespace {
@@ -33,6 +43,10 @@ namespace {
 // skipped, and everything else without one is consumed to the `;`.
 enum class at_kind {
     media,
+    supports,
+    layer,
+    scope,
+    container,
     media_like,
     font_face,
     property,
@@ -53,11 +67,13 @@ enum class at_kind {
         }
     }
     if (ascii_iequals(name, "media")) { return at_kind::media; }
-    if (ascii_iequals(name, "supports") || ascii_iequals(name, "document") ||
-        ascii_iequals(name, "layer")) {
-        // "media-like" = a conditional group whose contents are rules. `@layer`
-        // with a block is one too; `@layer a;` is a statement and falls out below
-        // because it has no block.
+    if (ascii_iequals(name, "supports")) { return at_kind::supports; }
+    if (ascii_iequals(name, "layer")) { return at_kind::layer; }
+    if (ascii_iequals(name, "scope")) { return at_kind::scope; }
+    if (ascii_iequals(name, "container")) { return at_kind::container; }
+    if (ascii_iequals(name, "document")) {
+        // A conditional group whose contents are rules and whose condition
+        // this engine cannot read: its rules apply.
         return at_kind::media_like;
     }
     if (ascii_iequals(name, "font-face")) { return at_kind::font_face; }
@@ -192,10 +208,22 @@ private:
             const css_token & word = sheet_.tokens[prelude[k].token];
             if (prelude[k].kind == cv_kind::token && word.type == token_type::ident &&
                 ascii_iequals(text(word), "layer")) {
+                made.layered = true;
                 ++k;
             } else if (prelude[k].kind == cv_kind::function &&
-                       (ascii_iequals(text(word), "layer(") ||
-                        ascii_iequals(text(word), "supports("))) {
+                       ascii_iequals(text(word), "layer(")) {
+                // `layer(<layer-name>)`: a name that does not parse makes the
+                // whole import invalid (CSS Cascade 5 §5.1).
+                std::string name;
+                if (!layer_name_of(sheet_.trimmed(sheet_.children_of(prelude[k])), name)) {
+                    return;
+                }
+                made.layered = true;
+                made.layer = std::move(name);
+                ++k;
+            } else if (prelude[k].kind == cv_kind::function &&
+                       ascii_iequals(text(word), "supports(")) {
+                made.supports = text_of_run(sheet_.children_of(prelude[k]));
                 ++k;
             } else {
                 break;
@@ -254,7 +282,8 @@ private:
         }
     }
 
-    // §5.4.2. The prelude is a selector list; the block is a declaration list.
+    // §5.4.2, at the top level. The prelude is a selector list; the block's
+    // contents are declarations and nested rules.
     void consume_qualified_rule() {
         leading_ = false;
         std::vector<component_value> prelude;
@@ -269,28 +298,421 @@ private:
         }
         if (at_eof()) { return; } // §5.4.2: a prelude with no block is dropped
         const component_value block = consume_component_value(); // the `{...}`
-
-        const std::uint32_t first_selector = static_cast<std::uint32_t>(sheet_.selectors.size());
-        const std::uint32_t count = parse_selector_list(sheet_, span_of(prelude), *atoms_);
-        const std::uint32_t first_declaration =
-            static_cast<std::uint32_t>(sheet_.declarations.size());
-        // The block's children were appended to sheet_.values by
-        // consume_component_value, so they are addressed rather than copied.
-        emit_declarations(sheet_.children_of(block));
-
-        raw_rule r;
-        r.first_selector = first_selector;
-        r.selector_count = count;
-        r.first_declaration = first_declaration;
-        r.condition = condition_;
-        r.declaration_count =
-            static_cast<std::uint32_t>(sheet_.declarations.size()) - first_declaration;
-        // A rule with no declarations is kept out: it can never contribute to the
-        // cascade, and every consumer would have to skip it.
-        if (r.declaration_count != 0 && r.selector_count != 0) { sheet_.rules.push_back(r); }
+        style_rule(span_of(prelude), block);
     }
 
-    // §5.4.3.
+    // WHAT A BLOCK IS PARSED INSIDE OF. The enclosing style rule's selectors
+    // are what `&` and an implicit `&` stand for and what a bare declaration
+    // in a nested `@media` belongs to; inside `@scope` with no style rule
+    // between, `&` is `:where(:scope)` and a bare declaration styles the
+    // scoping root. Copied rather than viewed: the sheet's selector vector
+    // moves while the children are parsed.
+    struct block_context {
+        std::vector<compiled_selector> parent;
+        bool in_scope = false;
+    };
+
+    // A style rule, top-level or nested: compile the selector list in the
+    // current context, then walk the block with THIS rule as the context.
+    void style_rule(std::span<const component_value> prelude, const component_value & block) {
+        const std::uint32_t first_selector = static_cast<std::uint32_t>(sheet_.selectors.size());
+        const nesting_context nesting{context_.parent, context_.in_scope};
+        const bool nested = !context_.parent.empty() || context_.in_scope;
+        const std::uint32_t count =
+            parse_selector_list(sheet_, prelude, *atoms_, nullptr, nested ? &nesting : nullptr);
+        // The children see this rule's list, dead alternatives included: a
+        // rule nested under a selector that cannot match compiles to one that
+        // cannot match either, rather than to a top-level rule.
+        block_context inner;
+        inner.parent.assign(sheet_.selectors.begin() + first_selector,
+                            sheet_.selectors.begin() + first_selector + count);
+        const block_context saved = std::exchange(context_, std::move(inner));
+        consume_block_contents(sheet_.children_of(block), first_selector, count);
+        context_ = saved;
+    }
+
+    // §5.4.4, "consume a block's contents": declarations and rules, mixed.
+    //
+    // THE DECLARATIONS ARE EMITTED IN RUNS. `.a { color: red; .b { } color:
+    // blue }` is a rule, a nested rule, and a second run of declarations that
+    // CSS Nesting 1 §4 calls a nested declarations rule - and the runs must
+    // keep their place in source order, because the nested rule's
+    // declarations sit between them in the cascade's final tie-break. So each
+    // run becomes a raw_rule of its own under the same selectors, with the
+    // declaration order counter running through the whole block in sequence.
+    //
+    // THE RUN IS COPIED, AND THAT COPY IS THE FIX FOR A HEAP-USE-AFTER-FREE.
+    // `incoming` is a span INTO `sheet_.values`, and every declaration this
+    // emits APPENDS to that vector, so the first reallocation frees the buffer
+    // the span points at. It looked harmless because the freed bytes still
+    // held the old values; an ASAN build said otherwise, on the UA stylesheet.
+    // Measured on bootstrap.css at about four percent of the parse.
+    //
+    // `first_selector`/`selector_count` are the selectors a run of
+    // declarations belongs to; none at the top level or in a bare
+    // conditional group, where a bare declaration is dropped (§5.4.4).
+    void consume_block_contents(std::span<const component_value> incoming,
+                                std::uint32_t first_selector, std::uint32_t selector_count) {
+        const std::vector<component_value> owned{incoming.begin(), incoming.end()};
+        const std::span<const component_value> run{owned};
+        std::uint32_t run_first = static_cast<std::uint32_t>(sheet_.declarations.size());
+        const auto flush = [&] {
+            const std::uint32_t now = static_cast<std::uint32_t>(sheet_.declarations.size());
+            if (now == run_first) { return; }
+            if (selector_count != 0) {
+                raw_rule r;
+                r.first_selector = first_selector;
+                r.selector_count = selector_count;
+                r.first_declaration = run_first;
+                r.declaration_count = now - run_first;
+                r.condition = condition_;
+                r.layer = layer_;
+                r.scope = scope_;
+                sheet_.rules.push_back(r);
+            } else if (context_.in_scope) {
+                // Bare declarations directly inside `@scope` style the
+                // scoping root as `:where(:scope)` would (CSS Cascade 6
+                // §3.4); the scope compiled that one selector on entry.
+                raw_rule r;
+                r.first_selector = scope_root_selector_;
+                r.selector_count = 1;
+                r.first_declaration = run_first;
+                r.declaration_count = now - run_first;
+                r.condition = condition_;
+                r.layer = layer_;
+                r.scope = scope_;
+                sheet_.rules.push_back(r);
+            }
+            run_first = now;
+        };
+        const auto is_token = [&](std::size_t i, token_type type) {
+            return i < run.size() && run[i].kind == cv_kind::token &&
+                   sheet_.tokens[run[i].token].type == type;
+        };
+        const auto is_curly = [&](std::size_t i) {
+            return i < run.size() && run[i].kind == cv_kind::block && run[i].open == '{';
+        };
+        std::size_t i = 0;
+        while (i < run.size()) {
+            if (sheet_.is_space(run[i]) || is_token(i, token_type::semicolon)) {
+                ++i;
+                continue;
+            }
+            if (is_token(i, token_type::at_keyword)) {
+                const std::string_view name = value_of_at(sheet_.tokens[run[i].token]);
+                std::size_t end = i + 1;
+                while (end < run.size() && !is_curly(end) &&
+                       !is_token(end, token_type::semicolon)) {
+                    ++end;
+                }
+                const std::span<const component_value> prelude = run.subspan(i + 1, end - i - 1);
+                if (is_curly(end)) {
+                    flush();
+                    ++nesting_;
+                    at_rule_block_of(name, prelude, run[end]);
+                    --nesting_;
+                    i = end + 1;
+                } else {
+                    // A statement at-rule inside a block: `@layer a;` still
+                    // declares its layers there; nothing else means anything.
+                    if (at_kind_of(name) == at_kind::layer) { layer_statement(prelude); }
+                    i = end + (end < run.size() ? 1 : 0);
+                }
+                continue;
+            }
+            // A DECLARATION OR A NESTED STYLE RULE. Try the declaration first,
+            // as §5.4.4 does: an ident, a colon, and a value up to the next
+            // `;` that holds no `{}` block - unless the property is custom, whose
+            // value may hold anything. What fails that is a qualified rule whose
+            // prelude runs to the first `{}` block.
+            std::size_t end = i;
+            while (end < run.size() && !is_token(end, token_type::semicolon)) { ++end; }
+            bool declaration = false;
+            if (is_token(i, token_type::ident)) {
+                std::size_t colon = i + 1;
+                while (colon < end && sheet_.is_space(run[colon])) { ++colon; }
+                if (is_token(colon, token_type::colon)) {
+                    const std::string_view property = text(sheet_.tokens[run[i].token]);
+                    declaration = property.starts_with("--");
+                    if (!declaration) {
+                        declaration = true;
+                        for (std::size_t k = colon + 1; k < end; ++k) {
+                            if (is_curly(k)) { declaration = false; }
+                        }
+                    }
+                }
+            }
+            if (declaration) {
+                if (selector_count != 0 || context_.in_scope) {
+                    emit_one_declaration(run.subspan(i, end - i));
+                }
+                i = end + 1;
+                continue;
+            }
+            std::size_t open = i;
+            while (open < end && !is_curly(open)) { ++open; }
+            if (open >= end) {
+                i = end + 1; // garbage up to the `;`: dropped, §5.4.4
+                continue;
+            }
+            flush();
+            style_rule(run.subspan(i, open - i), run[open]);
+            i = open + 1;
+        }
+        flush();
+    }
+
+    // The text of a run of component values: every token's text, joined.
+    [[nodiscard]] std::string text_of_run(std::span<const component_value> run) const {
+        std::string out;
+        if (run.empty()) { return out; }
+        for (std::uint32_t t = run.front().token; t < run.back().end_token; ++t) {
+            out += text(sheet_.tokens[t]);
+        }
+        return out;
+    }
+
+    // `<layer-name>`: `<ident> [ '.' <ident> ]*` with nothing between, CSS
+    // Cascade 5 §6.4.1. `run` is one comma-separated piece, trimmed.
+    [[nodiscard]] bool layer_name_of(std::span<const component_value> run,
+                                     std::string & out) const {
+        out.clear();
+        for (std::size_t i = 0; i < run.size(); ++i) {
+            if (run[i].kind != cv_kind::token) { return false; }
+            const css_token & t = sheet_.tokens[run[i].token];
+            if (i % 2 == 0) {
+                if (t.type != token_type::ident) { return false; }
+                out += text(t);
+            } else {
+                if (t.type != token_type::delim || text(t) != ".") { return false; }
+                out += '.';
+            }
+        }
+        return !out.empty() && run.size() % 2 == 1;
+    }
+
+    // FILE A LAYER, and every ancestor it implies, in first-appearance order:
+    // `@layer a.b` declares `a` then `a.b`. Names are relative to the layer
+    // being parsed inside of. Returns the 1-based index of the leaf.
+    [[nodiscard]] std::uint32_t declare_layer(std::string_view name) {
+        std::string full =
+            layer_prefix_.empty() ? std::string{name} : layer_prefix_ + "." + std::string{name};
+        std::uint32_t leaf = 0;
+        for (std::size_t dot = 0;;) {
+            const std::size_t next = full.find('.', dot);
+            const std::string_view prefix =
+                std::string_view{full}.substr(0, next == std::string::npos ? full.size() : next);
+            auto found = std::ranges::find(sheet_.layers, prefix);
+            if (found == sheet_.layers.end()) {
+                sheet_.layers.emplace_back(prefix);
+                found = sheet_.layers.end() - 1;
+            }
+            leaf = static_cast<std::uint32_t>(found - sheet_.layers.begin()) + 1;
+            if (next == std::string::npos) { break; }
+            dot = next + 1;
+        }
+        return leaf;
+    }
+
+    // `@layer a, b.c;` - every name declared, in order; a bad name makes the
+    // whole statement invalid and declares nothing.
+    void layer_statement(std::span<const component_value> prelude) {
+        std::vector<std::string> names;
+        std::size_t start = 0;
+        for (std::size_t i = 0; i <= prelude.size(); ++i) {
+            const bool comma = i < prelude.size() && prelude[i].kind == cv_kind::token &&
+                               sheet_.tokens[prelude[i].token].type == token_type::comma;
+            if (i < prelude.size() && !comma) { continue; }
+            std::string name;
+            if (!layer_name_of(sheet_.trimmed(prelude.subspan(start, i - start)), name)) { return; }
+            names.push_back(std::move(name));
+            start = i + 1;
+        }
+        for (const std::string & name : names) { (void)declare_layer(name); }
+    }
+
+    // A BLOCK AT-RULE'S BODY, wherever it sits: the conditional groups walk
+    // their contents in the enclosing context - a nested `@media` in a style
+    // rule keeps the rule's selectors for `&` and for its bare declarations -
+    // and the rest are collected or skipped.
+    void at_rule_block_of(std::string_view name, std::span<const component_value> prelude,
+                          const component_value & block) {
+        const at_kind kind = at_kind_of(name);
+        const auto contents = [&] { consume_block_contents(sheet_.children_of(block), 0, 0); };
+        // The selectors a bare declaration in the group belongs to: those of the
+        // enclosing style rule, or nothing.
+        const auto grouped = [&] {
+            if (context_.parent.empty() && !context_.in_scope) {
+                contents();
+                return;
+            }
+            // A nested group's bare declarations are a nested declarations
+            // rule under the parent's own selectors: the parent's list was
+            // already compiled, so it is re-filed as one more list of the
+            // same alternatives.
+            const std::uint32_t first = static_cast<std::uint32_t>(sheet_.selectors.size());
+            for (const compiled_selector & s : context_.parent) { sheet_.selectors.push_back(s); }
+            consume_block_contents(sheet_.children_of(block), first,
+                                   static_cast<std::uint32_t>(context_.parent.size()));
+        };
+        switch (kind) {
+        case at_kind::media: {
+            // A REAL CONDITION. The prelude becomes a query list, the list
+            // becomes an entry in the sheet's condition table with the enclosing
+            // condition as its parent, and every rule inside records that index.
+            // Nothing is evaluated here: a sheet is parsed once and the viewport
+            // changes, so the truth of a condition belongs to the engine.
+            media_condition condition;
+            condition.parent = condition_;
+            condition.queries = parse_media_query_list(sheet_, prelude);
+            push_condition(std::move(condition), grouped);
+            return;
+        }
+        case at_kind::supports: {
+            // DECIDED NOW, ONCE: what the property table accepts does not
+            // change. A false condition files its rules under a condition
+            // that is never true - `not all` - so the block still parses,
+            // and its `@layer` names still count.
+            if (supports_condition(text_of_run(prelude))) {
+                grouped();
+                return;
+            }
+            media_condition never;
+            never.parent = condition_;
+            media_query q;
+            q.malformed = true;
+            never.queries.push_back(std::move(q));
+            push_condition(std::move(never), grouped);
+            return;
+        }
+        case at_kind::layer: {
+            // `@layer <name>? { }`. One name or none; a list is the statement
+            // form's alone and makes the block invalid.
+            const auto trimmed = sheet_.trimmed(prelude);
+            std::string name;
+            if (trimmed.empty()) {
+                name = "\x01" + std::to_string(++anonymous_layers_);
+            } else if (!layer_name_of(trimmed, name)) {
+                return;
+            }
+            const std::uint32_t index = declare_layer(name);
+            const std::uint32_t saved_layer = std::exchange(layer_, index);
+            const std::string saved_prefix = std::exchange(layer_prefix_, sheet_.layers[index - 1]);
+            grouped();
+            layer_ = saved_layer;
+            layer_prefix_ = saved_prefix;
+            return;
+        }
+        case at_kind::scope: scope_block_of(prelude, block); return;
+        case at_kind::media_like: grouped(); return;
+        case at_kind::font_face: {
+            const std::uint32_t first = static_cast<std::uint32_t>(sheet_.declarations.size());
+            emit_declarations(sheet_.children_of(block));
+            font_face f;
+            f.first_declaration = first;
+            f.declaration_count = static_cast<std::uint32_t>(sheet_.declarations.size()) - first;
+            if (f.declaration_count != 0) { sheet_.font_faces.push_back(f); }
+            return;
+        }
+        case at_kind::property:
+        case at_kind::function: {
+            // Collected like @font-face, prelude included, and only at the top
+            // level: one inside a conditional group is discarded as before.
+            if (nesting_ != 1) { return; }
+            at_rule_block r;
+            r.prelude_first = static_cast<std::uint32_t>(sheet_.values.size());
+            r.prelude_count = static_cast<std::uint32_t>(prelude.size());
+            const std::vector<component_value> copy{prelude.begin(), prelude.end()};
+            sheet_.values.insert(sheet_.values.end(), copy.begin(), copy.end());
+            r.first_declaration = static_cast<std::uint32_t>(sheet_.declarations.size());
+            emit_declarations(sheet_.children_of(block));
+            r.declaration_count =
+                static_cast<std::uint32_t>(sheet_.declarations.size()) - r.first_declaration;
+            (kind == at_kind::property ? sheet_.properties : sheet_.functions).push_back(r);
+            return;
+        }
+        case at_kind::container:
+        case at_kind::statement:
+        case at_kind::skip:
+            // @keyframes, @page, @container, @starting-style, ... Their block
+            // is discarded. @keyframes is CAPTURED by a later rung - nothing
+            // reads it today. @container needs layout, which is the engine's
+            // rung, and until it asks its rules do not apply.
+            return;
+        }
+    }
+
+    template <typename F> void push_condition(media_condition condition, const F & body) {
+        sheet_.conditions.push_back(std::move(condition));
+        const std::uint32_t saved = condition_;
+        condition_ = static_cast<std::uint32_t>(sheet_.conditions.size() - 1);
+        body();
+        condition_ = saved;
+    }
+
+    // `@scope [(<scope-start>)]? [to (<scope-end>)]? { }`, CSS Cascade 6 §3.
+    // The start is compiled in the enclosing context - a nested scope's
+    // `:scope` and a relative selector refer to the outer root - and the end
+    // relative to this scope's root. Anything else in the prelude makes the
+    // rule invalid.
+    void scope_block_of(std::span<const component_value> prelude, const component_value & block) {
+        auto run = sheet_.trimmed(prelude);
+        scope_block made;
+        made.parent = scope_;
+        const nesting_context outer{{}, true};
+        const nesting_context * start_context =
+            scope_ != 0 || context_.in_scope || !context_.parent.empty() ? &outer : nullptr;
+        bool invalid = false;
+        if (!run.empty() && run.front().kind == cv_kind::block && run.front().open == '(') {
+            made.first_root = static_cast<std::uint32_t>(sheet_.selectors.size());
+            made.root_count = parse_selector_list(sheet_, sheet_.children_of(run.front()), *atoms_,
+                                                  &invalid, start_context);
+            run = sheet_.trimmed(run.subspan(1));
+        }
+        if (!run.empty()) {
+            const css_token * to =
+                run.front().kind == cv_kind::token ? &sheet_.tokens[run.front().token] : nullptr;
+            if (to == nullptr || to->type != token_type::ident || !ascii_iequals(text(*to), "to")) {
+                return;
+            }
+            run = sheet_.trimmed(run.subspan(1));
+            if (run.size() != 1 || run.front().kind != cv_kind::block || run.front().open != '(') {
+                return;
+            }
+            made.first_limit = static_cast<std::uint32_t>(sheet_.selectors.size());
+            made.limit_count = parse_selector_list(sheet_, sheet_.children_of(run.front()), *atoms_,
+                                                   &invalid, &outer);
+        }
+        // `@scope ()`, `@scope to ()`, a selector that is not one: the rule is
+        // invalid and its block applies nothing.
+        if (invalid) { return; }
+        sheet_.scopes.push_back(made);
+        const std::uint32_t saved_scope = scope_;
+        scope_ = static_cast<std::uint32_t>(sheet_.scopes.size());
+        // The rules inside: `&` is `:where(:scope)`, and a bare declaration
+        // styles the root through the same one-compound selector, compiled
+        // once per scope - by hand, since no token spells it.
+        {
+            compiled_selector amp;
+            compound c;
+            c.structural = structural_scope;
+            c.nesting = true;
+            amp.parts.push_back(std::move(c));
+            amp.explicit_scope = true;
+            const std::uint32_t at = static_cast<std::uint32_t>(sheet_.selectors.size());
+            sheet_.selectors.push_back(std::move(amp));
+            block_context inner;
+            inner.in_scope = true;
+            const std::uint32_t saved_root = std::exchange(scope_root_selector_, at);
+            const block_context saved_context = std::exchange(context_, std::move(inner));
+            consume_block_contents(sheet_.children_of(block), 0, 0);
+            context_ = saved_context;
+            scope_root_selector_ = saved_root;
+        }
+        scope_ = saved_scope;
+    }
+
+    // §5.4.3, at the top level.
     void consume_at_rule() {
         const std::size_t at_token = at_;
         const std::string_view name = value_of_at(here());
@@ -305,89 +727,27 @@ private:
         if (ended || at_eof()) {
             // `@namespace [<prefix>]? <url>;` is RECORDED, because it decides
             // which prefixes the selectors after it may use; a LEADING `@import`
-            // is too, for whoever can fetch it. The rest - @charset, `@layer a;`
-            // - are consumed and that is all.
+            // is too, for whoever can fetch it; `@layer a, b;` declares its
+            // layers. `@charset` is consumed and that is all.
             if (ascii_iequals(name, "import")) {
                 record_import(at_token, prelude);
             } else if (ascii_iequals(name, "namespace")) {
                 if (ended) { record_namespace(prelude); }
                 leading_ = false;
-            } else if (!ascii_iequals(name, "charset") && !ascii_iequals(name, "layer")) {
+            } else if (kind == at_kind::layer) {
+                if (ended) { layer_statement(prelude); }
+            } else if (!ascii_iequals(name, "charset")) {
                 leading_ = false;
             }
             if (ended) { ++at_; }
             return;
         }
         leading_ = false;
-        if (kind == at_kind::statement) {
-            // A statement at-rule that turned out to have a block: skip it, since
-            // its contents are not rules.
-            (void)consume_component_value();
-            return;
-        }
-        if (kind == at_kind::media && here().type == token_type::open_curly) {
-            // A REAL CONDITION. The prelude becomes a query list, the list becomes an
-            // entry in the sheet's condition table with the enclosing condition as its
-            // parent, and every rule inside records that index. Nothing is evaluated
-            // here: a sheet is parsed once and the viewport changes, so the truth of a
-            // condition belongs to the engine and not to the parse.
-            media_condition condition;
-            condition.parent = condition_;
-            condition.queries = parse_media_query_list(sheet_, span_of(prelude));
-            sheet_.conditions.push_back(std::move(condition));
-            const std::uint32_t saved = condition_;
-            condition_ = static_cast<std::uint32_t>(sheet_.conditions.size() - 1);
-            ++at_; // the `{`
-            ++nesting_;
-            consume_rule_list(/*top_level=*/false);
-            --nesting_;
-            if (here().type == token_type::close_curly) { ++at_; }
-            condition_ = saved;
-            return;
-        }
-        if (kind == at_kind::media_like) {
-            // `@supports`, `@document` and `@layer`: the CONTENTS are rules, and the
-            // condition is still ignored. `@supports` needs a property table to answer
-            // honestly - and answering `true` for `display: grid` would be worse than
-            // answering nothing, because a feature-detecting page would then pick the
-            // grid path. That is its own rung.
-            ++at_; // the `{`, so the nested rules are parsed in place
-            ++nesting_;
-            consume_rule_list(/*top_level=*/false);
-            --nesting_;
-            if (here().type == token_type::close_curly) { ++at_; }
-            return;
-        }
-        if (kind == at_kind::font_face) {
-            const component_value block = consume_component_value();
-            const std::uint32_t first = static_cast<std::uint32_t>(sheet_.declarations.size());
-            emit_declarations(sheet_.children_of(block));
-            font_face f;
-            f.first_declaration = first;
-            f.declaration_count = static_cast<std::uint32_t>(sheet_.declarations.size()) - first;
-            if (f.declaration_count != 0) { sheet_.font_faces.push_back(f); }
-            return;
-        }
-        if (kind == at_kind::property || kind == at_kind::function) {
-            // Collected like @font-face, prelude included, and only at the top
-            // level: one inside a conditional group is discarded as before.
-            const component_value block = consume_component_value();
-            if (nesting_ != 0) { return; }
-            at_rule_block r;
-            r.prelude_first = static_cast<std::uint32_t>(sheet_.values.size());
-            r.prelude_count = static_cast<std::uint32_t>(prelude.size());
-            sheet_.values.insert(sheet_.values.end(), prelude.begin(), prelude.end());
-            r.first_declaration = static_cast<std::uint32_t>(sheet_.declarations.size());
-            emit_declarations(sheet_.children_of(block));
-            r.declaration_count =
-                static_cast<std::uint32_t>(sheet_.declarations.size()) - r.first_declaration;
-            (kind == at_kind::property ? sheet_.properties : sheet_.functions).push_back(r);
-            return;
-        }
-        // @keyframes, @page, @container, @scope, ... Their block is
-        // consumed and discarded. @keyframes is CAPTURED by a later rung - nothing
-        // reads it today, so capturing it now would be storage with no consumer.
-        (void)consume_component_value();
+        const component_value block = consume_component_value();
+        if (kind == at_kind::statement) { return; } // a statement with a block: skipped
+        ++nesting_;
+        at_rule_block_of(name, span_of(prelude), block);
+        --nesting_;
     }
 
     // §5.4.7. A block or a function owns its children; a preserved token is one
@@ -677,9 +1037,20 @@ private:
     std::int32_t order_ = 0;
     // The `@media` a rule being parsed sits inside. 0 is the unconditional entry.
     std::uint32_t condition_ = 0;
-    // How many conditional groups deep the parse is; @property and @function
-    // are only collected at 0.
+    // How many at-rule blocks deep the parse is; @property and @function are
+    // only collected at 1, the top level.
     std::uint32_t nesting_ = 0;
+    // The `@layer` a rule being parsed sits inside - 0 for none - and its full
+    // name, which a nested `@layer` is relative to.
+    std::uint32_t layer_ = 0;
+    std::string layer_prefix_;
+    std::uint32_t anonymous_layers_ = 0;
+    // The `@scope` a rule sits inside, 0 for none, and the index of the
+    // `:where(:scope)` selector its bare declarations file under.
+    std::uint32_t scope_ = 0;
+    std::uint32_t scope_root_selector_ = 0;
+    // The enclosing style rule, for nesting - see block_context.
+    block_context context_;
     // Whether the sheet's leading run of `@charset` / `@layer x;` / `@import`
     // statements is still open: an `@import` after anything else is ignored.
     bool leading_ = true;

@@ -182,6 +182,9 @@ void append_compound(std::string & out, const style::compound & part, const atom
     } else if (out.size() != was) {
         out += '*';
     }
+    // THE NESTING SELECTOR, written back as `&`: what it compiled to - an
+    // `:is()` of the parent list, or the `:scope` bit - is left out below.
+    if (part.nesting) { out += '&'; }
     if (part.id) {
         out += '#';
         out += ident(atoms.text(part.id));
@@ -250,7 +253,8 @@ void append_compound(std::string & out, const style::compound & part, const atom
         {style::structural_enabled, "enabled"},
         {style::structural_checked, "checked"},
         {style::structural_link, "link"},
-        {style::structural_visited, "visited"}};
+        {style::structural_visited, "visited"},
+        {style::structural_scope, "scope"}};
     std::vector<std::string_view> emitted;
     const auto emit = [&](std::string_view name) {
         if (std::find(emitted.begin(), emitted.end(), name) != emitted.end()) { return; }
@@ -262,9 +266,12 @@ void append_compound(std::string & out, const style::compound & part, const atom
         if ((part.states & each.bit) != 0) { emit(each.name); }
     }
     for (const named_bit & each : structural_bits) {
-        if ((part.structural & each.bit) != 0) { emit(each.name); }
+        if ((part.structural & each.bit) == 0) { continue; }
+        if (each.bit == style::structural_scope && part.nesting) { continue; } // the `&`
+        emit(each.name);
     }
     for (const style::pseudo_ref & pseudo : part.pseudos) {
+        if (pseudo.nesting) { continue; } // the `&`, written above
         switch (pseudo.kind) {
         case style::pseudo_kind::nth_child:
             out += ":nth-child(" + an_plus_b(pseudo.a, pseudo.b) + ")";

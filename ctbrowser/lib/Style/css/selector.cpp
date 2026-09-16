@@ -421,6 +421,7 @@ public:
     // Whether anything in the list was not a selector at all, as opposed to one
     // this engine cannot match. See parse_selector_list's declaration.
     [[nodiscard]] bool invalid() const noexcept { return invalid_; }
+    void set_nesting(const nesting_context * nesting) noexcept { nesting_ = nesting; }
 
     [[nodiscard]] std::uint32_t run(std::span<const component_value> prelude) {
         std::uint32_t written = 0;
@@ -594,8 +595,13 @@ private:
         // selector, and the flag has to come back out of the recursion to say so.
         selector_parser nested{*sheet_, *atoms_};
         nested.relative_ = is_has;
+        nested.nesting_ = nesting_;
         const std::uint32_t count = nested.run(inner);
         invalid = invalid || nested.invalid();
+        // `:is(&.a)` contains the nesting selector, and `:not(:scope)` names
+        // the scoping root, as surely as the outer compound would.
+        saw_nesting_ = saw_nesting_ || nested.saw_nesting_;
+        saw_scope_ = saw_scope_ || nested.saw_scope_;
         for (std::size_t i = 0; i < count; ++i) {
             ref.args.push_back(std::move(sheet_->selectors[before + i]));
         }
@@ -635,11 +641,48 @@ private:
         sheet_->selectors.push_back(std::move(dead));
     }
 
+    // THE NESTING SELECTOR, compiled into `b` as what it stands for - see
+    // nesting_context. A parent alternative that can never match is left out
+    // of the `:is()`, since `:is()` refuses a dead argument; with none left the
+    // compound is dead too.
+    void make_nesting(building & b, bool & dead) {
+        b.part.nesting = true;
+        saw_nesting_ = true;
+        if (nesting_ == nullptr || nesting_->parent.empty()) {
+            // `:scope` at the top level, with a pseudo-class's specificity;
+            // `:where(:scope)` inside `@scope`, with none.
+            b.part.structural |= structural_scope;
+            if (nesting_ == nullptr || !nesting_->in_scope) { ++b.classes; }
+            saw_scope_ = true;
+            return;
+        }
+        pseudo_ref ref;
+        ref.kind = pseudo_kind::is_;
+        ref.nesting = true;
+        specificity most;
+        for (const compiled_selector & parent : nesting_->parent) {
+            if (parent.parts.empty() || parent.parts.front().never_matches) { continue; }
+            if (most < parent.spec) { most = parent.spec; }
+            if (parent.explicit_scope) { saw_scope_ = true; }
+            ref.args.push_back(parent);
+        }
+        if (ref.args.empty()) {
+            dead = true;
+            return;
+        }
+        b.ids += static_cast<int>(most.ids());
+        b.classes += static_cast<int>(most.classes());
+        b.tags += static_cast<int>(most.types());
+        b.part.pseudos.push_back(std::move(ref));
+    }
+
     // One comma-separated alternative.
     void emit(std::span<const component_value> run) {
         boost::container::small_vector<building, 2> compounds;
         boost::container::small_vector<combinator, 2> links; // left-to-right, size = n-1
         bool dead = false;
+        saw_nesting_ = false;
+        saw_scope_ = false;
         // ...AND WHETHER SOMETHING WAS LOST ON THE WAY. A dead alternative keeps
         // its compounds - `ns|e` and `::before` are unmatchable and still the
         // author's selector, which is what `selectorText` has to give back - and
@@ -671,6 +714,19 @@ private:
             start_compound();
             compounds.back().part.structural |= structural_scope;
             want_new_compound = true;
+        } else if (nesting_ != nullptr) {
+            // A NESTED RULE MAY BE RELATIVE TOO: `> .a` in a style rule is
+            // `& > .a` and in `@scope` it is `:where(:scope) > .a` (CSS
+            // Nesting 1 §2.1) - the anchor is `&`, written in the same way.
+            std::size_t first = 0;
+            while (first < run.size() && sheet_->is_space(run[first])) { ++first; }
+            if (first < run.size() && run[first].kind == cv_kind::token &&
+                token(run[first]).type == token_type::delim &&
+                (text(run[first]) == ">" || text(run[first]) == "+" || text(run[first]) == "~")) {
+                start_compound();
+                make_nesting(compounds.back(), dead);
+                want_new_compound = true;
+            }
         }
         // `|` IMMEDIATELY after run[at], which makes run[at] a namespace prefix.
         // Whitespace is a token, so `a | b` does not qualify - and cannot, since
@@ -825,6 +881,13 @@ private:
                     ++i; // the ident
                     continue;
                 }
+                if (d == "&") {
+                    // The nesting selector, CSS Nesting 1 §2: a compound of its
+                    // own or part of one - `&.a` and `.a&` are both legal.
+                    if (want_new_compound || compounds.empty()) { start_compound(); }
+                    make_nesting(compounds.back(), dead);
+                    continue;
+                }
                 if (d == "*") {
                     if (want_new_compound || compounds.empty()) { start_compound(); }
                     if (bar_follows(i)) {
@@ -951,6 +1014,7 @@ private:
                 if (const std::uint32_t bit = structural_bit_of(name); bit != 0) {
                     b.part.structural |= bit;
                     ++b.classes;
+                    if (bit == structural_scope) { saw_scope_ = true; }
                     continue;
                 }
                 // `:focus-visible` and `:defined` are real and this engine cannot
@@ -979,6 +1043,16 @@ private:
             push_dead();
             return;
         }
+        // IMPLICIT NESTING, CSS Nesting 1 §2.1: a selector in a nested style
+        // rule that names no `&` is `& <selector>`. Not inside `@scope`, whose
+        // in-scope test already restricts the subject, and not for the
+        // synthetic anchor of a `:has()` argument.
+        if (nesting_ != nullptr && !nesting_->parent.empty() && !saw_nesting_ && !relative_) {
+            building anchor;
+            make_nesting(anchor, dead);
+            compounds.insert(compounds.begin(), std::move(anchor));
+            links.insert(links.begin(), combinator::descendant);
+        }
         // A DEAD ALTERNATIVE KEEPS ITS COMPOUNDS. The rightmost is what the
         // matcher and the rule index consult first, so the flag goes there; the
         // CSSOM reads `dropped` to decide between the canonical serialisation
@@ -1002,6 +1076,7 @@ private:
         specificity spec;
         for (const building & b : compounds) { spec = spec + specificity_of(b); }
         out.spec = spec;
+        out.explicit_scope = saw_scope_;
         // RIGHTMOST FIRST, because that is the order matching walks them. `links`
         // was built left-to-right, and reversing means each link is read from the
         // compound to its right - which is the direction the walk moves.
@@ -1016,13 +1091,20 @@ private:
     atom_table * atoms_;
     bool invalid_ = false;
     bool relative_ = false; // parsing the argument of `:has()`
+    const nesting_context * nesting_ = nullptr;
+    // Per alternative: whether it wrote `&`, and whether it names the scoping
+    // root (`:scope`, or `&` where that is what `&` means).
+    bool saw_nesting_ = false;
+    bool saw_scope_ = false;
 };
 
 } // namespace
 
 std::uint32_t parse_selector_list(stylesheet & sheet, std::span<const component_value> prelude,
-                                  atom_table & atoms, bool * invalid) {
+                                  atom_table & atoms, bool * invalid,
+                                  const nesting_context * nesting) {
     selector_parser parser{sheet, atoms};
+    parser.set_nesting(nesting);
     const std::uint32_t written = parser.run(prelude);
     if (invalid && parser.invalid()) { *invalid = true; }
     return written;

@@ -169,6 +169,9 @@ struct pseudo_ref {
     // over the kinds and lives outside this subsystem; a compound holding one is
     // marked `dropped`, which sends the serialiser to the author's bytes anyway.
     bool relative = false;
+    // The `:is(<parent list>)` that a nested rule's `&` compiled to - see
+    // compound::nesting; serialised as `&`.
+    bool nesting = false;
     // The argument of `:lang()` - a comma-separated list of language RANGES, kept
     // as written because a range is not an identifier: `*-Latn` is a legal one and
     // interning it would put a wildcard in the atom table. `:dir()` stores its one
@@ -206,6 +209,12 @@ struct compound {
     // element; the name is kept so `selectorText` can be canonical, which is how
     // `:before` comes back as `::before`.
     atom pseudo_element;
+    // WRITTEN WITH `&`, CSS Nesting 1 §2. What the nesting selector MEANS is
+    // compiled into the compound - `:is(<parent list>)` in a nested style
+    // rule, `:where(:scope)` inside `@scope`, `:scope` at the top level - so
+    // the matcher never sees it; this is for `selectorText`, which gives
+    // back `&` rather than what it stood for.
+    bool nesting = false;
     bool never_matches = false; // a construct this engine cannot match
     // A construct the compiled form does not HOLD - `:has()`, `::part(x)`, a
     // namespaced attribute - so no serialiser can rebuild the author's selector
@@ -248,6 +257,13 @@ struct compiled_selector {
     boost::container::small_vector<compound, 2> parts;
     boost::container::small_vector<combinator, 2> links; // links[i] joins parts[i] to parts[i+1]
     specificity spec;
+    // NAMES THE SCOPING ROOT EXPLICITLY - `:scope` or `&` somewhere in it,
+    // nested arguments included. A scoped style rule (CSS Cascade 6 §3.3)
+    // matches only elements IN SCOPE, and the scoping root is in scope; but a
+    // selector that does not say `:scope` is implicitly `:where(:scope)`
+    // plus a descendant combinator, so `.a { }` inside `@scope (.a)` never
+    // styles the root and `:scope { }` does. This flag is that difference.
+    bool explicit_scope = false;
 };
 
 struct rule {
@@ -258,6 +274,18 @@ struct rule {
     // 0 is the unconditional entry. Matching tests one bool rather than evaluating
     // anything, which is what makes a media query cost nothing per candidate.
     std::uint32_t condition = 0;
+    // Which `@layer`, as an index into the engine's layer table: 0 is
+    // UNLAYERED. The cascade compares the layers' RANKS (engine::layer_rank_),
+    // not these indices - a layer's place in the order is decided by first
+    // appearance across every sheet, and the index is merely which one.
+    std::uint16_t layer = 0;
+    // Which `@scope`, as an index into the engine's scope table; 0 is none.
+    std::uint16_t scope = 0;
+    // HOW FAR THE SCOPING ROOT IS from the element this rule matched, in
+    // generations (CSS Cascade 6 §6.3): 0 is the root itself. Filled in when
+    // the rule is collected for one element, so it is meaningful only on a
+    // copy in engine::matches_. An unscoped rule is infinitely far.
+    std::uint16_t proximity = 0xFFFF;
     std::uint8_t origin = 0; // 0 = user agent, 1 = author. Author wins.
     bool important = false;
 };

@@ -619,13 +619,43 @@ private:
         if (!key) { return; }
         const auto it = bucket.find(key.id);
         if (it == bucket.end()) { return; }
-        for (const rule & r : it->second) {
-            // ONE BOOL, before any selector work. A false condition is the cheapest
-            // possible rejection and it is checked first for that reason.
-            if (!condition_truth_[r.condition]) { continue; }
-            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
-        }
+        for (const rule & r : it->second) { consider(r, txn, ancestors, depth); }
     }
+    // One candidate rule against the element at `depth`: the condition first,
+    // then - for a scoped rule only - the scoping root, then the selector.
+    void consider(const rule & r, const read_txn & txn, const ancestor_filter & ancestors,
+                  std::size_t depth) {
+        // ONE BOOL, before any selector work. A false condition is the cheapest
+        // possible rejection and it is checked first for that reason.
+        if (!condition_truth_[r.condition]) { return; }
+        if (r.scope == 0) {
+            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
+            return;
+        }
+        std::size_t root_depth = 0;
+        if (!scope_root_for(txn, ancestors, r.scope, depth, selectors_[r.selector].explicit_scope,
+                            root_depth)) {
+            return;
+        }
+        // `:scope` in the rule is the root found.
+        scope_ = levels_[root_depth][path_[root_depth]].node;
+        const bool hit = matches(txn, ancestors, selectors_[r.selector], depth);
+        scope_ = node_id{};
+        if (!hit) { return; }
+        rule found = r;
+        found.proximity =
+            static_cast<std::uint16_t>(std::min<std::size_t>(depth - root_depth, 0xFFFE));
+        matches_.push_back(found);
+    }
+    // THE NEAREST SCOPING ROOT of scope `s` that puts the element at `depth` in
+    // scope (CSS Cascade 6 §3.2): an ancestor-or-self on the current chain
+    // matching one of the scope's root selectors - with `:scope` meaning the
+    // enclosing scope's root, which is found the same way first - and with no
+    // element between it and the subject matching a limit. Answers its depth;
+    // `explicit_scope` says whether the subject may be its own root.
+    [[nodiscard]] bool scope_root_for(const read_txn & txn, const ancestor_filter & ancestors,
+                                      std::uint16_t s, std::size_t depth, bool explicit_scope,
+                                      std::size_t & root_depth);
 
     // Everything a compound can require, of the element at (depth, index).
     //
@@ -719,6 +749,25 @@ private:
     // a whole-document query, or the cascade - and `:scope` is then `:root`. A
     // root that is not an element (a fragment) is a scope no element can equal.
     node_id scope_{};
+    // THE CASCADE LAYERS, CSS Cascade 5 §6.4, across every sheet: full dotted
+    // names in first-appearance order, entry 0 the unlayered pseudo-layer,
+    // and beside them each layer's RANK in the layer order, which is what the
+    // cascade compares. Sub-layers come before their parent's own rules, and
+    // the unlayered entry after everything - so rank 0 is the lowest normal
+    // priority and entry 0 carries the highest rank. Re-ranked whenever a
+    // sheet adds a layer; a rule keeps its index.
+    std::vector<std::string> layer_names_{std::string{}};
+    std::vector<std::uint32_t> layer_rank_{0xFFFFFFFFu};
+    std::uint32_t sheet_serial_ = 0;
+    void rerank_layers();
+    // THE SCOPES, CSS Cascade 6 §3: each with its root and limit selector
+    // lists and its enclosing scope. Entry 0 is none.
+    struct scope_entry {
+        std::uint16_t parent = 0;
+        std::vector<compiled_selector> roots;
+        std::vector<compiled_selector> limits;
+    };
+    std::vector<scope_entry> scopes_{scope_entry{}};
     // THE PSEUDO-ELEMENT BEING RESOLVED, or none: a selector's subject compound
     // must name exactly this one - `#t::before` matches nothing in the ordinary
     // cascade and only `#t::before` matches while resolve_pseudo runs.
