@@ -216,7 +216,16 @@ struct layer_context {
     std::string out;
     if (match_position(ts, found, out)) { return out; }
     for (const std::size_t i : found.significant) {
-        if (ts.tokens[i].type == token_type::function) { return normalize_value_tokens(ts, text); }
+        if (ts.tokens[i].type == token_type::function) {
+            // A MATH FUNCTION IN A LAYER IS STILL SIMPLIFIED (CSS Values 4
+            // §10.12). check_declaration simplifies the whole value before any
+            // grammar sees it, and a layer list re-reads the AUTHOR'S text to
+            // split it, so this is the one path where that would be lost:
+            // `background-position: calc(2px + 3px)` reads back as `calc(5px)`,
+            // which is calc-background-position-003 for six values at once.
+            const std::string written = normalize_value_tokens(ts, text);
+            return may_have_math(written) ? simplify_math(written) : written;
+        }
     }
     return std::nullopt;
 }

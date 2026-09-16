@@ -412,6 +412,8 @@ void test_module_longhands() {
     bad("offset-anchor", "left 10% top");
     ok("offset-position", "10px 20%", "10px 20%");
     ok("background-blend-mode", "luminosity", "luminosity");
+    ok("background-position", "calc(2px + 3px) calc(4px + 5px)", "calc(5px) calc(9px)");
+    ok("background-position", "calc(6px + 21%) calc(7em + 22%)", "calc(21% + 6px) calc(22% + 7em)");
     bad("background-blend-mode", "normal luminosity");
 
     ok("animation-range-start", "exit 1%, cover 2%, contain 0%", "exit 1%, cover 2%, contain");
