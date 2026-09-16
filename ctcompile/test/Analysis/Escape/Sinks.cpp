@@ -10,6 +10,8 @@
 
 #include "Harness.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::escape;
 
 int main() {
@@ -477,12 +479,12 @@ int main() {
         const std::vector<std::optional<unsigned>> expected = {17U, 9U, std::nullopt};
         if (!module || pcs != expected) {
             std::printf("FAIL allocationPc: expected 17, 9, none\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         }
     }
 
-    if (failures != 0) {
-        std::printf("\n%d check(s) failed\n", failures);
+    if (ctbrowser_test_failures != 0) {
+        std::printf("\n%d check(s) failed\n", ctbrowser_test_failures);
         return 1;
     }
     std::printf("escape analysis: %zu rows, every cell agrees with the VM\n", rows.size());

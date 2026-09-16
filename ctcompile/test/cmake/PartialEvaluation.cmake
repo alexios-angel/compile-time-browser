@@ -2,38 +2,27 @@
 # Numeric observers receive heap arguments, so they remain runtime functions.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(object_values
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-values.js"
-    raw42)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-values.js")
   ctcompile_add_native_pipeline(object_fields
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-fields.js"
-    traceWrite)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-fields.js")
   ctcompile_add_native_pipeline(partial_evaluation
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-evaluation.js"
-    lifetime42 PARTIAL_EVALUATE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-evaluation.js" PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(partial_prefix
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-prefix.js"
-    lifetime42 PARTIAL_EVALUATE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-prefix.js" PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(partial_closures
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-closures.js"
-    lifetime42 PARTIAL_EVALUATE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-closures.js" PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(symbolic
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/symbolic.js"
-    lifetime42 PRECOMPUTE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/symbolic.js" PRECOMPUTE)
   ctcompile_add_native_pipeline(deforestation
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/deforestation.js"
-    zz_loop13 DEFOREST)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/deforestation.js" DEFOREST)
   ctcompile_add_native_pipeline(specialization
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/specialization.js"
-    lifetime42 SPECIALIZE PRECOMPUTE PARTIAL_EVALUATE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/specialization.js" SPECIALIZE PRECOMPUTE PARTIAL_EVALUATE)
   ctcompile_add_native_pipeline(reachability
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/reachability.js"
-    lifetime42 SPECIALIZE PARTIAL_EVALUATE PRUNE_UNREACHABLE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/reachability.js" SPECIALIZE PARTIAL_EVALUATE PRUNE_UNREACHABLE)
   ctcompile_add_native_pipeline(supercompilation
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/supercompilation.js"
-    lifetime42 SUPERCOMPILE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/supercompilation.js" SUPERCOMPILE)
   ctcompile_add_native_pipeline(supercompilation_generalization
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/supercompilation-generalization.js"
-    lifetime42 SUPERCOMPILE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/supercompilation-generalization.js" SUPERCOMPILE)
 endif()
 
 # Native variants retain the original callable value for boxed dispatch. The

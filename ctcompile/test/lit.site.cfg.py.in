@@ -19,6 +19,18 @@ config.ctbrowser_include = "@CTBROWSER_MONOREPO_ROOT@/ctbrowser/include"
 config.node = "@CTCOMPILE_BOOTSTRAP_NODE@"
 config.native_reference = "@CTCOMPILE_BINARY_DIR@/test/ctcompile-test-native-reference"
 
+# THE REST OF WHAT THE FORMER `cmake -P` CHECKS WERE HANDED. The monorepo root
+# reaches tools/check and the vendored corpora; nm and the two clean-compile
+# toolchains are what Native.cmake found; ctbrowser's tools directory holds
+# the launcher (ctrun) and ctbrowse for the packaging round trip.
+config.monorepo_root = "@CTBROWSER_MONOREPO_ROOT@"
+config.ctbrowser_tools_dir = "@CMAKE_BINARY_DIR@/tools"
+config.nm = "@_native_nm@"
+config.clean_compilers = "@CTCOMPILE_CLEAN_GXX@,@CTCOMPILE_CLEAN_CLANGXX@"
+config.cmake = "@CMAKE_COMMAND@"
+config.dom_clang = "@_native_dom_clang@"
+config.build_root = "@CMAKE_BINARY_DIR@"
+
 import lit.llvm
 lit.llvm.initialize(lit_config, config)
 

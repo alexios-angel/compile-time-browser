@@ -39,7 +39,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
         const auto position = text.find(from.str());
         if (position == std::string::npos) {
             std::printf("FAIL delete-size fixture replacement did not match\n");
-            ++failures;
+            ++ctbrowser_test_failures;
             return text;
         }
         text.replace(position, from.size(), to.str());
@@ -362,7 +362,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                 observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
                 std::printf("FAIL %s: %s delete-size membership differs from %d\n", what,
                             clone ? "fresh" : "reused", static_cast<int>(expected));
-                ++failures;
+                ++ctbrowser_test_failures;
             }
             std::vector<mlir::Operation *> after;
             current.walk([&](mlir::Operation * op) { after.push_back(op); });
@@ -372,11 +372,11 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             }
             if (!intact) {
                 std::printf("FAIL %s: delete-size preparation changed executable source\n", what);
-                ++failures;
+                ++ctbrowser_test_failures;
             }
             if (!supported && observed && observed->hasAttr(ctnative::kNativeMapReadType)) {
                 std::printf("FAIL %s: unsupported Map kept forged read-type evidence\n", what);
-                ++failures;
+                ++ctbrowser_test_failures;
             }
             check(current, what,
                   !supported ? "!ctnative.boxed"
@@ -395,7 +395,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                 &context);
             if (!module) {
                 std::printf("FAIL %s: delete-size presence fixture did not parse\n", r.what);
-                ++failures;
+                ++ctbrowser_test_failures;
                 continue;
             }
             // A homogeneous local Number read retains its optional public
@@ -409,7 +409,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                                                 &context);
     if (!joinedModule) {
         std::printf("FAIL live joined-size fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
     } else {
         auto * snapshot = marked(*joinedModule, "snapshot");
         auto * deletion = marked(*joinedModule, "join_erase");
@@ -424,7 +424,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
         });
         if (!snapshot || !deletion || !resetting || !observed || !branchOp || !wrong) {
             std::printf("FAIL live joined-size fixture lost a marked source operation\n");
-            ++failures;
+            ++ctbrowser_test_failures;
         } else {
             verify(*joinedModule, "live exact joined size", true);
             snapshot->moveBefore(branchOp);
@@ -458,7 +458,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             &context);
         if (!mutated) {
             std::printf("FAIL live joined-mutation fixture did not parse\n");
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         auto * mutation = marked(*mutated, "mutation");
@@ -473,7 +473,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
         });
         if (!mutation || !snapshot || !resetting || !one || !three) {
             std::printf("FAIL live joined-mutation fixture lost a marked source operation\n");
-            ++failures;
+            ++ctbrowser_test_failures;
             continue;
         }
         verify(*mutated, "live known mutation updates the independently joined size", true);
@@ -501,7 +501,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                                                           &context);
     if (!module) {
         std::printf("FAIL live delete-size fixture did not parse\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     auto * snapshot = marked(*module, "snapshot");
@@ -512,7 +512,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
     auto * observed = marked(*module, "check");
     if (!snapshot || !seeded || !deletion || !resetting || !storing || !observed) {
         std::printf("FAIL live delete-size fixture lost its marked operations\n");
-        ++failures;
+        ++ctbrowser_test_failures;
         return;
     }
     verify(*module, "current post-delete zero snapshot", true);

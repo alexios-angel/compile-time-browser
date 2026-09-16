@@ -1,0 +1,2 @@
+# Gate private DOM Data storage against the unchanged source proof and real documents.
+# RUN: python3 %S/native_dom_data_session.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference

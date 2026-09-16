@@ -1,8 +1,5 @@
 """Execute checked published Map methods and live primitive results without the VM."""
 
-from concurrent.futures import ThreadPoolExecutor
-import os
-
 from .driver_common import *
 from .driver_object_maps import *
 from .driver_globals import *
@@ -17,47 +14,209 @@ from .driver_umd import check_umd
 from CTNative.harness import find_compilers
 
 
-def main():
+def check_positive(args, node, reference, compilers, nm, name, spec):
+    """One native program: its source chain and call boundaries, the Node and
+    interpreter observations, the owning proof, the standalone build and the
+    emitted C++, returning what the forgery controls read back."""
+    source, binding, value = spec
+    js, ir, count = boundary.prepare(args, name, source)
+    functions = (
+        object_argument_cases()[name]["functions"]
+        if name in object_argument_sources()
+        else (
+            LEAF_OBJECT_FUNCTIONS[name]
+            if name in LEAF_OBJECT_FUNCTIONS
+            else (
+                5
+                if name in LEAF_READBACK_CALLS
+                or name in leaf_absence_sources()
+                or name in leaf_clear_sources()
+                or name in numeric_entry_sources()
+                or name in scalar_global_sources()
+                or name in constant_global_sources()
+                or name in string_field_sources()
+                or name in zero_size_sources()
+                or name in one_size_sources()
+                or name in delete_size_sources()
+                or name in join_size_sources()
+                or name in mutation_size_sources()
+                else (
+                    RESULT_SIGNATURES[name][2]
+                    if name in RESULT_SIGNATURES
+                    else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4
+                )
+            )
+        )
+    )
+    if count != functions:
+        raise RuntimeError(f"{name}: lost the {functions}-function source chain")
+    if name == "boolean_result" and (
+        len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 5
+        or len(source_calls(ir.read_text())) != 5
+    ):
+        raise RuntimeError("boolean_result: changed the historical five-call source")
+    if name == "saved_read_write" and len(source_calls(ir.read_text())) != 12:
+        raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
+    if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
+        raise RuntimeError("saved_join: changed the exact 16-call boundary")
+    if (
+        name in {"guarded_saved_read", "shortcircuit_same_tag", "nullable_normalized"}
+        and len(source_calls(ir.read_text())) != 18
+    ):
+        raise RuntimeError(f"{name}: changed the exact 18-call boundary")
+    if name == "nullable_homogeneous_key" and len(source_calls(ir.read_text())) != 11:
+        raise RuntimeError("nullable_homogeneous_key: changed the exact 11-call control")
+    if name in NULLABLE_KEY_CALLS and len(source_calls(ir.read_text())) != NULLABLE_KEY_CALLS[name]:
+        raise RuntimeError(f"{name}: changed the exact {NULLABLE_KEY_CALLS[name]}-call boundary")
+    if (
+        name in NULLABLE_PAYLOAD_CALLS
+        and len(source_calls(ir.read_text())) != NULLABLE_PAYLOAD_CALLS[name]
+    ):
+        raise RuntimeError(
+            f"{name}: changed the exact {NULLABLE_PAYLOAD_CALLS[name]}-call boundary"
+        )
+    if (
+        name in NULLABLE_HOST_RESULT_CALLS
+        and len(source_calls(ir.read_text())) != NULLABLE_HOST_RESULT_CALLS[name]
+    ):
+        raise RuntimeError(
+            f"{name}: changed the exact {NULLABLE_HOST_RESULT_CALLS[name]}-call boundary"
+        )
+    if (
+        name in NULLABLE_NESTED_RESULT_CALLS
+        and len(source_calls(ir.read_text())) != NULLABLE_NESTED_RESULT_CALLS[name]
+    ):
+        raise RuntimeError(
+            f"{name}: changed the exact {NULLABLE_NESTED_RESULT_CALLS[name]}-call boundary"
+        )
+    if name in LEAF_OBJECT_CALLS and len(source_calls(ir.read_text())) != LEAF_OBJECT_CALLS[name]:
+        raise RuntimeError(
+            f"{name}: changed the exact {LEAF_OBJECT_CALLS[name]}-call leaf boundary"
+        )
+    if (
+        name in LEAF_READBACK_CALLS
+        and len(source_calls(ir.read_text())) != LEAF_READBACK_CALLS[name]
+    ):
+        raise RuntimeError(
+            f"{name}: changed the exact {LEAF_READBACK_CALLS[name]}-call readback boundary"
+        )
+    check_leaf_absence_census(args, ir, name)
+    check_string_field_census(args, ir, name)
+    check_zero_size_census(args, ir, name)
+    check_one_size_census(args, ir, name)
+    check_delete_size_census(args, ir, name)
+    check_join_size_census(args, ir, name)
+    check_mutation_size_census(args, ir, name)
+    check_object_argument_census(args, ir, name)
+    if name in primitive_absence_sources() and (
+        len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 10
+        or len(source_calls(ir.read_text())) != 10
+    ):
+        raise RuntimeError(f"{name}: changed the exact ten-call primitive absence source")
+    if name == "already_resolved":
+        ir = resolve_getter(args, ir)
+    if name.startswith("legacy_"):
+        ir = methods.legacy_marker(args, ir, name)
+    expected = f"trace={str(value).lower() if isinstance(value, bool) else value}\n"
+    if isinstance(value, StringValue):
+        expected = scalar_global_output(name, value)
+    node_command = [node, "-e", numeric_node_observer(value), str(js)]
+    if name in constant_global_cases():
+        names = json.dumps(sorted(["trace", *constant_global_cases()[name]["saved"]]))
+        node_command = [node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]
+        expected = numeric_reference_output(name, value)
+    reference_result = host.run([str(reference), str(js)])
+    if host.run(node_command).stdout != expected or normalized_scalar_output(
+        reference_result.stdout
+    ) != numeric_reference_output(name, value):
+        raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
+    if name == "boolean_result" and (
+        "(0 number, 1 boolean, 0 string, 0 null, 0 undefined)" not in reference_result.stderr
+    ):
+        raise RuntimeError("boolean_result: reference lost its independently observed Boolean tag")
+    config = contract(args, ir, name, binding)
+    original, manifest = ir.read_text(), config.read_text()
+    output = owned.lower(args, ir, name, config)
+    text = methods.census(output, functions, name, admitted=functions)
+    if "ctnative.host_owner_proved = true" not in text:
+        raise RuntimeError(f"{name}: lost live owning proof")
+    if ir.read_text() != original or config.read_text() != manifest:
+        raise RuntimeError(f"{name}: changed supplied source or manifest")
+    if name == "boolean_result" or name in {
+        **saved_read_sources(),
+        **saved_join_sources(),
+        **guarded_saved_sources(),
+        **shortcircuit_sources(),
+        **nullable_result_sources(),
+        **nullable_key_sources(),
+        **nullable_payload_sources(),
+        **nullable_host_result_sources(),
+        **nullable_nested_result_sources(),
+        **leaf_object_sources(),
+        **leaf_readback_sources(),
+        **leaf_absence_sources(),
+        **primitive_absence_sources(),
+        **leaf_clear_sources(),
+        **numeric_entry_sources(),
+        **scalar_global_sources(),
+        **constant_global_sources(),
+        **string_field_sources(),
+        **join_size_sources(),
+        **mutation_size_sources(),
+        **object_argument_sources(),
+    }:
+        disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
+        if disabled.read_text() != output.read_text():
+            raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
+    standalone(args, output, name, value, compilers, nm)
+    check_scalar_global_emission(args, ir, name)
+    return ir, config, output
+
+
+def check_object_keys(args, node, reference, compilers, nm):
+    """Identity-only object keys: the fresh empty-object argument programs,
+    their typed Node/interpreter observations, and the controls that forge
+    their evidence (driver_object_keys.py)."""
+    positives = object_argument_sources()
+    check_object_argument_observations(args, node, reference)
+    saved = {
+        name: check_positive(args, node, reference, compilers, nm, name, spec)
+        for name, spec in positives.items()
+    }
+    check_object_argument_controls(args, saved)
+    print(f"object keys: {len(positives)} native programs and their controls")
+
+
+def setup():
+    """The command line every group shares, and the two oracles plus the two
+    compilers and the nm control they all need. Each group is its own lit
+    test (global-maps*.test), so a failure in one no longer hides the rest
+    and lit -j parallelises across them; within a group the programs run one
+    after another, which is what lit's own pool is for."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--node", required=True)
     parser.add_argument("--reference", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument(
-        "--group", choices=("all", "object-keys", "nested-maps", "recorder", "umd"), default="all"
-    )
-    parser.add_argument(
-        "--jobs",
-        type=int,
-        default=os.cpu_count() or 1,
-        help="parallel positive programs (default: available CPUs)",
-    )
     args = parser.parse_args()
-    if args.jobs < 1:
-        parser.error("--jobs must be a positive integer")
     args.work.mkdir(parents=True, exist_ok=True)
-    node, reference = args.node, args.reference
     compilers = find_compilers()
     nm = shutil.which("nm") or shutil.which("llvm-nm")
     if (
         not all(compilers)
         or not nm
-        or not owned.VM.search(host.run([nm, "-C", str(reference)]).stdout)
+        or not owned.VM.search(host.run([nm, "-C", str(args.reference)]).stdout)
     ):
         raise RuntimeError("need both host compilers and a working VM-symbol control")
-    if args.group in {"all", "umd"}:
-        check_umd(args, node, reference, compilers, nm)
-        if args.group == "umd":
-            return
-    if args.group in {"all", "recorder"}:
-        check_recorders(args, node, reference, compilers, nm)
-        if args.group == "recorder":
-            return
-    if args.group in {"all", "nested-maps"}:
-        check_nested_maps(args, node, reference, compilers, nm)
-        if args.group == "nested-maps":
-            return
+    return args, args.node, args.reference, compilers, nm
+
+
+def main(group=None):
+    args, node, reference, compilers, nm = setup()
+    if group is not None:
+        group(args, node, reference, compilers, nm)
+        return
     mutated = SOURCE.replace("return state.size;", "state.set('x', 1); return state.size;")
     growing = SOURCE.replace("return state.size;", "state.set(state.size, 1); return state.size;")
     positives = {
@@ -186,192 +345,15 @@ def main():
         **delete_size_sources(),
         **join_size_sources(),
         **mutation_size_sources(),
-        **object_argument_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
     }
-    saved = {}
-    if args.group == "object-keys":
-        positives = object_argument_sources()
-        check_object_argument_observations(args, node, reference)
-    else:
-        check_source_observations(args, node, reference, positives)
-
-    def check_positive(item):
-        name, (source, binding, value) = item
-        js, ir, count = boundary.prepare(args, name, source)
-        functions = (
-            object_argument_cases()[name]["functions"]
-            if name in object_argument_sources()
-            else (
-                LEAF_OBJECT_FUNCTIONS[name]
-                if name in LEAF_OBJECT_FUNCTIONS
-                else (
-                    5
-                    if name in LEAF_READBACK_CALLS
-                    or name in leaf_absence_sources()
-                    or name in leaf_clear_sources()
-                    or name in numeric_entry_sources()
-                    or name in scalar_global_sources()
-                    or name in constant_global_sources()
-                    or name in string_field_sources()
-                    or name in zero_size_sources()
-                    or name in one_size_sources()
-                    or name in delete_size_sources()
-                    or name in join_size_sources()
-                    or name in mutation_size_sources()
-                    else (
-                        RESULT_SIGNATURES[name][2]
-                        if name in RESULT_SIGNATURES
-                        else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4
-                    )
-                )
-            )
-        )
-        if count != functions:
-            raise RuntimeError(f"{name}: lost the {functions}-function source chain")
-        if name == "boolean_result" and (
-            len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 5
-            or len(source_calls(ir.read_text())) != 5
-        ):
-            raise RuntimeError("boolean_result: changed the historical five-call source")
-        if name == "saved_read_write" and len(source_calls(ir.read_text())) != 12:
-            raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
-        if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
-            raise RuntimeError("saved_join: changed the exact 16-call boundary")
-        if (
-            name in {"guarded_saved_read", "shortcircuit_same_tag", "nullable_normalized"}
-            and len(source_calls(ir.read_text())) != 18
-        ):
-            raise RuntimeError(f"{name}: changed the exact 18-call boundary")
-        if name == "nullable_homogeneous_key" and len(source_calls(ir.read_text())) != 11:
-            raise RuntimeError("nullable_homogeneous_key: changed the exact 11-call control")
-        if (
-            name in NULLABLE_KEY_CALLS
-            and len(source_calls(ir.read_text())) != NULLABLE_KEY_CALLS[name]
-        ):
-            raise RuntimeError(
-                f"{name}: changed the exact {NULLABLE_KEY_CALLS[name]}-call boundary"
-            )
-        if (
-            name in NULLABLE_PAYLOAD_CALLS
-            and len(source_calls(ir.read_text())) != NULLABLE_PAYLOAD_CALLS[name]
-        ):
-            raise RuntimeError(
-                f"{name}: changed the exact {NULLABLE_PAYLOAD_CALLS[name]}-call boundary"
-            )
-        if (
-            name in NULLABLE_HOST_RESULT_CALLS
-            and len(source_calls(ir.read_text())) != NULLABLE_HOST_RESULT_CALLS[name]
-        ):
-            raise RuntimeError(
-                f"{name}: changed the exact {NULLABLE_HOST_RESULT_CALLS[name]}-call boundary"
-            )
-        if (
-            name in NULLABLE_NESTED_RESULT_CALLS
-            and len(source_calls(ir.read_text())) != NULLABLE_NESTED_RESULT_CALLS[name]
-        ):
-            raise RuntimeError(
-                f"{name}: changed the exact {NULLABLE_NESTED_RESULT_CALLS[name]}-call boundary"
-            )
-        if (
-            name in LEAF_OBJECT_CALLS
-            and len(source_calls(ir.read_text())) != LEAF_OBJECT_CALLS[name]
-        ):
-            raise RuntimeError(
-                f"{name}: changed the exact {LEAF_OBJECT_CALLS[name]}-call leaf boundary"
-            )
-        if (
-            name in LEAF_READBACK_CALLS
-            and len(source_calls(ir.read_text())) != LEAF_READBACK_CALLS[name]
-        ):
-            raise RuntimeError(
-                f"{name}: changed the exact {LEAF_READBACK_CALLS[name]}-call readback boundary"
-            )
-        check_leaf_absence_census(args, ir, name)
-        check_string_field_census(args, ir, name)
-        check_zero_size_census(args, ir, name)
-        check_one_size_census(args, ir, name)
-        check_delete_size_census(args, ir, name)
-        check_join_size_census(args, ir, name)
-        check_mutation_size_census(args, ir, name)
-        check_object_argument_census(args, ir, name)
-        if name in primitive_absence_sources() and (
-            len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 10
-            or len(source_calls(ir.read_text())) != 10
-        ):
-            raise RuntimeError(f"{name}: changed the exact ten-call primitive absence source")
-        if name == "already_resolved":
-            ir = resolve_getter(args, ir)
-        if name.startswith("legacy_"):
-            ir = methods.legacy_marker(args, ir, name)
-        expected = f"trace={str(value).lower() if isinstance(value, bool) else value}\n"
-        if isinstance(value, StringValue):
-            expected = scalar_global_output(name, value)
-        node_command = [node, "-e", numeric_node_observer(value), str(js)]
-        if name in constant_global_cases():
-            names = json.dumps(sorted(["trace", *constant_global_cases()[name]["saved"]]))
-            node_command = [node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]
-            expected = numeric_reference_output(name, value)
-        reference_result = host.run([str(reference), str(js)])
-        if host.run(node_command).stdout != expected or normalized_scalar_output(
-            reference_result.stdout
-        ) != numeric_reference_output(name, value):
-            raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
-        if name == "boolean_result" and (
-            "(0 number, 1 boolean, 0 string, 0 null, 0 undefined)" not in reference_result.stderr
-        ):
-            raise RuntimeError(
-                "boolean_result: reference lost its independently observed Boolean tag"
-            )
-        config = contract(args, ir, name, binding)
-        original, manifest = ir.read_text(), config.read_text()
-        output = owned.lower(args, ir, name, config)
-        text = methods.census(output, functions, name, admitted=functions)
-        if "ctnative.host_owner_proved = true" not in text:
-            raise RuntimeError(f"{name}: lost live owning proof")
-        if ir.read_text() != original or config.read_text() != manifest:
-            raise RuntimeError(f"{name}: changed supplied source or manifest")
-        if name == "boolean_result" or name in {
-            **saved_read_sources(),
-            **saved_join_sources(),
-            **guarded_saved_sources(),
-            **shortcircuit_sources(),
-            **nullable_result_sources(),
-            **nullable_key_sources(),
-            **nullable_payload_sources(),
-            **nullable_host_result_sources(),
-            **nullable_nested_result_sources(),
-            **leaf_object_sources(),
-            **leaf_readback_sources(),
-            **leaf_absence_sources(),
-            **primitive_absence_sources(),
-            **leaf_clear_sources(),
-            **numeric_entry_sources(),
-            **scalar_global_sources(),
-            **constant_global_sources(),
-            **string_field_sources(),
-            **join_size_sources(),
-            **mutation_size_sources(),
-            **object_argument_sources(),
-        }:
-            disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
-            if disabled.read_text() != output.read_text():
-                raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
-        standalone(args, output, name, value, compilers, nm)
-        check_scalar_global_emission(args, ir, name)
-        return name, (ir, config, output)
-
-    # Each case owns its files; publish completed results in source order.
-    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-        for name, result in executor.map(check_positive, positives.items()):
-            saved[name] = result
-
-    check_object_argument_controls(args, saved)
-    if args.group == "object-keys":
-        print(f"object keys: {len(positives)} native programs and their controls")
-        return
+    check_source_observations(args, node, reference, positives)
+    saved = {
+        name: check_positive(args, node, reference, compilers, nm, name, spec)
+        for name, spec in positives.items()
+    }
     check_primitive_absence_forgeries(args, saved, node, reference)
     check_leaf_object_forgeries(args, saved)
     check_leaf_object_forgeries(

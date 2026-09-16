@@ -1,0 +1,12 @@
+# THE DEDUCTION PROBE AS A GATE - part 24 §3.3 constraint 3 and the Phase 53
+# gate: probes/deduction.cpp compiles at the generated code's flags on every
+# compiler the box has, and RUNS, because the two C++23 rows are answered by
+# its exit status (2 * move_only_function + ranges_to; 0 is the measured answer
+# on libstdc++ 13.3 and the one the plan's tables carry). Phases 56 to 62½ plan
+# against this file: a non-zero exit means part 24 §3.2 and the stages that
+# plan against it must be re-read before the change is accepted. Native.cmake
+# FATAL_ERRORs without both toolchains, so none is skipped here.
+#
+# RUN: %gxx -std=c++20 %S/../../../probes/deduction.cpp -o %t.gxx && %t.gxx
+# RUN: %clangxx -std=c++20 %S/../../../probes/deduction.cpp -o %t.clangxx && %t.clangxx
+# RUN: %host_cxx -std=c++20 -pedantic -Wall -Wextra -Werror -Wconversion %S/../../../probes/deduction.cpp -o %t.host && %t.host

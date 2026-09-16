@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 
 from CTNative.harness import find_compilers
 from CTNative.Ownership.native_owned_global_maps.driver_common import (
@@ -67,14 +68,18 @@ def main():
         for mode, ir in (("explicit", output), ("deduced", deduced)):
             host.run(
                 [
-                    "cmake",
-                    f"-DTRANSLATE={args.translate}",
-                    f"-DMODULE={ir}",
-                    "-DCOMPILERS=" + ",".join(compilers),
-                    f"-DWORK={args.work}",
-                    f"-DNAME={name}-{mode}",
-                    "-P",
-                    str(Path(__file__).resolve().parents[1] / "Checks/compile-clean.cmake"),
+                    sys.executable,
+                    str(Path(__file__).resolve().parents[1] / "Checks/compile-clean.py"),
+                    "--translate",
+                    args.translate,
+                    "--module",
+                    str(ir),
+                    "--compilers",
+                    ",".join(compilers),
+                    "--work",
+                    str(args.work),
+                    "--name",
+                    f"{name}-{mode}",
                 ]
             )
             cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout

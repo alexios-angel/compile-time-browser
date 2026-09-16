@@ -12,17 +12,11 @@
 #include <cstdio>
 #include <string>
 
+#include "check.hpp"
+
 namespace {
 using namespace ctbrowser::script;
 namespace ctjs = ctcompile::ctjs;
-
-int failures = 0;
-
-void check(bool holds, const char * message) {
-    if (holds) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 
 // Read only the dedicated metadata. The instruction's NameLoc also contains
 // strings, but none of them is a JavaScript binding name.
@@ -311,6 +305,6 @@ int main() {
     check_caught_and_boxed(*imported.module);
     check_missing_and_ambiguous(context, source, *imported.module);
     check_compiler_tables(context);
-    if (failures == 0) { std::puts("importer source-name provenance passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::puts("importer source-name provenance passed"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

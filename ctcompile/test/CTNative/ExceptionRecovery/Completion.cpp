@@ -1,14 +1,14 @@
 #include "Tests.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
-namespace ctcompile::test::exception_recovery {
+#include "check.hpp"
 
-int failures = 0;
+namespace ctcompile::test::exception_recovery {
 
 bool check(bool condition, llvm::StringRef label) {
     if (!condition) {
         llvm::errs() << "FAIL " << label << '\n';
-        ++failures;
+        ++ctbrowser_test_failures;
     }
     return condition;
 }

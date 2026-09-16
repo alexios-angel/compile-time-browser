@@ -29,13 +29,13 @@
 #include <string>
 #include <tuple>
 
+#include "check.hpp"
+
 namespace ctcompile::test::exception_recovery {
 
 namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::lowering_detail::ExceptionRecoveryMode;
 using ctcompile::ctnative::lowering_detail::recoverPrimitiveExceptionRegion;
-
-extern int failures;
 
 bool check(bool condition, llvm::StringRef label);
 std::string printed(mlir::Operation * operation);

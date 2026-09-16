@@ -43,6 +43,8 @@
 #include <string_view>
 #include <vector>
 
+#include "check.hpp"
+
 using ctbrowser::script::context;
 using ctbrowser::script::program;
 using ctbrowser::script::value;
@@ -59,14 +61,13 @@ constexpr std::string_view fixture =
 // appearing in it would be the miscompile CTNativeTypes.td forbids.
 constexpr std::string_view printed_module =
 #include "escape-cycle.ctjs.inc"
+
     ;
 #endif
 
-int failures = 0;
-
 void report(const char * what, bool ok) {
     std::printf("%-58s %s\n", what, ok ? "ok" : "FAILED");
-    if (!ok) { ++failures; }
+    if (!ok) { ++ctbrowser_test_failures; }
 }
 
 void report(const char * what, bool ok, const std::string & got, const std::string & want) {
@@ -596,6 +597,6 @@ int main() {
     std::printf("%-58s %s\n", "(f) printed module", "SKIPPED - no ctjs-translate in this build");
 #endif
 
-    if (failures == 0) { std::printf("\nall checks passed\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("\nall checks passed\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

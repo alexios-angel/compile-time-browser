@@ -25,21 +25,11 @@ ctcompile_target(ctcompile-test-type-oracle)
 # with a diff.
 add_test(NAME ctcompile_type_oracle COMMAND ctcompile-test-type-oracle)
 
-# AND THE TWO-IMPLEMENTATION COMPARISON, which needs an interpreter for the
-# checker. Optional the way plutosvg and SDL are: without Python the C++ half
-# still runs and says so, rather than the suite silently shrinking.
+# THE TWO-IMPLEMENTATION COMPARISON - TypeOracle.cpp walking the recorder in
+# memory against tools/check/type-oracle.py parsing the file it writes, one's
+# counters the other's expectations - is Analysis/Types/oracle-checker.test.
+# Python is still found here because the claims executables below need it.
 find_package(Python3 QUIET COMPONENTS Interpreter)
-if(Python3_Interpreter_FOUND)
-  add_test(NAME ctcompile_type_oracle_checker
-           COMMAND ${CMAKE_COMMAND}
-                   -DEXE=$<TARGET_FILE:ctcompile-test-type-oracle>
-                   -DPYTHON=${Python3_EXECUTABLE}
-                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
-                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-oracle.cmake)
-else()
-  message(STATUS "ctcompile: no Python3 - the type oracle's checker is not registered")
-endif()
 
 # ============================================================================
 # PHASE 54A - THE TYPE INFERENCE'S TRANSFER FUNCTION. Appended as ONE block,
@@ -76,7 +66,7 @@ endif()
 # the inference and writes one claim per register in the checker's format. It
 # is a SEPARATE executable from ctcompile-test-type-oracle on purpose - that
 # one refuses to link MLIR so a recording cannot share a bug with the claim it
-# is checking. check-type-claims.cmake runs both over one corpus and the Python
+# is checking. Analysis/Types/claims-*.test runs both over one corpus and the Python
 # checker over their two outputs, and the gate is zero soundness violations.
 #
 # FOUR CORPORA. The fixture is small, runs in milliseconds, and calls every
@@ -91,34 +81,8 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-type-claims)
 
-  # FOUR CORPORA, which is the plan's "all three" plus the fixture. p5 and
-  # phaser need no driver: under --script each bundle's top level runs until it
-  # reaches a DOM API this mode does not provide - `performance.now` for p5,
-  # `document.createElement` for phaser - and the recorder has by then seen
-  # 1,911 and 613 registers respectively. Bootstrap's UMD wrapper defines
-  # `bootstrap` and returns, so it gets the driver Phase 54B wrote for it.
-  foreach(_corpus fixture bootstrap p5 phaser)
-    set(_prefix "")
-    if(_corpus STREQUAL "fixture")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/claims.js")
-    elseif(_corpus STREQUAL "bootstrap")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/bootstrap-driver.js")
-      set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
-    else()
-      set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
-    endif()
-    add_test(NAME ctcompile_type_claims_${_corpus}
-             COMMAND ${CMAKE_COMMAND}
-                     -DORACLE=$<TARGET_FILE:ctcompile-test-type-oracle>
-                     -DCLAIMS=$<TARGET_FILE:ctcompile-test-type-claims>
-                     -DPYTHON=${Python3_EXECUTABLE}
-                     -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
-                     -DCORPUS=${_js}
-                     -DPREFIX=${_prefix}
-                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                     -DNAME=${_corpus}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-claims.cmake)
-  endforeach()
+  # FOUR CORPORA - the fixture, bootstrap behind its driver, p5 and phaser -
+  # are Analysis/Types/claims-*.test, and scalar-unions' fixture beside them.
 endif()
 
 # === PHASE 55C: escape cycle ===
@@ -139,7 +103,7 @@ endif()
 # IT NEEDS NO MLIR, like ctcompile-test-type-oracle: every question here is put
 # to the interpreter, and the module check is a string search over a file the
 # build printed. Gate 4(d) - the recorder over this file - belongs to the
-# escape-oracle work and its check-escape-claims.cmake; 4(g) is deferred by the
+# escape-oracle work and its escape-claims/check.py; 4(g) is deferred by the
 # design itself until 55B emits anything.
 set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/cycle.js")
 # THE DRIVER READS THE SAME FILE EVERYTHING ELSE DOES - the recorder, the
@@ -281,84 +245,17 @@ endif()
 # THE SAME TWO-IMPLEMENTATION SHAPE AS 54B: the escape self-test lives in the
 # same executable as the type one (one recorder, one file, header version 2),
 # walks the recorder in memory, and asserts a HAND-COMPUTED table; the Python
-# checker parses the file; check-escape-oracle.cmake makes one's numbers the
+# checker parses the file; Analysis/Escape/oracle-checker.test makes one's numbers the
 # other's expectations. No MLIR anywhere near it.
 add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escape)
-
-if(Python3_Interpreter_FOUND)
-  add_test(NAME ctcompile_escape_oracle_checker
-           COMMAND ${CMAKE_COMMAND}
-                   -DEXE=$<TARGET_FILE:ctcompile-test-type-oracle>
-                   -DPYTHON=${Python3_EXECUTABLE}
-                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
-                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-oracle.cmake)
-else()
-  message(STATUS "ctcompile: no Python3 - the escape oracle's checker is not registered")
-endif()
-
-# EVERY PLACE A FRAME ENDS, AS A TABLE. FrameEnds.def lists nine exit paths
-# and says which three are hooked; the escape self-test
-# static_asserts its shape, and this checks that the file:line half of each
-# citation still lands inside the file it names - the one class of rot a
-# machine can see, per source-citations.cmake's own header.
-add_test(NAME ctcompile_frame_ends_citations
-         COMMAND ${CMAKE_COMMAND}
-                 -DDEF=${CMAKE_CURRENT_SOURCE_DIR}/../include/ctcompile/JavaScript/FrameEnds.def
-                 -DROOT=${CTBROWSER_MONOREPO_ROOT}
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/Core/source-citations.cmake)
+# Its two checkers compared: Analysis/Escape/oracle-checker.test. And EVERY
+# PLACE A FRAME ENDS, AS A TABLE - FrameEnds.def's citations are checked
+# beside the ABI table's in Core/def-citations.test.
 
 # === PHASE 55 CLOSED: the escape claims over four corpora ===
-#
-# Phase 55A checked by 55O. check-escape-claims.cmake runs the interpreter's
-# recording and the compiler's claims over one corpus and the Python checker
-# over both; zero soundness violations is the gate. Budgets follow
-# 25-escape-analysis.md §5: unlimited on the fixture and bootstrap, bounded on
-# the two big bundles, where every frame pop otherwise costs a full mark.
-if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
-  # Preserve the complete JavaScript source bytes and allocation identities.
-  set(_escape_fixture "${CMAKE_CURRENT_BINARY_DIR}/escape-claims-fixture.js")
-  set(_escape_fixture_source "")
-  foreach(_part contents primitives escapes)
-    set(_path "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-claims/fixture/${_part}.js")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_path}")
-    file(READ "${_path}" _text)
-    string(APPEND _escape_fixture_source "${_text}")
-  endforeach()
-  file(GENERATE OUTPUT "${_escape_fixture}" CONTENT "${_escape_fixture_source}")
-  foreach(_corpus fixture bootstrap p5 phaser)
-    set(_prefix "")
-    set(_budget "")
-    set(_strict OFF)
-    if(_corpus STREQUAL "fixture")
-      set(_js "${_escape_fixture}")
-      set(_strict ON)
-    elseif(_corpus STREQUAL "bootstrap")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/bootstrap-driver.js")
-      set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
-    else()
-      set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
-      if(_corpus STREQUAL "p5")
-        set(_budget 8)
-      else()
-        set(_budget 4)
-      endif()
-    endif()
-    add_test(NAME ctcompile_escape_claims_${_corpus}
-             COMMAND ${CMAKE_COMMAND}
-                     -DORACLE=$<TARGET_FILE:ctcompile-test-type-oracle>
-                     -DCLAIMS=$<TARGET_FILE:ctcompile-test-escape-claims>
-                     -DPYTHON=${Python3_EXECUTABLE}
-                     -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
-                     -DCORPUS=${_js}
-                     -DPREFIX=${_prefix}
-                     -DBUDGET=${_budget}
-                     -DSTRICT=${_strict}
-                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                     -DNAME=${_corpus}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-claims/check.cmake)
-  endforeach()
-endif()
+# Analysis/Escape/escape-claims/{fixture,bootstrap,p5,phaser}.test, over
+# escape-claims/check.py; the fixture is its three parts concatenated by the
+# RUN line, byte for byte.
 
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
@@ -367,15 +264,7 @@ add_executable(ctcompile-test-escape-oracle-aot Analysis/Escape/AOTOracle.cpp)
 target_link_libraries(ctcompile-test-escape-oracle-aot PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-escape-oracle-aot)
 add_test(NAME ctcompile_escape_oracle_aot COMMAND ctcompile-test-escape-oracle-aot)
-if(Python3_Interpreter_FOUND)
-  add_test(NAME ctcompile_escape_oracle_aot_checker
-           COMMAND ${CMAKE_COMMAND}
-                   -DEXE=$<TARGET_FILE:ctcompile-test-escape-oracle-aot>
-                   -DPYTHON=${Python3_EXECUTABLE}
-                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
-                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-aot-oracle.cmake)
-endif()
+# Both AOT recordings through the Python checker: Analysis/Escape/aot-oracle.test.
 
 # Observe the real boxed emitter's normalized return value, retaining the
 # compiled sentinel coordinate rather than inventing a static source site.
@@ -402,13 +291,6 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   target_link_libraries(ctcompile-test-escape-oracle-aot-return PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-escape-oracle-aot-return)
   add_test(NAME ctcompile_escape_oracle_aot_return COMMAND ctcompile-test-escape-oracle-aot-return)
-  if(Python3_Interpreter_FOUND)
-    add_test(NAME ctcompile_escape_oracle_aot_return_checker
-      COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ctcompile-test-escape-oracle-aot-return>
-        -DPYTHON=${Python3_EXECUTABLE} -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
-        -DWORK=${CMAKE_CURRENT_BINARY_DIR} -DNAME=aot-return -DUNCLAIMED=5
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-aot-oracle.cmake)
-  endif()
 endif()
 
 # A slot census is usable only after its entire bounded proof completes.

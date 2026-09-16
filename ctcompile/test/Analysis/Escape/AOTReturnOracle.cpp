@@ -13,6 +13,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include "check.hpp"
+
 namespace aot = ctbrowser::aot;
 using namespace ctbrowser::script;
 extern "C" std::remove_pointer_t<aot::ct_aot_entry_fn> ctc_oracleReturn;
@@ -23,14 +25,6 @@ namespace {
 constexpr std::string_view fixture =
 #include "escape-oracle-aot-return.js.inc"
     ;
-int failures = 0;
-
-void check(bool ok, const char * message) {
-    if (!ok) {
-        std::printf("FAIL %s\n", message);
-        ++failures;
-    }
-}
 
 extern "C" std::int32_t legacy_or_failed(aot::ct_aot_ctx * ctx, const aot::ct_aot_site * site,
                                          const std::uint64_t *, std::uint32_t,
@@ -197,6 +191,6 @@ int main(int argc, char ** argv) {
               "the later interpreted call retains ordinary source-site observations");
     }
     if (argc == 3) { check(recorder.write(argv[2]), "the compiled return recording was written"); }
-    if (failures == 0) { std::printf("ok escape_oracle_aot_return\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("ok escape_oracle_aot_return\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

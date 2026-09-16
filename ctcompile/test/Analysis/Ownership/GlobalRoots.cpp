@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <string>
 
+#include "check.hpp"
+
 namespace {
 namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::HostContract;
@@ -36,13 +38,6 @@ module {
   }
 }
 )MLIR";
-
-int failures = 0;
-void check(bool value, const char * message) {
-    if (value) { return; }
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 
 HostContract contractFor(mlir::ModuleOp module) {
     HostContract contract;
@@ -279,9 +274,9 @@ int main() {
             "  }\n}\n",
             true, "multiple source functions remain outside the single-entry owner tier");
 
-    if (failures == 0) {
+    if (ctbrowser_test_failures == 0) {
         std::printf("owned global live proof and all %u incomplete budgets passed\n",
                     completionBudget);
     }
-    return failures == 0 ? 0 : 1;
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

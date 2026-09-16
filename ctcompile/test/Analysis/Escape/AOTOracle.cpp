@@ -13,22 +13,16 @@
 #include <cstring>
 #include <string_view>
 
+#include "check.hpp"
+
 namespace {
 namespace aot = ctbrowser::aot;
 using namespace ctbrowser::script;
 
-int failures = 0;
 std::uint32_t landing_pad = 0;
 std::size_t returned_calls = 0;
 std::size_t thrown_calls = 0;
 std::size_t landed_calls = 0;
-
-void check(bool ok, const char * message) {
-    if (!ok) {
-        std::printf("FAIL %s\n", message);
-        ++failures;
-    }
-}
 
 std::int32_t finish(aot::ct_aot_frame * frame, aot::ct_aot_status status) {
     if (status != aot::ct_aot_status::unwound) { aot::ct_aot_leave(frame); }
@@ -227,6 +221,6 @@ int main(int argc, char ** argv) {
     check(recorder.unwinds() > 0 && recorder.checks() > 0,
           "the test exercised the shared unwinder and real interpreter checks");
     if (argc == 3) { check(recorder.write(argv[2]), "the AOT recording was written"); }
-    if (failures == 0) { std::printf("ok escape_oracle_aot\n"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::printf("ok escape_oracle_aot\n"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

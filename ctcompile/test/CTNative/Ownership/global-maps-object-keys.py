@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Execute identity-only object-key Maps and their evidence controls without the VM."""
+
+# One group of the native_owned_global_maps package (global-maps.py runs the
+# rest); the path insert is for a caller that loads this file by path.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from native_owned_global_maps.driver import main  # noqa: E402
+from native_owned_global_maps.driver import check_object_keys  # noqa: E402
+
+if __name__ == "__main__":
+    main(check_object_keys)

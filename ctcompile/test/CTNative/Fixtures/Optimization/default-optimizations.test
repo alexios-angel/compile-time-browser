@@ -1,0 +1,38 @@
+# THE NATIVE ENTRY'S DEFAULT OPTIMIZATIONS, AS A GATE. Both the normal defaults
+# and the explicitly disabled baseline must compile standalone and agree with
+# the interpreter on effects and primitives; the two switches disable only what
+# they name; and no opt-in transformation (specialization, partial evaluation,
+# supercompilation, deforestation) is ever on by default. pipeline.cmake is the
+# same script the build runs over every fixture, so the modules here are what
+# the build would write with each setting.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/default-optimizations.js -DOPTIMIZATION_REPORT=ON -DOUTPUT=%t/enabled.mlir -P %S/../../Checks/pipeline.cmake
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/default-optimizations.js -DOPTIMIZATION_REPORT=ON -DOUTPUT=%t/disabled.mlir -DOPTIMIZE=OFF -P %S/../../Checks/pipeline.cmake
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/default-optimizations.js -DOPTIMIZATION_REPORT=ON -DOUTPUT=%t/no-precompute.mlir -DPRECOMPUTE=OFF -P %S/../../Checks/pipeline.cmake
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/default-optimizations.js -DOPTIMIZATION_REPORT=ON -DOUTPUT=%t/no-prune.mlir -DPRUNE_UNREACHABLE=OFF -P %S/../../Checks/pipeline.cmake
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/default-optimizations.js -DOPTIMIZATION_REPORT=ON -DOUTPUT=%t/explicit-precompute.mlir -DOPTIMIZE=OFF -DPRECOMPUTE=ON -P %S/../../Checks/pipeline.cmake
+#
+# The defaults precomputed something and ran reachability; the disabled
+# baseline ran neither; each switch removes only its own stage.
+# RUN: grep -Pzo 'ctnative.precompute_summary = \{[^}]*expressions = [1-9][0-9]* : i64' %t/enabled.mlir
+# RUN: grep -q ctnative.reachability_summary %t/enabled.mlir
+# RUN: not grep -E 'ctnative.(precompute|reachability)_summary' %t/disabled.mlir
+# RUN: not grep ctnative.precompute_summary %t/no-precompute.mlir
+# RUN: grep -q ctnative.reachability_summary %t/no-precompute.mlir
+# RUN: grep -q ctnative.precompute_summary %t/no-prune.mlir
+# RUN: not grep ctnative.reachability_summary %t/no-prune.mlir
+# RUN: grep -q ctnative.precompute_summary %t/explicit-precompute.mlir
+# RUN: not grep ctnative.reachability_summary %t/explicit-precompute.mlir
+# RUN: not grep -E 'ctnative.(specialized_from|partial_evaluated|supercompile_summary|deforest_summary)' %t/enabled.mlir %t/disabled.mlir %t/no-precompute.mlir %t/no-prune.mlir %t/explicit-precompute.mlir
+#
+# Both arms through the differential gate, printing the same eight
+# observations; and the two generated files DIFFER, or this fixture did not
+# exercise the policy.
+# RUN: %compilation_unit --module %t/enabled.mlir --js %S/default-optimizations.js --work %t --name defaults-enabled
+# RUN: %compilation_unit --module %t/disabled.mlir --js %S/default-optimizations.js --work %t --name defaults-disabled
+# RUN: %t/native-unit-defaults-enabled/unit > %t/enabled.out
+# RUN: %t/native-unit-defaults-disabled/unit > %t/disabled.out
+# RUN: printf 'answer=42\nliteralNaNEqual=0\nliteralStringEqual=1\nnegativeInfinity=-inf\nobserved=122\nruntimeNaNEqual=0\nruntimeNumberEqual=1\ntrace=122\n' | diff - %t/enabled.out
+# RUN: diff %t/enabled.out %t/disabled.out
+# RUN: not cmp -s %t/native-unit-defaults-enabled/unit.cpp %t/native-unit-defaults-disabled/unit.cpp

@@ -1,5 +1,7 @@
 #include "Tests.h"
 
+#include "check.hpp"
+
 using namespace ctcompile::test::owned_global_shared_map;
 
 namespace {
@@ -82,6 +84,6 @@ int main() {
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     checkSharedMap(context);
     checkSessionOwner(context);
-    if (failures == 0) { std::puts("owned global shared Map proofs passed"); }
-    return failures == 0 ? 0 : 1;
+    if (ctbrowser_test_failures == 0) { std::puts("owned global shared Map proofs passed"); }
+    return ctbrowser_test_failures == 0 ? 0 : 1;
 }

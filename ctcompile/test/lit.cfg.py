@@ -12,6 +12,7 @@ import lit.llvm
 
 lit.llvm.initialize(lit_config, config)
 from lit.llvm import llvm_config  # noqa: E402  (must follow initialize)
+from lit.llvm.subst import ToolSubst  # noqa: E402
 
 config.name = "ctcompile"
 config.suffixes = [".mlir", ".td", ".test"]
@@ -30,6 +31,37 @@ llvm_config.use_default_substitutions()
 # add_tool_substitutions accepts a search list, so nothing has to move.
 tools = ["ctjs-opt", "ctjs-translate", "ctcompile"]
 llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
+
+# THE TEST EXECUTABLES THE FORMER `cmake -P` CHECKS DROVE, by their target
+# names, from the directory CMake builds them into (this suite's exec root);
+# and ctbrowser's launcher and browser, which the packaging round trip runs.
+# unresolved="ignore", because add_tool_substitutions drops the WHOLE group
+# when one name is missing: a test executable that was not built should fail
+# its own RUN line by name, not turn eleven others into "command not found".
+llvm_config.add_tool_substitutions(
+    [
+        ToolSubst(name, unresolved="ignore")
+        for name in [
+            "ctcompile-test-type-oracle",
+            "ctcompile-test-type-claims",
+            "ctcompile-test-escape-claims",
+            "ctcompile-test-escape-oracle-aot",
+            "ctcompile-test-escape-oracle-aot-return",
+            "ctcompile-test-launcher-vm",
+            "ctcompile-test-launcher-aot",
+            "ctcompile-test-launcher-page-vm",
+            "ctcompile-test-launcher-page-aot",
+            "ctcompile-test-native-vm-linked",
+            "ctcompile-test-native-values-vm-linked",
+            "ctcompile-test-app_bundle",
+        ]
+    ],
+    [config.test_exec_root],
+)
+llvm_config.add_tool_substitutions(
+    [ToolSubst(name, unresolved="ignore") for name in ["ctrun", "ctbrowse"]],
+    [config.ctbrowser_tools_dir],
+)
 
 # mlir-translate IS LLVM'S, not ours, so it is looked for where LLVM's tools
 # are rather than in the three directories ctcompile builds into. It is what
@@ -88,6 +120,56 @@ for name, candidates in (("%gxx", ("g++-13", "g++")), ("%clangxx", ("clang++-18"
 
 config.substitutions.append(("%node", config.node or shutil.which("node") or "node"))
 config.substitutions.append(("%native_reference", config.native_reference))
+
+# THE NATIVE GATES AS SUBSTITUTIONS, so a fixture's RUN lines name only what
+# differs per fixture: the module, the program, the global to break. The
+# compilation-unit gate takes the HOST compiler bare (no ctbrowser include
+# path: standalone is the point), the same nm CMake found, the interpreter
+# reference and the type oracle as the nm control that links the interpreter.
+# INSERTED AT THE FRONT of the list: lit expands substitutions in order and
+# does not re-scan, so the tool names these expand to (ctjs-translate,
+# ctcompile-test-type-oracle) are resolved by the tool substitutions above
+# only if those run AFTER this one.
+checks = os.path.join(config.test_source_root, "CTNative", "Checks")
+config.substitutions.insert(
+    0,
+    (
+        "%compilation_unit",
+        f"python3 {checks}/compilation-unit.py --translate ctjs-translate --cxx {config.host_cxx}"
+        f" --nm {config.nm} --reference {config.native_reference}"
+        " --vm-linked ctcompile-test-type-oracle",
+    ),
+)
+config.substitutions.insert(
+    0,
+    (
+        "%compile_clean",
+        f"python3 {checks}/compile-clean.py --translate ctjs-translate"
+        f" --compilers {config.clean_compilers}",
+    ),
+)
+config.substitutions.insert(
+    0,
+    (
+        "%print_deduced",
+        f"python3 {checks}/print-deduced.py --translate ctjs-translate --cxx {config.host_cxx}",
+    ),
+)
+# The modules the build writes for every native fixture (Native.cmake's
+# ctcompile_add_native_pipeline: <name>.pipeline{,.deduced,.mutated}.emitc.mlir)
+# - the same files docs/refactor-goldens.md measures a refactor against, so
+# the gate and the instrument read one artefact.
+config.substitutions.append(("%{obj}", config.test_exec_root))
+config.substitutions.append(("%{monorepo}", config.monorepo_root))
+config.substitutions.append(("%host_cxx", config.host_cxx))
+config.substitutions.append(("%nm", config.nm))
+# pipeline.cmake is the build's own lowering script; default-optimizations.test
+# runs it under each switch so the modules it gates are what the build writes.
+config.substitutions.append(("%cmake", config.cmake))
+# The Browser drivers compile against the DOM's public API with the compiler
+# Native.cmake chose for it, and read the engine's build tree.
+config.substitutions.append(("%dom_clang", config.dom_clang))
+config.substitutions.append(("%build", config.build_root))
 
 # THE PYTHON DRIVERS IMPORT EACH OTHER ACROSS DIRECTORIES (CTNative/harness.py
 # says how), and a hand run wants the same path.
