@@ -88,7 +88,12 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
     // which is `xmlns=""`. With a prefix the declaration is `xmlns:p`, and it
     // is skipped when the element already carries one as an attribute.
     if (prefix.empty()) {
-        if (ns != inherited) { out += " xmlns=\"" + escape_xml(ns, true) + "\""; }
+        // NOT WHEN THE ELEMENT ALREADY CARRIES ONE. An `xmlns` in the source is
+        // an ordinary attribute in this tree and is written out with the rest
+        // of them, so synthesising a second would emit it twice.
+        if (ns != inherited && !txn.has_attribute(node, atoms_->intern("xmlns"))) {
+            out += " xmlns=\"" + escape_xml(ns, true) + "\"";
+        }
     } else if (!txn.has_attribute(node, atoms_->intern("xmlns:" + std::string{prefix}))) {
         out += " xmlns:" + std::string{prefix} + "=\"" + escape_xml(ns, true) + "\"";
     }
