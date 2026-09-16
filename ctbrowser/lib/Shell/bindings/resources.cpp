@@ -159,6 +159,11 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
 
     reader->set("readyState", value::number(2)); // DONE, either way
     auto * event = cx.allocate<script::object_object>();
+    // ROOTED ACROSS THE DISPATCH: the first listener dispatch compiles the
+    // fence through run_nested, which can collect, and this event was in a
+    // C++ local alone - freed before the handler read `e.target`. It never
+    // showed until the live-object count at that moment shifted.
+    const context::rooted keep_event{cx, value::object(event)};
     event->set("target", waiting.reader);
     if (!readable) {
         // NOT a silent empty string. A page that reads something that is not a
@@ -224,6 +229,7 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
     const bool ok = image != nullptr;
 
     auto * event = cx.allocate<script::object_object>();
+    const context::rooted keep_event{cx, value::object(event)}; // as settle_read's
     event->set("type", cx.string(ok ? "load" : "error"));
     event->set("target", waiting.target);
     if (!ok) { event->set("message", cx.string("could not load " + waiting.url)); }
