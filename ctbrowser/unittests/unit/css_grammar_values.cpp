@@ -92,6 +92,25 @@ void test_box_alignment() {
     CHECK_EQ(declaration_value(block, "justify-self"), std::string{"center"});
 }
 
+void test_the_small_shorthands() {
+    declaration_block block;
+    CHECK(set_declaration(block, "scroll-padding", "1px 2px", false));
+    CHECK_EQ(declaration_value(block, "scroll-padding-left"), std::string{"2px"});
+    CHECK_EQ(declaration_value(block, "scroll-padding"), std::string{"1px 2px"});
+    CHECK(set_declaration(block, "scroll-margin-block", "3px", false));
+    CHECK_EQ(declaration_value(block, "scroll-margin-block-end"), std::string{"3px"});
+    CHECK(set_declaration(block, "overscroll-behavior", "contain none", false));
+    CHECK_EQ(declaration_value(block, "overscroll-behavior-y"), std::string{"none"});
+    CHECK(set_declaration(block, "columns", "10em 2", false));
+    CHECK_EQ(declaration_value(block, "column-width"), std::string{"10em"});
+    CHECK_EQ(declaration_value(block, "column-count"), std::string{"2"});
+    CHECK(set_declaration(block, "column-rule", "thin solid red", false));
+    CHECK_EQ(declaration_value(block, "column-rule-color"), std::string{"red"});
+    CHECK(set_declaration(block, "text-wrap", "nowrap balance", false));
+    CHECK_EQ(declaration_value(block, "text-wrap-style"), std::string{"balance"});
+    CHECK_EQ(declaration_value(block, "text-wrap"), std::string{"nowrap balance"});
+}
+
 void test_filters() {
     ok("filter", "blur()", "blur()");
     ok("filter", "blur(0)", "blur(0px)");
@@ -134,6 +153,7 @@ void test_filters() {
 int main() {
     test_display();
     test_box_alignment();
+    test_the_small_shorthands();
     test_filters();
     REPORT("css_grammar_values");
 }
