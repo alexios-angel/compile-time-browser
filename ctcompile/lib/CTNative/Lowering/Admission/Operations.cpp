@@ -24,6 +24,10 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+            read && domEntry->isStringVectorLength(read)) {
+            return true;
+        }
         if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);
             closure && domEntry->callback(closure)) {
             return true;

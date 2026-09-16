@@ -174,6 +174,7 @@ public:
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
     [[nodiscard]] bool isDataset(mlir::Value value) const;
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
+    [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
     // One URI or JSON.parse call with owning String/json_value continuations;
@@ -204,6 +205,7 @@ private:
     std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> callbackClosures;
     std::vector<mlir::BlockArgument> elements;
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
+    std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
     std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics;

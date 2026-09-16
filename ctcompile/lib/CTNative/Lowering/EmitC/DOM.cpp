@@ -44,6 +44,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
         });
         function.walk([&](ctjs::GetPropertyOp read) {
+            if (entry.isStringVectorLength(read)) { vectorLengthReads.insert(read); }
             if (entry.method(read) || entry.isTokenList(read.getResult()) ||
                 entry.isDataset(read.getResult())) {
                 domReads.insert(read);

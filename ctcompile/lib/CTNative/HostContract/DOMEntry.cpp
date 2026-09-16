@@ -176,7 +176,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         null,
         undefined
     };
-    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets;
+    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics;
     std::vector<ctjs::InvokeOp> provedInvocations;
@@ -612,6 +612,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     const auto key = ctjs::constantKey(read.getKey());
+                    if (hasKind(read.getObject(), Kind::stringVector) && key == "length") {
+                        values[read.getResult()] = Kind::number;
+                        provedStringVectorLengths.push_back(read);
+                        continue;
+                    }
                     if (suppliedArray && hasKind(read.getObject(), Kind::stringVector) &&
                         key == "filter") {
                         values[read.getResult()] = Kind::filterStrings;
@@ -1006,6 +1011,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     elements = std::move(provedElements);
     tokenLists = std::move(provedTokens);
     datasets = std::move(provedDatasets);
+    stringVectorLengths = std::move(provedStringVectorLengths);
     datasetElements = std::move(provedDatasetElements);
     objectIntrinsics = std::move(provedObjectIntrinsics);
     numberIntrinsics = std::move(provedNumberIntrinsics);
@@ -1053,6 +1059,10 @@ bool DOMEntryAnalysis::isDataset(mlir::Value value) const {
 
 bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
     return llvm::is_contained(datasetElements, value);
+}
+
+bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {
+    return llvm::is_contained(stringVectorLengths, read);
 }
 
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {

@@ -28,6 +28,7 @@ BOOTSTRAP_FILTER = (
 PREDICATE = 't => t.startsWith("bs") && !t.startsWith("bsConfig")'
 FILTER_BODIES = {
     "dataset_filter": f"const t = element; return {BOOTSTRAP_FILTER};",
+    "dataset_filter_length": f"const t = element; return ({BOOTSTRAP_FILTER}).length;",
     "dataset_filter_alias": f"const keys = Object.keys(element.dataset); "
     f"const selected = keys.filter({PREDICATE}); return selected;",
     "dataset_filter_snapshot": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
@@ -126,6 +127,8 @@ REFUSALS = {
     f"alias[0] = 'bsChanged'; return keys.filter({PREDICATE});",
     "filter_result_mutation": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
     "selected[0] = 'changed'; return selected;",
+    "filter_length_mutation": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
+    "selected.length = 0; return selected.length;",
     "filter_receiver_escape": "const keys = Object.keys(element.dataset); element.saved = keys; "
     f"return keys.filter({PREDICATE});",
     "filter_callback_escape": f"const callback = {PREDICATE}; "
@@ -160,7 +163,9 @@ def oracles(args):
                     selected = keys + ["later"]
                 elif name == "dataset_reread":
                     selected = keys[1:] + ["later"]
-            wanted[name].append("|".join(selected))
+            number = name == "dataset_filter_length"
+            wanted[name].append(str(len(selected)) if number else "|".join(selected))
+            observation = f"String({name}(element))" if number else f"{name}(element).join('|')"
             source += f"""
 var {label} = (function() {{
     const keys = {json.dumps(keys)};
@@ -179,7 +184,7 @@ var {label} = (function() {{
             delete target.bsZ;
         }}
     }};
-    return {name}(element).join('|');
+    return {observation};
 }})();
 """
     node = args.work / "dataset-node.js"
@@ -205,10 +210,22 @@ def client(symbol, owned, name):
     fixtures = ",".join(
         "{" + ",".join(json.dumps(key) for key in attrs) + "}" for attrs, _, _ in CASES[name]
     )
+    number = name == "dataset_filter_length"
+    saved_type = "double" if number else "std::vector<std::string>"
+    observe = (
+        "std::cout << saved;"
+        if number
+        else """
+        for (std::size_t i = 0; i < saved.size(); ++i) {
+            if (i) std::cout << '|';
+            std::cout << saved[i];
+        }
+        """
+    )
     return f"""
     for (const auto & names : std::vector<std::vector<const char *>>{{{fixtures}}}) {{
     for (node_ns ns : {{node_ns::html, node_ns::svg}}) {{
-        std::vector<std::string> saved;
+        {saved_type} saved{{}};
         {{
             {setup}
             const auto node = doc.create_element(doc.atoms().intern("test"), ns);
@@ -227,10 +244,7 @@ def client(symbol, owned, name):
             try {{ (void){call}; }} catch (const std::invalid_argument &) {{ rejected = true; }}
             assert(rejected && doc.version() == version);
         }}
-        for (std::size_t i = 0; i < saved.size(); ++i) {{
-            if (i) std::cout << '|';
-            std::cout << saved[i];
-        }}
+        {observe}
         std::cout << '\\n';
     }}
     }}

@@ -66,7 +66,7 @@ module {
         input.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
-                     !proof.isTokenList(read.getResult());
+                     !proof.isTokenList(read.getResult()) && !proof.isStringVectorLength(read);
         });
         return empty;
     };
@@ -120,6 +120,58 @@ module {
                   "every incomplete filter proof withholds callback and entry evidence");
         }
     }
+    const auto lengthSource = replaced(source, "ctjs.return %answer", R"MLIR(
+    %lengthName = ctjs.constant #ctjs.string<"length">
+    %length = ctjs.get_property %answer[%lengthName]
+    ctjs.return %length
+)MLIR");
+    auto lengthInput = mlir::parseSourceString<mlir::ModuleOp>(lengthSource, &context);
+    check(static_cast<bool>(lengthInput), "filtered dataset snapshot length fixture parses");
+    if (lengthInput) {
+        ctjs::GetPropertyOp length;
+        lengthInput->walk([&](ctjs::GetPropertyOp read) {
+            if (ctjs::constantKey(read.getKey()) == "length") { length = read; }
+        });
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*lengthInput);
+            DOMEntryAnalysis proof(*lengthInput, request);
+            check(proof.proved() && proof.isStringVectorLength(length),
+                  "length observes the exact owning filtered String vector");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            lengthInput->walk([&](ctjs::GetPropertyOp read) {
+                check(proof.isStringVectorLength(read) == (read == length),
+                      "snapshot length evidence does not authorize any other property read");
+            });
+            check(hostContractFingerprint(*lengthInput) == request.moduleSha256,
+                  "snapshot length analysis preserves the complete original filter");
+            check(DOMEntryAnalysis(*lengthInput, request, proof.steps()).proved(),
+                  "snapshot length proof reproduces its exact completion budget");
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*lengthInput, request, budget);
+                check(limited.exhausted() && noEvidence(*lengthInput, limited),
+                      "every incomplete snapshot length proof withholds all evidence");
+            }
+        }
+        for (const auto & mutation :
+             {replaced(lengthSource, "%answer[%lengthName]", "%element[%lengthName]"),
+              replaced(lengthSource, "#ctjs.string<\"length\">", "#ctjs.string<\"size\">"),
+              replaced(lengthSource, "ctjs.return %length",
+                       "ctjs.set_property %answer[%lengthName], %u\n    ctjs.return %length")}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(mutation, &context);
+            check(static_cast<bool>(input), "snapshot length refusal fixture parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "wrong receiver/key and snapshot writes withhold all length evidence");
+        }
+    }
     for (const auto & names :
          {std::vector<std::string>{"Object"}, std::vector<std::string>{"Object", "Array"},
           std::vector<std::string>{"Object", "String"}, std::vector<std::string>{"Array", "String"},
@@ -128,6 +180,11 @@ module {
         request.initialIntrinsics = names;
         check(noEvidence(*module, DOMEntryAnalysis(*module, request)),
               "filter authority requires unique Object, Array and String premises");
+        if (lengthInput) {
+            request.moduleSha256 = hostContractFingerprint(*lengthInput);
+            check(noEvidence(*lengthInput, DOMEntryAnalysis(*lengthInput, request)),
+                  "snapshot length cannot bypass original filter identity premises");
+        }
     }
     const auto refused = [&](llvm::StringRef from, llvm::StringRef to) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(replaced(source, from, to), &context);
