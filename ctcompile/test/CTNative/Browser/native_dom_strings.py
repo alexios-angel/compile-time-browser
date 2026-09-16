@@ -2245,12 +2245,13 @@ function makeElement(value) {
                     optional_read=name != "helper_branch" and name not in uri.CASES,
                     uri_call=name in uri.CASES or name in nullable_uri.CASES,
                 )
-                # Hoist includes AND the defines in front of the runtime include
+                # Hoist includes AND the runtime's defines in front of its include
                 # (CTNATIVE_DOM, CTNATIVE_ORDERED_MAPS) before isolating each
-                # unit; sorted(), `#define` precedes `#include`. Generated local
-                # helper names need not be globally unique.
-                headers.update(re.findall(r"^#(?:include|define)[^\n]*", cpp, re.M))
-                body = re.sub(r"^#(?:include|define)[^\n]*\n?", "", cpp, flags=re.M)
+                # unit; sorted(), `#define` precedes `#include`. The deduced
+                # layout's CTCOMPILE_PIN block stays in its unit, inside its own
+                # #ifndef. Generated local helper names need not be globally unique.
+                headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
+                body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 entry = namespace + "::" + symbol
                 if name in nullable_uri.CASES:

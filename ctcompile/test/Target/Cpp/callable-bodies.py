@@ -116,7 +116,9 @@ def main():
             assert "ctn_bind_classified(" not in marked, marked
             unmarked = function_body(cpp, prefix + "_unmarked")
             assert "ctn_bind_classified(" in unmarked, unmarked
-        assert "return ctn_lambda;" in function_body(cpp, "deferred_literal_marked"), cpp
+        # The deferred creation is a named local (v<N> now, ctn_lambda before
+        # source-derived names went), returned by name rather than inlined.
+        assert re.search(r"return v\d+;", function_body(cpp, "deferred_literal_marked")), cpp
         source = args.work / f"{label}.cpp"
         source.write_text(cpp + MAIN)
         for index, compiler in enumerate(compilers):
