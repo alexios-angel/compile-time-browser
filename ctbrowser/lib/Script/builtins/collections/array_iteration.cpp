@@ -48,36 +48,43 @@ namespace ctbrowser::script::detail {
         // Reads its state off the RECEIVER rather than out of the closure, so
         // the collector sees one object holding everything and a native
         // captures nothing it would have to root.
-        made->define("next",
-                     value::object(detail::method_native(
-                         cx, "next",
-                         [](context & c, std::span<value>) {
-                             auto * out = static_cast<object_object *>(c.make_object().as_heap());
-                             const value self = detail::array_this(c);
-                             array_object * items = nullptr;
-                             std::size_t at = 0;
-                             if (self.is_object()) {
-                                 auto * holder = static_cast<object_object *>(self.as_heap());
-                                 if (value * list = holder->find("__items");
-                                     list != nullptr && list->is_array()) {
-                                     items = static_cast<array_object *>(list->as_heap());
-                                 }
-                                 if (value * cursor = holder->find("__at"); cursor != nullptr) {
-                                     const double n = context::to_number(*cursor);
-                                     at = n > 0 ? static_cast<std::size_t>(n) : 0;
-                                 }
-                                 if (items != nullptr && at < items->items.size()) {
-                                     holder->define("__at",
-                                                    value::number(static_cast<double>(at + 1)),
-                                                    attr_builtin);
-                                 }
-                             }
-                             const bool done = items == nullptr || at >= items->items.size();
-                             out->set("done", value::boolean(done));
-                             out->set("value", done ? value::undefined() : items->items[at]);
-                             return value::object(out);
-                         })),
-                     attr_builtin);
+        detail::method(
+            cx, made, "next", 0, [kind = std::string{tag}](context & c, std::span<value>) {
+                const value self = detail::array_this(c);
+                // RequireInternalSlot (23.1.5.2.1 step 2 and its
+                // siblings): the receiver is an iterator of THIS
+                // kind - `__items` is the slot, `__kind` which
+                // prototype made it - or it is a TypeError.
+                const value * of_kind =
+                    self.is_object() ? static_cast<object_object *>(self.as_heap())->find("__kind")
+                                     : nullptr;
+                if (of_kind == nullptr || !of_kind->is_string() || c.to_string(*of_kind) != kind) {
+                    c.throw_error("TypeError", kind + " next called on an incompatible receiver");
+                    return value::undefined();
+                }
+                auto * out = static_cast<object_object *>(c.make_object().as_heap());
+                array_object * items = nullptr;
+                std::size_t at = 0;
+                if (self.is_object()) {
+                    auto * holder = static_cast<object_object *>(self.as_heap());
+                    if (value * list = holder->find("__items");
+                        list != nullptr && list->is_array()) {
+                        items = static_cast<array_object *>(list->as_heap());
+                    }
+                    if (value * cursor = holder->find("__at"); cursor != nullptr) {
+                        const double n = context::to_number(*cursor);
+                        at = n > 0 ? static_cast<std::size_t>(n) : 0;
+                    }
+                    if (items != nullptr && at < items->items.size()) {
+                        holder->define("__at", value::number(static_cast<double>(at + 1)),
+                                       attr_builtin);
+                    }
+                }
+                const bool done = items == nullptr || at >= items->items.size();
+                out->set("done", value::boolean(done));
+                out->set("value", done ? value::undefined() : items->items[at]);
+                return value::object(out);
+            });
         table = value::object(made);
         cx.define_global(key, table);
     }
@@ -88,6 +95,7 @@ namespace ctbrowser::script::detail {
     // `Object.keys` of one is empty, which is what a browser answers.
     it->define("__items", items, attr_builtin);
     it->define("__at", value::number(0), attr_builtin);
+    it->define("__kind", cx.string(std::string{tag}), attr_builtin);
     return value::object(it);
 }
 
