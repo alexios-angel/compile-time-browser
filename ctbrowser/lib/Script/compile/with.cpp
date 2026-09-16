@@ -141,6 +141,17 @@ void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
         proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), src});
         return;
     }
+    // 19.1: `NaN`, `Infinity` and `undefined` are { false, false, false } on
+    // the global object. The globals table has no attributes, so the refusal
+    // is decided here: a sloppy write is dropped, a strict one is the
+    // TypeError of PutValue - and neither reaches op::set_global.
+    if (name == "undefined" || name == "NaN" || name == "Infinity") {
+        if (fn().is_strict) {
+            emit_throw("TypeError",
+                       "Cannot assign to read only property '" + std::string{name} + "'");
+        }
+        return;
+    }
     emit_strict_assign_check(name);
     proto().emit(instruction::with_bx(op::set_global, src, intern_name(std::string{name})));
 }

@@ -330,6 +330,15 @@ int main() {
             " try { new K().m(); } catch (e) { r = e.name; } return r;",
             "ReferenceError");
 
+    // --- 19.1: NaN, Infinity and undefined are not writable - a sloppy
+    // write is dropped, a strict one is a TypeError.
+    answers("undefined = 1; var undefined = 2; NaN = 3; Infinity = 4;"
+            " return [typeof undefined, NaN !== NaN, Infinity].join();",
+            "undefined,true,Infinity");
+    answers("'use strict'; try { undefined = 1; } catch (e) { return e.name; } return 'no';",
+            "TypeError");
+    answers("function f() { var undefined = 5; return undefined; } return f();", "5");
+
     // --- the temporal dead zone, statically: a read of this frame's own
     // let/const/class before the declarator that initialises it throws
     // (9.1.1.1.6), typeof included; a read after it, or from a nested

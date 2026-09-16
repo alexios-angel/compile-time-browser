@@ -143,6 +143,10 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
                 if (decl.b >= 0) { // a shape, not a name
                     compile_pattern_binding(decl.b, r, true);
+                } else if (decl.text == "undefined" || decl.text == "NaN" ||
+                           decl.text == "Infinity") {
+                    // `var undefined = 5;` PutValue on a non-writable global:
+                    // dropped (see emit_plain_write).
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));
