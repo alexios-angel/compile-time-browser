@@ -48,7 +48,7 @@
 # MANIFEST-DAG: "entry": "index.html"
 # MANIFEST-DAG: "font_directory": "fonts"
 # RUN: python3 -c 'import json, sys; s = json.load(open(sys.argv[1]))["scripts"]; sys.exit(len(s) != 2 or s[0]["program_id"] == s[1]["program_id"])' %t/app.json
-# RUN: test $(stat -c %s %t/app) -gt $(stat -c %s ctrun)
+# RUN: test $(stat -c %%s %t/app) -gt $(stat -c %%s ctrun)
 #
 # ---- run it, from somewhere that is not the application directory ----------
 # RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 %t/app

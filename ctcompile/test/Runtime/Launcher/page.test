@@ -19,7 +19,7 @@
 # The size says this is a 320x240 PPM rather than a truncated write; the
 # colour count says something was drawn on it - three is the background, the
 # sprites and the score text.
-# RUN: test $(stat -c %s %t.aot.ppm) -ge 230400
+# RUN: test $(stat -c %%s %t.aot.ppm) -ge 230400
 # RUN: FileCheck %s --check-prefix=AOT < %t.aot.err
 # RUN: FileCheck %s --check-prefix=VM < %t.vm.err
 # AOT-DAG: colours = {{([3-9]|[1-9][0-9]+)$}}
