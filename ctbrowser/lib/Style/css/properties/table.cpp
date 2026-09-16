@@ -251,7 +251,8 @@ constexpr property_syntax table[] = {
     {"text-shadow", k::freeform, "", "none", true, false},
     {"white-space", k::keyword_only, "normal pre nowrap pre-wrap pre-line break-spaces", "normal",
      true, false},
-    {"word-break", k::keyword_only, "normal break-all keep-all break-word", "normal", true, false},
+    {"word-break", k::keyword_only, "normal break-all keep-all break-word manual auto-phrase",
+     "normal", true, false},
     {"overflow-wrap", k::keyword_only, "normal break-word anywhere", "normal", true, false},
     {"direction", k::keyword_only, "ltr rtl", "ltr", true, false},
     // Read by the cascade (an inherited property) and by the computed style's
@@ -260,7 +261,8 @@ constexpr property_syntax table[] = {
     // checked against - an unsupported name is an expando there.
     {"writing-mode", k::keyword_only,
      "horizontal-tb vertical-rl vertical-lr sideways-rl sideways-lr", "horizontal-tb", true, false},
-    {"unicode-bidi", k::freeform, "", "normal", false, false},
+    {"unicode-bidi", k::keyword_only,
+     "normal embed isolate bidi-override isolate-override plaintext", "normal", false, false},
     {"tab-size", k::number_length, "", "8", true, true},
     {"vertical-align", k::length_percentage,
      "baseline sub super text-top text-bottom middle top bottom", "baseline", false, false},
@@ -315,12 +317,12 @@ constexpr property_syntax table[] = {
     {"transform", k::freeform, "", "none", false, false},
     {"transform-origin", k::freeform, "", "50% 50%", false, false},
     {"transition", k::freeform, "", "all 0s ease 0s", false, false, true},
-    {"transition-duration", k::time, "", "0s", false, false},
+    {"transition-duration", k::time, "", "0s", false, true},
     {"transition-delay", k::time, "", "0s", false, false},
     {"transition-property", k::freeform, "", "all", false, false},
     {"transition-timing-function", k::freeform, "", "ease", false, false},
     {"animation", k::freeform, "", "none", false, false, true},
-    {"animation-duration", k::time, "", "0s", false, false},
+    {"animation-duration", k::time, "auto", "0s", false, true},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
     // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
@@ -328,7 +330,7 @@ constexpr property_syntax table[] = {
     // reads an `ident()` back through, and as an UNKNOWN one getComputedStyle
     // did not publish it at all.
     {"view-transition-name", k::freeform, "", "none", false, false},
-    {"animation-iteration-count", k::freeform, "", "1", false, false},
+    {"animation-iteration-count", k::number, "infinite", "1", false, true},
     {"filter", k::freeform, "", "none", false, false},
     {"content", k::freeform, "", "normal", false, false},
     // PROPERTIES WITH NO CONSUMER YET, carried so a page can set and read

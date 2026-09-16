@@ -41,11 +41,51 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
                        "attachShadow: `mode` is required and must be \"open\" or \"closed\"");
         return value::undefined();
     }
+    // THE REST OF THE DICTIONARY, and still before the element is looked at:
+    // `slotAssignment` is a WebIDL enumeration, so a value that is neither
+    // "named" nor "manual" is a TypeError from the CONVERSION - which is the
+    // same rank of failure as a missing `mode` and comes before any
+    // NotSupportedError the element could earn.
+    const value given_assignment = dict_member(cx, init, "slotAssignment");
+    const std::string assignment =
+        given_assignment.is_undefined() ? "named" : cx.to_string(given_assignment);
+    if (assignment != "named" && assignment != "manual") {
+        cx.throw_error("TypeError", "attachShadow: `slotAssignment` must be \"named\" or "
+                                    "\"manual\"");
+        return value::undefined();
+    }
     if (!host) {
         cx.throw_error("TypeError", "attachShadow: the receiver is not an Element");
         return value::undefined();
     }
-    const auto root = doc_->attach_shadow(host, mode == "open");
+    // A ROOT THE PARSER ATTACHED IS CLAIMED, NOT REFUSED. DOM 4.8 step 4: a
+    // shadow root that is still declarative and whose mode MATCHES is emptied
+    // and handed back, so a page can reach into a `<template shadowrootmode>`
+    // tree it did not build - including a closed one, which is the only way to
+    // get at it at all. It works once: the second call is the ordinary
+    // NotSupportedError, because the flag is gone.
+    if (const node_id existing = shadow_root_of(host)) {
+        const shadow_tree * tree = shadow_tree_of(existing);
+        if (tree != nullptr && tree->declarative && tree->open == (mode == "open")) {
+            std::vector<node_id> children;
+            {
+                const auto txn = doc_->read();
+                const std::span<const node_id> kids = txn.children(existing);
+                children.assign(kids.begin(), kids.end());
+            }
+            for (const node_id child : children) { (void)doc_->remove_child(child); }
+            doc_->set_shadow_declarative(existing, false);
+            mutated();
+            return wrap(cx, existing);
+        }
+    }
+    const auto root = doc_->attach_shadow(
+        host, document::shadow_tree{.host = host,
+                                    .open = mode == "open",
+                                    .delegates_focus = dict_flag(cx, init, "delegatesFocus"),
+                                    .manual_slots = assignment == "manual",
+                                    .clonable = dict_flag(cx, init, "clonable"),
+                                    .serializable = dict_flag(cx, init, "serializable")});
     if (!root) {
         if (root.error() == dom_error::shadow_root_exists) {
             throw_dom_exception(cx, "NotSupportedError",
@@ -90,6 +130,31 @@ void dom_bindings::install_shadow_root_members(context & cx, script::object_obje
         value::object(cx.allocate<script::native_object>(
             "host", [this, host](context & c, std::span<value>) { return wrap(c, host); })),
         value::undefined());
+    // AND THE REST OF THE INIT DICTIONARY, read back. They are what a page
+    // feature-detects declarative shadow DOM with, what `getHTML` consults and
+    // what `cloneNode` has to carry - `gethtml.html` reads all four of them
+    // before it looks at any markup.
+    const bool delegates = tree->delegates_focus;
+    const bool manual = tree->manual_slots;
+    const bool clonable = tree->clonable;
+    const bool serializable = tree->serializable;
+    for (const auto & [name, held] :
+         std::initializer_list<std::pair<const char *, bool>>{{"delegatesFocus", delegates},
+                                                              {"clonable", clonable},
+                                                              {"serializable", serializable}}) {
+        obj.define_accessor(
+            name,
+            value::object(cx.allocate<script::native_object>(
+                name, [held](context &, std::span<value>) { return value::boolean(held); })),
+            value::undefined());
+    }
+    obj.define_accessor("slotAssignment",
+                        value::object(cx.allocate<script::native_object>(
+                            "slotAssignment",
+                            [manual](context & c, std::span<value>) {
+                                return c.string(manual ? "manual" : "named");
+                            })),
+                        value::undefined());
 }
 
 } // namespace ctbrowser::shell

@@ -41,40 +41,65 @@ namespace {
 
 constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 
-// HTML 4.13.1 "valid custom element name": PotentialCustomElementName.
-[[nodiscard]] bool is_pcen_char(char32_t c) {
-    return c == '-' || c == '.' || (c >= '0' && c <= '9') || c == '_' || (c >= 'a' && c <= 'z') ||
-           c == 0xB7 || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
-           (c >= 0xF8 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF) ||
-           (c >= 0x200C && c <= 0x200D) || (c >= 0x203F && c <= 0x2040) ||
-           (c >= 0x2070 && c <= 0x218F) || (c >= 0x2C00 && c <= 0x2FEF) ||
-           (c >= 0x3001 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) ||
-           (c >= 0xFDF0 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0xEFFFF);
+// HTML 4.13.1, "valid custom element name" AS IT IS TODAY - not
+// PotentialCustomElementName, which whatwg/html#7991 replaced.
+//
+// The old production was a fixed list of XML name characters; a name is now
+// any VALID ELEMENT LOCAL NAME that has no ASCII upper alpha in it, has a
+// hyphen, and is not one of the eight SVG/MathML names. That is much wider:
+// `a!-element`, `a\x01-element` and `_-element` are all names a page may
+// define, and PotentialCustomElementName refused every one of them.
+//
+// A valid element local name is the tag names the HTML and the XML parsers
+// can both produce, which is the specification's one regular expression:
+//   ^(?:[A-Za-z][^NUL TAB LF FF CR SPACE / >]*
+//     | [:_ or U+0080 and up][A-Za-z0-9-.:_ or U+0080 and up]*)$
+// The first branch is what the HTML tokenizer will read back as a tag name -
+// it bans only the characters that would END one - and the second is the XML
+// Name production's shape.
+[[nodiscard]] bool html_tag_name_char(char32_t c) {
+    return c != 0 && c != 0x9 && c != 0xA && c != 0xC && c != 0xD && c != 0x20 && c != '/' &&
+           c != '>';
+}
+
+[[nodiscard]] bool xml_name_char(char32_t c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+           c == '.' || c == ':' || c == '_' || (c >= 0x80 && c <= 0x10FFFF);
+}
+
+[[nodiscard]] bool is_valid_element_local_name(const std::vector<char32_t> & points) {
+    if (points.empty()) { return false; }
+    const char32_t first = points.front();
+    if ((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) {
+        bool ok = true;
+        for (std::size_t i = 1; i < points.size(); ++i) {
+            ok = ok && html_tag_name_char(points[i]);
+        }
+        if (ok) { return true; }
+    }
+    if (first != ':' && first != '_' && (first < 0x80 || first > 0x10FFFF)) { return false; }
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        if (!xml_name_char(points[i])) { return false; }
+    }
+    return true;
 }
 
 [[nodiscard]] bool is_valid_custom_element_name(std::string_view name) {
-    if (name.empty() || name[0] < 'a' || name[0] > 'z') { return false; }
-    if (name.find('-') == std::string_view::npos) { return false; }
-    for (std::size_t i = 0; i < name.size();) {
-        const auto lead = static_cast<unsigned char>(name[i]);
-        const std::size_t length = lead < 0x80           ? 1
-                                   : (lead >> 5) == 0x6  ? 2
-                                   : (lead >> 4) == 0xE  ? 3
-                                   : (lead >> 3) == 0x1E ? 4
-                                                         : 0;
-        if (length == 0 || i + length > name.size()) { return false; }
-        char32_t point = length == 1   ? lead
-                         : length == 2 ? (lead & 0x1Fu)
-                         : length == 3 ? (lead & 0x0Fu)
-                                       : (lead & 0x07u);
-        for (std::size_t k = 1; k < length; ++k) {
-            const auto trail = static_cast<unsigned char>(name[i + k]);
-            if ((trail & 0xC0) != 0x80) { return false; }
-            point = (point << 6) | (trail & 0x3Fu);
-        }
-        if (!is_pcen_char(point)) { return false; }
-        i += length;
+    if (name.empty()) { return false; }
+    std::vector<char32_t> points;
+    for (std::size_t at = 0; at < name.size();) { points.push_back(decode_utf8(name, at)); }
+    // THE FIRST CHARACTER IS AN ASCII LOWER ALPHA. It is a requirement of its
+    // own, beside the local-name production: `_-element`, `:-element` and
+    // `\u{10000}-element` are all valid element local names and none of them
+    // is a valid CUSTOM element name. MEASURED - five subtests of
+    // valid-custom-element-names.html say so by code point.
+    if (points.front() < 'a' || points.front() > 'z') { return false; }
+    bool hyphen = false;
+    for (const char32_t c : points) {
+        if (c >= 'A' && c <= 'Z') { return false; }
+        hyphen = hyphen || c == '-';
     }
+    if (!hyphen || !is_valid_element_local_name(points)) { return false; }
     for (const std::string_view reserved :
          {"annotation-xml", "color-profile", "font-face", "font-face-src", "font-face-uri",
           "font-face-format", "font-face-name", "missing-glyph"}) {
@@ -146,7 +171,8 @@ value dom_bindings::create_html_element(context & cx, const std::string & name) 
 
 // --- the scan ----------------------------------------------------------------------
 
-void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected) {
+void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected,
+                                        bool upgrade) {
     struct frame {
         node_id at;
         bool moved; // an ancestor changed parent while connected
@@ -209,7 +235,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             txn.element_ns(here.at) == node_ns::html) {
             const std::uint64_t key = here.at.key();
             const auto found = custom_elements_.find(key);
-            if (found == custom_elements_.end()) {
+            if (found == custom_elements_.end() && upgrade) {
                 const std::size_t index = custom_definition_for(txn, here.at);
                 if (index != npos) {
                     // "Upgrade an element": the constructor, then
@@ -226,7 +252,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                     if (connected) { enqueue(here.at, kind::connected); }
                     custom_elements_.emplace(key, std::move(state));
                 }
-            } else {
+            } else if (found != custom_elements_.end()) {
                 custom_element_state & state = found->second;
                 const custom_element_definition & def = custom_definitions_[state.definition];
                 state.visited = true;
@@ -270,22 +296,31 @@ void dom_bindings::scan_custom_elements() {
             top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
         walk_custom_elements(txn, root, connected);
     }
-    // What no root reached is detached: a connected one left the tree.
+    // WHAT NO ROOT REACHED IS DETACHED - AND IS STILL A CUSTOM ELEMENT.
+    //
+    // A disconnected element's reactions do not stop: `el.setAttribute(...)`
+    // on one a page made and has not inserted still runs
+    // attributeChangedCallback, and that is most of what
+    // custom-elements/reactions/* measures - every one of those files creates
+    // its element, mutates it, and reads the log before anything is in the
+    // document. Walking it with connected=false does both halves at once, the
+    // disconnect and the attribute diff, through the same code a connected one
+    // goes through.
+    //
+    // THE KEYS ARE COLLECTED FIRST: an upgrade inside a detached subtree
+    // inserts into this map, and a flat_map rehashes under an iterator.
+    std::vector<node_id> loose;
+    for (const auto & [key, state] : custom_elements_) {
+        if (!state.visited) { loose.push_back(unpack(key)); }
+    }
+    for (const node_id at : loose) {
+        if (txn.contains(at)) { walk_custom_elements(txn, at, false, false); }
+    }
+    // A node that is GONE, rather than merely detached, is forgotten.
     for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
-        if (it->second.visited) {
-            ++it;
-            continue;
-        }
-        const node_id at = unpack(it->first);
-        if (!txn.contains(at)) {
+        if (!it->second.visited && !txn.contains(unpack(it->first))) {
             it = custom_elements_.erase(it);
             continue;
-        }
-        if (it->second.connected) {
-            custom_reactions_.push_back(custom_element_reaction{
-                at, custom_element_reaction::kind::disconnected, {}, {}, {}, false, false});
-            it->second.connected = false;
-            it->second.parent = node_id{};
         }
         ++it;
     }

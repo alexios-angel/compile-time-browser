@@ -14,6 +14,58 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-16, evening: round four merged
+
+**781 of the 1,104 that ran (70.7%); subtests 83,566 PASS, 4,462 FAIL** -
+from 776 (70.3%) at `273773cd` (the row below): **+6 files, -1**. Engine at
+`6edb7421` on `ctbrowser-wpt` (round four's four branches on `273773cd`: S
+shadow DOM / custom elements / Selection / DOMParser, G2 the CSS value
+grammars, T2 test262 `language`+`annexB`, U2 the URL surface and
+TextEncoder/Decoder), gated 221/221 green, same run as the test262 row of
+this SHA in `docs/test262.md`. Most of round four lands in the WIDE corpus
+below, not the five suites - which is why the five-suite move is small and
+the wide move is +149 files.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/css-values` | **169** (+6) | 91 | 7 | 0 | 4 | 237 | 508 | 7,579 / 2,749 |
+| `css/cssom` | **151** (+0) | 41 | 0 | 0 | 0 | 29 | 221 | 2,822 / 737 |
+| `dom/events` | **70** (-1) | 18 | 3 | 0 | 2 | 85 | 178 | 613 / 92 |
+| `dom/nodes` | **244** (+0) | 45 | 18 | 0 | 2 | 53 | 362 | 12,054 / 734 |
+| `html/dom` | **147** (+0) | 73 | 11 | 0 | 8 | 137 | 376 | 60,498 / 150 |
+| **total** | **781** | 268 | 39 | 0 | 16 | 541 | 1645 | 83,566 / 4,462 |
+781 of the 1104 that ran (70.7%); subtests 83,566 PASS, 4,462 FAIL, 76 NOTRUN, 37 TIMEOUT
+
+**The one lost, and it is a real regression:** `dom/events/Event-dispatch-
+single-activation-behavior.html` (PASS -> FAIL, 38 subtests), the form-submit
+and form-reset cases only (checkbox/radio still pass): clicking an
+`<input type=submit>` no longer records its form's activation. It was PASS at
+`273773cd` (F's forms work) and broke in the round-four merge; the only
+round-four edit to the dispatch path is `1b45c4a4` (composedPath per
+listener), which is additive and should not touch activation, so the cause
+is not yet found - it needs a `ctdrive` probe, which the lock did not free
+for this session. NOT re-baselined: this is the first thing to fix next.
+
+### And the wide corpus at the same SHA
+
+**2,310 of the 5,156 that ran (44.8%); subtests 220,908 PASS, 72,033 FAIL**
+- from 2,162 (41.9%) and 180,098 / 78,842 at `273773cd`: **+149 files, -1**
+(the same activation regression). The four agents' suites moved:
+`selection` **0 -> 41** /183 (17 -> 33,326 subtests, 48 HARNESS_ERRORs -> 5:
+a real Selection over the Range), `url` **22 -> 38** /49 (5,400 -> 9,242:
+`<a>`/`<area>` HyperlinkUtils, the URLSearchParams iterator, UTS #46),
+`shadow-dom` **49 -> 57** /345 (350 -> 1,489: `attachShadow` options, slots,
+`composedPath` per listener), `custom-elements` **9 -> 14** /193 (2,175 ->
+2,345: the name rule, detached reactions), `domparsing` **10 -> 11** (the
+scripting flag off for a DOMParser document), `html/webappapis` **122 ->
+124**. `encoding` (dropped from the wide run since 2026-09-16 - its 1,261
+files timed out on the missing TextDecoder) now has TextEncoder/TextDecoder:
+measured on filters, `textdecoder` 0 -> 14 /19 (7,461 subtests), `textencoder`
+0 -> 1 /2. And the 65 CSS modules (`docs/css-conformance.md` §2-wide):
+**1,352 files PASS of 2,925 (from 1,276), +76, one lost**, 57,583 subtests -
+G2's tightened grammars (css-animations +16, css-text +7, css-transitions
++6, css-overflow +6, css-fonts +5).
+
 ## The baseline — 2026-09-16, afternoon: rounds two and three merged
 
 **776 of the 1,104 that ran (70.3%); subtests 83,317 PASS, 4,449 FAIL** -

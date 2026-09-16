@@ -406,6 +406,14 @@ void install_search_params(context & cx, const value iterator_proto) {
     if (const value * entries = made.proto->find("entries"); entries != nullptr) {
         made.proto->define("@@iterator", *entries, script::attr_builtin);
     }
+    // THE ITERATOR PROTOTYPE IS A ROOT AND NOTHING ELSE POINTS AT IT. It lives
+    // in the `entries`/`keys`/`values` lambdas' C++ captures, which a precise
+    // collector cannot see (script::native_object::retained is the note), and
+    // nothing in the heap graph refers to it until the first iterator is made.
+    // So it was swept, `made->prototype` pointed at a reused cell, and every
+    // `for (x of params)` died with "iterator.next is not a function" - the
+    // whole of urlsearchparams-foreach and most of -constructor.
+    made.ctor->retained.push_back(iterator_proto);
 }
 
 // --- URL -----------------------------------------------------------------------------
@@ -441,6 +449,10 @@ script::native_object * install_url(context & cx) {
 
     const interface_pair made = make_interface(cx, "URL", {});
     auto * ctor = made.ctor;
+    // Captured below, so retained here for the same reason: a page that deletes
+    // the `URLSearchParams` global must not take `new URL()`'s query object
+    // with it.
+    ctor->retained.push_back(params_ctor);
     // §6.1 "new URL(url, base)": the base parsed first, then the URL against
     // it; either failing is a TypeError. `undefined` is the string "undefined"
     // here - WebIDL's USVString conversion - which is why

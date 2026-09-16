@@ -30,9 +30,25 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     switch (n.kind) {
     case nk::empty: return;
 
+    case nk::import_decl:
     case nk::export_decl:
+        // 16.2.1: an ImportDeclaration and an ExportDeclaration are
+        // ModuleItems. They are not Statements, so neither is in the grammar
+        // inside a block, a clause or a function body, and a classic Script's
+        // grammar has neither at any depth - `{ export default null; }` and
+        // `() => { import v from "./m.js"; }` are SyntaxErrors, which is 91
+        // of test262's module-code files. The parser reads them wherever a
+        // statement may stand, so the position is this pass's to refuse.
+        // `list_kind::script` is only ever the program's own statement list
+        // (see run()), so anything else is nested in something.
+        if (!module_() || kind != list_kind::script) {
+            report(std::string{n.kind == nk::import_decl ? "`import`" : "`export`"} +
+                       (module_() ? " is only allowed at the top level of a module"
+                                  : " is only allowed in a module, not in a script"),
+                   idx);
+        }
         // The wrapper contributes nothing of its own; its declaration does.
-        walk_statement(n.a, kind, vars);
+        if (n.kind == nk::export_decl) { walk_statement(n.a, kind, vars); }
         return;
 
     case nk::var_decl: check_declaration(idx, vars); return;
@@ -119,7 +135,8 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     case nk::func_decl:
         // Its NAME is this scope's business - lexical in a block, var at the
         // top of a script or a function body (8.2.6).
-        if (!n.text.empty() && kind != list_kind::block) {
+        if (!n.text.empty() && kind != list_kind::block &&
+            !(kind == list_kind::script && module_())) {
             vars.push_back(binding{n.text, binding_kind::function_, idx});
         }
         check_function(idx, frame_kind::function);

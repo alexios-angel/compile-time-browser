@@ -1,5 +1,44 @@
 # WPT — the next round, as briefs
 
+**Updated 2026-09-16, session 15.** Round four is MERGED (`13cc45c3` ->
+`6edb7421`, four `--no-ff` merges, gated 221/221 green) and, when the main
+tree is clean, integrated into `ctcompile-v1`. The four briefs
+(`~/Downloads/claude/wt/wpt11-session/round4/`) were S shadow DOM / custom
+elements / Selection / DOMParser, G2 the CSS value grammars, T2 test262
+`language`+`annexB`, U2 the URL surface + TextEncoder/Decoder. Measured at
+`6edb7421` (rows in `docs/wpt.md`, `docs/test262.md`, `docs/css-conformance.md`):
+five suites 776 -> 781, wide corpus 2,162 -> **2,310 files (+149/-1)** and
+171k -> **220,908 subtests**, test262 38,730 -> **39,175 (80.6%)**. Biggest:
+selection 0 -> 41 (33,326 subtests), url 22 -> 38, annexB 469 -> 776 (B.3.3),
+css 1,276 -> 1,352 files, TextDecoder 0 -> 14.
+
+**THE ONE REGRESSION round four left** (fix first): `dom/events/Event-
+dispatch-single-activation-behavior.html`, 38 subtests, PASS at `273773cd`
+-> FAIL - form-submit/reset activation no longer records the form. The only
+round-four dispatch edit is `1b45c4a4` (composedPath per listener), additive
+and not obviously the cause; needs a `ctdrive` probe. `viewport-units-
+invalidation` (session 14's regression) is still open too.
+
+**What round four left for its own areas** (from the agents' reports):
+- S: `getHTML`'s shadow-root serialisation needs `tree_ops.cpp serialize_html`
+  a `shadow_roots` parameter (gethtml.html = 6,528 subtests, ~12 lines); the
+  event path must walk the FLAT tree (`events/input.cpp propagation_path`);
+  the cascade needs `:host`/`::slotted`/`::part`/`:defined` matching
+  (lib/Style/css/selector.cpp - none matches today); a made document
+  (createHTMLDocument) has empty `custom_definitions_`, so custom elements in
+  it never react. Also a VM bug S hit: a nested `for-of` whose OUTER binding
+  is read after the inner loop reads `undefined` (attach-shadow-non-html-
+  namespace.html, 304 subtests) - repro `for (const a of [1,2]) { for (const
+  b of [3]) {} use(a); }`.
+- U2: `<a>`/`<area>` setters resolve against the process cwd, not the
+  document base (url-setters-a-area); IDNA's `IdnaTestV2` (1,296 subtests) is
+  the rest of UTS #46; `XMLHttpRequest` undefined (url/failure.html 570).
+- G2: the remaining `*-invalid` files (grid shorthands, `clip-path`/`mask`/
+  `shape-outside` basic shapes) and `getComputedStyle-property-order` (CSSOM
+  sorted order, reverted once - needs care).
+- T2: the class/async-generator SameValue clusters in `language/expressions`
+  (767) and `language/statements` (535), module early errors (291).
+
 **Updated 2026-09-16, session 14.** Rounds one, two and three are MERGED
 and integrated into `ctcompile-v1` (`bee703ed`). Round three landed as four
 merge commits ending `cb2cdcdf` on session 13's tip - U URL (the WHATWG

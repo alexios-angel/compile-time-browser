@@ -375,6 +375,8 @@ void dom_bindings::install_window(context & cx) {
         // url.cpp. The File API's two blob methods hang off the constructor
         // here because they are the bindings' business (the asset registry).
         script::native_object * url = install_url(cx);
+        // `TextEncoder`/`TextDecoder` beside them - bindings/window/encoding.cpp.
+        install_encoding(cx);
         set_method(cx, *url, "createObjectURL", [this](context & c, std::span<value> a) {
             if (assets_ == nullptr || a.empty() || !a[0].is_object()) { return c.string(""); }
             const value held = c.lookup_property(a[0], "__bytes");

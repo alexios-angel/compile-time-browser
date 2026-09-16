@@ -23,8 +23,14 @@ struct parse_result {
     std::vector<std::pair<node_id, std::string>> svg_sources;
 };
 
-[[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source) {
+// `scripting` is the DOCUMENT's scripting flag - see tree_builder::set_scripting.
+// A page parses with it on; a document no script will ever run in (DOMParser's,
+// createHTMLDocument's) parses with it off, which is what makes `<noscript>`
+// hold elements rather than text.
+[[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source,
+                                             bool scripting = true) {
     html::tree_builder builder{doc, doc.atoms()};
+    builder.set_scripting(scripting);
     parse_result out;
     out.root = builder.parse(source);
     out.svg_sources = builder.foreign_sources();

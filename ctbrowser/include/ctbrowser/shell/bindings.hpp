@@ -663,6 +663,9 @@ private:
     // see the helpers above install_character_data in element/character_data.cpp, and the note
     // there on what a surrogate pair costs.
     void install_character_data(context & cx);
+    // HTMLHyperlinkElementUtils (HTML 4.6.3) on HTMLAnchorElement and
+    // HTMLAreaElement - element/hyperlink.cpp.
+    void install_hyperlink_utils(context & cx);
     // `new Text("x")`, `new Comment("x")` and `new DocumentFragment()` - the
     // three node interfaces a page may construct. The other eighty-eight throw
     // "Illegal constructor", which is what a browser does too; these three make
@@ -1039,7 +1042,12 @@ private:
     // the HTMLElement constructor learns which class `super()` came from.
     [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver) const;
     // One subtree in tree order: upgrade what is new, diff what is tracked.
-    void walk_custom_elements(const read_txn & txn, node_id start, bool connected);
+    // `upgrade` is false for the pass over DETACHED elements: a candidate that
+    // is not in a document is not upgraded (HTML 4.13.5 upgrades on insertion
+    // and on `customElements.upgrade`), but one that was already upgraded
+    // still gets its attributeChanged and disconnected reactions.
+    void walk_custom_elements(const read_txn & txn, node_id start, bool connected,
+                              bool upgrade = true);
     void scan_custom_elements();
     void flush_custom_element_reactions();
     void sync_custom_element_roots();
@@ -1761,6 +1769,13 @@ private:
     // same way a wrapper is.
     flat_map<std::uint64_t, std::string> namespaces_;
     flat_map<std::uint64_t, script::object_object *> wrappers_;
+    // `slot.assign(...nodes)`, keyed by the SLOT: a shadow tree whose
+    // slotAssignment is "manual" assigns nothing by name, so the only
+    // assignment it has is the one a page made. What is stored is what the
+    // page passed; whether a node still qualifies - a child of the host, an
+    // element or a text node - is decided when the list is read, so moving a
+    // node out of the host un-assigns it without a hook.
+    flat_map<std::uint64_t, std::vector<node_id>> manual_slots_;
     // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
     // the `nonce` attribute's text at the time - see reflection.cpp's
     // `cryptographic_nonce` for why the pair. Empty until a page assigns one.
@@ -1985,6 +2000,27 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // `XMLSerializer` - bindings/domparsing.cpp, the serialising half of the
+    // DOM Parsing specification (DOMParser itself is in window/window.cpp).
+    void install_xml_serializer(context & cx);
+    // One node as XML, with `inherited` the default namespace its parent put
+    // in scope. Not the HTML fragment serialiser: see the file.
+    [[nodiscard]] std::string serialize_xml(node_id node, std::string_view inherited) const;
+    // Slots, `assignedSlot`, `setHTMLUnsafe` and `getHTML` - bindings/shadow_dom.cpp.
+    // On the interface prototypes, so it runs once and AFTER the table exists.
+    void install_shadow_dom(context & cx);
+    // The slottables one <slot> has been given, in tree order. A function of
+    // the two trees rather than a stored list: see the file.
+    [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
+    // Every `<template shadowrootmode>` under `within` turned into the shadow
+    // root it declares, IN `doc` - which is the scratch document a fragment
+    // was parsed into. `setHTMLUnsafe` runs it; `innerHTML` deliberately does
+    // not.
+    void attach_declarative_shadow_roots(document & doc, node_id within);
+    // `innerHTML` plus those roots, and the copy that carries them across.
+    void set_html_unsafe(node_id target, std::string_view markup);
+    void copy_shadow_trees(const document & src, const read_txn & from, node_id source,
+                           node_id made);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
@@ -2076,6 +2112,10 @@ private:
     // prototype, and the document's `createRange`.
     void install_range(context & cx);
     [[nodiscard]] value create_range(context & cx);
+    // The Selection API - bindings/selection.cpp. `Selection` the global,
+    // `getSelection()` on the window and on Document.prototype, and the one
+    // selection object they both answer with.
+    void install_selection(context & cx);
     // WRAPPERS THAT LEFT WITH THEIR NODE. `node_from` adopts by cloning into
     // the other document's slab and rebinding the page's wrapper to the copy;
     // the node here keeps its slot, and anything that finds it again by id -

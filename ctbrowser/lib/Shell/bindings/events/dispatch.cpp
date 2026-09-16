@@ -414,6 +414,38 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // whether this step is AT_TARGET - which the HOST of a shadow tree also is,
     // its shadow-adjusted target being itself, so a listener there sees phase 2
     // and hears a non-bubbling event.
+    // `composedPath()` IS PER LISTENER, NOT PER DISPATCH. DOM 2.9 builds it
+    // from the INVOCATION TARGET, and a node inside a closed shadow tree that
+    // the listener is not itself in is left out: a page that put a listener on
+    // the document must not learn what is inside a closed tree from the path.
+    // An OPEN tree hides nothing - being reachable through `shadowRoot` is
+    // what open means.
+    const auto closed_to = [&](const path_step & item, const path_step & from) {
+        if (item.on != listen_on::node || !item.node) { return false; }
+        const auto txn = doc_->read();
+        node_id a = item.node;
+        for (int guard = 0; a && guard < 64; ++guard) {
+            const node_id root = root_of_tree(txn, a, false);
+            const shadow_tree * tree = shadow_tree_of(root);
+            if (tree == nullptr) { return false; }
+            if (!tree->open) {
+                // Is the closed root a shadow-including inclusive ancestor of
+                // the listener's own node? The walk `retarget` uses, and a
+                // listener that is not on a node at all - the document, the
+                // window - is never inside one.
+                bool holds = false;
+                for (node_id b = from.on == listen_on::node ? from.node : node_id{}; b && !holds;) {
+                    holds = b == root;
+                    const node_id up = txn.parent(b);
+                    const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
+                    b = up ? up : above == nullptr ? node_id{} : above->host;
+                }
+                if (!holds) { return true; }
+            }
+            a = tree->host;
+        }
+        return false;
+    };
     const auto visit = [&](std::size_t index, double otherwise) {
         const path_step & step = path[index];
         node_id shown = at.node;
@@ -423,6 +455,15 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
             object->set("target", shown_object);
             object->set("srcElement", shown_object);
             expose(hidden_steps[index] ? value::undefined() : event);
+            // The path AS THIS STEP MAY SEE IT. Rebuilt per step rather than
+            // filtered by the method, for the reason the whole list is built
+            // here: the tree may have moved by the time a page asks.
+            value listed = cx.make_array();
+            auto * items = static_cast<script::array_object *>(listed.as_heap());
+            for (const path_step & one : path) {
+                if (!closed_to(one, step)) { items->items.push_back(object_of_step(cx, one)); }
+            }
+            object->set(std::string{path_property}, listed);
         }
         const bool is_target = (step.on == at.on && step.node == at.node) ||
                                (step.on == listen_on::node && step.node == shown);

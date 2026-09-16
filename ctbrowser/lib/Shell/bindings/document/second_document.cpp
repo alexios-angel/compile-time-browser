@@ -175,7 +175,12 @@ value dom_bindings::parse_from_string(context & cx, std::string_view markup,
     document & fresh = *(primary_ == nullptr ? *this : *primary_)
                             .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     if (type == "text/html") {
-        (void)parse_html(fresh, markup);
+        // WITH SCRIPTING OFF: nothing will ever run a script in this document,
+        // so 13.2.6.4.4's flag is false and `<noscript>` holds parsed elements
+        // rather than raw text. It is the LAST assertion of
+        // DOMParser-parseFromString-html.html, and the reason the option
+        // exists at all.
+        (void)parse_html(fresh, markup, false);
         dom_bindings & made = adopt_second_document(cx, fresh);
         made.install_document(cx);
         return made.document_;

@@ -186,6 +186,15 @@ void dom_bindings::install(context & cx) {
     // reads as flakiness, and it was the same one behind `createHTMLDocument`
     // and `make_live_collection` earlier on this branch.
     ensure_dom_interfaces(cx);
+    // AFTER the interface table: `document.getSelection` goes on
+    // Document.prototype, which does not exist until ensure_dom_interfaces
+    // has built it.
+    install_selection(cx);
+    // AFTER the interface table for the same reason: HTMLSlotElement.prototype,
+    // Element.prototype and ShadowRoot.prototype are where slots and
+    // setHTMLUnsafe go.
+    install_shadow_dom(cx);
+    install_xml_serializer(cx);
 }
 
 // THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this

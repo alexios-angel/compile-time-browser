@@ -31,7 +31,8 @@ void checker::run() {
             }
         }
     }
-    (void)check_list(kids(root), list_kind::script, nullptr, "");
+    const std::vector<binding> vars = check_list(kids(root), list_kind::script, nullptr, "");
+    if (strict_root_) { check_module_items(ast_.root, vars); }
     frames_.pop_back();
 }
 

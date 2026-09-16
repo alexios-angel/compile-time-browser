@@ -214,6 +214,11 @@ private:
     void bound_names(std::int32_t idx, binding_kind how, std::vector<binding> & out) const;
     // --- strict mode -------------------------------------------------------
     [[nodiscard]] bool strict() const { return !frames_.empty() && frames_.back().strict; }
+    // IS THIS SOURCE A MODULE? `strict_root_` is the flag compile.cpp sets
+    // for one, and the rules below ask that rather than "is strict" - a
+    // script with a "use strict" directive is strict and is still not a
+    // module. Named so those rules read as what they are.
+    [[nodiscard]] bool module_() const { return strict_root_; }
     // Whether `body` (a block or a program) opens with a "use strict"
     // directive (11.2.1).
     [[nodiscard]] bool has_use_strict_directive(std::int32_t body) const;
@@ -241,6 +246,7 @@ private:
     [[nodiscard]] static const char * kind_word(binding_kind how);
     std::vector<binding> check_list(std::span<const std::int32_t> stmts, list_kind kind,
                                     const std::vector<binding> * outer, const char * outer_what);
+    void check_module_items(std::int32_t root, const std::vector<binding> & vars);
 
     // --- defined in statements.cpp --------------------------------------------------------
     void walk_statement(std::int32_t idx, list_kind kind, std::vector<binding> & vars);
