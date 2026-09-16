@@ -6,7 +6,7 @@
 //
 // The lines that are NOT here are the ones the VM cannot answer yet (the
 // constructors file says which): `ta.buffer === ta.buffer`, a subclass
-// instance, BigInt64Array.
+// instance.
 
 #include "js_expect.hpp"
 
@@ -297,6 +297,93 @@ int main() {
               "return a.join() + '|' + r.read + '|' + r.written; })()",
               "1,2|4|2");
     throws("Uint8Array.prototype.toHex.call(new Int8Array(1))", "TypeError");
+
+    // --- BigInt64Array, BigUint64Array (Table 71): the element is a bigint -----
+    js_expect("BigInt64Array.BYTES_PER_ELEMENT + '|' + BigUint64Array.BYTES_PER_ELEMENT", "8|8");
+    js_expect("Object.getPrototypeOf(BigInt64Array) === Object.getPrototypeOf(Int8Array)", "true");
+    js_expect("Object.prototype.toString.call(new BigUint64Array(1))", "[object BigUint64Array]");
+    js_expect("typeof new BigInt64Array(2)[0] + '|' + new BigInt64Array(2)[1]", "bigint|0");
+    // ToBigInt64 / ToBigUint64 wrap modulo 2^64 - in either storage shape.
+    js_expect("(() => { const a = new BigInt64Array(2); a[0] = 2n ** 63n; a[1] = -1n; "
+              "return a[0] + '|' + a[1]; })()",
+              "-9223372036854775808|-1");
+    js_expect("(() => { const a = new BigUint64Array(1); a[0] = -1n; return a[0]; })()",
+              "18446744073709551615");
+    js_expect("(() => { const a = new BigInt64Array(new ArrayBuffer(16)); a[1] = -2n; "
+              "return a[1] + '|' + new Uint8Array(a.buffer).join(); })()",
+              "-2|0,0,0,0,0,0,0,0,254,255,255,255,255,255,255,255");
+    js_expect("new BigUint64Array(new BigInt64Array([-1n]).buffer)[0]", "18446744073709551615");
+    // ToBigInt: a Number is a TypeError, a string parses, a valueOf runs.
+    throws("(() => { const a = new BigInt64Array(1); a[0] = 1; })()", "TypeError");
+    throws("new BigInt64Array([1])", "TypeError");
+    throws("new BigInt64Array(1).fill(1)", "TypeError");
+    js_expect("(() => { const a = new BigInt64Array(1); a[0] = '12'; return a[0]; })()", "12");
+    js_expect("(() => { const a = new BigInt64Array(1); a[0] = {valueOf() { return 7n; }}; "
+              "return a[0]; })()",
+              "7");
+    js_expect("Object.getOwnPropertyDescriptor(new BigInt64Array([5n]), 0).value", "5");
+    js_expect("(() => { const a = new BigInt64Array(1); Object.defineProperty(a, 0, {value: 3n}); "
+              "return a[0]; })()",
+              "3");
+    throws("Object.defineProperty(new BigInt64Array(1), 0, {value: 3})", "TypeError");
+    // [[ContentType]]: a BigInt array and a Number array do not mix.
+    throws("new BigInt64Array(new Uint8Array(1))", "TypeError");
+    throws("new Uint8Array(new BigInt64Array(1))", "TypeError");
+    throws("new Uint8Array(1).set(new BigInt64Array(1))", "TypeError");
+    throws("new BigInt64Array(1).set([1])", "TypeError");
+    throws("(() => { const a = new BigInt64Array(1); a.constructor = {[Symbol.species]: "
+           "Uint8Array}; return a.map(x => x); })()",
+           "TypeError");
+    // The prototype methods, over bigints.
+    js_expect("BigInt64Array.from([1n, 2n], x => x * 2n).join('-')", "2-4");
+    js_expect("BigUint64Array.of(3n, 1n, 2n).sort().join()", "1,2,3");
+    js_expect("new BigInt64Array([3n, -1n, 2n]).sort().join()", "-1,2,3");
+    js_expect("new BigInt64Array([3n, -1n, 2n]).sort((a, b) => Number(b - a)).join()", "3,2,-1");
+    js_expect("new BigInt64Array([1n, 2n, 3n]).map(x => x + 1n).join()", "2,3,4");
+    js_expect("new BigInt64Array([1n, 2n, 3n]).filter(x => x > 1n).join()", "2,3");
+    js_expect("new BigInt64Array([1n, 2n, 3n]).reduce((a, b) => a + b)", "6");
+    js_expect(
+        "new BigInt64Array([1n, 2n]).includes(2n) + '|' + new BigInt64Array([1n]).includes(1)",
+        "true|false");
+    js_expect("new BigInt64Array([1n, 2n]).indexOf(2n) + '|' + "
+              "new BigInt64Array([1n, 2n]).lastIndexOf(1n)",
+              "1|0");
+    js_expect("new BigInt64Array([1n, 2n]).with(0, 9n).join()", "9,2");
+    js_expect("new BigInt64Array([1n, 2n]).toReversed().join() + '|' + "
+              "new BigInt64Array([1n, 2n]).reverse().join()",
+              "2,1|2,1");
+    js_expect("new BigInt64Array([1n, 2n, 3n]).subarray(1)[0] + '|' + "
+              "new BigInt64Array([1n, 2n, 3n]).slice(-1)[0]",
+              "2|3");
+    js_expect("[...new BigInt64Array([4n, 5n])].join() + '|' + "
+              "[...new BigInt64Array([4n]).entries()].join()",
+              "4,5|0,4");
+    js_expect("new BigInt64Array(3).fill(7n, 1).join()", "0,7,7");
+    js_expect("new BigUint64Array([1n, 2n]).at(-1)", "2");
+    js_expect("new BigInt64Array([1n, 2n]).toString()", "1,2");
+    js_expect("(() => { const a = new BigInt64Array([1n, 2n, 3n]); a.copyWithin(0, 1); "
+              "return a.join(); })()",
+              "2,3,3");
+    js_expect("(() => { const a = new BigInt64Array(2); const b = new BigInt64Array(a.buffer); "
+              "b[1] = 5n; return a[1]; })()",
+              "5");
+    js_expect("new DataView(new BigInt64Array([-1n]).buffer).getBigInt64(0)", "-1");
+
+    // --- Float16Array: binary16, ties to even, either storage shape --------------
+    js_expect("Float16Array.BYTES_PER_ELEMENT", "2");
+    js_expect("new Float16Array([1.5, 65520, 2 ** -25, 0.1]).join()",
+              "1.5,Infinity,0,0.0999755859375");
+    js_expect("(() => { const a = new Float16Array(new ArrayBuffer(4)); a[1] = -2; "
+              "return a[1] + '|' + new Uint16Array(a.buffer)[1].toString(16); })()",
+              "-2|c000");
+    js_expect("(() => { const a = new Float16Array(1); a[0] = NaN; return a[0] + '|' + "
+              "typeof (a[0] - 1); })()",
+              "NaN|number");
+    js_expect("(() => { const a = new Float16Array(1); a[0] = -0; return Object.is(a[0], -0); })()",
+              "true");
+    js_expect("new Float16Array([3, 1, 2]).sort().join() + '|' + Math.f16round(0.1)",
+              "1,2,3|0.0999755859375");
+    js_expect("new Float16Array(new Uint8Array([1, 2])).join()", "1,2");
 
     REPORT("typed_arrays");
 }
