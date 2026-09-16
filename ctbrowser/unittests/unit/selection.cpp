@@ -89,7 +89,7 @@ void test_collapse_and_extend_carry_the_direction() {
                   "s.collapseToStart();"
                   "alert(s.isCollapsed);"
                   "</script></body></html>"),
-             "3,3,Caret;3,5,forward;3,1,backward;he;hello,1;true;true");
+             "3,3,Caret;3,5,forward;3,1,backward;el;hello,1;true;true");
 }
 
 void test_what_the_selection_refuses() {
