@@ -1299,13 +1299,12 @@ void install_promise(context & cx) {
     // exist, which is any point in this function. builtins.cpp is not this
     // file's to edit; the call belongs there.
     install_iterator(cx);
-    // WeakRef and FinalizationRegistry (collections/weak.cpp) are written and
-    // compile, but ctcompile's escape-cycle test PINS their absence as the
-    // documented divergence ND-2 (ctcompile/test/Analysis/Escape/Cycle.cpp,
-    // "typeof WeakRef === 'undefined'"; ctcompile/docs/native-divergences.md).
-    // Installing them turns that gate red, and ctcompile/ is not this
-    // change's to edit: drop the three ND-2 probes there and enable this.
-    // install_weak_refs(cx);
+    // WeakRef and FinalizationRegistry (collections/weak.cpp). ctcompile's
+    // escape-cycle test pinned their ABSENCE as the divergence ND-2 until
+    // 2026-09-13 (its 73d4e034 retired the three probes;
+    // ctcompile/docs/native-divergences.md says so), which is what kept this
+    // call commented out for a day.
+    install_weak_refs(cx);
     install_disposable(cx);
 
     // 19.2.2 and 19.2.3, both of arity 1: ? ToNumber(number) - through
