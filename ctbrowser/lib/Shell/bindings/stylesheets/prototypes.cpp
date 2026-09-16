@@ -63,6 +63,17 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             script::attr_builtin);
     };
 
+    // A `cssRules` list a page holds on to is [SameObject] and must not go
+    // stale: `const {cssRules} = sheet; sheet.insertRule(...)` then reads
+    // `cssRules.length` (css/support/parsing-testcommon.js does exactly this)
+    // without going through the getter that refreshes it. So every mutation
+    // refreshes the list cached on its receiver, when there is one.
+    const auto refresh_cached_rules = [this](context & c, std::span<const std::size_t> rules) {
+        script::object_object * self = as_object(c.current_this());
+        if (self == nullptr) { return; }
+        if (const value * held = self->find(rules_key)) { refresh_rule_list(c, *held, rules); }
+    };
+
     // --- MediaList
     //
     // A VIEW OF A RECORD'S QUERY LIST, not a list of its own. `mediaText`,
@@ -357,7 +368,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                  value::undefined(), script::attr_configurable);
     set_method(
         cx, *sheet_proto, "insertRule",
-        [this, origin_dirty](context & c, std::span<value> args) {
+        [this, origin_dirty, refresh_cached_rules](context & c, std::span<value> args) {
             css_sheet_record * sheet = receiver_sheet(c);
             if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
             if (args.empty()) {
@@ -445,13 +456,14 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 }
             }
             sheet->rules.insert(sheet->rules.begin() + static_cast<std::ptrdiff_t>(at), made);
+            refresh_cached_rules(c, sheet->rules);
             style_sheets_changed();
             return value::number(asked);
         },
         script::attr_builtin);
     set_method(
         cx, *sheet_proto, "deleteRule",
-        [this, origin_dirty](context & c, std::span<value> args) {
+        [this, origin_dirty, refresh_cached_rules](context & c, std::span<value> args) {
             css_sheet_record * sheet = receiver_sheet(c);
             if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
             if (args.empty()) {
@@ -480,6 +492,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             }
             detach_rule(css_rule_store_, going);
             sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
+            refresh_cached_rules(c, sheet->rules);
             style_sheets_changed();
             return value::undefined();
         },
@@ -518,11 +531,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // one. `CSSStyleSheet-constructable-replace-on-regular-sheet.html` asserts
     // both halves separately, and a throw out of `replace` fails that test with
     // an uncaught exception rather than the rejection it is waiting for.
-    const auto replace_rules = [this](context & c, std::span<value> args) -> bool {
+    const auto replace_rules = [this, refresh_cached_rules](context & c,
+                                                            std::span<value> args) -> bool {
         css_sheet_record * sheet = receiver_sheet(c);
         if (sheet == nullptr || !sheet->constructed) { return false; }
         const std::size_t at = slot_index(as_object(c.current_this()), sheet_key);
         parse_sheet_rules(at, args.empty() ? std::string{} : c.to_string(args[0]));
+        refresh_cached_rules(c, sheet->rules);
         style_sheets_changed();
         return true;
     };
@@ -712,7 +727,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // builds every one of its fixtures.
     set_method(
         cx, *grouping_proto, "insertRule",
-        [this](context & c, std::span<value> args) {
+        [this, refresh_cached_rules](context & c, std::span<value> args) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
             if (args.empty()) {
@@ -764,13 +779,14 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             } else {
                 prune_bare_declarations(css_rule_store_, made);
             }
+            refresh_cached_rules(c, rule->children);
             style_sheets_changed();
             return value::number(asked);
         },
         script::attr_builtin);
     set_method(
         cx, *grouping_proto, "deleteRule",
-        [this](context & c, std::span<value> args) {
+        [this, refresh_cached_rules](context & c, std::span<value> args) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
             if (args.empty()) {
@@ -784,6 +800,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             }
             detach_rule(css_rule_store_, rule->children[static_cast<std::size_t>(asked)]);
             rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
+            refresh_cached_rules(c, rule->children);
             style_sheets_changed();
             return value::undefined();
         },

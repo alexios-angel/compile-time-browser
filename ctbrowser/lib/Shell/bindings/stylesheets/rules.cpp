@@ -629,12 +629,101 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 made.children.push_back(child);
             }
             made.verbatim.clear();
-        } else if (made.at_name == "layer" && open == std::string_view::npos) {
-            // `@layer a, b;` - the statement form, its names in `prelude`.
-            made.at_name = "layer-statement";
-            made.prelude = collapse_whitespace(made.prelude, html_whitespace);
+        } else if (made.at_name == "layer") {
+            // `@layer a, b.c;` names its layers; `@layer a { }` names one or
+            // none. A `<layer-name>` is identifiers joined by `.` with nothing
+            // between (CSS Cascade 5 §6.4.1); anything else is no rule at all.
+            std::vector<std::string> names;
+            for (const std::string_view part : split_on_commas(made.prelude)) {
+                const std::string_view name = trim(part, html_whitespace);
+                bool ok = !name.empty();
+                for (const std::string_view piece : split_top_level(name, ".")) {
+                    ok = ok && !piece.empty() &&
+                         piece.find_first_of(std::string{html_whitespace} + ".()[]{},;:\"'") ==
+                             std::string_view::npos;
+                }
+                if (!ok) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+                names.emplace_back(name);
+            }
+            const bool statement = open == std::string_view::npos;
+            if (statement ? names.empty() : names.size() > 1) {
+                css_rule_store_.pop_back();
+                error = "SyntaxError";
+                return no_index;
+            }
+            made.prelude.clear();
+            for (const std::string & name : names) {
+                if (!made.prelude.empty()) { made.prelude += ", "; }
+                made.prelude += name;
+            }
+            if (statement) {
+                made.at_name = "layer-statement";
+                made.verbatim = "@layer " + made.prelude + ";";
+            } else {
+                parse_block_contents(at, body, false);
+                made.verbatim.clear();
+            }
         } else if (at_rule_holds_rules(made.at_name)) {
-            if (made.at_name == "layer" || made.at_name == "scope" || made.at_name == "container") {
+            if (made.at_name == "scope") {
+                // `[(<scope-start>)]? [to (<scope-end>)]?`, CSS Cascade 6 §3:
+                // each a selector list that parses and names no
+                // pseudo-element, the end one relative to the root; anything
+                // else in the prelude is no rule. Serialised as written, with
+                // the whitespace collapsed and ` to ` spaced.
+                const std::string_view text = trim(made.prelude, html_whitespace);
+                std::size_t k = 0;
+                std::string start;
+                std::string end;
+                bool ok = true;
+                const auto group = [&](bool relative, std::string & into) {
+                    if (k >= text.size() || text[k] != '(') { return false; }
+                    const std::size_t close = scan_to(text, k + 1, ")");
+                    if (close >= text.size()) { return false; }
+                    into = collapse_whitespace(text.substr(k + 1, close - k - 1), html_whitespace);
+                    k = close + 1;
+                    bool bad = false;
+                    const std::vector<style::compiled_selector> placeholder;
+                    const style::css::nesting_context nesting{placeholder, true};
+                    const style::css::stylesheet parsed = style::css::parse_selector_text(
+                        into, *atoms_, bad, nullptr, relative ? &nesting : nullptr);
+                    if (bad || into.empty()) { return false; }
+                    for (const style::compiled_selector & s : parsed.selectors) {
+                        for (const style::compound & c : s.parts) {
+                            if (c.pseudo_element) { return false; }
+                        }
+                    }
+                    return true;
+                };
+                if (k < text.size() && text[k] == '(') { ok = group(false, start); }
+                while (ok && k < text.size() &&
+                       html_whitespace.find(text[k]) != std::string_view::npos) {
+                    ++k;
+                }
+                if (ok && k < text.size()) {
+                    ok = text.compare(k, 2, "to") == 0;
+                    k += 2;
+                    while (ok && k < text.size() &&
+                           html_whitespace.find(text[k]) != std::string_view::npos) {
+                        ++k;
+                    }
+                    ok = ok && group(true, end) && trim(text.substr(k), html_whitespace).empty();
+                }
+                if (!ok) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+                made.prelude.clear();
+                if (!start.empty()) { made.prelude = "(" + start + ")"; }
+                if (!end.empty()) {
+                    made.prelude += made.prelude.empty() ? "to (" : " to (";
+                    made.prelude += end + ")";
+                }
+            } else if (made.at_name == "container") {
                 made.prelude = collapse_whitespace(made.prelude, html_whitespace);
             }
             parse_block_contents(at, body, false);
