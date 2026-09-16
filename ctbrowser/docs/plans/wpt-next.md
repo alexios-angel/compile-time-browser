@@ -1,11 +1,51 @@
 # WPT — the next round, as briefs
 
-Written 2026-09-13 at the end of a session that was cut short with four
-agents still running. **Everything below is measured** (`docs/wpt.md`, the
-`7f9211d0` row; `docs/css-conformance.md` §2-wide; `docs/test262.md`, the
-`b346dc0b` row) except where it says what an agent's transcript reports.
+**Updated 2026-09-16, session 12.** Round one is MERGED (§1 below is history
+now: `c5682f32` T, `20f17da4` P, `247a7c53` W, `9c70aaa0` E on top of the
+audit's `09341902`; measured in `docs/test262.md` `9c70aaa0` and
+`docs/wpt.md` 2026-09-16). Round two is RUNNING as four agents in their own
+worktrees cut from `9c70aaa0` - A animations, G the value grammar, L layout,
+C the cascade - with the briefs of §3 (copies in
+`~/Downloads/claude/wt/wpt11-session/round2/`, with `COMMON.md`). Five more
+briefs are written and waiting for a free slot, in this order:
 
-## 1. Four agent branches to merge FIRST — all finished, all clean, all gated
+| brief | what | why now |
+|---|---|---|
+| `brief-B.md` | `BigInt64Array`/`BigUint64Array`/`Float16Array` (`element_kind` big_i64/big_u64/f16) | the single largest lever in `built-ins`: ~900 files die on `BigInt64Array is not defined` in the harness |
+| `brief-U.md` | the WHATWG URL parser behind `URL`, `URLSearchParams`, `location` (replacing the Boost.URL split in `shell/net/url.cpp`) | `url` 11/34, `URLSearchParams` undefined = 12 HARNESS_ERRORs in html/dom |
+| `brief-D.md` | `document.open/write/close`, html/syntax fixtures, the script processing model | html/syntax 22/268 (133 TIMEOUT), webappapis dynamic-markup-insertion |
+| `brief-F.md` | forms, Range's mutation algorithms, NodeIterator/TreeWalker | forms 58/647, ranges 16/72 (9,294 failing subtests), traversal 8/18 |
+| `brief-S.md` | shadow DOM, custom elements reactions, Selection, DOMParser | shadow-dom 74/345, custom-elements 37/193, selection 8/177 |
+
+**Open in the VM, not briefed** (each a day's work, with a Codex notice
+because the native backend follows the bytecode):
+
+- **TDZ for `let`/`const`/`class`**: the engine has none except parameter
+  defaults (`compile_ident` emits a static throw there). A textual read
+  before the declaration in the same scope can be a static throw the same
+  way; a read from a nested closure needs a hole value in the register and a
+  check on captured reads - a new op or a new value tag, which is an ABI
+  change for ctcompile. ~150 test262 files (`block-scope`, `using`'s TDZ
+  family, class heritage).
+- **RegExp `\p{...}` property escapes** (469 `property-escapes/generated`
+  files) and the `v` flag's `unicodeSets` (85): the first is a data job -
+  the UCD tables behind General_Category, Script, Script_Extensions and the
+  binary properties, generated into a header by a tool under `tools/gen/`.
+- **`Object.prototype.toString` of an arguments object** is `[object Array]`
+  (arguments objects are arrays here), `Function.prototype` is not callable,
+  `NaN`/`Infinity`/`undefined` are writable globals (the globals table has
+  no attributes) - each a handful of files.
+- `var x;` at a script's top level writes undefined over an existing value:
+  `statements/dispatch.cpp` says why it stays (Codex's
+  `bootstrap-host-prefix.py` prover reads the write as the declaration).
+
+**Open in the DOM/CSS half, not briefed:** `scrollTop`/`scrollLeft` and the
+scroll event on elements (css/cssom-view 44/239 + 8 dom/events files),
+`FontFace` (3 HARNESS_ERRORs), `showModal`, the `NodeList` index read that
+allocates (250 million of them in `NodeList-static-length-getter-tampered-*`,
+now collected but slow).
+
+## 1. (DONE 2026-09-16) The four round-one branches — merged as c5682f32, 20f17da4, 247a7c53, 9c70aaa0
 
 Round one ran four agents in their own worktrees, cut from `b346dc0b`. They
 FINISHED minutes after the session's handoff was written: every worktree is
