@@ -57,6 +57,15 @@ constexpr dom_interface interface_table[] = {
     // interface_prototype(), which is how another file reaches them.
     {"NodeList", "", ""},
     {"HTMLCollection", "", ""},
+    // The forms' three, HTML 4.10.20.1 and 2.6.2: `form.elements`,
+    // `select.options` and the list `elements.namedItem` answers for a
+    // radio group. Made by make_live_collection; the extra members are
+    // installed by install_control_methods.
+    {"HTMLFormControlsCollection", "HTMLCollection", ""},
+    {"HTMLOptionsCollection", "HTMLCollection", ""},
+    {"RadioNodeList", "NodeList", ""},
+    // `control.validity`, HTML 4.10.20.3 - an object of booleans, not a node.
+    {"ValidityState", "", ""},
     {"DOMTokenList", "", ""},
     {"NamedNodeMap", "", ""},
     {"DOMImplementation", "", ""},
