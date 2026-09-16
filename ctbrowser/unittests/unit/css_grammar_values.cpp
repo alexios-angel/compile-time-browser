@@ -350,6 +350,78 @@ void test_filters() {
              std::string{"drop-shadow(rgb(4, 5, 6) 1px 2px 0px)"});
 }
 
+// The module longhands that were `freeform` rows until they had a grammar.
+// Every line is an assertion of a css/<module>/parsing/*-{valid,invalid} file.
+void test_module_longhands() {
+    ok("continue", "discard", "discard");
+    bad("continue", "auto");
+    bad("continue", "normal collapse");
+    ok("text-spacing-trim", "trim-both", "trim-both");
+    bad("text-spacing-trim", "allow-end");
+    ok("scroll-target-group", "auto", "auto");
+    bad("scroll-target-group", "default");
+    bad("scroll-target-group", "auto, auto");
+    ok("image-orientation", "none", "none");
+    bad("image-orientation", "0deg flip");
+    ok("text-size-adjust", "200%", "200%");
+    bad("text-size-adjust", "-100%");
+    bad("text-size-adjust", "10px");
+    ok("-webkit-line-clamp", "6", "6");
+    bad("-webkit-line-clamp", "0");
+    bad("column-count", "0");
+    ok("column-count", "2", "2");
+    ok("ruby-position", "inter-character", "inter-character");
+    ok("ruby-position", "alternate over", "alternate over");
+    bad("ruby-position", "over under");
+    ok("text-autospace", "insert punctuation ideograph-alpha",
+       "ideograph-alpha punctuation insert");
+    bad("text-autospace", "normal insert");
+
+    ok("page", "xyzabc", "xyzabc");
+    bad("page", "not valid");
+    bad("page", "default");
+    ok("view-transition-class", "foo bar", "foo bar");
+    bad("view-transition-class", "foo none");
+    ok("view-transition-group", "nearest", "nearest");
+    bad("view-transition-group", "foo 12px");
+    ok("counter-reset", "chapter 2", "chapter 2");
+    bad("counter-reset", "default 0");
+    bad("will-change", "revert-rule, transform");
+
+    ok("hyphenate-character", "\"=\"", "\"=\"");
+    bad("hyphenate-character", "1400");
+    ok("block-ellipsis", "ellipsis", "ellipsis");
+    bad("block-ellipsis", "auto");
+    ok("font-language-override", "\"ENG \"", "\"ENG\"");
+    bad("font-language-override", "\"turkish\"");
+    bad("font-language-override", "\"\"");
+
+    ok("color-scheme", "only light dark", "light dark only");
+    bad("color-scheme", "light only dark");
+    bad("color-scheme", "only");
+    ok("scrollbar-gutter", "both-edges stable", "stable both-edges");
+    bad("scrollbar-gutter", "force both");
+    ok("text-combine-upright", "digits 3", "digits 3");
+    bad("text-combine-upright", "none all");
+
+    ok("offset-rotate", "0rad reverse", "reverse 0rad");
+    bad("offset-rotate", "auto reverse");
+    ok("offset-anchor", "auto", "auto");
+    bad("offset-anchor", "left 10% top");
+    ok("offset-position", "10px 20%", "10px 20%");
+    ok("background-blend-mode", "luminosity", "luminosity");
+    bad("background-blend-mode", "normal luminosity");
+
+    ok("animation-range-start", "exit 1%, cover 2%, contain 0%", "exit 1%, cover 2%, contain");
+    ok("animation-range-end", "cover 100%", "cover");
+    bad("animation-range-start", "50% contain");
+    bad("animation-range-end", "none");
+    ok("image-resolution", "snap from-image 0dppx", "snap from-image 0dppx");
+    bad("image-resolution", "3dpi snap from-image");
+    ok("clip", "rect(10px, -20px, auto, auto)", "rect(10px, -20px, auto, auto)");
+    bad("clip", "rect(10px 20px, 30px 40px)");
+}
+
 } // namespace
 
 int main() {
@@ -362,5 +434,6 @@ int main() {
     test_shadows();
     test_background_layers();
     test_filters();
+    test_module_longhands();
     REPORT("css_grammar_values");
 }
