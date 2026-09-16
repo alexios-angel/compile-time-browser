@@ -73,7 +73,7 @@ constexpr std::array<std::string_view, 6> performed_substitutions{
 // when the engine does. It costs a false NEGATIVE - a page asking about a
 // function the engine handles but this list has not caught up with - which makes
 // a test skip rather than lie.
-constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
+constexpr std::array<std::string_view, 31> value_functions{"cross-origin",
                                                            "integrity",
                                                            "referrer-policy",
                                                            "rgb",
@@ -102,6 +102,7 @@ constexpr std::array<std::string_view, 30> value_functions{"cross-origin",
                                                            "cubic-bezier",
                                                            "steps",
                                                            "counter",
+                                                           "rect",
                                                            "format"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit) {
