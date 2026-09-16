@@ -359,6 +359,9 @@ int main() {
             " return f();",
             "3");
     answers("function f() { const g = () => w; let w = 5; return g(); } return f();", "5");
+    answers("function f() { const {a, b = a + 1} = {a: 1}; let [c, d = c * 2] = [3]; return"
+            " a + b + c + d; } return f();",
+            "11");
     // ...and a template substitution, re-parsed from its own text, reads a
     // binding declared before the template without a false dead zone.
     answers("function f() { const map = new Map([['k', 1]]); return `${[...map.keys()][0]}:${map"

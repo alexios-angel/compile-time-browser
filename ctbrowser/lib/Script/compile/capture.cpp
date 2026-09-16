@@ -184,9 +184,12 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             for (const std::int32_t d : kids(at(stmt))) {
                 const std::uint32_t ready = lexical ? at(d).end : 0;
                 if (at(d).b >= 0) { // a shape: hoist every name inside it
+                    // ...with no static dead zone: `const {a, b = a} = o`
+                    // initialises `a` before `b`'s default reads it, which a
+                    // single offset cannot say.
                     std::vector<std::string> names;
                     pattern_names(at(d).b, names);
-                    for (std::string & name : names) { hoist(std::move(name), ready); }
+                    for (std::string & name : names) { hoist(std::move(name)); }
                 } else {
                     hoist(std::string{at(d).text}, ready);
                 }
