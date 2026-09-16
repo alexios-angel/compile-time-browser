@@ -14,10 +14,10 @@
 // stored: the assignment is a function of the two trees, so it is computed
 // when it is asked for and cannot go stale the way a cached list would.
 //
-// ponytail: `slot.assign()` and `slotAssignment: "manual"` accept their
-// arguments and assign nothing - a manual tree's slots are empty until the
-// imperative API is real - and there is no `slotchange` event, which needs the
-// microtask queue signals do. Neither changes what a named assignment answers.
+// ponytail: no `slotchange` event - it needs the microtask queue signals do -
+// and nothing here reaches the FLAT TREE that layout would render: a slot's
+// assigned nodes are an answer to a question, not a rearrangement of the
+// boxes. See the report.
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -70,7 +70,20 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
     if (!is_slot(txn, slot)) { return {}; }
     const node_id root = root_of_tree(txn, slot, false);
     const document::shadow_tree * tree = shadow_tree_of(root);
-    if (tree == nullptr || tree->manual_slots) { return {}; }
+    if (tree == nullptr) { return {}; }
+    // MANUAL: the page said which nodes, and nothing else qualifies. A node
+    // that has since left the host is dropped here rather than when it moved.
+    if (tree->manual_slots) {
+        const auto held = manual_slots_.find(slot.key());
+        if (held == manual_slots_.end()) { return {}; }
+        std::vector<node_id> out;
+        for (const node_id one : held->second) {
+            const node_kind kind = txn.kind(one).value_or(node_kind::comment);
+            if (kind != node_kind::element && kind != node_kind::text) { continue; }
+            if (txn.parent(one) == tree->host) { out.push_back(one); }
+        }
+        return out;
+    }
     const std::string name = slot_name_of(txn, *atoms_, slot, "name");
     // FIRST SLOT OF THAT NAME WINS - a second <slot name=x> is assigned
     // nothing at all, which is what `slots-fallback.html` reads.
@@ -249,10 +262,32 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 },
                 script::attr_builtin);
         }
-        // ponytail: `assign()` takes its nodes and drops them - see the note at
-        // the top. It is here so a page that calls it is not a TypeError.
+        // `slot.assign(...nodes)`: VARIADIC, not a sequence, and it REPLACES
+        // whatever was assigned before. It means nothing to a tree that
+        // assigns by name - assigned_nodes_of only reads the list for a manual
+        // one - and the nodes are remembered as given, because whether one
+        // still qualifies is a question about where it is NOW.
         set_method(
-            cx, *on, "assign", [](context &, std::span<value>) { return value::undefined(); },
+            cx, *on, "assign",
+            [this](context & c, std::span<value> args) {
+                const node_id slot = handle_of(c.current_this());
+                if (!slot) { return value::undefined(); }
+                std::vector<node_id> assigned;
+                for (const value & one : args) {
+                    if (const node_id id = handle_of(one)) { assigned.push_back(id); }
+                }
+                // A node may be assigned to ONE slot: taking it here takes it
+                // from wherever it was.
+                for (auto & [key, held] : manual_slots_) {
+                    if (key == slot.key()) { continue; }
+                    std::erase_if(held, [&](node_id one) {
+                        return std::ranges::find(assigned, one) != assigned.end();
+                    });
+                }
+                manual_slots_.insert_or_assign(slot.key(), std::move(assigned));
+                mutated();
+                return value::undefined();
+            },
             script::attr_builtin);
     }
 

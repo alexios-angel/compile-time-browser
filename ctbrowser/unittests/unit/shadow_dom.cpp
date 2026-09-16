@@ -85,6 +85,26 @@ void test_slots_assign_by_name() {
              "1,true;1,true;true;1;0,null;0;one,");
 }
 
+// `slotAssignment: "manual"`: nothing is assigned by name, and what the page
+// did assign stops counting as soon as the node leaves the host.
+void test_manual_slot_assignment() {
+    CHECK_EQ(said("<html><body><div id=h><span id=a></span><b id=b></b></div><script>"
+                  "var h = document.getElementById('h');"
+                  "var a = document.getElementById('a'), b = document.getElementById('b');"
+                  "var r = h.attachShadow({mode: 'open', slotAssignment: 'manual'});"
+                  "r.innerHTML = '<slot id=s></slot>';"
+                  "var s = r.getElementById('s');"
+                  "alert(s.assignedNodes().length);"
+                  "s.assign(a, b);"
+                  "alert(s.assignedNodes().length + ',' + (s.assignedNodes()[0] === a));"
+                  "h.removeChild(b);"
+                  "alert(s.assignedNodes().length);"
+                  "s.assign();"
+                  "alert(s.assignedNodes().length);"
+                  "</script></body></html>"),
+             "0;2,true;1;0");
+}
+
 void test_set_html_unsafe_attaches_a_declarative_root() {
     CHECK_EQ(said("<html><body><div id=w></div><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
@@ -119,6 +139,7 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
 int main() {
     test_the_init_dictionary_is_readable_back();
     test_slots_assign_by_name();
+    test_manual_slot_assignment();
     test_set_html_unsafe_attaches_a_declarative_root();
     REPORT("shadow_dom");
 }

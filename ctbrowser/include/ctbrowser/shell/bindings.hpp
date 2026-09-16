@@ -1761,6 +1761,13 @@ private:
     // same way a wrapper is.
     flat_map<std::uint64_t, std::string> namespaces_;
     flat_map<std::uint64_t, script::object_object *> wrappers_;
+    // `slot.assign(...nodes)`, keyed by the SLOT: a shadow tree whose
+    // slotAssignment is "manual" assigns nothing by name, so the only
+    // assignment it has is the one a page made. What is stored is what the
+    // page passed; whether a node still qualifies - a child of the host, an
+    // element or a text node - is decided when the list is read, so moving a
+    // node out of the host un-assigns it without a hook.
+    flat_map<std::uint64_t, std::vector<node_id>> manual_slots_;
     // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
     // the `nonce` attribute's text at the time - see reflection.cpp's
     // `cryptographic_nonce` for why the pair. Empty until a page assigns one.
