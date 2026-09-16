@@ -83,6 +83,11 @@ std::string dom_bindings::author_style_text() {
             !link_explicitly_enabled(sheet->owner)) {
             return;
         }
+        // The sheet's own media list - the `media` attribute, as the CSSOM
+        // holds it - gates every rule in it (CSSOM §5.1), as
+        // browser::collect_author_styles wraps the attribute.
+        const std::string sheet_media = serialize_media_query_list(sheet->media_queries);
+        if (!sheet_media.empty()) { out += "@media " + sheet_media + " {\n"; }
         for (const std::size_t rule : sheet->rules) {
             if (rule >= css_rule_store_.size()) { continue; }
             const css_rule_record & record = *css_rule_store_[rule];
@@ -118,6 +123,7 @@ std::string dom_bindings::author_style_text() {
             out += rule_css_text(record);
             out += '\n';
         }
+        if (!sheet_media.empty()) { out += "}\n"; }
     };
     for (const std::size_t at : css_document_sheets_) { emit(emit, at, 0); }
     // AND THE ADOPTED SHEETS, AFTER THEM AND IN THEIR OWN ORDER.
