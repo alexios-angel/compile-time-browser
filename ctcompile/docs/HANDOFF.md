@@ -6,6 +6,85 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original snapshot iteration and scalar loop completion, 2026-09-16 UTC
+
+Resumed clean **9b02a344**, its HANDOFF and the **19:22:54 AGENT-SYNC** journal:
+the unfinished thread was the original filtered `for...of`, with source regressions
+preserved at `/tmp/ctcompile-dom-iterator-tests/native_dom_dataset.loop-draft.py`.
+Both histories and unmerged branches were checked; September 7 WIP was already landed
+and older lens/JSON branches were explicitly superseded. Three agents split source
+normalization, regressions and escape review. Root recovered two service-limited
+agents' work; the source agent completed independent proof and next-boundary reviews.
+
+**a607afc6** preserves source loop condition/yield tuples and exact register
+correspondence through completion dispatch. An inactive slot may disappear only with
+a constant predicate, an unused destination and a same-type live state replacement;
+all source operations are accounted for. Original Array iterator and open/next/close
+identities are explicit host premises. Iterator preparation reuses the complete
+dataset/filter prefix proof on a private clone, then reproves the complete entry.
+Scalar Number/String/Boolean loop state is supported. Each indexed String read needs
+the exact immutable vector, a zero-start/unit-increment index and dominance by that
+vector's `index < length` true arm. Vector writes, loop DOM mutations, escaped helpers,
+unknown calls and insufficient budgets still refuse without published evidence.
+
+**d9112248** connects those proofs to native String inference and owning `vector.at`
+extraction. Original count, ordered-key and saved-snapshot loops execute unchanged;
+generated C++ uses ordinary vectors, strings and loops, with no Script/VM/GC symbols.
+The driver preserves all previous source witnesses and adds iterator/prototype,
+mutation, escape and missing-premise controls. Independent prepared-loop tests cover
+incorrect starts, updates, guards, vectors, branch placement, forwarded slots and every
+insufficient proof budget. No browser implementation or runtime semantics changed.
+
+Corrected focused build, **3/3 CTests (0.89s) / 2/2 lit (34.66s) PASS**. Dataset:
+**15 sources / 45 Node-VM source-double observations / eight GCC-Clang binaries /
+228 refusals**, HTML/SVG and lifetime sanitization. The first build's const MLIR
+handle API error was fixed; failed logs and hashes are retained. The escape review
+found no defect in the landed negative-Sub proof; no escape extension was started.
+Historical escape results remain **895 observed sites / 40 sound / zero violations /
+40 of 172 precision (23.3%)**, with all **1,123 snapshot rows unchanged**.
+
+Complete build and **305/305 CTests (2261.10s) / 256/256 lit (1977.19s) PASS**,
+wrapper **0**, with no skips. All **1,774 frozen input hashes** match locally and on
+the devbox before documentation edits. Fresh full Bootstrap remains **19/574 native /
+0 of 47 globals**, Data **7/7**, and Button **4/86** with **22 Node-VM lifecycle
+observations**. Both Bootstrap policy reports and Data/Button reports are byte-identical
+to the previous gate; no full-bundle admission gain is claimed. Original M retains
+**24 nine-register blocks / handler ^bb12**. The full WPT/test262 corpus measurement
+was not rerun. Stable formatting passes **879 C++ / 104 Python / 105 web**; the required
+pinned formatter reproduces the unchanged **nine files / 26 diagnostics** baseline.
+
+**Exact next, measured in all four provider/policy modes:** the original count loop
+now compiles **two native functions**, as does the filter. Full original
+`H.getDataAttributes` now refuses **DOM helper branch contains an unproved local
+identity**. Its filter closure is created inside the continuation of `if (!t)`, so
+branch-local callable scheduling (or proof of that exact valid-element guard) remains
+before full H admission. The isolated original `n.replace(/^bs/, "")` loop and the
+following `charAt(0).toLowerCase() + slice(1)` loop both refuse **DOM property read
+lacks a proved receiver and supported member**. The smallest independent String step
+is exact anchored ASCII-prefix removal through ordinary String operations, with
+original String/RegExp/factory identities and complete effect/use proof.
+
+The next-key witness measures six Node/VM cases: ASCII, empty, emoji and supplementary
+Deseret agree; `bsÉtage` gives Node `étage` versus VM `Étage`, and `bsİtem` gives Node
+`i` + U+0307 + `tem` versus VM `İtem`. Current VM charAt/slice use byte positions and
+lowercase is ASCII-only. The original expression selects one UTF-16 code unit in JS;
+lowercasing the first full Unicode code point would also mishandle the Deseret case.
+Record/coordinate this oracle boundary before claiming general key normalization;
+the filter alone does not prove an ASCII suffix. No runtime expectations changed.
+
+Live values can reuse public `ctbrowser::dataset_value`, but indexed-key provenance,
+same-element presence and mutation epochs must be proved; missing own properties
+have Undefined/prototype semantics. Loop-local M calls and dynamic result assignment
+remain separate proofs: collisions preserve assignment order and `__proto__` uses its
+inherited setter. Full Config/inheritance/defaults, retained callbacks and the
+application driver remain open. The read-only `next-key-review.md` and executable
+`next-probe.py` under the evidence directory describe these seams.
+
+Claude's **6edb7421** browser work is still separate from this gate: Annex B/catch
+bytecode, new globals and platform changes require fresh differential validation when
+integrated. Evidence, source hashes, generated C++, reviews and fresh boundary probes:
+`/tmp/ctcompile-iteration-resume/`. The previous sections are historical checkpoints.
+
 ## Owning snapshot length and negative Number strides, 2026-09-16 UTC
 
 Continued the clean **26ba2f8e** handoff and its exact original dataset iteration

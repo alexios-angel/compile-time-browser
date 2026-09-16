@@ -1,6 +1,66 @@
 # What native Bootstrap needs next
 
-## Current boundary: snapshot length and original iteration, 2026-09-16
+## Current boundary: original snapshot iteration, 2026-09-16
+
+**a607afc6 / d9112248** compile the original filtered dataset `for...of` for count,
+ordered Strings and saved snapshots. Explicit original Array iterator/open/next/close
+premises permit private specialization; the existing dataset/filter proof validates
+the snapshot prefix, and the complete entry is reproved. Loop completion preserves
+exact terminal tuples and scalar state. Each String extraction requires an immutable
+vector, zero/unit index and its exact dominating length guard. C++ uses owning
+vectors/strings and `vector.at`; no Script/VM/GC or browser implementation was added.
+Loop DOM writes, vector mutation, helper escape, wrong guards/forwarding and incomplete
+proofs refuse. Original source loops were not replaced with `.length` observations.
+
+Focused **3/3 CTests (0.89s) / 2/2 lit (34.66s) PASS**; dataset **15 sources / 45
+Node-VM source-double observations / eight GCC-Clang binaries / 228 refusals**, both
+providers/policies/layouts, HTML/SVG and lifetime sanitizer. Escape remains **895 sites /
+40 sound / zero violations / 40 of 172 precision (23.3%)**; all **1,123 historical rows**
+match. The independent negative-Sub review found no defect; no new escape precision
+gain is claimed.
+
+Complete build and **305/305 CTests (2261.10s) / 256/256 lit (1977.19s) PASS**,
+wrapper **0**, with no skips. All **1,774 frozen input hashes** match locally and on
+the devbox before documentation edits. Fresh full Bootstrap remains **19/574 native /
+0 of 47 globals**, Data **7/7**, and Button **4/86** with **22 Node-VM lifecycle
+observations**. Both Bootstrap policy reports and Data/Button reports are byte-identical
+to the previous gate; no full-bundle admission gain is claimed. Original M retains
+**24 nine-register blocks / handler ^bb12**. The full WPT/test262 corpus measurement
+was not rerun. Stable formatting passes **879 C++ / 104 Python / 105 web**; the required
+pinned formatter reproduces the unchanged **nine files / 26 diagnostics** baseline.
+
+**Exact next, measured in all four provider/policy modes:** the original count loop
+now compiles **two native functions**, as does the filter. Full original
+`H.getDataAttributes` now refuses **DOM helper branch contains an unproved local
+identity**. Its filter closure is created inside the continuation of `if (!t)`, so
+branch-local callable scheduling (or proof of that exact valid-element guard) remains
+before full H admission. The isolated original `n.replace(/^bs/, "")` loop and the
+following `charAt(0).toLowerCase() + slice(1)` loop both refuse **DOM property read
+lacks a proved receiver and supported member**. The smallest independent String step
+is exact anchored ASCII-prefix removal through ordinary String operations, with
+original String/RegExp/factory identities and complete effect/use proof.
+
+The next-key witness measures six Node/VM cases: ASCII, empty, emoji and supplementary
+Deseret agree; `bsÉtage` gives Node `étage` versus VM `Étage`, and `bsİtem` gives Node
+`i` + U+0307 + `tem` versus VM `İtem`. Current VM charAt/slice use byte positions and
+lowercase is ASCII-only. The original expression selects one UTF-16 code unit in JS;
+lowercasing the first full Unicode code point would also mishandle the Deseret case.
+Record/coordinate this oracle boundary before claiming general key normalization;
+the filter alone does not prove an ASCII suffix. No runtime expectations changed.
+
+Live values can reuse public `ctbrowser::dataset_value`, but indexed-key provenance,
+same-element presence and mutation epochs must be proved; missing own properties
+have Undefined/prototype semantics. Loop-local M calls and dynamic result assignment
+remain separate proofs: collisions preserve assignment order and `__proto__` uses its
+inherited setter. Full Config/inheritance/defaults, retained callbacks and the
+application driver remain open. The read-only `next-key-review.md` and executable
+`next-probe.py` under the evidence directory describe these seams.
+
+Claude's **6edb7421** runtime changes remain outside this gate and need fresh oracle
+validation when integrated. Evidence: `/tmp/ctcompile-iteration-resume/`; details in
+HANDOFF. Earlier entries below are historical.
+
+## Previous boundary: snapshot length and original iteration, 2026-09-16
 
 **0f3fbe91** proves exact `.length` reads on owning dataset-key and filtered String
 snapshots, reusing existing native `vec_length`. The filter still requires its original

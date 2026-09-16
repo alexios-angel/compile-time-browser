@@ -68,7 +68,7 @@ The complete source proof requires the original Object/keys identity and receive
 A saved dataset alias is accepted only when no DOM mutation intervenes before
 its enumeration. Returning a saved key vector after a mutation and rereading
 `element.dataset` for a fresh snapshot are supported. Dataset/value writes,
-vector mutation or identity, dynamic value reads and loops remain refused. Missing
+vector mutation or identity and dynamic value reads remain refused. Missing
 dataset values need an Undefined/prototype proof separate from getAttribute's
 String-or-null result.
 
@@ -79,8 +79,10 @@ Object.keys(element.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bs
 ```
 
 Its manifest supplies `"initial_intrinsics": ["Object", "Array", "String"]`.
-Array fixes the original filter method and default Array species; String fixes the
-original startsWith method. The complete source proof requires a capture-free,
+Array fixes the original filter method and default constructor/species chain, as
+well as `Array.prototype[Symbol.iterator]`/`values` and its iterator prototype chain
+without custom next/return hooks. String fixes the original startsWith method.
+The complete source proof requires a capture-free,
 confined callback with one String parameter and a Boolean result. Implicit arguments,
 callback identity, side effects and prefixes not proved as ASCII String constants
 remain refused.
@@ -92,8 +94,34 @@ forged proof attributes and every insufficient work budget withdraw all evidence
 An exact `.length` read on either owning snapshot returns a JavaScript Number
 through the existing `ctnative::vec_length` helper. The complete proof identifies
 each read and its owning String-vector receiver, and rejects vector writes.
-Indexed reads and the original `for...of` loop still require their own bounds,
-iterator-identity and loop-state proofs.
+Original `for...of` over either owning snapshot is supported for one top-level
+source iterator with scalar Number/String/Boolean loop state. For the Bootstrap
+filter, its manifest supplies:
+
+```json
+{
+  "initial_intrinsics": [
+    "Object", "Array", "String",
+    "__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"
+  ]
+}
+```
+
+The three helper identities and original Array iteration permit private specialization
+of the dense snapshot path. Preparation reuses the complete dataset/filter proof for
+the original prefix, then reproves the complete entry. Source completion dispatch
+preserves exact loop condition/yield tuples and register correspondence. A poison slot
+can be removed only for a constant-selected, unused destination with a same-type live
+state replacement; every source operation is accounted for.
+
+Each indexed read requires an index starting at Number zero, a Number-one increment
+on every continuing backedge, and dominance by the true arm of `index < length` for
+that exact immutable vector. The emitted `vector.at` copies an owning String. Original
+count, ordered-key and saved-snapshot loops retain their source order and lifetime.
+Wrong starts/updates/guards/forwarded slots, vector mutation, loop DOM mutation,
+escaped helper records, unknown calls and insufficient budgets refuse. Nested or
+multiple source iterators, dynamic key normalization and live dataset values remain
+outside this proof.
 
 The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
 Proxy. Chromium independently confirms attribute order and live saved-dataset
@@ -157,7 +185,8 @@ emission; generated C++ still calls the public DOM library directly.
 Only a checked inert declaration or the proved initialization above may be omitted.
 Skipped source, additional initialization effects, calls to the entry from JavaScript,
 mutable entry bindings, borrowed returns, handle retention, prototype or method writes,
-unknown receivers, loops and unstructured control flow refuse. Current operations are
+unknown receivers, unproved loops and unstructured control flow refuse.
+Current operations are
 strict element identity, Boolean/Number negation, and Number/Boolean/String/undefined
 constants and returns,
 `classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
@@ -188,8 +217,9 @@ Strict equality/inequality compares these copied results with null, definite Str
 or another optional String. `!` and `!!` preserve the difference between presence
 and truthiness: both a missing attribute and an empty attribute are false. These
 Boolean observations can drive existing DOM force arguments. Concatenation accepts
-two definite Strings and uses ordinary `std::string` addition; optional Strings
-are not implicitly coerced into names or values. Loose equality between two independently proved Strings is supported;
+two definite Strings and returns an owning `std::string` with public Core
+surrogate normalization; optional Strings are not implicitly coerced into names or
+values. Loose equality between two independently proved Strings is supported;
 coercive loose equality, global `Boolean` calls, implicit numeric conversion and
 property storage still refuse. No generic
 nullable carrier is emitted.
@@ -370,9 +400,10 @@ each branch continuation and selects only constant completion tags. Every origin
 operation must be visited, and observing an inactive poison value refuses. Source
 effects and frame exits remain in their original paths; the unchanged proof checks
 the resulting branches. Three/four-return helpers and captured String snapshots
-compile; unknown selectors, unvisited arms, invalid frame exits, loops and
-general exceptions remain refused. The bounded URI/JSON cases above have their own
-complete source and ownership proofs.
+compile; unknown selectors, unvisited arms, invalid frame exits and
+general exceptions remain refused. Original snapshot loops use the separate exact
+terminal-tuple and scalar-state proof above. The bounded URI/JSON cases above have
+their own complete source and ownership proofs.
 
 The provider starts with the standard `undefined` and reserved `__ctbrowser_regexp`
 bindings and initially unmodified
@@ -406,9 +437,11 @@ when both operands are proved Strings. Original Bootstrap H `setDataAttribute` a
 `removeDataAttribute` compose with captured F, including a factory-exported entry
 table. Nullable values, objects, Numbers and Booleans do not gain implicit template
 conversion. H's `getDataAttribute` composes with original M for a proved constant
-no-match key such as `"config"`. Matching/live keys and iteration in
-`getDataAttributes` remain unproved; dataset key snapshots and the original filter
-have the separate complete proof above.
+no-match key such as `"config"`. Matching/live keys and the complete
+`getDataAttributes` remain unproved. Dataset key snapshots, the original filter and
+its count/ordered-key/saved-snapshot loops have the separate complete proof above;
+key normalization, live dataset values, M composition and dynamic result writes
+remain next boundaries.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private
