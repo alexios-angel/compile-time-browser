@@ -6,6 +6,66 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded Config spreads and recovered escape work, 2026-09-16 UTC
+
+Resumed the interrupted 09:13/09:15 Config-spread and negated-guard drafts,
+found as six dirty files plus `negated-guard.test` and the abandoned 09:15:56
+AGENT-SYNC loop. Both histories/unmerged branches were checked; September 7 WIP
+was already an ancestor. Three agents recovered regressions, checked proof
+soundness and surveyed the next independent boundaries. No browser/VM source changed.
+
+**fcd4a0c2** compiles original Config's guarded JSON spread, including two ordered
+spreads. Preparation preserves fresh data objects and immutable branch cell reads;
+writer locality is checked before source-order comparisons. The complete DOM proof
+requires object-tagged JSON (null, arrays or objects), fresh direct targets and all
+writes before any copying observation. Members, identity, captures and later/alias
+mutation remain refused. Output owns `ctbrowser::json_value`, explicitly constructs
+empty objects, and uses standard C++ for own-key order and overwrites. Numeric keys,
+duplicate keys, `__proto__`, array indices, fallbacks and post-document lifetime pass.
+Core JSON parser behavior, including nested object storage order, is unchanged.
+
+**344b514d** proves equivalent `!(index >= length)` / `!(length <= index)` array
+guards only for the existing bounded Number induction. Source order, retained
+children, immutable length and complete-budget requirements survive. The new oracle
+observes **15/15 sites, 6/8 precision, zero violations**. Array suites cover
+**567 dense / 118 induction / 100 structured rows**, with **21,925 / 9,090 / 5,843**
+conservative budget cutoffs. The source's negations remain in imported IR.
+
+Focused **4/4 proof/runtime CTests (3.91s) / 4/4 lit (80.02s) PASS**. JSON covers
+**18 sources / 486 Node-VM observations / eight GCC-Clang binaries / 260 refusals**,
+both providers/policies/layouts and lifetime sanitization. Complete build and
+**288/288 CTests (2305.41s) / 252/252 lit (2029.51s) PASS**,
+wrapper **0**; all **1,721 frozen input hashes** match local and devbox sources
+before docs. Stable formatter 23.1.1 passes **831 C++ / 103 Python / 105 web**;
+required pinned formatter retains its unchanged **nine-file / 26-diagnostic** baseline.
+Evidence: `/tmp/ctcompile-spread-resume/` (`measured.json`, full/focused logs and exits,
+manifests, generated C++, source probes). Initial mixed-upload and emitter/preparation
+failures are archived and superseded by the final frozen gate.
+
+Full Bootstrap remains **19/574 native / 0 of 43 globals** without skips/pruning;
+DOM Data **7/7**, Button **4/86** with 22 Node observations and its known VM
+inheritance failure. These reports and all **1,123 historical escape rows** are
+byte-identical to the previous integrated gate; precision remains **40/172**, zero
+violations. No full-bundle gain is claimed. H, Config typeof and Config spread each
+compile in all four modes; original M retains **24 nine-register blocks / handler
+^bb12** before preparation.
+
+**Exact next native boundary:** original `H.getDataAttributes(e)` refuses in all
+four provider/policy combinations at `DOM helper completion requires acyclic
+structured source`. Its loop, `Object.keys(t.dataset).filter(...)`, dynamic key
+normalization and per-key `M(t.dataset[n])` reads remain intact. Public
+`dom/dataset.hpp` already supplies owning `dataset_entries` and `dataset_value`;
+no browser extraction is needed for those reads. Prove the original iteration and
+Object identity, namespace eligibility, key snapshot versus live reads, missing-key
+semantics and dynamic writes. Its `e["__proto__"] = value` assignment has setter
+semantics, unlike spread's own-data definition. Full Config additionally needs
+`r(e)`, inherited defaults/initialization, retained callbacks and the driver.
+Matching/live F keys remain refused. The independent plan25 continuation is bounded
+Number `i += 1` induction: the shared latch recognizer still requires
+`BinaryStaticOp`, although dynamic Add already uses `boundedNumberSum`.
+
+Earlier entries below are historical checkpoints.
+
 ## Config JSON tags and reversed array guards, 2026-09-16 UTC
 
 Continued the exact Config `typeof` boundary recorded in **cb002682**, HANDOFF,

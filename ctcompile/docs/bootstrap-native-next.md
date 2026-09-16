@@ -1,6 +1,38 @@
 # What native Bootstrap needs next
 
-## Current boundary, 2026-09-16
+## Current boundary: guarded Config spread, 2026-09-16
+
+**fcd4a0c2 / 344b514d: guarded Config spreads and negated finite guards,
+2026-09-16 UTC.** Recovered the abandoned 09:15:56 drafts before new work.
+Original one/two-spread Config slices now own their JSON results, preserving
+own-key order, overwrites and source failure snapshots. Complete fresh-target and
+no-later-mutation proofs gate copying; no generic JSON member/capture authority.
+Negated inclusive array guards preserve bounded Number, retention and budget proof.
+Focused **4/4 CTests and 4/4 lit**; JSON covers **18 sources / 486 observations /
+eight binaries / 260 refusals**, with lifetime sanitization. New escape oracle:
+**15/15 sites, 6/8 precision, zero violations**; array rows **567/118/100**.
+Full **288/288 CTests (2305.41s), 252/252 lit
+(2029.51s), wrapper 0**, 1,721 frozen hashes verified. Stable formatter
+passes; pinned 26-diagnostic baseline unchanged. Bootstrap **19/574, 0/43 globals**;
+Data **7/7**; Button **4/86**; all **1,123 historical escape rows** unchanged.
+No browser/VM changes or full-bundle gain. Evidence `/tmp/ctcompile-spread-resume/`; details in HANDOFF.
+
+**Exact next native boundary:** original `H.getDataAttributes(e)` refuses in all
+four provider/policy combinations at `DOM helper completion requires acyclic
+structured source`. Its loop, `Object.keys(t.dataset).filter(...)`, dynamic key
+normalization and per-key `M(t.dataset[n])` reads remain intact. Public
+`dom/dataset.hpp` already supplies owning `dataset_entries` and `dataset_value`;
+no browser extraction is needed for those reads. Prove the original iteration and
+Object identity, namespace eligibility, key snapshot versus live reads, missing-key
+semantics and dynamic writes. Its `e["__proto__"] = value` assignment has setter
+semantics, unlike spread's own-data definition. Full Config additionally needs
+`r(e)`, inherited defaults/initialization, retained callbacks and the driver.
+Matching/live F keys remain refused. The independent plan25 continuation is bounded
+Number `i += 1` induction: the shared latch recognizer still requires
+`BinaryStaticOp`, although dynamic Add already uses `boundedNumberSum`.
+
+
+## Previous boundary, 2026-09-16
 
 **c127ba96** compiles Config's original
 `"object" == typeof H.getDataAttribute(element, "config")` and the String tag.

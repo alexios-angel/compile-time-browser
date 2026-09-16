@@ -269,8 +269,29 @@ M retains its Boolean/Number/null prefix, saved nullable guard, original lookup
 order and failure snapshots. H reuses the existing proof for F's original
 regexp/callback replacement when the constant key has no match, then calls the
 public DOM attribute core. Matching or live F keys remain refused. Config's
-`"object" == typeof parsed` observation compiles; the following branch-local empty
-object and JSON object spread remain outside the current proof.
+`"object" == typeof parsed` observation and the original following spread compile:
+
+```javascript
+const i = H.getDataAttribute(element, "config");
+return {..."object" == typeof i ? i : {}};
+```
+
+The object tag proves only null/array/object alternatives. Null contributes no
+properties; arrays contribute indices without `length`; objects preserve their
+own data keys. Fresh `{}` constructs the explicit object alternative of
+`ctbrowser::json_value`. Ordered spreads overwrite values without moving ordinary
+keys, sort array-index keys first, and retain `__proto__` as an own data key.
+This is distinct from assignment through its inherited setter.
+
+Every mutable target must be a direct fresh local allocation, with all writes in
+its source block before any branch yield, source spread or return can copy it.
+No descendant property access, identity observation, capture or later mutation is
+admitted. These complete-use restrictions make the owning value result equivalent
+to JavaScript's shallow spread without introducing a shared object graph. Parsed
+nested trees retain the public Core representation. Immutable saved cells may be
+read inside structured branches only when their initialization precedes the whole
+branch; conditional and late assignments refuse. Generic JSON/String spreads,
+parsed/branch-result targets and dataset/config dynamic writes remain unsupported.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
@@ -286,8 +307,9 @@ budget, and nesting reaching 64 branches refuses. **755af20b** applies complete
 arm/operand/yield proof to local helpers before expansion. Simple early returns
 that lift to `scf.if` are accepted when both arms have matching frame state;
 checked frame bookkeeping disappears while cloning, and branch-local immutable
-capture loads bind at each invocation. Callable/cell/object identities and local
-helper calls inside branch arms remain refused. **83da7d42** additionally proves
+capture loads bind at each invocation. Callable/cell identities and local helper
+calls inside branch arms remain refused; fresh data objects have the separate
+complete JSON-spread proof above. **83da7d42** additionally proves
 acyclic completion dispatch: a bounded private rewrite carries exact yields into
 each branch continuation and selects only constant completion tags. Every original
 operation must be visited, and observing an inactive poison value refuses. Source
