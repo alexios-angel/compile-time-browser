@@ -2245,10 +2245,12 @@ function makeElement(value) {
                     optional_read=name != "helper_branch" and name not in uri.CASES,
                     uri_call=name in uri.CASES or name in nullable_uri.CASES,
                 )
-                # Hoist includes before isolating each complete translation unit;
-                # generated local helper names need not be globally unique.
-                headers.update(re.findall(r"^#include[^\n]*", cpp, re.M))
-                body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
+                # Hoist includes AND the defines in front of the runtime include
+                # (CTNATIVE_DOM, CTNATIVE_ORDERED_MAPS) before isolating each
+                # unit; sorted(), `#define` precedes `#include`. Generated local
+                # helper names need not be globally unique.
+                headers.update(re.findall(r"^#(?:include|define)[^\n]*", cpp, re.M))
+                body = re.sub(r"^#(?:include|define)[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 entry = namespace + "::" + symbol
                 if name in nullable_uri.CASES:
