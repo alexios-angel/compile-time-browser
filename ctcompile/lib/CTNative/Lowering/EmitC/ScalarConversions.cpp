@@ -25,6 +25,11 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     if (target == ec::OpaqueType::get(context, kDOMOptionalStringType) &&
         value.getType() == carrierType(context, carrier::string)) {
         helper = kDOMOptionalStringType;
+    } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
+               value.getType() == carrierType(context, carrier::string)) {
+        // A String arm of a json_value join owns its bytes in the tree.
+        needsDOMJSON = true;
+        helper = kDOMJSONType;
     } else if (isBooleanStringCarrier(target)) {
         needsBooleanString = true;
         helper = kBooleanStringType;
@@ -112,6 +117,9 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                 if (domStringResults.contains(ret.getValue())) {
                     domResult = carrierType(context, carrier::string);
                     needsString = true;
+                } else if (carrierOf(typeOf(ret.getValue())) == carrier::json) {
+                    domResult = carrierType(context, carrier::json);
+                    needsDOMJSON = true;
                 }
             });
         }
@@ -164,7 +172,8 @@ void lowering::convertBoundaries(ctjs::FuncOp fn) {
             for (unsigned i = 3; i < op->getNumOperands(); ++i) {
                 convert(i, loop->getResult(i - 3).getType());
             }
-        } else if (llvm::isa<mlir::scf::YieldOp>(op)) {
+        } else if (llvm::isa<mlir::scf::YieldOp, ctjs::InvokeYieldOp>(op)) {
+            // A proved invoke's String failure arm widens into its json result.
             mlir::Operation * parent = op->getParentOp();
             for (unsigned i = 0; i < op->getNumOperands(); ++i) {
                 auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);

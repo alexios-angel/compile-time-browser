@@ -51,7 +51,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (auto call = domCalls.find(v.getDefiningOp());
             call != domCalls.end() && !call->second.returnsBoolean() &&
             !call->second.returnsElement() && !call->second.returnsNumber() &&
-            !call->second.returnsString()) {
+            !call->second.returnsString() && !call->second.returnsJSON()) {
             // The proof requires this result to be unused, and the effect is
             // emitted as a void call. This placeholder never reaches C++.
             v.setType(mlir::Float64Type::get(context));
@@ -116,6 +116,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         needsString |= isStringCarrier(c);
+        needsDOMJSON |= c == carrier::json;
         // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
         // scalars carrierType() can spell: an owning vector in this frame,
         // or an SCF-carried address whose owners outlive every use.

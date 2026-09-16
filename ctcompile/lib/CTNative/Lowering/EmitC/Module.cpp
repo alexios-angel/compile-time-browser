@@ -190,6 +190,11 @@ void lowering::declareGlobals() {
                 ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
             }
         }
+        if (needsDOMJSON) {
+            for (llvm::StringRef header : {"ctbrowser/core/json.hpp", "expected", "utility"}) {
+                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+            }
+        }
         if (needsDOMNumber) {
             ec::IncludeOp::create(b, module.getLoc(),
                                   b.getStringAttr("ctbrowser/core/number_format.hpp"),

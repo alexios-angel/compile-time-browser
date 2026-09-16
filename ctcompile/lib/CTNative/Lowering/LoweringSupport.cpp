@@ -45,6 +45,7 @@ carrier carrierOf(mlir::Type type) {
     if (type == nullptr) { return carrier::none; }
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
+    if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
@@ -257,6 +258,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // that is worth far more than a double that happens to verify.
     switch (which) {
     case carrier::domElement: return ec::OpaqueType::get(c, kDOMElementType);
+    case carrier::json: return ec::OpaqueType::get(c, kDOMJSONType);
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
     case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
