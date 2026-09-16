@@ -460,6 +460,9 @@ public:
     // non-element branch would clear the level a text node happens to sit in and
     // lose every sibling before it.
     void enter_level(const read_txn & txn, node_id parent, std::size_t depth);
+    // A parentless element at depth 0 - the document element - is one of one.
+    void root_facts(const read_txn & txn, node_id node, std::size_t depth,
+                    element_facts & facts) const;
 
     [[nodiscard]] static constexpr std::uint64_t key_of(node_id id) noexcept { return id.key(); }
 

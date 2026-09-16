@@ -527,6 +527,17 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     return found;
 }
 
+// THE DOCUMENT ELEMENT HAS NO SIBLINGS. Depth 0 is entered from the root
+// itself - its level totals are its CHILDREN's - so the counts the traversal
+// wrote for `<html>` were its children's: `:only-child` and `:last-of-type`
+// were false of it (child-indexed-pseudo-class). A parentless element is one
+// of one, as cursor_to already has it.
+void engine::root_facts(const read_txn & txn, node_id node, std::size_t depth,
+                        element_facts & facts) const {
+    if (depth != 0 || txn.parent(node)) { return; }
+    facts.sibling_index = facts.sibling_count = facts.type_index = facts.type_count = 1;
+}
+
 element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     element_facts f;
     f.tag = txn.tag(id).value_or(atom{});
@@ -647,6 +658,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
         my_facts.sibling_count = totals_[depth].elements;
         my_facts.type_index = totals_[depth].next_for(my_facts.tag);
         my_facts.type_count = totals_[depth].total_for(my_facts.tag);
+        root_facts(txn, node, depth, my_facts);
         levels_[depth].push_back(visited_element{node, std::move(my_facts)});
         path_[depth] = levels_[depth].size() - 1;
 
@@ -1919,6 +1931,7 @@ void engine::resolve_subtree(const read_txn & txn, node_id node, ancestor_filter
     my_facts.sibling_count = totals_[depth].elements;
     my_facts.type_index = totals_[depth].next_for(my_facts.tag);
     my_facts.type_count = totals_[depth].total_for(my_facts.tag);
+    root_facts(txn, node, depth, my_facts);
     levels_[depth].push_back(visited_element{node, std::move(my_facts)});
     path_[depth] = levels_[depth].size() - 1;
     const element_facts & self = levels_[depth].back().facts;

@@ -224,6 +224,7 @@ void append_compound(std::string & out, const style::compound & part, const atom
         if (attribute.op != style::attr_op::present) {
             out += quoted_string(attribute.value);
             if (attribute.case_insensitive) { out += " i"; }
+            if (attribute.case_sensitive_flag) { out += " s"; }
         }
         out += ']';
     }

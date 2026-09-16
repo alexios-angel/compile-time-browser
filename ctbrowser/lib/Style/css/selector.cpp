@@ -252,8 +252,10 @@ constexpr std::string_view functional_pseudo_elements_named[] = {
         std::size_t digits = 0;
         std::int64_t value = 0;
         while (digits < rest.size() && rest[digits] >= '0' && rest[digits] <= '9') {
-            value = value * 10 + (rest[digits] - '0');
-            if (value > INT32_MAX) { return false; }
+            // CLAMPED, not refused: a coefficient past the integer range is
+            // INT_MAX (nth-child-large-anplusb-clamp), as the CSSOM reads it.
+            if (value <= INT32_MAX) { value = value * 10 + (rest[digits] - '0'); }
+            if (value > INT32_MAX) { value = INT32_MAX; }
             ++digits;
         }
         rest.remove_prefix(digits);
@@ -389,7 +391,9 @@ constexpr std::string_view functional_pseudo_elements_named[] = {
         const std::string_view flag = sheet.text_of(tok(inner.front()));
         if (ascii_iequals(flag, "i")) {
             out.case_insensitive = true;
-        } else if (!ascii_iequals(flag, "s")) {
+        } else if (ascii_iequals(flag, "s")) {
+            out.case_sensitive_flag = true;
+        } else {
             return false;
         }
     }

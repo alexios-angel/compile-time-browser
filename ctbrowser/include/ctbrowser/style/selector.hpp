@@ -105,6 +105,9 @@ struct attribute_match {
     // Level 4 and Bootstrap uses neither, but they are two lines here and a
     // silent wrong answer without them.
     bool case_insensitive = false;
+    // ...and an explicit `s`, which changes nothing in matching and is kept
+    // for selectorText (attribute-case/cssom.html).
+    bool case_sensitive_flag = false;
     // `[*|title]`, `[|title]`, `[xlink|href]`. Unset is the plain `[title]`, which
     // the matcher answers by qualified name; the other three are answered by
     // LOCAL name and the attribute's own namespace, and a named prefix carries
