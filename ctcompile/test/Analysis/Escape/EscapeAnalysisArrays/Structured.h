@@ -487,6 +487,29 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(dynamic, "binary add %i, %one", "binary add %i, %p"));
     reject("structured dynamic Add still excludes zero strides",
            replace(dynamic, "binary add %i, %one", "binary add %i, %zero"));
+    const auto commuted = replace(dynamic, "binary add %i, %one", "binary add %one, %i");
+    rows.push_back({.what = "structured commuted Add preserves reordered induction transport",
+                    .body = commuted,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured commuted Add discharges unreturned children",
+                    .body = replace(commuted, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    const auto commutedStride = replace(carriedStride, "add %i, %d", "add %d, %i");
+    rows.push_back({.what = "structured commuted static Add preserves a held positive stride",
+                    .body = commutedStride,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    reject("a commuted structured stride cannot change on its backedge",
+           replace(commutedStride, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("commuted structured Add cannot concatenate its initial String index",
+           replace(commuted, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
+    reject("commuted structured Add still requires its exact induction formal",
+           replace(commuted, "add %one, %i", "add %one, %last"));
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
     reject("a structured array backedge must preserve its certified formal",

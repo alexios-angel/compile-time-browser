@@ -565,6 +565,46 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("a dynamic subtract latch cannot borrow the Add proof",
            replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
+    for (const std::string opcode : {"binary_static", "binary"}) {
+        const auto commuted =
+            replace(savedChild, "binary_static add %i, %one", opcode + " add %one, %i");
+        run({.what = "commuted Number Add retains the exact returned child",
+             .body = commuted,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "commuted Number Add discharges only unreturned children",
+             .body = replace(commuted, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        run({.what = "commuted Number Add preserves a zero-trip saved child",
+             .body = replace(commuted, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+             .arrays = "a:[one,x]",
+             .exit = "x -> {x}"});
+        const auto carried =
+            replace(carriedStride, "binary_static add %i, %d", opcode + " add %d, %i");
+        run({.what = "commuted held strides preserve exact backedge transport and overshoot",
+             .body = carried,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[2]=three",
+             .exit = "added -> {}"});
+        reject("a commuted carried stride must remain unchanged",
+               replace(carried, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        reject("two induction operands cannot supply an invariant positive stride",
+               replace(commuted, "add %one, %i", "add %i, %i"));
+        reject("commuted Add still requires the original induction operand",
+               replace(commuted, "add %one, %i", "add %one, %s"));
+        reject("commuted Add cannot borrow a String stride",
+               replace(commuted, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"));
+        reject("commuted Add cannot borrow a BigInt stride",
+               replace(commuted, "#ctjs.number<4607182418800017408>", "#ctjs.bigint<\"1\">"));
+        reject("commuted Add still bounds its final update",
+               replace(replace(maxStride, "binary_static add %i, %max", opcode + " add %max, %i"),
+                       "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    }
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",

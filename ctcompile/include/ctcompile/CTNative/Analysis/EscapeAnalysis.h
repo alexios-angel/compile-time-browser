@@ -551,7 +551,7 @@ struct ArrayContentsEvidence {
 /// path snapshots are charged to the same work budget. Other unknown forwarded
 /// values refuse. A certified read-only CFG or scf.while header/body loop may replay with proved
 /// nonnegative integral Number initialization and proved positive integral Number Add steps
-/// (dynamic or static, with the same bounded operand proof) under a
+/// (dynamic or static, with either operand order and the same bounded Number proof) under a
 /// strict current own-array length guard (`index < length`, `length > index`,
 /// `!(index >= length)` or `!(length <= index)`), within the same
 /// work budget. The start and exact final
