@@ -354,6 +354,12 @@ void test_filters() {
 // Every line is an assertion of a css/<module>/parsing/*-{valid,invalid} file.
 void test_module_longhands() {
     ok("continue", "discard", "discard");
+    ok("word-break", "auto-phrase", "auto-phrase");
+    ok("unicode-bidi", "isolate", "isolate");
+    bad("unicode-bidi", "isolate plaintext");
+    ok("border-image-repeat", "space space", "space");
+    ok("border-image-repeat", "repeat round", "repeat round");
+    bad("border-image-repeat", "stretch repeat round");
     bad("continue", "auto");
     bad("continue", "normal collapse");
     ok("text-spacing-trim", "trim-both", "trim-both");

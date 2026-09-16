@@ -449,6 +449,27 @@ constexpr string_grammar string_grammars[] = {
     return only ? out + " only" : out;
 }
 
+// `[ a | b | ... ]{1,2}`, the pair written once when both words are the same
+// (`border-image-repeat: space space` is `space`, CSS Backgrounds 3 §6.4).
+struct pair_grammar {
+    std::string_view property;
+    std::string_view keywords;
+};
+
+constexpr pair_grammar pair_grammars[] = {
+    {"border-image-repeat", "stretch repeat round space"},
+};
+
+[[nodiscard]] std::optional<std::string> keyword_pair(const pair_grammar & g,
+                                                      std::span<const std::string> words) {
+    if (words.empty() || words.size() > 2) { return std::nullopt; }
+    for (const std::string & w : words) {
+        if (!has_keyword(g.keywords, w)) { return std::nullopt; }
+    }
+    if (words.size() == 2 && words[0] != words[1]) { return words[0] + " " + words[1]; }
+    return words[0];
+}
+
 // `auto | stable && both-edges?` (CSS Overflow 3): `both-edges` needs `stable`
 // beside it, and the pair serialises in that order however it was written.
 [[nodiscard]] std::optional<std::string> scrollbar_gutter(std::span<const std::string> words) {
@@ -738,6 +759,12 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
             answer = ascii_iequals(property, "color-scheme") ? color_scheme(*words)
                                                              : scrollbar_gutter(*words);
         }
+    }
+    for (const pair_grammar & g : pair_grammars) {
+        if (handled || !ascii_iequals(g.property, property)) { continue; }
+        handled = true;
+        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        if (words) { answer = keyword_pair(g, *words); }
     }
     if (!handled && ascii_iequals(property, "text-combine-upright")) {
         handled = true;
