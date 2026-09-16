@@ -166,13 +166,20 @@ preference deleted). `24eeb654`/`7662b763`/`3c50bc67` format the test
 JS/HTML/CSS and repin what that moved (`escape-claims/Initialize.cmake` hashes,
 `expected.txt` program row; `Exports/boundary.js` stays byte-exact under
 js-beautify ignore markers because 27 pinned hashes derive from it).
-Two audit branches were still in their final gates at hand-over —
-`audit-ctcompile-emit` (nine string-literal helper headers → compiled
-`include/ctcompile/CTNative/Runtime/ctnative.hpp`; source-name provenance for
-emitted identifiers removed, locals are `v<N>`) and `audit-ctcompile-tests`
-(24 `cmake -P` checks and 7 driver registrations → lit, ~320 CTests → ~250 lit
-tests; `check()` copies → `ctbrowser/test/support/check.hpp`) — see AGENT-SYNC
-for who lands them. The integrated **09341902** baseline has since passed the combined gate above. Sanitizer findings outside the audit, not
+The last two audit branches landed on 2026-09-16: **5e3d3b86**
+`audit-ctcompile-tests` (24 `cmake -P` checks, the eight Browser drivers and
+`native_owned_global_maps` are lit tests; `ctcompile_` CTest registrations
+424 → 106, lit 177 → 251, `ctcompile_lit` cap 5400 s; test C++ uses
+`ctbrowser/test/support/check.hpp`; escape-claims hash pins live in
+`escape-claims/check.py`) and **28878c6c** `audit-ctcompile-emit` (nine
+string-literal helper headers → the compiled
+`include/ctcompile/CTNative/Runtime/ctnative.hpp` behind `#define
+CTNATIVE_ORDERED_MAPS`/`CTNATIVE_DOM`, with `style/engine.hpp` included only by
+programs that take a style parameter; every `needs*` flag is gone — **0b1e0911**
+removed the `needsDOMJSON` guard c127ba96 had just added; source-name
+provenance deleted, locals are `v<N>`, captures `capture_<i>`/`argument_<i>`).
+Each passed 288/288 (251 lit) in its own devbox dir; the merged tip compiles
+(304 steps) and awaits its combined ctest. The integrated **09341902** baseline has since passed the combined gate above. Sanitizer findings outside the audit, not
 fixed: `Script/builtins/collections/keyed.cpp:593` UAF,
 `Style/css/calc/units.cpp:36` UAF, `Core/number_format.cpp:194` UB cast.
 
