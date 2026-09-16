@@ -96,7 +96,13 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
     // Images and fonts are resolved BEFORE layout, because an <img> with no
     // width attribute takes its size from the decoded bitmap and layout has
     // no way to ask; the page's @font-face files for the same reason.
-    load_author_styles();
+    // The sheets the last script did not see - or all of them, on a page
+    // with no script.
+    if (!author_sheet_loaded_) {
+        load_author_styles();
+    } else {
+        refresh_author_styles();
+    }
     load_page_fonts();
     // The sheets and scripts above are owed their `load`. Handed over here
     // because run_scripts has only just built the bindings that queue them.

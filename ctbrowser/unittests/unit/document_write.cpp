@@ -62,7 +62,7 @@ void test_write_inserts_at_the_insertion_point() {
     // document-write/002.html: an unclosed <i> stays open across what follows.
     is("<script>document.write('<i>Filler Text')</script>more"
        "<script>var i = document.body.firstChild;"
-       " console.log(i.localName + ':' + i.textContent)</script></body>",
+       " console.log(i.localName + ':' + i.firstChild.data)</script></body>",
        "i:Filler Textmore");
     // document-write/010.html: two half-writes are one tag, read once whole.
     is("<script>document.write('<i id='); document.write(\"'test'>Filler Text\");"

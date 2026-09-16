@@ -208,10 +208,15 @@ void browser::run_scripts() {
         // style block" at the end tag), so its getComputedStyle and its
         // offsetWidth read the styled page - and the sheets that follow it
         // are not, which is what a browser answers too. The first script
-        // latches `author_sheet_loaded_`; every later read goes through
-        // refresh_author_styles, which re-collects the text the parse has
-        // added since.
-        load_author_styles();
+        // latches `author_sheet_loaded_`; each later one re-collects what the
+        // parse added since. And their `load`s are handed over NOW, ahead of
+        // this script's own, so the events keep document order.
+        if (!author_sheet_loaded_) {
+            load_author_styles();
+        } else {
+            refresh_author_styles();
+        }
+        announce_resource_loads();
         // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
         // percent of a page load; loading the same program from bytes is four
         // times faster on every corpus measured. Two things make it safe, and
