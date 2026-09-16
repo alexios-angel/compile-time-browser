@@ -313,19 +313,64 @@ namespace {
     return out;
 }
 
+// THE COMPUTED SHAPE OF A VALUE WHOSE GRAMMAR LETS THE AUTHOR REORDER OR OMIT:
+// a shadow is `<color> <x> <y> <blur> <spread> inset?` with the colour first
+// and the omitted lengths zero (CSS Backgrounds 3 §7.2, the order the
+// computed-style serialiser prints), a corner radius is two lengths. Paired
+// as written, `10px 30px orange` against `green 20px 20px 20px` has nothing
+// to interpolate; in computed shape it has a colour and three lengths.
+[[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text) {
+    const bool box = property == "box-shadow";
+    if (box || property == "text-shadow") {
+        std::string out;
+        for (const std::string_view shadow : split_top_level(text, ",")) {
+            std::string colour;
+            std::vector<std::string> lengths;
+            bool inset = false;
+            for (const std::string_view raw : split_top_level(shadow, html_whitespace)) {
+                const std::string_view part = trim(raw, html_whitespace);
+                if (part.empty()) { continue; }
+                if (ascii_iequals(part, "inset")) {
+                    inset = true;
+                } else if (ascii_iequals(part, "currentcolor") || paint::parse_color(part)) {
+                    colour = std::string{part};
+                } else {
+                    lengths.emplace_back(part);
+                }
+            }
+            const std::size_t wanted = box ? 4 : 3;
+            if (lengths.size() < 2 || lengths.size() > wanted) { return std::string{text}; }
+            while (lengths.size() < wanted) { lengths.emplace_back("0px"); }
+            if (!out.empty()) { out += ", "; }
+            out += colour.empty() ? std::string{"currentcolor"} : colour;
+            for (const std::string & len : lengths) { out += ' ' + len; }
+            if (inset) { out += " inset"; }
+        }
+        return out.empty() ? std::string{text} : out;
+    }
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
+        if (parts.size() == 1) { return std::string{parts[0]} + ' ' + std::string{parts[0]}; }
+    }
+    return std::string{text};
+}
+
 } // namespace
 
 std::string dom_bindings::interpolate_value(std::string_view property, std::string_view from,
                                             std::string_view to, double p,
                                             const style::css::length_context & ctx) {
     bool interpolable = true;
-    return interpolate_pair(property, from, to, p, ctx, interpolable);
+    return interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
+                            p, ctx, interpolable);
 }
 
-bool dom_bindings::transitionable(std::string_view from, std::string_view to) {
+bool dom_bindings::transitionable(std::string_view property, std::string_view from,
+                                  std::string_view to) {
     bool interpolable = true;
     style::css::length_context ctx;
-    (void)interpolate_pair("", from, to, 0.5, ctx, interpolable);
+    (void)interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
+                           0.5, ctx, interpolable);
     return interpolable;
 }
 
@@ -600,7 +645,7 @@ void dom_bindings::update_css_transitions(
 
         if (existing == no_record) {
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(before_value, after_value))) {
+                (discrete_ok || transitionable(property, before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -614,7 +659,7 @@ void dom_bindings::update_css_transitions(
             if (running.end_value == after_value) { continue; }
             cancel_record(existing);
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(before_value, after_value))) {
+                (discrete_ok || transitionable(property, before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -623,7 +668,7 @@ void dom_bindings::update_css_transitions(
         // The running transition's end moved. Its current value is what the
         // before-change style carries.
         if (before_value == after_value || combined <= 0 ||
-            !(discrete_ok || transitionable(before_value, after_value))) {
+            !(discrete_ok || transitionable(property, before_value, after_value))) {
             cancel_record(existing);
             continue;
         }

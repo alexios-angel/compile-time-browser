@@ -910,7 +910,8 @@ private:
                                                        const style::css::length_context & ctx);
     // Whether a transition may run between two values (CSS Transitions §3:
     // numeric of one type, or two colours).
-    [[nodiscard]] static bool transitionable(std::string_view from, std::string_view to);
+    [[nodiscard]] static bool transitionable(std::string_view property, std::string_view from,
+                                             std::string_view to);
     // Composite order (Web Animations §5.4.2) over record indices.
     [[nodiscard]] bool composites_before(std::size_t a, std::size_t b) const noexcept;
     // "Cancel an animation" (§4.4.12): idle, the finished promise rejected.
