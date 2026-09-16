@@ -189,13 +189,11 @@ void test_resolve_against_a_base() {
 // --- leniency -------------------------------------------------------------
 
 void test_a_url_a_browser_accepts_is_accepted() {
-    // BOOST.URL IS A STRICT RFC 3986 PARSER and rejects both of these outright.
-    // A browser does not, and neither did the two hand-rolled parsers this
-    // replaced - so handing pages a stricter engine than they were written for
-    // would be a regression dressed as correctness. The wrapper percent-encodes
-    // what RFC 3986 disallows before parsing, which is what a browser does.
-    //
-    // ctcss and ctjs are both documented as lenient parsers. This matches them.
+    // A raw space and a raw UTF-8 byte in a path: RFC 3986 rejects both and a
+    // browser percent-encodes both, because the URL Standard's path
+    // percent-encode set says so. Boost.URL, a strict RFC 3986 parser, needed
+    // the input pre-encoded to accept them; the standard's parser is lenient
+    // by specification. See url_wpt.cpp for the whole corpus.
     const auto spaced = parse_absolute("http://h/a b/c");
     CHECK(spaced.valid);
     CHECK(spaced.target == "/a%20b/c");
@@ -209,6 +207,25 @@ void test_a_url_a_browser_accepts_is_accepted() {
     const auto already = parse_absolute("http://h/a%20b");
     CHECK(already.valid);
     CHECK(already.target == "/a%20b");
+}
+
+// --- what changed when the parser became the URL Standard's ------------------
+
+void test_the_standard_not_rfc_3986() {
+    // Each of these differed from a browser under Boost.URL (docs/plans/
+    // ada-url.md measured them) and is now what the platform says.
+    CHECK(parse_absolute("http://h:80/x").authority == "h"); // a default port is dropped
+    CHECK(location_parts("http://h:80/x").port.empty());
+    CHECK(location_parts("http:\\\\h\\a").pathname == "/a"); // `\` is `/` when special
+    CHECK(location_parts("http:\\\\h\\a").hostname == "h");
+    CHECK(location_parts("http://h/a\tb").pathname == "/ab"); // a tab is removed anywhere
+    CHECK(resolve("http://h/", "http://\xe6\x97\xa5\xe6\x9c\xac.jp/") ==
+          "http://xn--wgv71a.jp/");                              // IDNA to punycode
+    CHECK(location_parts("http://h/%2e%2e/x").pathname == "/x"); // encoded dot segments
+    CHECK(location_parts("http://User@h/").username == "User");
+    // An unparseable reference comes back as written, which is what HTML's
+    // URL reflection asks for.
+    CHECK(resolve("http://h/", "http://[::1") == "http://[::1");
 }
 
 } // namespace
@@ -230,5 +247,6 @@ int main() {
     test_a_url_with_no_path_still_has_one();
     test_resolve_against_a_base();
     test_a_url_a_browser_accepts_is_accepted();
+    test_the_standard_not_rfc_3986();
     REPORT("url_basics");
 }

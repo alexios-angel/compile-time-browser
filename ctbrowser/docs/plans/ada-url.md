@@ -1,7 +1,11 @@
 # Ada, and the fact that this engine parses URLs by the wrong standard
 
-**Status: investigated, measured, NOT started.** The finding is a correctness
-one and it is worse than the performance question that prompted it.
+**Status: DONE, differently (2026-09-16).** The finding below stands and was
+the reason; the fix was not ada but the URL Standard's parser written out in
+`shell/net/url.cpp` (see `docs/platform.md`, "URLs"), because a compiled
+dependency needs the mingw sysroot treatment and the parser is 900 lines of
+plain C++. `unittests/unit/url_wpt` passes all 893 + 278 corpus cases. The
+measurements below are kept as the record of why.
 
 ## The problem, in one line
 
