@@ -442,6 +442,11 @@ int main() {
     answers("function f() { { function h() { return 'inner'; } } var r = h();"
             " function h() { return 'outer'; } return r; } return f();",
             "inner");
+    // Two blocks of one name are two applicable declarations: the second
+    // only skips creating the binding again.
+    answers("function f() { { function h() { return 1; } } { function h() { return 2; } }"
+            " return h(); } return f();",
+            "2");
     // ...and never for `arguments`, whose binding the extension leaves alone.
     answers("function f() { { function arguments() {} } return typeof arguments; } return f();",
             "object");

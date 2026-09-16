@@ -282,6 +282,13 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
                 if (name == "arguments") { return; }
                 const bool fresh = find_local_entry(fn(), name) == nullptr;
                 if (fresh) {
+                    // AND IT IS VAR-SCOPED FROM NOW ON. Two blocks declaring
+                    // one name are two applicable declarations: the second
+                    // finds the binding the first made and only skips
+                    // CREATING it again (step 1.a.ii.2 guards the creation,
+                    // not the write), so `{ function h() {} } { function h()
+                    // {} }` ends with the second.
+                    var_scoped.push_back(name);
                     hoist(std::move(name));
                 } else if (std::find(var_scoped.begin(), var_scoped.end(), name) ==
                            var_scoped.end()) {
