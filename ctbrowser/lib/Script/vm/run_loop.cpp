@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ctbrowser/aot/aot.hpp>
+#include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -223,7 +224,27 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(add) do {
-            reg(in.a) = binary_op_static(op::add, reg(in.b), reg(in.c));
+            // `++`/`--` and the internal counters only (compile_binary maps
+            // source `+` to add_generic): ToNumeric of an object operand
+            // first, so `o++` on {valueOf: () => 3} stores 4. The postfix
+            // expression's own value is still the object it read - the
+            // old value is moved before this runs and there is no ToNumeric
+            // opcode to spend on every loop counter.
+            value lhs = numeric_operand(reg(in.b));
+            value rhs = numeric_operand(reg(in.c));
+            // `1n++`: the step is the integral Number 1 (or -1, or the 0 that
+            // reads the old value) beside a BigInt, and here - and only
+            // here, since this is never source `+` - it is that BigInt.
+            if (lhs.is_kind(heap_kind::bigint) != rhs.is_kind(heap_kind::bigint)) {
+                value & number = lhs.is_kind(heap_kind::bigint) ? rhs : lhs;
+                if (number.is_number()) {
+                    if (const std::optional<bigint> as_big =
+                            bigint_from_double(number.as_number())) {
+                        number = value::object(allocate<bigint_object>(*as_big));
+                    }
+                }
+            }
+            reg(in.a) = binary_op_static(op::add, lhs, rhs);
             break;
         }
         while (0);
@@ -331,31 +352,36 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_and) do {
-            reg(in.a) = binary_op_static(op::bit_and, reg(in.b), reg(in.c));
+            reg(in.a) = binary_op_static(op::bit_and, numeric_operand(reg(in.b)),
+                                         numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_or) do {
-            reg(in.a) = binary_op_static(op::bit_or, reg(in.b), reg(in.c));
+            reg(in.a) = binary_op_static(op::bit_or, numeric_operand(reg(in.b)),
+                                         numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_xor) do {
-            reg(in.a) = binary_op_static(op::bit_xor, reg(in.b), reg(in.c));
+            reg(in.a) = binary_op_static(op::bit_xor, numeric_operand(reg(in.b)),
+                                         numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shl) do {
-            reg(in.a) = binary_op_static(op::shl, reg(in.b), reg(in.c));
+            reg(in.a) =
+                binary_op_static(op::shl, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shr) do {
-            reg(in.a) = binary_op_static(op::shr, reg(in.b), reg(in.c));
+            reg(in.a) =
+                binary_op_static(op::shr, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
             break;
         }
         while (0);
@@ -364,13 +390,14 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // The BigInt arm REFUSES this one: an unsigned shift needs a WIDTH
             // to fill from and a BigInt has none. binary_op_static carries that
             // refusal, which is where it belongs.
-            reg(in.a) = binary_op_static(op::ushr, reg(in.b), reg(in.c));
+            reg(in.a) =
+                binary_op_static(op::ushr, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_not) do {
-            reg(in.a) = bit_not_value(reg(in.b));
+            reg(in.a) = bit_not_value(numeric_operand(reg(in.b)));
             break;
         }
         while (0);

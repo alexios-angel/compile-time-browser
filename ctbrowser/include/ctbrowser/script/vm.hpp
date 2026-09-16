@@ -1063,6 +1063,15 @@ public:
     // the other's fast path.
     [[nodiscard]] value bit_not_value(value v);
 
+    // ToNumeric (7.1.3) of an OBJECT operand, for the interpreter's six
+    // bitwise operations, `~` and the `++`/`--` add: ToPrimitive with hint
+    // number, and a BigInt out of it stays one. A primitive comes back as it
+    // is - to_int32/to_number take it from there without re-entering, which
+    // keeps binary_op_static's contract (and ct_aot_binary_op_static's row)
+    // exactly what it was for every primitive operand. Null with a
+    // TypeError in flight when valueOf threw.
+    [[nodiscard]] value numeric_operand(value v);
+
     // --- prototypes ---------------------------------------------------------
     //
     // A string is not an object_object, so there is nowhere on it to put a

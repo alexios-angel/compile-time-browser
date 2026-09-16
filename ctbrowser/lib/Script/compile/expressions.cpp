@@ -790,12 +790,22 @@ void compiler_impl::compile_update(const vp::node & n, std::uint16_t dst) {
     // `obj.n++` and `a[i]++` work and evaluate their target exactly once.
     const reference ref = prepare_reference(target);
     const std::uint16_t cur = alloc_reg();
-    const std::uint16_t one = alloc_reg();
+    const std::uint16_t step = alloc_reg();
     emit_load(ref, cur);
-    emit_const(one, value::number(1));
-    // postfix yields the OLD value, prefix the new one
-    if (n.b == 0) { proto().emit(instruction{op::move, dst, cur}); }
-    proto().emit(instruction{n.text == "++" ? op::add : op::sub, cur, cur, one});
+    // BOTH THROUGH op::add - `x--` is `x + (-1)`, the same double - because
+    // op::add is the internal add of ++/-- and the counters, never source
+    // `+`, and the VM lets it take a BigInt beside its integral Number step
+    // (`1n++` is `2n`; `1n - 1` is the mixing TypeError op::sub keeps).
+    emit_const(step, value::number(n.text == "++" ? 1 : -1));
+    // postfix yields the OLD value AS A NUMERIC (13.4.2.1 step 2: ToNumeric
+    // of it, so `false++` reads 0 and an object its valueOf) - `+ 0` through
+    // the same op is that conversion; prefix yields the new one.
+    if (n.b == 0) {
+        const std::uint16_t zero = alloc_reg();
+        emit_const(zero, value::number(0));
+        proto().emit(instruction{op::add, dst, cur, zero});
+    }
+    proto().emit(instruction{op::add, cur, cur, step});
     if (n.b != 0) { proto().emit(instruction{op::move, dst, cur}); }
     emit_store(ref, cur);
     release_to(mark);

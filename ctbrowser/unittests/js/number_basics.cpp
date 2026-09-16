@@ -136,6 +136,16 @@ int main() {
     js_expect("-5/0", "-Infinity");
     js_expect("~~4.9", "4"); // truncation toward zero
     js_expect("~~-4.9", "-4");
+    // ToNumeric of an OBJECT operand (13.15.3, 13.5.6): valueOf runs for the
+    // bitwise operators, `~` and `++`/`--` - and a postfix result is the
+    // numeric old value, so `false++` reads 0 and `1n++` stays a BigInt.
+    js_expect("(function(){ var o = {valueOf(){return 3}}; return [o | 0, o << 1, ~o, o++, o,"
+              " ++o].join(); })()",
+              "3,6,-4,3,4,5");
+    js_expect("(function(){ var x = false, b = 1n; var y = x++, c = b--; return [y, x, c, b,"
+              " typeof b].join(); })()",
+              "0,1,1,0,bigint");
+    js_expect("(function(){ try { 1n - 1; } catch (e) { return e.name; } })()", "TypeError");
     js_expect("1e21", "1e+21");
     js_expect("1e-7", "1e-7");
 

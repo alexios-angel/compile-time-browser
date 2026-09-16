@@ -361,6 +361,16 @@ value context::negate_value(value v) {
 }
 
 // BITWISE NOT, likewise VM_CASE(bit_not) unchanged.
+value context::numeric_operand(value v) {
+    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint) ||
+        v.is_kind(heap_kind::symbol)) {
+        return v;
+    }
+    value out = value::undefined();
+    if (!to_primitive_hint(v, "number", out)) { return value::null(); }
+    return out;
+}
+
 value context::bit_not_value(value v) {
     // ~1n is -2n, on the unbounded two's-complement value - there is no ToInt32
     // step, because a BigInt has no width to truncate to.
