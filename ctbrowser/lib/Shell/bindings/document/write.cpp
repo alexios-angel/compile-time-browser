@@ -322,7 +322,7 @@ void dom_bindings::document_open(context & cx) {
     parser_script_created_ = true;
     parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
     parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
-    parser_->begin({}, true);
+    parser_->begin({}, true, !secondary_);
     mutated();
 }
 

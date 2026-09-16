@@ -154,6 +154,15 @@ void test_a_frame_document_can_be_written() {
        " d.documentElement.outerHTML)"
        "</script></body>",
        "CSS1Compat:2:<html><head></head><body><p>a</p><p>b</p></body></html>");
+    // insert-into-nonempty-document.html: after open() a doctype write leaves
+    // the doctype the Document's ONLY child - the <html> element is "before
+    // html"'s to make, when something needs it.
+    is("<body><script>"
+       " var f = document.createElement('iframe'); document.body.appendChild(f);"
+       " var d = f.contentDocument; d.open(); d.write('<!DOCTYPE html>');"
+       " console.log(d.childNodes.length + ':' + d.doctype.name + ':' + d.documentElement)"
+       "</script></body>",
+       "1:html:null");
 }
 
 } // namespace

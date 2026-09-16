@@ -64,13 +64,17 @@ void tree_builder::start(std::string_view input, std::string_view context) {
     nesting_ = 0;
     lexer_ = tokenizer{std::string_view{}};
 
-    root_ = doc_->create_element(atoms_->intern_lower("html"));
-    doc_->set_document_element(root_);
+    root_ = node_id{};
     context_ = std::string{context};
     if (context_.empty()) {
+        // The <html> element is the "before html" mode's to make, when the
+        // first token that needs it arrives - so `document.open()` followed
+        // by a doctype write leaves the doctype the Document's only child.
         mode_ = mode::initial;
         return;
     }
+    root_ = doc_->create_element(atoms_->intern_lower("html"));
+    doc_->set_document_element(root_);
     // THE FRAGMENT CASE, 13.2.9: the root is on the stack, the context
     // element is not - it stands in for the topmost node wherever the
     // algorithm asks about "the adjusted current node" or resets the mode -
@@ -83,9 +87,17 @@ void tree_builder::start(std::string_view input, std::string_view context) {
     reset_insertion_mode();
 }
 
-void tree_builder::begin(std::string_view input, bool open) {
+void tree_builder::begin(std::string_view input, bool open, bool eager_root) {
     start(input, {});
     open_stream_ = open;
+    // THE PAGE'S OWN DOCUMENT ALWAYS HAS AN ELEMENT: every walk in the style,
+    // layout and paint engines starts at `document::root()` and expects one,
+    // so a `document.open()` that returns to the event loop before writing
+    // must not leave the Document bare. A frame's or a made document may.
+    if (eager_root) {
+        root_ = doc_->create_element(atoms_->intern_lower("html"));
+        doc_->set_document_element(root_);
+    }
     // AN OPEN STREAM'S INSERTION POINT IS ITS END: `document.open()` leaves the
     // parser waiting there, and each `write` appends at it and advances it.
     // Kept at the BOTTOM of the stack, under whatever the scripts push, so
@@ -813,9 +825,14 @@ void tree_builder::mode_initial(const token & t) {
     case token_kind::processing_instruction: return insert_comment(t, node_id{}, true);
     case token_kind::doctype: {
         if (context_.empty()) { doc_->set_quirks(quirks_for(t)); }
-        const node_id doctype =
-            doc_->create_document_type(atoms_->intern(t.name), t.public_id, t.system_id);
-        builder_->insert_before(doc_->document_node(), doctype, root_);
+        // A Document takes one doctype, ahead of its element: a script that
+        // put either there first keeps it (insert-into-nonempty-document).
+        if (!document_has_child(node_kind::document_type) &&
+            !document_has_child(node_kind::element)) {
+            const node_id doctype =
+                doc_->create_document_type(atoms_->intern(t.name), t.public_id, t.system_id);
+            builder_->insert_before(doc_->document_node(), doctype, root_);
+        }
         mode_ = mode::before_html;
         return;
     }
@@ -827,8 +844,31 @@ void tree_builder::mode_initial(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.2 "before html". The <html> element already exists (start()
-// makes it so the document always has a root); the tag supplies attributes.
+// The <html> element, appended to the Document - unless the Document already
+// has an element child (a script put one there before the parser reached
+// this), in which case the tree is built DETACHED: the spec's "insert an
+// element at the adjusted insertion location" returns without inserting
+// when the location cannot accept the node, and everything under it follows.
+void tree_builder::create_root() {
+    if (!root_) {
+        root_ = doc_->create_element(atoms_->intern_lower("html"));
+        if (!document_has_child(node_kind::element)) { doc_->set_document_element(root_); }
+    }
+    if (!on_stack(root_)) { open_.push_back(entry{root_, "html"}); }
+}
+
+// Whether the Document has a child of this kind - other than the root this
+// parse made, which begin() may have put there ahead of time.
+bool tree_builder::document_has_child(node_kind kind) const {
+    const auto txn = doc_->read();
+    for (const node_id child : txn.children(doc_->document_node())) {
+        if (child != root_ && txn.kind(child) == kind) { return true; }
+    }
+    return false;
+}
+
+// 13.2.6.4.2 "before html": the <html> element is made here, by the tag or
+// for whatever came first.
 void tree_builder::mode_before_html(const token & t) {
     switch (t.kind) {
     case token_kind::doctype: return;
@@ -840,8 +880,8 @@ void tree_builder::mode_before_html(const token & t) {
         break;
     case token_kind::start_tag:
         if (t.name == "html") {
+            create_root();
             merge_attributes(root_, t.attributes);
-            open_.push_back(entry{root_, "html"});
             mode_ = mode::before_head;
             return;
         }
@@ -851,7 +891,7 @@ void tree_builder::mode_before_html(const token & t) {
         break;
     default: break;
     }
-    open_.push_back(entry{root_, "html"});
+    create_root();
     mode_ = mode::before_head;
     process(t, mode_);
 }

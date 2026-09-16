@@ -181,7 +181,10 @@ public:
     // Start a parse. `open` is `document.open()`: the stream stays open after
     // the input is consumed and `write` appends to it until `close`. A page
     // load passes the whole file and false, and returns finished.
-    void begin(std::string_view input, bool open);
+    // `eager_root` makes the <html> element before any token asks for it -
+    // for the page's own document, which the engine's walks expect to have
+    // one at every moment; the spec's "before html" makes it otherwise.
+    void begin(std::string_view input, bool open, bool eager_root = false);
     // `document.write`: into the stream at the insertion point, then parsed
     // up to it. Requires `has_insertion_point()`.
     void write(std::string_view text);
@@ -272,6 +275,8 @@ private:
     // non-whitespace and reprocess the rest.
     void characters(const std::string & data, mode in);
 
+    void create_root();
+    [[nodiscard]] bool document_has_child(node_kind kind) const;
     void mode_initial(const token & t);
     void mode_before_html(const token & t);
     void mode_before_head(const token & t);
