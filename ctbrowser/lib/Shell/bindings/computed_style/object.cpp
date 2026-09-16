@@ -296,25 +296,24 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     }
     held->set("length", value::number(static_cast<double>(indexed.size())));
 
-    const auto method = [&](std::string name, script::native_fn fn) {
-        held->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // THE SPELLING THE DUMP USES, and the only one both engines agree on. It
     // takes a CSS name and accepts the IDL one too, because a page holding
     // `backgroundColor` should not have to hyphenate it itself. Live, like the
     // accessors: css-style-declaration-modifications edits a stylesheet rule and
     // reads the computed value back through this.
-    method("getPropertyValue", [refresh, answer](context & c, std::span<value> args) {
-        if (args.empty()) { return c.string(std::string{}); }
-        const std::string asked = style::css::css_name_of(c.to_string(args[0]));
-        refresh(c);
-        return c.string(answer(asked));
-    });
+    set_method(cx, *held, "getPropertyValue",
+               [refresh, answer](context & c, std::span<value> args) {
+                   if (args.empty()) { return c.string(std::string{}); }
+                   const std::string asked = style::css::css_name_of(c.to_string(args[0]));
+                   refresh(c);
+                   return c.string(answer(asked));
+               });
     // Always empty. Importance is a cascade INPUT, and by the time a value is
     // computed the question has been settled; this engine does not keep which
     // declaration won past resolve().
-    method("getPropertyPriority", [](context & c, std::span<value>) { return c.string(""); });
-    method("item", [indexed](context & c, std::span<value> args) {
+    set_method(cx, *held, "getPropertyPriority",
+               [](context & c, std::span<value>) { return c.string(""); });
+    set_method(cx, *held, "item", [indexed](context & c, std::span<value> args) {
         if (args.empty()) { return c.string(std::string{}); }
         const double i = context::to_number(args[0]);
         if (!(i >= 0) || static_cast<std::size_t>(i) >= indexed.size()) { return c.string(""); }
@@ -325,8 +324,8 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
                             "a computed style declaration is read-only");
         return value::undefined();
     };
-    method("setProperty", refuse_method);
-    method("removeProperty", refuse_method);
+    set_method(cx, *held, "setProperty", refuse_method);
+    set_method(cx, *held, "removeProperty", refuse_method);
     // Empty rather than reconstructed - which is also what the specification
     // says: a computed style's cssText getter returns the empty string, because
     // serialising one means deciding how to rebuild every shorthand and engines,

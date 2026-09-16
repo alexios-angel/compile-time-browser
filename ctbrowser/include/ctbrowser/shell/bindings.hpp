@@ -1,11 +1,13 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -55,6 +57,106 @@ using ctbrowser::script::value;
 }
 [[nodiscard]] inline value arg(std::span<value> args, std::size_t i) {
     return i < args.size() ? args[i] : value::undefined();
+}
+
+// Installing natives. One function object, and the two ways the bindings hang
+// one on an object: as a data property (`attrs` is what `define` takes, and
+// `attr_default` means a plain `set`, which keeps an existing property's
+// attributes) or as an accessor. An accessor's natives are named the way
+// WebIDL names them - `get x` and `set x`.
+[[nodiscard]] inline value native(context & cx, std::string name, script::native_fn fn) {
+    return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
+}
+template <class Obj>
+void set_method(context & cx, Obj & obj, const std::string & name, script::native_fn fn,
+                std::uint8_t attrs = script::attr_default) {
+    obj.set(name, native(cx, name, std::move(fn)));
+    if (attrs != script::attr_default) { obj.set_attrs(name, attrs); }
+}
+template <class Obj>
+void define_getter(context & cx, Obj & obj, const std::string & name, script::native_fn get,
+                   script::native_fn set = {},
+                   std::uint8_t attrs = script::attr_enumerable | script::attr_configurable) {
+    obj.define_accessor(name, native(cx, "get " + name, std::move(get)),
+                        set ? native(cx, "set " + name, std::move(set)) : value::undefined(),
+                        attrs);
+}
+
+// WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an
+// effect's timing. One member, undefined when it is not there.
+//
+// A MISSING DICTIONARY, `undefined` AND `null` ARE THE SAME ANSWER. WebIDL
+// converts all three to the dictionary with every member defaulted, and
+// Event-subclasses-constructors.html tests each of the three separately for
+// every interface - `new MouseEvent("type", null)` beside `new
+// MouseEvent("type")` - which is 18 of its assertions. PRESENT is "not
+// undefined", not a real [[HasProperty]] - the same answer for every
+// dictionary a page or a test writes, and what the specification's "if
+// options["x"] exists" steps read.
+[[nodiscard]] inline value dict_member(context & cx, value init, const std::string & name) {
+    if (!init.is_object_like()) { return value::undefined(); }
+    return cx.lookup_property(init, name);
+}
+[[nodiscard]] inline bool dict_flag(context & cx, value init, const std::string & name) {
+    return context::truthy(dict_member(cx, init, name));
+}
+// A `long`/`double` member. NaN is 0 rather than NaN: WebIDL's integer
+// conversions send it there and the suite's default-value cases compare against
+// 0 with assert_equals, which NaN fails against itself.
+[[nodiscard]] inline double dict_number(context & cx, value init, const std::string & name) {
+    const value held = dict_member(cx, init, name);
+    if (held.is_undefined()) { return 0.0; }
+    const double number = context::to_number(held);
+    return std::isnan(number) ? 0.0 : number;
+}
+[[nodiscard]] inline std::string dict_string(context & cx, value init, const std::string & name) {
+    const value held = dict_member(cx, init, name);
+    return held.is_undefined() ? std::string{} : cx.to_string(held);
+}
+// A nullable interface member - `relatedTarget`, `view`. Absent is `null` and
+// not `undefined`, which the suite compares for with assert_equals.
+[[nodiscard]] inline value dict_object(context & cx, value init, const std::string & name) {
+    const value held = dict_member(cx, init, name);
+    return held.is_undefined() ? value::null() : held;
+}
+
+// The first fragment for `id` in tree order, with its bounds made ABSOLUTE:
+// a fragment's bounds are relative to its containing block, so "where is this
+// element on the page" is a different question from `fragment::find`'s "which
+// fragment is it". Nothing when the node has no fragment. This is
+// fragment::find with the offsets accumulated and belongs beside it in
+// layout/fragment.hpp; it sits here because that header is Layout's.
+[[nodiscard]] inline std::optional<rect> absolute_rect_of(const layout::fragment & at, node_id id,
+                                                          float dx = 0, float dy = 0) noexcept {
+    const rect box = at.absolute_bounds(dx, dy);
+    if (at.source == id) { return box; }
+    for (const layout::fragment & child : at.children) {
+        if (const std::optional<rect> hit = absolute_rect_of(child, id, box.x, box.y)) {
+            return hit;
+        }
+    }
+    return std::nullopt;
+}
+
+// Bytes as the u8 array the typed-array builtins recognise, and the
+// ArrayBuffer shape install_typed_arrays reads: an object carrying `__bytes`,
+// so `new Uint8Array(buffer)` is a view over THIS storage rather than a copy.
+[[nodiscard]] inline value make_u8_array(context & cx, std::span<const std::byte> bytes) {
+    const value out = cx.make_array();
+    auto * items = static_cast<script::array_object *>(out.as_heap());
+    items->elements = script::element_kind::u8;
+    items->items.reserve(bytes.size());
+    for (const std::byte b : bytes) {
+        items->items.push_back(value::number(static_cast<double>(std::to_integer<int>(b))));
+    }
+    return out;
+}
+[[nodiscard]] inline value make_array_buffer(context & cx, std::span<const std::byte> bytes) {
+    auto * buffer = cx.allocate<script::object_object>();
+    buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
+    buffer->set("length", value::number(static_cast<double>(bytes.size())));
+    buffer->set("__bytes", make_u8_array(cx, bytes));
+    return value::object(buffer);
 }
 
 // Where an element wrapper keeps its handle. A property rather than a side
@@ -146,7 +248,7 @@ public:
     [[nodiscard]] std::vector<loaded_frame> loaded_frames() const {
         std::vector<loaded_frame> out;
         for (const frame_entry & entry : frames_) {
-            if (entry.bindings != nullptr) { out.push_back({unpack(entry.key), entry.bindings}); }
+            if (entry.bindings != nullptr) { out.push_back({entry.element, entry.bindings}); }
         }
         return out;
     }
@@ -239,13 +341,6 @@ public:
     // The first fault a timer or animation-frame callback raised. Empty when
     // the page's callbacks are running cleanly.
     [[nodiscard]] const std::string & callback_error() const noexcept { return callback_error_; }
-    // --- the WebGL back end, stage 2 of docs/plans/angle.md -------------------
-    //
-    // BEFORE THE PAGE RUNS. A context is made when a page asks for one, and its
-    // backend cannot change underneath programs already compiled into it - so
-    // this decides for contexts made from here on and says nothing about any
-    // that exist.
-    void prefer_angle(bool on) { angle_preferred_ = on; }
     // Every GL call a page made that the ANGLE path does not forward yet,
     // gathered from all its contexts. EMPTY is the claim a test makes; a
     // backend that silently dropped calls would paint something plausible.
@@ -320,7 +415,8 @@ private:
     // about the live element rather than about a snapshot.
     [[nodiscard]] value wrap(context & cx, node_id id);
 
-    [[nodiscard]] static std::uint64_t pack(node_id id);
+    // The inverse of handle::key(), which is how a wrapper's `__node` number
+    // and every per-node table here spell a node.
     [[nodiscard]] static node_id unpack(std::uint64_t bits);
 
     // The element a native was called on. Returns an empty handle when the
@@ -1191,34 +1287,29 @@ private:
     // with the same buffers and programs still bound, and a fresh one each time
     // would quietly lose everything it had uploaded.
     flat_map<std::uint64_t, std::unique_ptr<webgl_context>> webgl_contexts_;
-    // Whether a NEW WebGL context should go on the ANGLE backend. Stage 2 of
-    // docs/plans/angle.md keeps both paths alive, and this is the switch.
-    bool angle_preferred_ = false;
     // The JS wrapper for each, so getContext hands back the SAME object - and a
     // GC root, because the page may drop its reference and ask again.
     flat_map<std::uint64_t, script::object_object *> webgl_objects_;
 
-    [[nodiscard]] static float number(std::span<value> args, std::size_t i);
-
-    // "bold 16px sans-serif" -> 16.
-    [[nodiscard]] static float font_size_from(std::string_view font);
-
-    // ...and -> family "sans-serif", bold, not italic.
-    //
-    // An honest subset of the CSS `font` shorthand: tokens before the <n>px one
-    // supply bold/italic, and the first entry of the family list after it is
-    // the family. Not handled, and not pretended to be: `font-weight: 700` as a
-    // number, `<size>/<line-height>`, and keyword sizes like `medium`.
-    static void font_face_from(std::string_view font, std::string & family, bool & bold,
-                               bool & italic);
+    // `ctx.font = "..."`, read as the CSS `font` shorthand it is: the size in
+    // px, the first family, bold and italic. False for a string that is not
+    // one, which the specification says leaves the font as it was.
+    static bool apply_canvas_font(canvas_context & canvas, std::string_view font);
 
     [[nodiscard]] node_id handle_of(value v);
+
+    // A `width`/`height` content attribute as HTML 2.6.9 reflects an unsigned
+    // long: the rules for parsing non-negative integers, and `fallback` when it
+    // is absent, not a number, negative or past 2^31-1. ZERO IS A VALUE - a
+    // `<canvas width=0>` is a canvas nothing can be drawn on, not a 300-wide
+    // one - so the 2D context, the WebGL context, toBlob and `canvas.width`
+    // all read the same number. Defined in element/views.cpp.
+    [[nodiscard]] long long size_attribute(const read_txn & txn, node_id id, std::string_view name,
+                                           long long fallback) const;
 
     [[nodiscard]] std::string text_of(node_id id) const;
 
     void set_text(node_id id, std::string text);
-
-    [[nodiscard]] static std::vector<std::string_view> split(std::string_view text);
 
     void mutated();
 
@@ -1292,7 +1383,7 @@ private:
     // compares against - a page that assigns the same src twice must not
     // reload, and one that assigns a different one must.
     struct frame_entry {
-        std::uint64_t key; // pack(id) of the <iframe>
+        node_id element; // the <iframe>
         std::string src;
         dom_bindings * bindings; // over the frame's document
     };
@@ -1352,106 +1443,7 @@ private:
     // observe.
     [[nodiscard]] value make_response(context & cx, const std::string & url, int status,
                                       const std::string & content_type,
-                                      std::vector<std::byte> body) {
-        auto * response = cx.allocate<script::object_object>();
-        response->set("url", cx.string(url));
-        response->set("status", value::number(status));
-        response->set("ok", value::boolean(status >= 200 && status < 300));
-        response->set("statusText", cx.string(status == 200   ? "OK"
-                                              : status == 404 ? "Not Found"
-                                                              : ""));
-        response->set("type", cx.string("basic"));
-        // `headers` IS AN OBJECT with get() and has(), not a string. A page does
-        // `res.headers.get('content-type')`, and the only header this engine
-        // knows is the content type - so it answers that one and reports every
-        // other as absent rather than pretending.
-        {
-            auto * headers = cx.allocate<script::object_object>();
-            headers->set("__contentType", cx.string(content_type));
-            const auto header_method = [&](std::string name, script::native_fn fn) {
-                headers->set(
-                    name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-            };
-            const auto is_content_type = [](std::string_view wanted) {
-                return ascii_iequals(wanted, "content-type");
-            };
-            header_method("get", [content_type, is_content_type](context & c, std::span<value> a) {
-                if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {
-                    return value::null();
-                }
-                return c.string(content_type);
-            });
-            header_method("has", [content_type, is_content_type](context & c, std::span<value> a) {
-                return value::boolean(is_content_type(arg_string(c, a, 0)) &&
-                                      !content_type.empty());
-            });
-            response->set("headers", value::object(headers));
-        }
-
-        const std::string text{reinterpret_cast<const char *>(body.data()), body.size()};
-        const auto method = [&](std::string name, script::native_fn fn) {
-            response->set(name,
-                          value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-        };
-        method("text", [text](context & c, std::span<value>) {
-            return c.make_promise(c.string(text), false);
-        });
-        method("json", [text](context & c, std::span<value>) {
-            // Through the standard library's JSON.parse, so one parser decides
-            // what JSON means here.
-            const value parser = c.global("JSON");
-            if (parser.is_object()) {
-                if (value * parse =
-                        static_cast<script::object_object *>(parser.as_heap())->find("parse")) {
-                    const value text_value = c.string(text);
-                    const value args[1] = {text_value};
-                    return c.make_promise(c.call(*parse, args), false);
-                }
-            }
-            return c.make_promise(value::undefined(), false);
-        });
-        // The bytes, three ways a caller may ask for them. `bytes()` is the
-        // newest and p5 prefers it when present; `arrayBuffer()` is what
-        // everything else uses, and `blob()` is what an object URL is made from.
-        const auto byte_array = [](context & c, const std::vector<std::byte> & bytes) {
-            const value out = c.make_array();
-            auto * items = static_cast<script::array_object *>(out.as_heap());
-            items->elements = script::element_kind::u8;
-            items->items.reserve(bytes.size());
-            for (const std::byte b : bytes) {
-                items->items.push_back(value::number(static_cast<double>(std::to_integer<int>(b))));
-            }
-            return out;
-        };
-        method("bytes", [body, byte_array](context & c, std::span<value>) {
-            return c.make_promise(byte_array(c, body), false);
-        });
-        method("arrayBuffer", [body, byte_array](context & c, std::span<value>) {
-            // The shape install_typed_arrays recognises: an object carrying
-            // `__bytes`, so `new Uint8Array(buffer)` is a view over THIS
-            // storage rather than a copy of it.
-            auto * buffer = c.allocate<script::object_object>();
-            buffer->set("byteLength", value::number(static_cast<double>(body.size())));
-            buffer->set("length", value::number(static_cast<double>(body.size())));
-            buffer->set("__bytes", byte_array(c, body));
-            return c.make_promise(value::object(buffer), false);
-        });
-        method("blob", [this, body, content_type, byte_array](context & c, std::span<value>) {
-            // A minimal Blob: its size, its type and its bytes. Enough for a
-            // page that hands one to URL.createObjectURL, which is the only
-            // thing anything here does with one.
-            auto * blob = c.allocate<script::object_object>();
-            // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob
-            // probe only ever read as passing because the throw in its
-            // `.then` was lost rather than delivered as a rejection.
-            if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
-            blob->set("size", value::number(static_cast<double>(body.size())));
-            blob->set("type", c.string(content_type));
-            blob->set("__bytes", byte_array(c, body));
-            return c.make_promise(value::object(blob), false);
-        });
-        return cx.make_promise(value::object(response), false);
-    }
+                                      std::vector<std::byte> body);
 
     void install_timers(context & cx);
 
@@ -1625,11 +1617,6 @@ private:
     // and `getOwnPropertyDescriptor` traps over `document_target_` and returns
     // it.
     [[nodiscard]] value make_document_proxy(context & cx, value target);
-    // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
-    // FF and CR, all five - and drop duplicates. `split` above splits on spaces
-    // alone, which is right for nothing in particular and wrong for a class
-    // attribute written across two lines.
-    [[nodiscard]] static std::vector<std::string> ordered_set(std::string_view text);
     // A COLLECTION THAT IS LIVE, which is the whole difficulty. `getElementsBy*`
     // returns a view of the document rather than a snapshot of it: a page takes
     // the collection, appends an element, and reads `length` again expecting the
@@ -1741,6 +1728,10 @@ private:
     // Blob.prototype, kept so canvas.toBlob's Blob is one too - `x instanceof
     // Blob` has to be true whoever made it.
     value blob_prototype_;
+    // A Blob: its size, its type and its bytes (a u8 array, see
+    // make_u8_array), on that prototype. Enough for a page that hands one to
+    // URL.createObjectURL or a FileReader, which is everything done with one.
+    [[nodiscard]] value make_blob(context & cx, value bytes, std::string_view type);
 
     // THE CONTEXT INTERFACE OBJECTS - `window.CanvasRenderingContext2D` and
     // friends; the element interfaces live in the table (interface_prototypes_).
@@ -2038,7 +2029,7 @@ private:
                                                     const std::string & qualified);
     // ONE Attr OBJECT PER (element, namespace, local name), so that
     // `el.getAttributeNode("x") === el.attributes[0]` - an Attr is a node and
-    // a node has an identity. Keyed by pack(element), then by the pair; rooted
+    // a node has an identity. Keyed by element.key(), then by the pair; rooted
     // by mark_roots like wrappers_; an entry goes when the attribute does.
     flat_map<std::uint64_t, std::vector<std::pair<std::string, script::object_object *>>>
         attr_objects_;

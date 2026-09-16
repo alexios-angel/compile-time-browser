@@ -719,7 +719,7 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         // differently now has been changed since and reloads it.
         // ponytail: a setAttribute("nonce", <the same text>) after an IDL set
         // is not seen; an attribute-change hook in attributes.cpp would be.
-        const auto slot = nonce_slots_.find(pack(id));
+        const auto slot = nonce_slots_.find(id.key());
         if (slot != nonce_slots_.end() && slot->second.second == raw) {
             return cx.string(slot->second.first);
         }
@@ -866,7 +866,7 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
             const auto txn = doc_->read();
             current = std::string{txn.attribute_value(id, name)};
         }
-        nonce_slots_[pack(id)] = {arg_string(cx, args, 0), std::move(current)};
+        nonce_slots_[id.key()] = {arg_string(cx, args, 0), std::move(current)};
         return value::undefined();
     }
     case reflect_type::dom_string:
@@ -1066,7 +1066,11 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
     if (!answered) {
         if (!present) { return value::null(); }
         if (list) {
-            for (const std::string_view token : split(raw)) {
+            // "Split on ASCII whitespace" - all five, not just the space.
+            // ponytail: split_top_level also honours quotes and parentheses,
+            // which an id could in theory contain; a plain whitespace split
+            // is the fix if one ever does.
+            for (const std::string_view token : split_top_level(raw, html_whitespace)) {
                 if (const node_id node = element_reference_by_id(txn, id, token)) {
                     found.push_back(node);
                 }

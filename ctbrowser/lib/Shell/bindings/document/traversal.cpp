@@ -131,9 +131,6 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
 
     const auto install_walker = [=](context & c, script::object_object & walker,
                                     std::shared_ptr<bool> active) {
-        const auto method = [&](std::string name, script::native_fn fn) {
-            walker.set(name, value::object(c.allocate<script::native_object>(name, std::move(fn))));
-        };
         const auto current = [=](context & cx2) {
             return from_value(property(cx2, "currentNode"));
         };
@@ -143,7 +140,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             store(cx2, "currentNode", v);
             return v;
         };
-        method("parentNode", [=](context & cx2, std::span<value>) {
+        set_method(c, walker, "parentNode", [=](context & cx2, std::span<value>) {
             spot node = current(cx2);
             while (!node.none() && node != root(cx2)) {
                 node = parent_of(node);
@@ -184,10 +181,10 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             }
             return value::null();
         };
-        method("firstChild",
-               [=](context & cx2, std::span<value>) { return traverse_children(cx2, true); });
-        method("lastChild",
-               [=](context & cx2, std::span<value>) { return traverse_children(cx2, false); });
+        set_method(c, walker, "firstChild",
+                   [=](context & cx2, std::span<value>) { return traverse_children(cx2, true); });
+        set_method(c, walker, "lastChild",
+                   [=](context & cx2, std::span<value>) { return traverse_children(cx2, false); });
         // "Traverse siblings", likewise.
         const auto traverse_siblings = [=](context & cx2, bool next) {
             const spot top = root(cx2);
@@ -212,11 +209,11 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
                 if (*result == filter_accept) { return value::null(); }
             }
         };
-        method("nextSibling",
-               [=](context & cx2, std::span<value>) { return traverse_siblings(cx2, true); });
-        method("previousSibling",
-               [=](context & cx2, std::span<value>) { return traverse_siblings(cx2, false); });
-        method("previousNode", [=](context & cx2, std::span<value>) {
+        set_method(c, walker, "nextSibling",
+                   [=](context & cx2, std::span<value>) { return traverse_siblings(cx2, true); });
+        set_method(c, walker, "previousSibling",
+                   [=](context & cx2, std::span<value>) { return traverse_siblings(cx2, false); });
+        set_method(c, walker, "previousNode", [=](context & cx2, std::span<value>) {
             const spot top = root(cx2);
             spot node = current(cx2);
             while (node != top) {
@@ -244,7 +241,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             }
             return value::null();
         });
-        method("nextNode", [=](context & cx2, std::span<value>) {
+        set_method(c, walker, "nextNode", [=](context & cx2, std::span<value>) {
             const spot top = root(cx2);
             spot node = current(cx2);
             unsigned result = filter_accept;
@@ -286,10 +283,6 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
 
     const auto install_iterator = [=](context & c, script::object_object & iterator,
                                       std::shared_ptr<bool> active) {
-        const auto method = [&](std::string name, script::native_fn fn) {
-            iterator.set(name,
-                         value::object(c.allocate<script::native_object>(name, std::move(fn))));
-        };
         // "Following" and "preceding" in tree order, within the root.
         const auto following = [=](spot node, spot top) {
             if (const spot child = child_of(node, false); !child.none()) { return child; }
@@ -327,11 +320,13 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             store(cx2, "pointerBeforeReferenceNode", value::boolean(before));
             return found;
         };
-        method("nextNode", [=](context & cx2, std::span<value>) { return traverse(cx2, true); });
-        method("previousNode",
-               [=](context & cx2, std::span<value>) { return traverse(cx2, false); });
+        set_method(c, iterator, "nextNode",
+                   [=](context & cx2, std::span<value>) { return traverse(cx2, true); });
+        set_method(c, iterator, "previousNode",
+                   [=](context & cx2, std::span<value>) { return traverse(cx2, false); });
         // "detach()" does nothing, and the DOM says so in those words.
-        method("detach", [](context &, std::span<value>) { return value::undefined(); });
+        set_method(c, iterator, "detach",
+                   [](context &, std::span<value>) { return value::undefined(); });
     };
 
     // --- the two factories ---------------------------------------------------
@@ -375,13 +370,10 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         }
         return value::object(made);
     };
-    const auto method = [&](std::string name, script::native_fn fn) {
-        doc.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    method("createTreeWalker",
-           [factory](context & c, std::span<value> args) { return factory(c, args, false); });
-    method("createNodeIterator",
-           [factory](context & c, std::span<value> args) { return factory(c, args, true); });
+    set_method(cx, doc, "createTreeWalker",
+               [factory](context & c, std::span<value> args) { return factory(c, args, false); });
+    set_method(cx, doc, "createNodeIterator",
+               [factory](context & c, std::span<value> args) { return factory(c, args, true); });
 
     // `NodeFilter` is a callback interface with constants and no constructor:
     // one global, defined once, for the realm the primary document is in.

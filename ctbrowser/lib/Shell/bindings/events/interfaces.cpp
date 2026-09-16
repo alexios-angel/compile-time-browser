@@ -42,40 +42,6 @@ namespace {
     return false;
 }
 
-// One member of an event's init dictionary.
-//
-// A MISSING DICTIONARY, `undefined` AND `null` ARE THE SAME ANSWER. WebIDL
-// converts all three to the dictionary with every member defaulted, and
-// Event-subclasses-constructors.html tests each of the three separately for
-// every interface - `new MouseEvent("type", null)` beside `new
-// MouseEvent("type")` - which is 18 of its assertions.
-[[nodiscard]] value dict_member(context & cx, value init, const char * name) {
-    if (!init.is_object_like()) { return value::undefined(); }
-    return cx.lookup_property(init, std::string{name});
-}
-[[nodiscard]] bool dict_flag(context & cx, value init, const char * name) {
-    return context::truthy(dict_member(cx, init, name));
-}
-// A `long`/`double` member. NaN is 0 rather than NaN: WebIDL's integer
-// conversions send it there and the suite's default-value cases compare against
-// 0 with assert_equals, which NaN fails against itself.
-[[nodiscard]] double dict_number(context & cx, value init, const char * name) {
-    const value held = dict_member(cx, init, name);
-    if (held.is_undefined()) { return 0.0; }
-    const double number = context::to_number(held);
-    return std::isnan(number) ? 0.0 : number;
-}
-[[nodiscard]] std::string dict_string(context & cx, value init, const char * name) {
-    const value held = dict_member(cx, init, name);
-    return held.is_undefined() ? std::string{} : cx.to_string(held);
-}
-// A nullable interface member - `relatedTarget`, `view`. Absent is `null` and
-// not `undefined`, which the suite compares for with assert_equals.
-[[nodiscard]] value dict_object(context & cx, value init, const char * name) {
-    const value held = dict_member(cx, init, name);
-    return held.is_undefined() ? value::null() : held;
-}
-
 } // namespace
 
 // THE EVENT INTERFACES, as a hierarchy rather than as one class wearing every
@@ -106,11 +72,6 @@ void dom_bindings::install_event_interfaces(context & cx) {
         target->set("AT_TARGET", value::number(2));
         target->set("BUBBLING_PHASE", value::number(3));
     };
-    const auto method_on = [&cx](script::object_object * target, const char * name,
-                                 script::native_fn fn) {
-        target->define(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-                       script::attr_builtin);
-    };
 
     // --- Event.prototype: everything an event DOES ------------------------
     //
@@ -132,78 +93,93 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // other side: `{passive: true}` is a promise not to cancel, and the DOM
     // enforces it rather than trusting it. Both refusals are silent, because
     // both are what a browser does.
-    method_on(event_proto, "preventDefault", [](context & c, std::span<value>) {
-        const value target = c.current_this();
-        if (target.is_object() && context::truthy(c.lookup_property(target, "cancelable")) &&
-            !flag_of(c, target, passive_property)) {
-            static_cast<script::object_object *>(target.as_heap())
-                ->set("defaultPrevented", value::boolean(true));
-        }
-        return value::undefined();
-    });
-    method_on(event_proto, "stopPropagation", [](context & c, std::span<value>) {
-        const value target = c.current_this();
-        if (target.is_object()) {
-            static_cast<script::object_object *>(target.as_heap())
-                ->set(std::string{cancel_bubble_property}, value::boolean(true));
-        }
-        return value::undefined();
-    });
+    set_method(
+        cx, *event_proto, "preventDefault",
+        [](context & c, std::span<value>) {
+            const value target = c.current_this();
+            if (target.is_object() && context::truthy(c.lookup_property(target, "cancelable")) &&
+                !flag_of(c, target, passive_property)) {
+                static_cast<script::object_object *>(target.as_heap())
+                    ->set("defaultPrevented", value::boolean(true));
+            }
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *event_proto, "stopPropagation",
+        [](context & c, std::span<value>) {
+            const value target = c.current_this();
+            if (target.is_object()) {
+                static_cast<script::object_object *>(target.as_heap())
+                    ->set(std::string{cancel_bubble_property}, value::boolean(true));
+            }
+            return value::undefined();
+        },
+        script::attr_builtin);
     // The IMMEDIATE flag stops the listeners at THIS step as well as the rest
     // of the path, which is the only difference between the two and the reason
     // both exist.
-    method_on(event_proto, "stopImmediatePropagation", [](context & c, std::span<value>) {
-        const value target = c.current_this();
-        if (target.is_object()) {
-            auto * o = static_cast<script::object_object *>(target.as_heap());
-            o->set(std::string{cancel_bubble_property}, value::boolean(true));
-            o->set(std::string{stop_immediate_property}, value::boolean(true));
-        }
-        return value::undefined();
-    });
+    set_method(
+        cx, *event_proto, "stopImmediatePropagation",
+        [](context & c, std::span<value>) {
+            const value target = c.current_this();
+            if (target.is_object()) {
+                auto * o = static_cast<script::object_object *>(target.as_heap());
+                o->set(std::string{cancel_bubble_property}, value::boolean(true));
+                o->set(std::string{stop_immediate_property}, value::boolean(true));
+            }
+            return value::undefined();
+        },
+        script::attr_builtin);
     // The path the CURRENT dispatch built, or an empty list outside one.
-    method_on(event_proto, "composedPath", [](context & c, std::span<value>) {
-        const value held = c.lookup_property(c.current_this(), std::string{path_property});
-        return held.is_array() ? held : c.make_array();
-    });
+    set_method(
+        cx, *event_proto, "composedPath",
+        [](context & c, std::span<value>) {
+            const value held = c.lookup_property(c.current_this(), std::string{path_property});
+            return held.is_array() ? held : c.make_array();
+        },
+        script::attr_builtin);
     // `initEvent` is how an event made by `document.createEvent` is given its
     // type - createEvent hands back an event whose type is the empty string, and
     // a page that never calls this dispatches an event named "".
-    method_on(event_proto, "initEvent", [](context & c, std::span<value> a) {
-        const value target = c.current_this();
-        if (!target.is_object()) { return value::undefined(); }
-        // THE TYPE IS MANDATORY. `initEvent()` with no argument is a TypeError
-        // in every browser, and answering it with an event named "undefined"
-        // would be a dispatch to nobody that looks like it worked.
-        if (a.empty()) {
-            c.throw_error("TypeError",
-                          "initEvent requires at least 1 argument, but only 0 were passed");
+    set_method(
+        cx, *event_proto, "initEvent",
+        [](context & c, std::span<value> a) {
+            const value target = c.current_this();
+            if (!target.is_object()) { return value::undefined(); }
+            // THE TYPE IS MANDATORY. `initEvent()` with no argument is a TypeError
+            // in every browser, and answering it with an event named "undefined"
+            // would be a dispatch to nobody that looks like it worked.
+            if (a.empty()) {
+                c.throw_error("TypeError",
+                              "initEvent requires at least 1 argument, but only 0 were passed");
+                return value::undefined();
+            }
+            // DOES NOTHING WHILE THE EVENT IS BEING DISPATCHED. The specification
+            // returns early on the dispatch flag, and it is not a corner: a listener
+            // that re-initialises the event it was handed would otherwise rename it
+            // and reset its flags underneath the rest of the path.
+            if (flag_of(c, target, dispatch_property)) { return value::undefined(); }
+            auto * o = static_cast<script::object_object *>(target.as_heap());
+            o->set("type", c.string(arg_string(c, a, 0)));
+            o->set("bubbles", value::boolean(a.size() > 1 && context::truthy(a[1])));
+            o->set("cancelable", value::boolean(a.size() > 2 && context::truthy(a[2])));
+            // AND CLEARS THE FLAGS. initEvent re-initialises the event, which means
+            // the canceled flag, BOTH propagation flags, the target and the trusted
+            // flag - an event that has been stopped once must be usable again, and
+            // the suite dispatches the same object several times to check exactly
+            // that. It also SETS the initialized flag, which is the only way an
+            // event from document.createEvent ever becomes dispatchable.
+            o->set("defaultPrevented", value::boolean(false));
+            o->set(std::string{cancel_bubble_property}, value::boolean(false));
+            o->set(std::string{stop_immediate_property}, value::boolean(false));
+            o->set("target", value::null());
+            o->set("srcElement", value::null());
+            o->set(std::string{trusted_property}, value::boolean(false));
+            o->set(std::string{initialised_property}, value::boolean(true));
             return value::undefined();
-        }
-        // DOES NOTHING WHILE THE EVENT IS BEING DISPATCHED. The specification
-        // returns early on the dispatch flag, and it is not a corner: a listener
-        // that re-initialises the event it was handed would otherwise rename it
-        // and reset its flags underneath the rest of the path.
-        if (flag_of(c, target, dispatch_property)) { return value::undefined(); }
-        auto * o = static_cast<script::object_object *>(target.as_heap());
-        o->set("type", c.string(arg_string(c, a, 0)));
-        o->set("bubbles", value::boolean(a.size() > 1 && context::truthy(a[1])));
-        o->set("cancelable", value::boolean(a.size() > 2 && context::truthy(a[2])));
-        // AND CLEARS THE FLAGS. initEvent re-initialises the event, which means
-        // the canceled flag, BOTH propagation flags, the target and the trusted
-        // flag - an event that has been stopped once must be usable again, and
-        // the suite dispatches the same object several times to check exactly
-        // that. It also SETS the initialized flag, which is the only way an
-        // event from document.createEvent ever becomes dispatchable.
-        o->set("defaultPrevented", value::boolean(false));
-        o->set(std::string{cancel_bubble_property}, value::boolean(false));
-        o->set(std::string{stop_immediate_property}, value::boolean(false));
-        o->set("target", value::null());
-        o->set("srcElement", value::null());
-        o->set(std::string{trusted_property}, value::boolean(false));
-        o->set(std::string{initialised_property}, value::boolean(true));
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
 
     // `cancelBubble` AND `returnValue` are accessors rather than properties,
     // because both are one-way: `cancelBubble = false` does NOT restart a
@@ -373,27 +349,30 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // document.createEvent("CustomEvent"). On the PROTOTYPE, so an event from
     // createEvent has it too - it used to be installed by the constructor only,
     // so the one path that actually needs it was the one path without it.
-    method_on(static_cast<script::object_object *>(custom_event_prototype_.as_heap()),
-              "initCustomEvent", [](context & c, std::span<value> a) {
-                  const value self = c.current_this();
-                  if (!self.is_object()) { return value::undefined(); }
-                  if (a.empty()) {
-                      c.throw_error("TypeError", "initCustomEvent requires at least 1 argument, "
-                                                 "but only 0 were passed");
-                      return value::undefined();
-                  }
-                  if (flag_of(c, self, dispatch_property)) { return value::undefined(); }
-                  auto * o = static_cast<script::object_object *>(self.as_heap());
-                  o->set("type", c.string(arg_string(c, a, 0)));
-                  o->set("bubbles", value::boolean(a.size() > 1 && context::truthy(a[1])));
-                  o->set("cancelable", value::boolean(a.size() > 2 && context::truthy(a[2])));
-                  o->set("detail", a.size() > 3 ? a[3] : value::null());
-                  o->set("defaultPrevented", value::boolean(false));
-                  o->set(std::string{cancel_bubble_property}, value::boolean(false));
-                  o->set(std::string{stop_immediate_property}, value::boolean(false));
-                  o->set(std::string{initialised_property}, value::boolean(true));
-                  return value::undefined();
-              });
+    set_method(
+        cx, *static_cast<script::object_object *>(custom_event_prototype_.as_heap()),
+        "initCustomEvent",
+        [](context & c, std::span<value> a) {
+            const value self = c.current_this();
+            if (!self.is_object()) { return value::undefined(); }
+            if (a.empty()) {
+                c.throw_error("TypeError", "initCustomEvent requires at least 1 argument, "
+                                           "but only 0 were passed");
+                return value::undefined();
+            }
+            if (flag_of(c, self, dispatch_property)) { return value::undefined(); }
+            auto * o = static_cast<script::object_object *>(self.as_heap());
+            o->set("type", c.string(arg_string(c, a, 0)));
+            o->set("bubbles", value::boolean(a.size() > 1 && context::truthy(a[1])));
+            o->set("cancelable", value::boolean(a.size() > 2 && context::truthy(a[2])));
+            o->set("detail", a.size() > 3 ? a[3] : value::null());
+            o->set("defaultPrevented", value::boolean(false));
+            o->set(std::string{cancel_bubble_property}, value::boolean(false));
+            o->set(std::string{stop_immediate_property}, value::boolean(false));
+            o->set(std::string{initialised_property}, value::boolean(true));
+            return value::undefined();
+        },
+        script::attr_builtin);
 
     // --- UIEvent, and everything below it ---------------------------------
     const member_writer ui_members = [](context & c, script::object_object & e, value init) {
@@ -472,8 +451,8 @@ void dom_bindings::install_event_interfaces(context & cx) {
         if (property == nullptr) { return value::boolean(false); }
         return value::boolean(context::truthy(c.lookup_property(c.current_this(), property)));
     };
-    method_on(static_cast<script::object_object *>(mouse_prototype.as_heap()), "getModifierState",
-              modifier_state);
+    set_method(cx, *static_cast<script::object_object *>(mouse_prototype.as_heap()),
+               "getModifierState", modifier_state, script::attr_builtin);
 
     const value wheel_prototype =
         interface_of("WheelEvent", mouse_prototype,
@@ -537,19 +516,22 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // has here.
     auto * touch_list_proto = cx.allocate<script::object_object>();
     const value touch_list_prototype = value::object(touch_list_proto);
-    method_on(touch_list_proto, "item", [](context & c, std::span<value> a) {
-        const value self = c.current_this();
-        if (!self.is_object()) { return value::null(); }
-        // OUT OF RANGE IS `null` AND NOT undefined - the getter is `Touch?`.
-        // The bounds are checked on the DOUBLE before the cast, because
-        // converting a NaN or a 1e300 to an integer type is undefined
-        // behaviour and an index is whatever the page passed.
-        const double at = a.empty() ? 0.0 : context::to_number(a[0]);
-        if (!(at >= 0.0) || at >= 4294967296.0) { return value::null(); }
-        const value * held = static_cast<script::object_object *>(self.as_heap())
-                                 ->find(std::to_string(static_cast<std::uint32_t>(at)));
-        return held == nullptr ? value::null() : *held;
-    });
+    set_method(
+        cx, *touch_list_proto, "item",
+        [](context & c, std::span<value> a) {
+            const value self = c.current_this();
+            if (!self.is_object()) { return value::null(); }
+            // OUT OF RANGE IS `null` AND NOT undefined - the getter is `Touch?`.
+            // The bounds are checked on the DOUBLE before the cast, because
+            // converting a NaN or a 1e300 to an integer type is undefined
+            // behaviour and an index is whatever the page passed.
+            const double at = a.empty() ? 0.0 : context::to_number(a[0]);
+            if (!(at >= 0.0) || at >= 4294967296.0) { return value::null(); }
+            const value * held = static_cast<script::object_object *>(self.as_heap())
+                                     ->find(std::to_string(static_cast<std::uint32_t>(at)));
+            return held == nullptr ? value::null() : *held;
+        },
+        script::attr_builtin);
     // NOT CONSTRUCTIBLE: a TouchList has no constructor in the IDL, and saying
     // so is better than handing back an empty object that is not one.
     {
@@ -684,7 +666,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
         proto->set("DOM_KEY_LOCATION_LEFT", value::number(1));
         proto->set("DOM_KEY_LOCATION_RIGHT", value::number(2));
         proto->set("DOM_KEY_LOCATION_NUMPAD", value::number(3));
-        method_on(proto, "getModifierState", modifier_state);
+        set_method(cx, *proto, "getModifierState", modifier_state, script::attr_builtin);
         // `initKeyEvent` is DELIBERATELY ABSENT. It is a Gecko-only legacy
         // method that the DOM removed, and dom/events/KeyEvent-initKeyEvent.html
         // asserts three times that it is undefined.
@@ -774,64 +756,71 @@ void dom_bindings::install_event_interfaces(context & cx) {
         o.set(std::string{stop_immediate_property}, value::boolean(false));
         o.set(std::string{initialised_property}, value::boolean(true));
     };
-    method_on(static_cast<script::object_object *>(ui_prototype.as_heap()), "initUIEvent",
-              [init_common](context & c, std::span<value> a) {
-                  const value self = c.current_this();
-                  if (!self.is_object() || flag_of(c, self, dispatch_property)) {
-                      return value::undefined();
-                  }
-                  auto * o = static_cast<script::object_object *>(self.as_heap());
-                  init_common(c, a, *o);
-                  o->set("view", a.size() > 3 ? a[3] : value::null());
-                  o->set("detail", value::number(a.size() > 4 ? context::to_number(a[4]) : 0.0));
-                  return value::undefined();
-              });
-    method_on(static_cast<script::object_object *>(mouse_prototype.as_heap()), "initMouseEvent",
-              [init_common](context & c, std::span<value> a) {
-                  const value self = c.current_this();
-                  if (!self.is_object() || flag_of(c, self, dispatch_property)) {
-                      return value::undefined();
-                  }
-                  auto * o = static_cast<script::object_object *>(self.as_heap());
-                  init_common(c, a, *o);
-                  // The argument order is the one DOM Level 2 fixed and cannot
-                  // be changed: view, detail, screenX, screenY, clientX,
-                  // clientY, ctrl, alt, shift, meta, button, relatedTarget.
-                  const auto number_at = [&a](std::size_t i) {
-                      return value::number(i < a.size() ? context::to_number(a[i]) : 0.0);
-                  };
-                  const auto flag_at = [&a](std::size_t i) {
-                      return value::boolean(i < a.size() && context::truthy(a[i]));
-                  };
-                  o->set("view", a.size() > 3 ? a[3] : value::null());
-                  o->set("detail", number_at(4));
-                  o->set("screenX", number_at(5));
-                  o->set("screenY", number_at(6));
-                  o->set("clientX", number_at(7));
-                  o->set("clientY", number_at(8));
-                  o->set("ctrlKey", flag_at(9));
-                  o->set("altKey", flag_at(10));
-                  o->set("shiftKey", flag_at(11));
-                  o->set("metaKey", flag_at(12));
-                  o->set("button", number_at(13));
-                  o->set("relatedTarget", a.size() > 14 ? a[14] : value::null());
-                  return value::undefined();
-              });
-    method_on(static_cast<script::object_object *>(keyboard_prototype.as_heap()),
-              "initKeyboardEvent", [init_common](context & c, std::span<value> a) {
-                  const value self = c.current_this();
-                  if (!self.is_object() || flag_of(c, self, dispatch_property)) {
-                      return value::undefined();
-                  }
-                  auto * o = static_cast<script::object_object *>(self.as_heap());
-                  init_common(c, a, *o);
-                  o->set("view", a.size() > 3 ? a[3] : value::null());
-                  o->set("key", c.string(a.size() > 4 ? c.to_string(a[4]) : std::string{}));
-                  o->set("location", value::number(a.size() > 5 ? context::to_number(a[5]) : 0.0));
-                  o->set("code", c.string(a.size() > 6 ? c.to_string(a[6]) : std::string{}));
-                  o->set("repeat", value::boolean(a.size() > 7 && context::truthy(a[7])));
-                  return value::undefined();
-              });
+    set_method(
+        cx, *static_cast<script::object_object *>(ui_prototype.as_heap()), "initUIEvent",
+        [init_common](context & c, std::span<value> a) {
+            const value self = c.current_this();
+            if (!self.is_object() || flag_of(c, self, dispatch_property)) {
+                return value::undefined();
+            }
+            auto * o = static_cast<script::object_object *>(self.as_heap());
+            init_common(c, a, *o);
+            o->set("view", a.size() > 3 ? a[3] : value::null());
+            o->set("detail", value::number(a.size() > 4 ? context::to_number(a[4]) : 0.0));
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *static_cast<script::object_object *>(mouse_prototype.as_heap()), "initMouseEvent",
+        [init_common](context & c, std::span<value> a) {
+            const value self = c.current_this();
+            if (!self.is_object() || flag_of(c, self, dispatch_property)) {
+                return value::undefined();
+            }
+            auto * o = static_cast<script::object_object *>(self.as_heap());
+            init_common(c, a, *o);
+            // The argument order is the one DOM Level 2 fixed and cannot
+            // be changed: view, detail, screenX, screenY, clientX,
+            // clientY, ctrl, alt, shift, meta, button, relatedTarget.
+            const auto number_at = [&a](std::size_t i) {
+                return value::number(i < a.size() ? context::to_number(a[i]) : 0.0);
+            };
+            const auto flag_at = [&a](std::size_t i) {
+                return value::boolean(i < a.size() && context::truthy(a[i]));
+            };
+            o->set("view", a.size() > 3 ? a[3] : value::null());
+            o->set("detail", number_at(4));
+            o->set("screenX", number_at(5));
+            o->set("screenY", number_at(6));
+            o->set("clientX", number_at(7));
+            o->set("clientY", number_at(8));
+            o->set("ctrlKey", flag_at(9));
+            o->set("altKey", flag_at(10));
+            o->set("shiftKey", flag_at(11));
+            o->set("metaKey", flag_at(12));
+            o->set("button", number_at(13));
+            o->set("relatedTarget", a.size() > 14 ? a[14] : value::null());
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *static_cast<script::object_object *>(keyboard_prototype.as_heap()),
+        "initKeyboardEvent",
+        [init_common](context & c, std::span<value> a) {
+            const value self = c.current_this();
+            if (!self.is_object() || flag_of(c, self, dispatch_property)) {
+                return value::undefined();
+            }
+            auto * o = static_cast<script::object_object *>(self.as_heap());
+            init_common(c, a, *o);
+            o->set("view", a.size() > 3 ? a[3] : value::null());
+            o->set("key", c.string(a.size() > 4 ? c.to_string(a[4]) : std::string{}));
+            o->set("location", value::number(a.size() > 5 ? context::to_number(a[5]) : 0.0));
+            o->set("code", c.string(a.size() > 6 ? c.to_string(a[6]) : std::string{}));
+            o->set("repeat", value::boolean(a.size() > 7 && context::truthy(a[7])));
+            return value::undefined();
+        },
+        script::attr_builtin);
 
     // --- EventTarget -------------------------------------------------------
     //
@@ -847,61 +836,67 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // so `step_of` asks which target the receiver names rather than assuming
     // the object bucket, which no dispatch through the tree ever visits.
     auto * target_proto = cx.allocate<script::object_object>();
-    const auto target_method = [&](const char * name, script::native_fn fn) {
-        method_on(target_proto, name, std::move(fn));
-    };
     // AND `this` IS NOT ALWAYS THIS DOCUMENT'S. The prototypes are the realm's
     // and installed by the primary, so a node of a document the page made -
     // `createHTMLDocument()`, `document.cloneNode(true)` - arrives here with
     // the primary as `this`, whose `step_of` does not know it and files it as
     // a standalone object: no capture, no bubble, no path. Each method asks
     // which bindings own the receiver, as every Node operation does.
-    target_method("addEventListener", [this](context & c, std::span<value> args) {
-        const value self = c.current_this();
-        if (!self.is_object_like()) { return value::undefined(); }
-        dom_bindings & owner = target_owner(self);
-        owner.add_listener(owner.make_listener(c, owner.step_of(self), args));
-        return value::undefined();
-    });
-    target_method("removeEventListener", [this](context & c, std::span<value> args) {
-        const value self = c.current_this();
-        dom_bindings & owner = target_owner(self);
-        const std::string type = arg_string(c, args, 0);
-        const value callback = arg(args, 1);
-        // The capture flag is part of a listener's identity, and the third
-        // argument may be an options object or the bare boolean. NOTHING ELSE
-        // in the dictionary is read - `once`, `passive` and `signal` are on
-        // AddEventListenerOptions, which removeEventListener does not take, and
-        // a page detects that by handing it getters and watching which run.
-        const value options = arg(args, 2);
-        const bool capture = options.is_object()
-                                 ? context::truthy(c.lookup_property(options, "capture"))
-                                 : context::truthy(options);
-        const path_step at = owner.step_of(self);
-        std::erase_if(owner.listeners_, [&](const listener & l) {
-            if (l.on != at.on || l.type != type || l.capture != capture ||
-                l.callback.bits() != callback.bits()) {
-                return false;
+    set_method(
+        cx, *target_proto, "addEventListener",
+        [this](context & c, std::span<value> args) {
+            const value self = c.current_this();
+            if (!self.is_object_like()) { return value::undefined(); }
+            dom_bindings & owner = target_owner(self);
+            owner.add_listener(owner.make_listener(c, owner.step_of(self), args));
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *target_proto, "removeEventListener",
+        [this](context & c, std::span<value> args) {
+            const value self = c.current_this();
+            dom_bindings & owner = target_owner(self);
+            const std::string type = arg_string(c, args, 0);
+            const value callback = arg(args, 1);
+            // The capture flag is part of a listener's identity, and the third
+            // argument may be an options object or the bare boolean. NOTHING ELSE
+            // in the dictionary is read - `once`, `passive` and `signal` are on
+            // AddEventListenerOptions, which removeEventListener does not take, and
+            // a page detects that by handing it getters and watching which run.
+            const value options = arg(args, 2);
+            const bool capture = options.is_object()
+                                     ? context::truthy(c.lookup_property(options, "capture"))
+                                     : context::truthy(options);
+            const path_step at = owner.step_of(self);
+            std::erase_if(owner.listeners_, [&](const listener & l) {
+                if (l.on != at.on || l.type != type || l.capture != capture ||
+                    l.callback.bits() != callback.bits()) {
+                    return false;
+                }
+                return at.on == listen_on::object ? l.host.bits() == at.host.bits()
+                                                  : l.target == at.node;
+            });
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *target_proto, "dispatchEvent",
+        [this](context & c, std::span<value> args) {
+            const value self = c.current_this();
+            const value event = arg(args, 0);
+            // NOT AN EVENT IS A TypeError, not a quiet `true`. `dispatchEvent(null)`
+            // used to report that nothing cancelled the event it was never given.
+            if (!inherits_from(event, event_prototype_)) {
+                c.throw_error("TypeError", "Failed to execute 'dispatchEvent' on 'EventTarget': "
+                                           "parameter 1 is not of type 'Event'.");
+                return value::boolean(false);
             }
-            return at.on == listen_on::object ? l.host.bits() == at.host.bits()
-                                              : l.target == at.node;
-        });
-        return value::undefined();
-    });
-    target_method("dispatchEvent", [this](context & c, std::span<value> args) {
-        const value self = c.current_this();
-        const value event = arg(args, 0);
-        // NOT AN EVENT IS A TypeError, not a quiet `true`. `dispatchEvent(null)`
-        // used to report that nothing cancelled the event it was never given.
-        if (!inherits_from(event, event_prototype_)) {
-            c.throw_error("TypeError", "Failed to execute 'dispatchEvent' on 'EventTarget': "
-                                       "parameter 1 is not of type 'Event'.");
-            return value::boolean(false);
-        }
-        if (!self.is_object_like()) { return value::boolean(true); }
-        dom_bindings & owner = target_owner(self);
-        return value::boolean(!owner.dispatch_to(event, owner.step_of(self)));
-    });
+            if (!self.is_object_like()) { return value::boolean(true); }
+            dom_bindings & owner = target_owner(self);
+            return value::boolean(!owner.dispatch_to(event, owner.step_of(self)));
+        },
+        script::attr_builtin);
     // The Error constructor's shape, and for the same reason: `this` is the
     // instance when this runs through `new` or through a subclass's `super()`,
     // and a bare call still has to produce something.

@@ -189,7 +189,7 @@ void dom_bindings::install(context & cx) {
 }
 
 // THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this
-// checks. `pack(node_id)` is a slot and a generation into ONE slab, so the
+// checks. `node_id.key()` is a slot and a generation into ONE slab, so the
 // same number names a different node in a different document - and there are
 // two documents now. Reading a foreign wrapper's handle would hand back
 // whatever node happens to sit in that slot HERE, which is exactly the silent
@@ -260,18 +260,6 @@ void dom_bindings::set_text(node_id id, std::string text) {
         }
     }
     mutated();
-}
-
-std::vector<std::string_view> dom_bindings::split(std::string_view text) {
-    std::vector<std::string_view> out;
-    std::size_t at = 0;
-    while (at < text.size()) {
-        while (at < text.size() && text[at] == ' ') { ++at; }
-        const std::size_t start = at;
-        while (at < text.size() && text[at] != ' ') { ++at; }
-        if (at > start) { out.push_back(text.substr(start, at - start)); }
-    }
-    return out;
 }
 
 void dom_bindings::mutated() {
@@ -460,14 +448,12 @@ void dom_bindings::install_navigation(context & cx) {
 
 value dom_bindings::make_location(context & cx) {
     auto * loc = cx.allocate<script::object_object>();
-    const auto method = [&](std::string name, script::native_fn fn) {
-        loc->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    method("reload", [this](context &, std::span<value>) {
+    set_method(cx, *loc, "reload", [this](context &, std::span<value>) {
         reload_requested_ = true;
         return value::undefined();
     });
-    method("toString", [this](context & c, std::span<value>) { return c.string(location_href_); });
+    set_method(cx, *loc, "toString",
+               [this](context & c, std::span<value>) { return c.string(location_href_); });
     loc->set("href", cx.string(location_href_));
     loc->set("hash", cx.string(location_hash_));
     write_location_parts(cx, *loc);

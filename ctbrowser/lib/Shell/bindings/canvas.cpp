@@ -15,6 +15,13 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+// arg_number as the float the canvas works in.
+[[nodiscard]] float number(std::span<value> args, std::size_t i) {
+    return static_cast<float>(arg_number(args, i));
+}
+} // namespace
+
 // A DOMMatrix: the six numbers a page reads, and the methods it composes with.
 //
 // Every method is IMMUTABLE - `inverse()`, `multiply()`, `translate()` and
@@ -37,9 +44,6 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
     out->set("m41", value::number(t.e));
     out->set("m42", value::number(t.f));
     out->set("is2D", value::boolean(true));
-    const auto method = [&](std::string name, script::native_fn fn) {
-        out->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // Reads its operand back out of whatever object it was given, so a page can
     // pass a DOMMatrix, a plain {a,b,c,d,e,f}, or the result of getTransform.
     const auto read = [](context & c, value v) {
@@ -57,29 +61,29 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
         got.f = part("f", 0);
         return got;
     };
-    method("inverse",
-           [this, t](context & c, std::span<value>) { return matrix_object(c, t.inverse()); });
-    method("multiply", [this, t, read](context & c, std::span<value> a) {
+    set_method(cx, *out, "inverse",
+               [this, t](context & c, std::span<value>) { return matrix_object(c, t.inverse()); });
+    set_method(cx, *out, "multiply", [this, t, read](context & c, std::span<value> a) {
         // `A.multiply(B)` is B applied FIRST and then A, which is the order the
         // spec's matrix product gives - and `then` here already composes that
         // way round, so this is A.then(B) with the arguments as written.
         return matrix_object(c, t.then(read(c, arg(a, 0))));
     });
-    method("translate", [this, t](context & c, std::span<value> a) {
+    set_method(cx, *out, "translate", [this, t](context & c, std::span<value> a) {
         return matrix_object(c, transform::translation(number(a, 0), number(a, 1)).then(t));
     });
-    method("scale", [this, t](context & c, std::span<value> a) {
+    set_method(cx, *out, "scale", [this, t](context & c, std::span<value> a) {
         const float sx = a.empty() ? 1.0f : number(a, 0);
         const float sy = a.size() > 1 ? number(a, 1) : sx;
         return matrix_object(c, transform::scaling(sx, sy).then(t));
     });
-    method("rotate", [this, t](context & c, std::span<value> a) {
+    set_method(cx, *out, "rotate", [this, t](context & c, std::span<value> a) {
         // DEGREES, which is the one place this API does not use radians.
         const auto radians =
             static_cast<float>(static_cast<double>(number(a, 0)) * std::numbers::pi / 180.0);
         return matrix_object(c, transform::rotation(radians).then(t));
     });
-    method("toString", [t](context & c, std::span<value>) {
+    set_method(cx, *out, "toString", [t](context & c, std::span<value>) {
         const auto text = [](float v) {
             std::string out = std::to_string(v);
             // Trailing zeros make `matrix(1.000000, ...)` - correct and unreadable.
@@ -95,24 +99,15 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
 
 value dom_bindings::canvas_context_object(context & cx, node_id id) {
     const auto txn = doc_->read();
-    const auto attribute = [&](std::string_view name, int fallback) {
-        const std::string_view text = txn.attribute_value(id, atoms_->intern(name));
-        if (text.empty() || text.front() < '0' || text.front() > '9') { return fallback; }
-        int value = 0;
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-        return parsed.ec != std::errc{} || value == 0 ? fallback : value;
-    };
     canvas_context * canvas =
-        canvases_->context_for(id, attribute("width", 300), attribute("height", 150));
+        canvases_->context_for(id, static_cast<int>(size_attribute(txn, id, "width", 300)),
+                               static_cast<int>(size_attribute(txn, id, "height", 150)));
     if (canvas == nullptr) { return value::null(); }
 
     auto * obj = cx.allocate<script::object_object>();
     if (canvas2d_prototype_.is_object()) { obj->prototype = canvas2d_prototype_; }
     const value self = value::object(obj);
     obj->set("canvas", wrap(cx, id));
-    const auto method = [&](std::string name, script::native_fn fn) {
-        obj->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // fillStyle and strokeStyle are PROPERTIES that the drawing calls read
     // back, which is the real canvas idiom - `ctx.fillStyle = 'red'` then
     // `ctx.fillRect(...)`. Reading them at draw time rather than at
@@ -155,9 +150,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         }
         if (const value * v = o->find("font")) {
             std::string font = c.to_string(*v);
-            canvas->font_size = font_size_from(font);
-            font_face_from(font, canvas->font_family, canvas->font_bold, canvas->font_italic);
-            canvas->font_spec = std::move(font);
+            if (apply_canvas_font(*canvas, font)) { canvas->font_spec = std::move(font); }
         }
         // Kept as the spec's strings rather than parsed here: an unknown value
         // has to behave as the default, and the drawing code is the one place
@@ -188,52 +181,54 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         };
     };
 
-    method("fillRect", draws([canvas](context &, std::span<value> a) {
-               canvas->fill_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-           }));
-    method("clearRect", draws([canvas](context &, std::span<value> a) {
-               canvas->clear_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-           }));
-    method("strokeRect", draws([canvas](context &, std::span<value> a) {
-               canvas->stroke_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-           }));
-    method("beginPath", draws([canvas](context &, std::span<value>) { canvas->begin_path(); }));
-    method("closePath", draws([canvas](context &, std::span<value>) { canvas->close_path(); }));
-    method("moveTo", draws([canvas](context &, std::span<value> a) {
-               canvas->move_to(number(a, 0), number(a, 1));
-           }));
-    method("lineTo", draws([canvas](context &, std::span<value> a) {
-               canvas->line_to(number(a, 0), number(a, 1));
-           }));
-    method("rect", draws([canvas](context &, std::span<value> a) {
-               canvas->rect_path(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
-           }));
-    method("arc", draws([canvas](context & c, std::span<value> a) {
-               canvas->arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
-                           a.size() > 5 && context::truthy(a[5]));
-               (void)c;
-           }));
+    set_method(cx, *obj, "fillRect", draws([canvas](context &, std::span<value> a) {
+                   canvas->fill_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+               }));
+    set_method(cx, *obj, "clearRect", draws([canvas](context &, std::span<value> a) {
+                   canvas->clear_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+               }));
+    set_method(cx, *obj, "strokeRect", draws([canvas](context &, std::span<value> a) {
+                   canvas->stroke_rect(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+               }));
+    set_method(cx, *obj, "beginPath",
+               draws([canvas](context &, std::span<value>) { canvas->begin_path(); }));
+    set_method(cx, *obj, "closePath",
+               draws([canvas](context &, std::span<value>) { canvas->close_path(); }));
+    set_method(cx, *obj, "moveTo", draws([canvas](context &, std::span<value> a) {
+                   canvas->move_to(number(a, 0), number(a, 1));
+               }));
+    set_method(cx, *obj, "lineTo", draws([canvas](context &, std::span<value> a) {
+                   canvas->line_to(number(a, 0), number(a, 1));
+               }));
+    set_method(cx, *obj, "rect", draws([canvas](context &, std::span<value> a) {
+                   canvas->rect_path(number(a, 0), number(a, 1), number(a, 2), number(a, 3));
+               }));
+    set_method(cx, *obj, "arc", draws([canvas](context & c, std::span<value> a) {
+                   canvas->arc(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
+                               a.size() > 5 && context::truthy(a[5]));
+                   (void)c;
+               }));
     // drawImage(image, dx, dy [, dw, dh]) and the source-rect form. `image`
     // is either a loadImage() handle or an <img> element wrapper - the same
     // two things a page can hold, and both have to work.
-    method("drawImage", draws([this, canvas](context &, std::span<value> a) {
-               const std::shared_ptr<const paint::bitmap> source = image_argument(arg(a, 0));
-               if (!source) { return; }
-               const auto natural_w = static_cast<float>(source->width);
-               const auto natural_h = static_cast<float>(source->height);
-               if (a.size() >= 9) {
-                   // The nine-argument form takes a rectangle OUT of the source.
-                   canvas->draw_image_region(*source, number(a, 1), number(a, 2), number(a, 3),
-                                             number(a, 4), number(a, 5), number(a, 6), number(a, 7),
-                                             number(a, 8));
-                   return;
-               }
-               // The five-argument form is the whole source into a rectangle.
-               const float w = a.size() >= 4 ? number(a, 3) : natural_w;
-               const float h = a.size() >= 5 ? number(a, 4) : natural_h;
-               canvas->draw_image_region(*source, 0, 0, natural_w, natural_h, number(a, 1),
-                                         number(a, 2), w, h);
-           }));
+    set_method(cx, *obj, "drawImage", draws([this, canvas](context &, std::span<value> a) {
+                   const std::shared_ptr<const paint::bitmap> source = image_argument(arg(a, 0));
+                   if (!source) { return; }
+                   const auto natural_w = static_cast<float>(source->width);
+                   const auto natural_h = static_cast<float>(source->height);
+                   if (a.size() >= 9) {
+                       // The nine-argument form takes a rectangle OUT of the source.
+                       canvas->draw_image_region(*source, number(a, 1), number(a, 2), number(a, 3),
+                                                 number(a, 4), number(a, 5), number(a, 6),
+                                                 number(a, 7), number(a, 8));
+                       return;
+                   }
+                   // The five-argument form is the whole source into a rectangle.
+                   const float w = a.size() >= 4 ? number(a, 3) : natural_w;
+                   const float h = a.size() >= 5 ? number(a, 4) : natural_h;
+                   canvas->draw_image_region(*source, 0, 0, natural_w, natural_h, number(a, 1),
+                                             number(a, 2), w, h);
+               }));
     // `fill(path)` and `stroke(path)` REPLAY a Path2D rather than using the
     // context's own current path. p5.js draws every shape that way: it builds
     // one Path2D per shape with a visitor and hands it to the context, so a
@@ -276,33 +271,33 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         }
     };
     // `clip()` takes the same two forms as fill: a Path2D and/or a rule.
-    method("clip", draws([canvas, replay](context & c, std::span<value> a) {
-               replay(c, a);
-               auto rule = canvas_context::fill_rule::nonzero;
-               for (const value & v : a) {
-                   if (v.is_string() && c.to_string(v) == "evenodd") {
-                       rule = canvas_context::fill_rule::even_odd;
+    set_method(cx, *obj, "clip", draws([canvas, replay](context & c, std::span<value> a) {
+                   replay(c, a);
+                   auto rule = canvas_context::fill_rule::nonzero;
+                   for (const value & v : a) {
+                       if (v.is_string() && c.to_string(v) == "evenodd") {
+                           rule = canvas_context::fill_rule::even_odd;
+                       }
                    }
-               }
-               canvas->clip(rule);
-           }));
-    method("fill", draws([canvas, replay](context & c, std::span<value> a) {
-               replay(c, a);
-               // The rule is the last argument in both forms - `fill(rule)` and
-               // `fill(path, rule)` - so it is looked for rather than counted.
-               auto rule = canvas_context::fill_rule::nonzero;
-               for (const value & v : a) {
-                   if (v.is_string() && c.to_string(v) == "evenodd") {
-                       rule = canvas_context::fill_rule::even_odd;
+                   canvas->clip(rule);
+               }));
+    set_method(cx, *obj, "fill", draws([canvas, replay](context & c, std::span<value> a) {
+                   replay(c, a);
+                   // The rule is the last argument in both forms - `fill(rule)` and
+                   // `fill(path, rule)` - so it is looked for rather than counted.
+                   auto rule = canvas_context::fill_rule::nonzero;
+                   for (const value & v : a) {
+                       if (v.is_string() && c.to_string(v) == "evenodd") {
+                           rule = canvas_context::fill_rule::even_odd;
+                       }
                    }
-               }
-               canvas->fill(rule);
-           }));
-    method("stroke", draws([canvas, replay](context & c, std::span<value> a) {
-               replay(c, a);
-               canvas->stroke();
-           }));
-    method("save", draws([canvas](context &, std::span<value>) { canvas->save(); }));
+                   canvas->fill(rule);
+               }));
+    set_method(cx, *obj, "stroke", draws([canvas, replay](context & c, std::span<value> a) {
+                   replay(c, a);
+                   canvas->stroke();
+               }));
+    set_method(cx, *obj, "save", draws([canvas](context &, std::span<value>) { canvas->save(); }));
     // restore() has to write the state BACK TO THE JAVASCRIPT OBJECT, not just
     // pop the C++ stack. Everything on that stack except the transform is also
     // a property script can assign - fillStyle, strokeStyle, lineWidth,
@@ -316,34 +311,35 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     // assignment made since the last call is folded in before restore() pops
     // over it - which is what the spec means by restoring the state as of the
     // matching save().
-    method("restore", draws([canvas](context & c, std::span<value>) {
-               canvas->restore();
-               const value self_value = c.current_this();
-               if (!self_value.is_object()) { return; }
-               auto * o = static_cast<script::object_object *>(self_value.as_heap());
-               o->set("fillStyle", c.string(canvas->fill_spec));
-               o->set("strokeStyle", c.string(canvas->stroke_spec));
-               o->set("font", c.string(canvas->font_spec));
-               o->set("textAlign", c.string(canvas->text_align));
-               o->set("textBaseline", c.string(canvas->text_baseline));
-               o->set("lineWidth", value::number(canvas->line_width));
-               o->set("globalAlpha", value::number(canvas->global_alpha));
-               o->set("globalCompositeOperation", c.string(canvas->composite_spec));
-           }));
-    method("translate", draws([canvas](context &, std::span<value> a) {
-               canvas->translate(number(a, 0), number(a, 1));
-           }));
-    method("scale", draws([canvas](context &, std::span<value> a) {
-               canvas->scale(number(a, 0), number(a, 1));
-           }));
-    method("rotate",
-           draws([canvas](context &, std::span<value> a) { canvas->rotate(number(a, 0)); }));
-    method("ellipse", draws([canvas](context &, std::span<value> a) {
-               canvas->ellipse(number(a, 0), number(a, 1), number(a, 2), number(a, 3), number(a, 4),
-                               number(a, 5), number(a, 6), a.size() > 7 && context::truthy(a[7]));
-           }));
-    method("resetTransform",
-           draws([canvas](context &, std::span<value>) { canvas->reset_transform(); }));
+    set_method(cx, *obj, "restore", draws([canvas](context & c, std::span<value>) {
+                   canvas->restore();
+                   const value self_value = c.current_this();
+                   if (!self_value.is_object()) { return; }
+                   auto * o = static_cast<script::object_object *>(self_value.as_heap());
+                   o->set("fillStyle", c.string(canvas->fill_spec));
+                   o->set("strokeStyle", c.string(canvas->stroke_spec));
+                   o->set("font", c.string(canvas->font_spec));
+                   o->set("textAlign", c.string(canvas->text_align));
+                   o->set("textBaseline", c.string(canvas->text_baseline));
+                   o->set("lineWidth", value::number(canvas->line_width));
+                   o->set("globalAlpha", value::number(canvas->global_alpha));
+                   o->set("globalCompositeOperation", c.string(canvas->composite_spec));
+               }));
+    set_method(cx, *obj, "translate", draws([canvas](context &, std::span<value> a) {
+                   canvas->translate(number(a, 0), number(a, 1));
+               }));
+    set_method(cx, *obj, "scale", draws([canvas](context &, std::span<value> a) {
+                   canvas->scale(number(a, 0), number(a, 1));
+               }));
+    set_method(cx, *obj, "rotate",
+               draws([canvas](context &, std::span<value> a) { canvas->rotate(number(a, 0)); }));
+    set_method(cx, *obj, "ellipse", draws([canvas](context &, std::span<value> a) {
+                   canvas->ellipse(number(a, 0), number(a, 1), number(a, 2), number(a, 3),
+                                   number(a, 4), number(a, 5), number(a, 6),
+                                   a.size() > 7 && context::truthy(a[7]));
+               }));
+    set_method(cx, *obj, "resetTransform",
+               draws([canvas](context &, std::span<value>) { canvas->reset_transform(); }));
     // `setTransform` REPLACES the matrix and `transform` composes with it. The
     // six numbers are the 2x3 in the spec's order - a, b, c, d, e, f - and a
     // single argument is a matrix-like object, which is the form
@@ -360,17 +356,19 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         return transform{number(a, 0), number(a, 1), number(a, 2),
                          number(a, 3), number(a, 4), number(a, 5)};
     };
-    method("setTransform", draws([canvas, matrix_argument](context & c, std::span<value> a) {
-               // No arguments is the identity, which is what resetTransform is.
-               canvas->set_transform(a.empty() ? transform{} : matrix_argument(c, a));
-           }));
-    method("transform", draws([canvas, matrix_argument](context & c, std::span<value> a) {
-               canvas->multiply_transform(matrix_argument(c, a));
-           }));
+    set_method(cx, *obj, "setTransform",
+               draws([canvas, matrix_argument](context & c, std::span<value> a) {
+                   // No arguments is the identity, which is what resetTransform is.
+                   canvas->set_transform(a.empty() ? transform{} : matrix_argument(c, a));
+               }));
+    set_method(cx, *obj, "transform",
+               draws([canvas, matrix_argument](context & c, std::span<value> a) {
+                   canvas->multiply_transform(matrix_argument(c, a));
+               }));
     // Not wrapped in draws(): reading the matrix changes no pixels. It does
     // still have to be the LIVE one, so a library that reads it back after its
     // own translate() sees the translate.
-    method("getTransform", [this, canvas](context & c, std::span<value>) {
+    set_method(cx, *obj, "getTransform", [this, canvas](context & c, std::span<value>) {
         return matrix_object(c, canvas->current_transform());
     });
     // `new DOMMatrix()` - and getTransform hands one back.
@@ -399,10 +397,10 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         }
         return matrix_object(c, t);
     });
-    method("fillText", draws([canvas](context & c, std::span<value> a) {
-               canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
-                                 number(a, 2));
-           }));
+    set_method(cx, *obj, "fillText", draws([canvas](context & c, std::span<value> a) {
+                   canvas->fill_text(a.empty() ? std::string{} : c.to_string(a[0]), number(a, 1),
+                                     number(a, 2));
+               }));
     // NOT wrapped in draws() - it changes no pixels - but it must still SYNC,
     // and it did not. It is the one method that read the canvas's font state
     // without refreshing it first, so `ctx.font = '20px X'; ctx.measureText(s)`
@@ -414,7 +412,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     // `pixels[]` loop in p5.js. The buffer is RGBA bytes in that order, which
     // is NOT the engine's packed ARGB, so both directions unpack rather than
     // memcpy: getting that wrong swaps red and blue and looks almost right.
-    method("createImageData", [this](context & c, std::span<value> a) {
+    set_method(cx, *obj, "createImageData", [this](context & c, std::span<value> a) {
         // The one-argument overload takes the other image's size, not its pixels.
         const bool given = a.size() == 1 && a[0].is_object();
         const auto width =
@@ -431,7 +429,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
                                        static_cast<std::uint64_t>(std::abs(std::int64_t{*width})),
                                        static_cast<std::uint64_t>(std::abs(std::int64_t{*height})));
     });
-    method("getImageData", [this, canvas](context & c, std::span<value> a) {
+    set_method(cx, *obj, "getImageData", [this, canvas](context & c, std::span<value> a) {
         const auto sx = detail::image_data_long(c, arg(a, 0));
         if (!sx) { return value::undefined(); }
         const auto sy = detail::image_data_long(c, arg(a, 1));
@@ -471,7 +469,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         }
         return out;
     });
-    method("putImageData", [this, canvas](context & c, std::span<value> a) {
+    set_method(cx, *obj, "putImageData", [this, canvas](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_object()) { return value::undefined(); }
         const value source = c.lookup_property(a[0], "data");
         if (!source.is_array()) { return value::undefined(); }
@@ -517,7 +515,7 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
         }
         return value::undefined();
     });
-    method("measureText", [canvas, sync](context & c, std::span<value> a) {
+    set_method(cx, *obj, "measureText", [canvas, sync](context & c, std::span<value> a) {
         sync(c);
         auto * metrics = c.allocate<script::object_object>();
         const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
@@ -563,46 +561,45 @@ value dom_bindings::canvas_context_object(context & cx, node_id id) {
     return self;
 }
 
-float dom_bindings::number(std::span<value> args, std::size_t i) {
-    return i < args.size() ? static_cast<float>(context::to_number(args[i])) : 0.0f;
-}
-
-float dom_bindings::font_size_from(std::string_view font) {
-    const std::size_t px = font.find("px");
-    if (px == std::string_view::npos) { return 10; }
-    std::size_t start = px;
-    while (start > 0 && font[start - 1] >= '0' && font[start - 1] <= '9') { --start; }
-    float size = 0;
-    for (std::size_t i = start; i < px; ++i) {
-        size = size * 10 + static_cast<float>(font[i] - '0');
+bool dom_bindings::apply_canvas_font(canvas_context & canvas, std::string_view font) {
+    // The same reading a stylesheet's `font:` gets - set_declaration splits the
+    // shorthand into its seven longhands and refuses what is not one - so `bold
+    // 16px/1.2 "Fira Sans", serif`, a numeric weight and a keyword size all mean
+    // here what they mean there. (expand_cascaded_shorthand does not do `font`.)
+    style::css::declaration_block longhands;
+    if (!style::css::set_declaration(longhands, "font", font, false)) { return false; }
+    for (const auto & [name, text, important] : longhands) {
+        if (name == "font-size") {
+            // ponytail: em/% and the keyword sizes resolve against 16px, the
+            // UA default, rather than the canvas element's computed font.
+            static constexpr std::string_view keywords[] = {"xx-small", "x-small",  "small",
+                                                            "medium",   "large",    "x-large",
+                                                            "xx-large", "xxx-large"};
+            static constexpr float keyword_px[] = {9, 10, 13, 16, 18, 24, 32, 48};
+            const layout::length size = layout::parse_length(text);
+            canvas.font_size = size.is_auto() ? canvas.font_size : size.resolve(16, 16);
+            for (std::size_t i = 0; i < std::size(keywords); ++i) {
+                if (ascii_iequals(text, keywords[i])) { canvas.font_size = keyword_px[i]; }
+            }
+        } else if (name == "font-family") {
+            // The FIRST entry, unquoted - what layout resolves a list to as well.
+            std::string_view first = trim(text.substr(0, text.find(',')), " \t");
+            if (first.size() >= 2 && (first.front() == '"' || first.front() == '\'') &&
+                first.back() == first.front()) {
+                first = first.substr(1, first.size() - 2);
+            }
+            canvas.font_family = std::string{first};
+        } else if (name == "font-weight") {
+            // 600 and up is bold, as layout reads it.
+            int numeric = 0;
+            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), numeric);
+            canvas.font_bold =
+                parsed.ec == std::errc{} ? numeric >= 600 : text == "bold" || text == "bolder";
+        } else if (name == "font-style") {
+            canvas.font_italic = text == "italic" || text == "oblique";
+        }
     }
-    return size > 0 ? size : 10;
-}
-
-void dom_bindings::font_face_from(std::string_view font, std::string & family, bool & bold,
-                                  bool & italic) {
-    family.clear();
-    bold = false;
-    italic = false;
-    const std::size_t px = font.find("px");
-    if (px == std::string_view::npos) { return; }
-
-    // Before the size: the style and weight keywords.
-    const std::string_view before = font.substr(0, px);
-    bold = before.find("bold") != std::string_view::npos;
-    italic = before.find("italic") != std::string_view::npos ||
-             before.find("oblique") != std::string_view::npos;
-
-    // After it: the family list. The FIRST entry, which is what the rest of the
-    // engine resolves too (layout takes the first name of the list as well).
-    std::string_view rest = font.substr(px + 2);
-    if (const std::size_t comma = rest.find(','); comma != std::string_view::npos) {
-        rest = rest.substr(0, comma);
-    }
-    const std::size_t first = rest.find_first_not_of(" \t'\"");
-    if (first == std::string_view::npos) { return; }
-    const std::size_t last = rest.find_last_not_of(" \t'\"");
-    family = rest.substr(first, last - first + 1);
+    return true;
 }
 
 } // namespace ctbrowser::shell

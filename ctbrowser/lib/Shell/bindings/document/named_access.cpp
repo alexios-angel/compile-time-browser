@@ -99,11 +99,8 @@ std::vector<std::string> dom_bindings::document_property_names() {
 // index on the document rather than a special case here.
 value dom_bindings::make_document_proxy(context & cx, value target) {
     auto * handler = cx.allocate<script::object_object>();
-    const auto native = [&](std::string name, script::native_fn fn) {
-        return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
-    };
     handler->set(
-        "get", native("get", [this](context & c, std::span<value> args) {
+        "get", native(cx, "get", [this](context & c, std::span<value> args) {
             if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
             const std::string name = c.to_string(args[1]);
             // THE WHOLE CHAIN FIRST, not only the own properties: a named
@@ -138,7 +135,7 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
             }
             return value::undefined();
         }));
-    handler->set("has", native("has", [this](context & c, std::span<value> args) {
+    handler->set("has", native(cx, "has", [this](context & c, std::span<value> args) {
                      if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
                      const std::string name = c.to_string(args[1]);
                      // `'x' in document` must agree with `document.x`, or a
@@ -157,7 +154,7 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
     // an object reports must be one it can describe: a legacy platform
     // object's named property is a read-only, enumerable, configurable data
     // property (WebIDL 3.9.1), and the target's own answer for themselves.
-    handler->set("ownKeys", native("ownKeys", [this](context & c, std::span<value> args) {
+    handler->set("ownKeys", native(cx, "ownKeys", [this](context & c, std::span<value> args) {
                      const value out = c.make_array();
                      if (args.empty() || !args[0].is_object()) { return out; }
                      auto & items = static_cast<script::array_object *>(out.as_heap())->items;
@@ -173,7 +170,7 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
                      return out;
                  }));
     handler->set("getOwnPropertyDescriptor",
-                 native("getOwnPropertyDescriptor", [this](context & c, std::span<value> args) {
+                 native(cx, "getOwnPropertyDescriptor", [this](context & c, std::span<value> args) {
                      if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
                      const std::string name = c.to_string(args[1]);
                      context::property_descriptor own;

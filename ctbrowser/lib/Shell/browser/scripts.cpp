@@ -73,15 +73,11 @@ void browser::run_scripts() {
             }
         },
         [this](node_id id) { (void)focus(id); });
-    // The back end a caller chose before the page loaded - see
-    // browser::prefer_angle_webgl. Applied here because this is the first
-    // moment the object that owns WebGL contexts exists.
     // THE CASCADE'S ENGINE, so `querySelector` runs the matcher a stylesheet runs.
     // reset_document() replaces it on every load and this object is rebuilt after
     // that, so handing it over here is enough - the second call in reset_document
     // covers a reload that keeps these bindings.
     bindings_->observe_style_engine(*styles_);
-    bindings_->prefer_angle(prefer_angle_webgl_);
     bindings_->observe_viewport(layout_viewport_width(), options_.height);
     bindings_->observe_resources(assets_, images_);
     bindings_->allow_network(network_allowed_);
@@ -441,8 +437,7 @@ bool browser::add_script_image(std::vector<std::byte> image) {
         // toString and drop-then-keep did not. THE ONE THAT KEEPS THE SOURCE
         // WINS, whichever arrives first, because the other is an optimisation
         // that removes behaviour and silently taking it when the better image
-        // was also offered is the wrong default. `clear_script_images` is how a
-        // caller says it means the lean one.
+        // was also offered is the wrong default.
         if (held.option == script::image_option::keep_source &&
             head->option == script::image_option::drop_source) {
             return true;

@@ -150,15 +150,6 @@ struct nodes {
 void dom_bindings::install_range(context & cx) {
     auto * proto = cx.allocate<script::object_object>();
     const value proto_value = value::object(proto);
-    const auto method = [&cx, proto](const char * name, script::native_fn fn) {
-        proto->define(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-                      script::attr_builtin);
-    };
-    const auto getter = [&cx, proto](const char * name, script::native_fn fn) {
-        proto->define_accessor(
-            name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-            value::undefined());
-    };
     const auto self_of = [](context & c) -> script::object_object * {
         const value self = c.current_this();
         if (!self.is_object()) {
@@ -220,14 +211,20 @@ void dom_bindings::install_range(context & cx) {
             set_end(self, bp);
         }
     };
-    method("setStart", [set_boundary](context & c, std::span<value> a) {
-        set_boundary(c, arg(a, 0), arg(a, 1), true);
-        return value::undefined();
-    });
-    method("setEnd", [set_boundary](context & c, std::span<value> a) {
-        set_boundary(c, arg(a, 0), arg(a, 1), false);
-        return value::undefined();
-    });
+    set_method(
+        cx, *proto, "setStart",
+        [set_boundary](context & c, std::span<value> a) {
+            set_boundary(c, arg(a, 0), arg(a, 1), true);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "setEnd",
+        [set_boundary](context & c, std::span<value> a) {
+            set_boundary(c, arg(a, 0), arg(a, 1), false);
+            return value::undefined();
+        },
+        script::attr_builtin);
     // The four "before/after a node" setters: the node's parent and index.
     const auto beside = [this, set_boundary](context & c, value node, bool after, bool start) {
         const nodes n{c};
@@ -242,33 +239,47 @@ void dom_bindings::install_range(context & cx) {
         }
         set_boundary(c, parent, value::number(n.index(node) + (after ? 1 : 0)), start);
     };
-    method("setStartBefore", [beside](context & c, std::span<value> a) {
-        beside(c, arg(a, 0), false, true);
-        return value::undefined();
-    });
-    method("setStartAfter", [beside](context & c, std::span<value> a) {
-        beside(c, arg(a, 0), true, true);
-        return value::undefined();
-    });
-    method("setEndBefore", [beside](context & c, std::span<value> a) {
-        beside(c, arg(a, 0), false, false);
-        return value::undefined();
-    });
-    method("setEndAfter", [beside](context & c, std::span<value> a) {
-        beside(c, arg(a, 0), true, false);
-        return value::undefined();
-    });
-    method("collapse",
-           [self_of, start_of, end_of, set_start, set_end](context & c, std::span<value> a) {
-               script::object_object * self = self_of(c);
-               if (self == nullptr) { return value::undefined(); }
-               if (context::truthy(arg(a, 0))) {
-                   set_end(self, start_of(c, self));
-               } else {
-                   set_start(self, end_of(c, self));
-               }
-               return value::undefined();
-           });
+    set_method(
+        cx, *proto, "setStartBefore",
+        [beside](context & c, std::span<value> a) {
+            beside(c, arg(a, 0), false, true);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "setStartAfter",
+        [beside](context & c, std::span<value> a) {
+            beside(c, arg(a, 0), true, true);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "setEndBefore",
+        [beside](context & c, std::span<value> a) {
+            beside(c, arg(a, 0), false, false);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "setEndAfter",
+        [beside](context & c, std::span<value> a) {
+            beside(c, arg(a, 0), true, false);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "collapse",
+        [self_of, start_of, end_of, set_start, set_end](context & c, std::span<value> a) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            if (context::truthy(arg(a, 0))) {
+                set_end(self, start_of(c, self));
+            } else {
+                set_start(self, end_of(c, self));
+            }
+            return value::undefined();
+        },
+        script::attr_builtin);
     const auto select = [this, self_of, set_start, set_end](context & c, value node,
                                                             bool contents) {
         script::object_object * self = self_of(c);
@@ -296,41 +307,57 @@ void dom_bindings::install_range(context & cx) {
         set_start(self, {parent, index});
         set_end(self, {parent, index + 1});
     };
-    method("selectNode", [select](context & c, std::span<value> a) {
-        select(c, arg(a, 0), false);
-        return value::undefined();
-    });
-    method("selectNodeContents", [select](context & c, std::span<value> a) {
-        select(c, arg(a, 0), true);
-        return value::undefined();
-    });
-    getter("collapsed", [self_of, start_of, end_of](context & c, std::span<value>) {
-        script::object_object * self = self_of(c);
-        if (self == nullptr) { return value::undefined(); }
-        const point s = start_of(c, self);
-        const point e = end_of(c, self);
-        return value::boolean(same(s.node, e.node) && s.offset == e.offset);
-    });
-    getter("commonAncestorContainer", [self_of, start_of, end_of](context & c, std::span<value>) {
-        script::object_object * self = self_of(c);
-        if (self == nullptr) { return value::undefined(); }
-        const nodes n{c};
-        value at = start_of(c, self).node;
-        const value end = end_of(c, self).node;
-        while (at.is_object_like() && !n.inclusive_ancestor(at, end)) { at = n.parent(at); }
-        return at;
-    });
-    method("cloneRange", [self_of, proto_value](context & c, std::span<value>) {
-        script::object_object * self = self_of(c);
-        if (self == nullptr) { return value::undefined(); }
-        auto * made = c.allocate<script::object_object>();
-        made->prototype = proto_value;
-        for (const char * name : {"startContainer", "startOffset", "endContainer", "endOffset"}) {
-            made->set(name, c.lookup_property(value::object(self), name));
-        }
-        return value::object(made);
-    });
-    method("detach", [](context &, std::span<value>) { return value::undefined(); });
+    set_method(
+        cx, *proto, "selectNode",
+        [select](context & c, std::span<value> a) {
+            select(c, arg(a, 0), false);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "selectNodeContents",
+        [select](context & c, std::span<value> a) {
+            select(c, arg(a, 0), true);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    define_getter(cx, *proto, "collapsed",
+                  [self_of, start_of, end_of](context & c, std::span<value>) {
+                      script::object_object * self = self_of(c);
+                      if (self == nullptr) { return value::undefined(); }
+                      const point s = start_of(c, self);
+                      const point e = end_of(c, self);
+                      return value::boolean(same(s.node, e.node) && s.offset == e.offset);
+                  });
+    define_getter(cx, *proto, "commonAncestorContainer",
+                  [self_of, start_of, end_of](context & c, std::span<value>) {
+                      script::object_object * self = self_of(c);
+                      if (self == nullptr) { return value::undefined(); }
+                      const nodes n{c};
+                      value at = start_of(c, self).node;
+                      const value end = end_of(c, self).node;
+                      while (at.is_object_like() && !n.inclusive_ancestor(at, end)) {
+                          at = n.parent(at);
+                      }
+                      return at;
+                  });
+    set_method(
+        cx, *proto, "cloneRange",
+        [self_of, proto_value](context & c, std::span<value>) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            auto * made = c.allocate<script::object_object>();
+            made->prototype = proto_value;
+            for (const char * name :
+                 {"startContainer", "startOffset", "endContainer", "endOffset"}) {
+                made->set(name, c.lookup_property(value::object(self), name));
+            }
+            return value::object(made);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "detach", [](context &, std::span<value>) { return value::undefined(); },
+        script::attr_builtin);
 
     // DOM 5.5 "contained": (node, 0) after the start and (node, length)
     // before the end, in the range's tree.
@@ -435,14 +462,21 @@ void dom_bindings::install_range(context & cx) {
         }
         return fragment;
     };
-    method("extractContents",
-           [extract_from](context & c, std::span<value>) { return extract_from(c, true); });
-    method("cloneContents",
-           [extract_from](context & c, std::span<value>) { return extract_from(c, false); });
-    method("deleteContents", [extract_from](context & c, std::span<value>) {
-        (void)extract_from(c, true);
-        return value::undefined();
-    });
+    set_method(
+        cx, *proto, "extractContents",
+        [extract_from](context & c, std::span<value>) { return extract_from(c, true); },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "cloneContents",
+        [extract_from](context & c, std::span<value>) { return extract_from(c, false); },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "deleteContents",
+        [extract_from](context & c, std::span<value>) {
+            (void)extract_from(c, true);
+            return value::undefined();
+        },
+        script::attr_builtin);
 
     // DOM 5.5 "insert": split the start text node when the start is inside
     // one, put `node` ahead of what follows the start, and stretch a
@@ -486,69 +520,80 @@ void dom_bindings::install_range(context & cx) {
         (void)n.call(parent, "insertBefore", {node, reference});
         if (same(s.node, e.node) && s.offset == e.offset) { set_end(self, {parent, new_offset}); }
     };
-    method("insertNode", [insert](context & c, std::span<value> a) {
-        insert(c, arg(a, 0));
-        return value::undefined();
-    });
-    method("surroundContents", [this, self_of, start_of, end_of, partially, extract_from, insert,
-                                select](context & c, std::span<value> a) {
-        script::object_object * self = self_of(c);
-        if (self == nullptr) { return value::undefined(); }
-        const nodes n{c};
-        const value parent = arg(a, 0);
-        if (!n.is_node(parent)) {
-            c.throw_error("TypeError", "surroundContents: the argument is not a Node");
+    set_method(
+        cx, *proto, "insertNode",
+        [insert](context & c, std::span<value> a) {
+            insert(c, arg(a, 0));
             return value::undefined();
-        }
-        const point s = start_of(c, self);
-        const point e = end_of(c, self);
-        // A partially contained non-Text node cannot be surrounded.
-        for (value at : {s.node, e.node}) {
-            for (; at.is_object_like(); at = n.parent(at)) {
-                if (!n.text_like(at) && partially(n, at, s, e)) {
-                    throw_dom_exception(c, "InvalidStateError",
-                                        "surroundContents: the range splits a non-Text node");
-                    return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "surroundContents",
+        [this, self_of, start_of, end_of, partially, extract_from, insert,
+         select](context & c, std::span<value> a) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            const nodes n{c};
+            const value parent = arg(a, 0);
+            if (!n.is_node(parent)) {
+                c.throw_error("TypeError", "surroundContents: the argument is not a Node");
+                return value::undefined();
+            }
+            const point s = start_of(c, self);
+            const point e = end_of(c, self);
+            // A partially contained non-Text node cannot be surrounded.
+            for (value at : {s.node, e.node}) {
+                for (; at.is_object_like(); at = n.parent(at)) {
+                    if (!n.text_like(at) && partially(n, at, s, e)) {
+                        throw_dom_exception(c, "InvalidStateError",
+                                            "surroundContents: the range splits a non-Text node");
+                        return value::undefined();
+                    }
                 }
             }
-        }
-        const double type = n.type(parent);
-        if (type == document_node || type == doctype_node || type == fragment_node) {
-            throw_dom_exception(c, "InvalidNodeTypeError",
-                                "surroundContents: the new parent cannot hold the contents");
-            return value::undefined();
-        }
-        const value fragment = extract_from(c, true);
-        if (!fragment.is_object_like()) { return value::undefined(); }
-        for (const value & child : n.children(parent)) { n.remove(child); }
-        insert(c, parent);
-        if (c.throw_pending()) { return value::undefined(); }
-        n.append(parent, fragment);
-        select(c, parent, false);
-        return value::undefined();
-    });
-    // DOM 5.5 "stringification": the text between the two boundary points.
-    method("toString", [self_of, start_of, end_of, contained](context & c, std::span<value>) {
-        script::object_object * self = self_of(c);
-        if (self == nullptr) { return value::undefined(); }
-        const nodes n{c};
-        const point s = start_of(c, self);
-        const point e = end_of(c, self);
-        if (same(s.node, e.node) && n.text_like(s.node)) {
-            return c.string(n.data(s.node, s.offset, e.offset - s.offset));
-        }
-        std::string out;
-        if (n.text_like(s.node)) { out += n.data(s.node, s.offset, n.length(s.node) - s.offset); }
-        const auto walk = [&](auto && self_walk, value at) -> void {
-            if (n.text_like(at) && contained(n, at, s, e)) {
-                out += c.to_string(n.get(at, "data"));
+            const double type = n.type(parent);
+            if (type == document_node || type == doctype_node || type == fragment_node) {
+                throw_dom_exception(c, "InvalidNodeTypeError",
+                                    "surroundContents: the new parent cannot hold the contents");
+                return value::undefined();
             }
-            for (const value & child : n.children(at)) { self_walk(self_walk, child); }
-        };
-        walk(walk, n.root(s.node));
-        if (n.text_like(e.node)) { out += n.data(e.node, 0, e.offset); }
-        return c.string(out);
-    });
+            const value fragment = extract_from(c, true);
+            if (!fragment.is_object_like()) { return value::undefined(); }
+            for (const value & child : n.children(parent)) { n.remove(child); }
+            insert(c, parent);
+            if (c.throw_pending()) { return value::undefined(); }
+            n.append(parent, fragment);
+            select(c, parent, false);
+            return value::undefined();
+        },
+        script::attr_builtin);
+    // DOM 5.5 "stringification": the text between the two boundary points.
+    set_method(
+        cx, *proto, "toString",
+        [self_of, start_of, end_of, contained](context & c, std::span<value>) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            const nodes n{c};
+            const point s = start_of(c, self);
+            const point e = end_of(c, self);
+            if (same(s.node, e.node) && n.text_like(s.node)) {
+                return c.string(n.data(s.node, s.offset, e.offset - s.offset));
+            }
+            std::string out;
+            if (n.text_like(s.node)) {
+                out += n.data(s.node, s.offset, n.length(s.node) - s.offset);
+            }
+            const auto walk = [&](auto && self_walk, value at) -> void {
+                if (n.text_like(at) && contained(n, at, s, e)) {
+                    out += c.to_string(n.get(at, "data"));
+                }
+                for (const value & child : n.children(at)) { self_walk(self_walk, child); }
+            };
+            walk(walk, n.root(s.node));
+            if (n.text_like(e.node)) { out += n.data(e.node, 0, e.offset); }
+            return c.string(out);
+        },
+        script::attr_builtin);
     proto->define("@@toStringTag", cx.string("Range"), script::attr_configurable);
 
     // `new Range()`: collapsed at (document, 0) of the realm's document.

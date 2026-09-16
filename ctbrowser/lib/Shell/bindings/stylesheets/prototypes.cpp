@@ -47,25 +47,6 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         cx.define_global(name, value::object(ctor));
         return proto;
     };
-    const auto method = [&](script::object_object * on, const char * name, script::native_fn fn) {
-        on->define(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-                   script::attr_builtin);
-    };
-    const auto getter = [&](script::object_object * on, const char * name, script::native_fn read) {
-        on->define_accessor(name,
-                            value::object(cx.allocate<script::native_object>(
-                                std::string{"get "} + name, std::move(read))),
-                            value::undefined(), script::attr_configurable);
-    };
-    const auto accessor = [&](script::object_object * on, const char * name, script::native_fn read,
-                              script::native_fn write) {
-        on->define_accessor(name,
-                            value::object(cx.allocate<script::native_object>(
-                                std::string{"get "} + name, std::move(read))),
-                            value::object(cx.allocate<script::native_object>(
-                                std::string{"set "} + name, std::move(write))),
-                            script::attr_configurable);
-    };
     // `@@iterator` on every collection here. `for (const x of list)` already
     // worked - context::iterable_values reads `length` and the indices - but
     // `Symbol.iterator in CSSStyleDeclaration.prototype` is asked by name, and
@@ -73,10 +54,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // indexed-getter interface exactly the Array iterator, so it IS that one,
     // over the snapshot iterable_values already takes.
     const auto iterable = [&](script::object_object * on) {
-        method(on, "@@iterator", [](context & c, std::span<value>) {
-            const value items = c.iterable_values(c.current_this());
-            return c.call(c.lookup_property(items, "values"), std::span<const value>{}, items);
-        });
+        set_method(
+            cx, *on, "@@iterator",
+            [](context & c, std::span<value>) {
+                const value items = c.iterable_values(c.current_this());
+                return c.call(c.lookup_property(items, "values"), std::span<const value>{}, items);
+            },
+            script::attr_builtin);
     };
 
     // --- MediaList
@@ -88,10 +72,12 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // list read two ways rather than two lists that have to be kept in step.
     script::object_object * media_proto = interface("MediaList", nullptr, nullptr);
     iterable(media_proto);
-    method(media_proto, "item",
-           [](context & c, std::span<value> a) { return collection_item(c, a); });
-    accessor(
-        media_proto, "mediaText",
+    set_method(
+        cx, *media_proto, "item",
+        [](context & c, std::span<value> a) { return collection_item(c, a); },
+        script::attr_builtin);
+    define_getter(
+        cx, *media_proto, "mediaText",
         [this](context & c, std::span<value>) {
             const std::vector<std::string> * queries = receiver_media(c);
             return c.string(queries == nullptr ? std::string{}
@@ -110,100 +96,123 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             refresh_media_list(c, c.current_this());
             style_sheets_changed();
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     // The stringifier. `media.toString()` and `'' + media` are both `mediaText`.
-    method(media_proto, "toString", [](context & c, std::span<value>) {
-        return c.lookup_property(c.current_this(), "mediaText");
-    });
-    method(media_proto, "appendMedium", [this](context & c, std::span<value> a) {
-        std::vector<std::string> * queries = receiver_media(c);
-        if (queries == nullptr) { return value::undefined(); }
-        // "Parse A MEDIA QUERY" - singular. `appendMedium("screen, print")` is
-        // not two appends and it is not one query called `screen, print`
-        // either: the parse returns null, and step 1 says return. A top-level
-        // comma is the whole test for it.
-        const std::string one = arg_string(c, a, 0);
-        if (split_on_commas(one).size() != 1) { return value::undefined(); }
-        const std::string added = serialize_media_query_text(one);
-        if (added.empty()) { return value::undefined(); }
-        // "If comparing medium with any of the media queries in the collection
-        // returns true, then return" - appending a medium twice is a no-op.
-        if (std::find(queries->begin(), queries->end(), added) != queries->end()) {
+    set_method(
+        cx, *media_proto, "toString",
+        [](context & c, std::span<value>) {
+            return c.lookup_property(c.current_this(), "mediaText");
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *media_proto, "appendMedium",
+        [this](context & c, std::span<value> a) {
+            std::vector<std::string> * queries = receiver_media(c);
+            if (queries == nullptr) { return value::undefined(); }
+            // "Parse A MEDIA QUERY" - singular. `appendMedium("screen, print")` is
+            // not two appends and it is not one query called `screen, print`
+            // either: the parse returns null, and step 1 says return. A top-level
+            // comma is the whole test for it.
+            const std::string one = arg_string(c, a, 0);
+            if (split_on_commas(one).size() != 1) { return value::undefined(); }
+            const std::string added = serialize_media_query_text(one);
+            if (added.empty()) { return value::undefined(); }
+            // "If comparing medium with any of the media queries in the collection
+            // returns true, then return" - appending a medium twice is a no-op.
+            if (std::find(queries->begin(), queries->end(), added) != queries->end()) {
+                return value::undefined();
+            }
+            queries->push_back(added);
+            refresh_media_list(c, c.current_this());
+            style_sheets_changed();
             return value::undefined();
-        }
-        queries->push_back(added);
-        refresh_media_list(c, c.current_this());
-        style_sheets_changed();
-        return value::undefined();
-    });
-    method(media_proto, "deleteMedium", [this](context & c, std::span<value> a) {
-        std::vector<std::string> * queries = receiver_media(c);
-        if (queries == nullptr) { return value::undefined(); }
-        // A REQUIRED ARGUMENT, so calling it with none is a TypeError and not a
-        // NotFoundError about the empty string - `medialist-interfaces-002.html`
-        // asserts which of the two by name.
-        if (a.empty()) {
-            c.throw_error("TypeError", "deleteMedium requires a medium");
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *media_proto, "deleteMedium",
+        [this](context & c, std::span<value> a) {
+            std::vector<std::string> * queries = receiver_media(c);
+            if (queries == nullptr) { return value::undefined(); }
+            // A REQUIRED ARGUMENT, so calling it with none is a TypeError and not a
+            // NotFoundError about the empty string - `medialist-interfaces-002.html`
+            // asserts which of the two by name.
+            if (a.empty()) {
+                c.throw_error("TypeError", "deleteMedium requires a medium");
+                return value::undefined();
+            }
+            const std::string wanted = serialize_media_query_text(c.to_string(a[0]));
+            // "Remove ALL media queries in the collection that match" - a list may
+            // hold the same query twice (`screen, print, screen`) and removing only
+            // the first leaves one behind that the page has just asked to be rid of.
+            const auto gone = std::remove(queries->begin(), queries->end(), wanted);
+            if (wanted.empty() || gone == queries->end()) {
+                // "If nothing was removed, then throw a NotFoundError" - the one
+                // place in the CSSOM where deleting something absent is an error.
+                throw_dom_exception(c, "NotFoundError", "that medium is not in the list");
+                return value::undefined();
+            }
+            queries->erase(gone, queries->end());
+            refresh_media_list(c, c.current_this());
+            style_sheets_changed();
             return value::undefined();
-        }
-        const std::string wanted = serialize_media_query_text(c.to_string(a[0]));
-        // "Remove ALL media queries in the collection that match" - a list may
-        // hold the same query twice (`screen, print, screen`) and removing only
-        // the first leaves one behind that the page has just asked to be rid of.
-        const auto gone = std::remove(queries->begin(), queries->end(), wanted);
-        if (wanted.empty() || gone == queries->end()) {
-            // "If nothing was removed, then throw a NotFoundError" - the one
-            // place in the CSSOM where deleting something absent is an error.
-            throw_dom_exception(c, "NotFoundError", "that medium is not in the list");
-            return value::undefined();
-        }
-        queries->erase(gone, queries->end());
-        refresh_media_list(c, c.current_this());
-        style_sheets_changed();
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
 
     // --- StyleSheetList
     script::object_object * list_proto = interface("StyleSheetList", nullptr, nullptr);
     iterable(list_proto);
     // `item()` re-derives the list from the tree first - see resync_sheet_list.
-    method(list_proto, "item", [this](context & c, std::span<value> a) {
-        if (script::object_object * self = as_object(c.current_this())) {
-            resync_sheet_list(c, *self);
-        }
-        return collection_item(c, a);
-    });
+    set_method(
+        cx, *list_proto, "item",
+        [this](context & c, std::span<value> a) {
+            if (script::object_object * self = as_object(c.current_this())) {
+                resync_sheet_list(c, *self);
+            }
+            return collection_item(c, a);
+        },
+        script::attr_builtin);
 
     // --- CSSRuleList
     script::object_object * rules_proto = interface("CSSRuleList", nullptr, nullptr);
     iterable(rules_proto);
-    method(rules_proto, "item",
-           [](context & c, std::span<value> a) { return collection_item(c, a); });
+    set_method(
+        cx, *rules_proto, "item",
+        [](context & c, std::span<value> a) { return collection_item(c, a); },
+        script::attr_builtin);
 
     // --- StyleSheet / CSSStyleSheet
     script::object_object * base_proto = interface("StyleSheet", nullptr, nullptr);
-    getter(base_proto, "type", [](context & c, std::span<value>) { return c.string("text/css"); });
-    getter(base_proto, "href", [this](context & c, std::span<value>) {
-        const css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr || sheet->href.empty()) { return value::null(); }
-        return c.string(sheet->href);
-    });
-    getter(base_proto, "ownerNode", [this](context & c, std::span<value>) {
-        const css_sheet_record * sheet = receiver_sheet(c);
-        // NULL ONCE THE OWNER NO LONGER CARRIES IT: a `<link>` that was
-        // disabled or removed keeps this record for the page that holds it,
-        // and the record answers that it belongs to nothing. The owner's tree
-        // is re-walked first, so the answer follows a `link.disabled = true`
-        // made a statement ago.
-        if (sheet == nullptr || !sheet->owner) { return value::null(); }
-        if (shadow_tree_of(sheet->tree) != nullptr) {
-            (void)shadow_sheet_list(c, sheet->tree);
-        } else {
-            sync_style_sheets(c);
-        }
-        if (!sheet->attached) { return value::null(); }
-        return wrap(c, sheet->owner);
-    });
+    define_getter(
+        cx, *base_proto, "type", [](context & c, std::span<value>) { return c.string("text/css"); },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *base_proto, "href",
+        [this](context & c, std::span<value>) {
+            const css_sheet_record * sheet = receiver_sheet(c);
+            if (sheet == nullptr || sheet->href.empty()) { return value::null(); }
+            return c.string(sheet->href);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *base_proto, "ownerNode",
+        [this](context & c, std::span<value>) {
+            const css_sheet_record * sheet = receiver_sheet(c);
+            // NULL ONCE THE OWNER NO LONGER CARRIES IT: a `<link>` that was
+            // disabled or removed keeps this record for the page that holds it,
+            // and the record answers that it belongs to nothing. The owner's tree
+            // is re-walked first, so the answer follows a `link.disabled = true`
+            // made a statement ago.
+            if (sheet == nullptr || !sheet->owner) { return value::null(); }
+            if (shadow_tree_of(sheet->tree) != nullptr) {
+                (void)shadow_sheet_list(c, sheet->tree);
+            } else {
+                sync_style_sheets(c);
+            }
+            if (!sheet->attached) { return value::null(); }
+            return wrap(c, sheet->owner);
+        },
+        {}, script::attr_configurable);
     // An `@import`'s sheet knows its rule, and through it its parent - and
     // deleteRule detaches the rule from its sheet, which is what makes
     // `parentStyleSheet` null afterwards (cssimportrule-parent.html).
@@ -213,26 +222,36 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         const css_rule_record & rule = *css_rule_store_[sheet->owner_rule];
         return rule.sheet < css_sheets_.size() ? &rule : nullptr;
     };
-    getter(base_proto, "ownerRule", [this, owner_rule](context & c, std::span<value>) {
-        const css_rule_record * rule = owner_rule(c);
-        return rule == nullptr ? value::null() : rule_object_for(c, receiver_sheet(c)->owner_rule);
-    });
-    getter(base_proto, "parentStyleSheet", [this, owner_rule](context & c, std::span<value>) {
-        const css_rule_record * rule = owner_rule(c);
-        return rule == nullptr ? value::null() : sheet_object_for(c, rule->sheet);
-    });
-    getter(base_proto, "title", [this](context & c, std::span<value>) {
-        const css_sheet_record * sheet = receiver_sheet(c);
-        // "The title attribute must return the title or null if the title is
-        // the empty string" - and a CONSTRUCTED sheet has no title at all,
-        // whatever was passed to the constructor.
-        if (sheet == nullptr || sheet->constructed || sheet->title.empty()) {
-            return value::null();
-        }
-        return c.string(sheet->title);
-    });
-    accessor(
-        base_proto, "media",
+    define_getter(
+        cx, *base_proto, "ownerRule",
+        [this, owner_rule](context & c, std::span<value>) {
+            const css_rule_record * rule = owner_rule(c);
+            return rule == nullptr ? value::null()
+                                   : rule_object_for(c, receiver_sheet(c)->owner_rule);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *base_proto, "parentStyleSheet",
+        [this, owner_rule](context & c, std::span<value>) {
+            const css_rule_record * rule = owner_rule(c);
+            return rule == nullptr ? value::null() : sheet_object_for(c, rule->sheet);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *base_proto, "title",
+        [this](context & c, std::span<value>) {
+            const css_sheet_record * sheet = receiver_sheet(c);
+            // "The title attribute must return the title or null if the title is
+            // the empty string" - and a CONSTRUCTED sheet has no title at all,
+            // whatever was passed to the constructor.
+            if (sheet == nullptr || sheet->constructed || sheet->title.empty()) {
+                return value::null();
+            }
+            return c.string(sheet->title);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *base_proto, "media",
         [this](context & c, std::span<value>) {
             script::object_object * self = as_object(c.current_this());
             if (self == nullptr || receiver_sheet(c) == nullptr) { return value::undefined(); }
@@ -244,9 +263,10 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             const value list = c.lookup_property(c.current_this(), "media");
             c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
             return value::undefined();
-        });
-    accessor(
-        base_proto, "disabled",
+        },
+        script::attr_configurable);
+    define_getter(
+        cx, *base_proto, "disabled",
         [this](context & c, std::span<value>) {
             const css_sheet_record * sheet = receiver_sheet(c);
             return value::boolean(sheet != nullptr && sheet->disabled);
@@ -260,7 +280,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 }
             }
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
 
     script::object_object * sheet_proto =
         interface("CSSStyleSheet", "StyleSheet", [this](context & c, std::span<value> args) {
@@ -305,21 +326,26 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         throw_dom_exception(c, "SecurityError", "the stylesheet is not origin-clean");
         return true;
     };
-    getter(sheet_proto, "cssRules", [this, origin_dirty](context & c, std::span<value>) {
-        // [SameObject]: `sheet.cssRules === sheet.cssRules` and
-        // `sheet.cssRules === sheet.rules` are both asserted, so the list is
-        // built once and REFRESHED rather than rebuilt.
-        script::object_object * self = as_object(c.current_this());
-        const css_sheet_record * sheet = receiver_sheet(c);
-        if (self == nullptr || sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
-        if (const value * held = self->find(rules_key)) {
-            refresh_rule_list(c, *held, sheet->rules);
-            return *held;
-        }
-        const value list = make_rule_list(c, sheet->rules);
-        self->define(rules_key, list, script::attr_none);
-        return list;
-    });
+    define_getter(
+        cx, *sheet_proto, "cssRules",
+        [this, origin_dirty](context & c, std::span<value>) {
+            // [SameObject]: `sheet.cssRules === sheet.cssRules` and
+            // `sheet.cssRules === sheet.rules` are both asserted, so the list is
+            // built once and REFRESHED rather than rebuilt.
+            script::object_object * self = as_object(c.current_this());
+            const css_sheet_record * sheet = receiver_sheet(c);
+            if (self == nullptr || sheet == nullptr || origin_dirty(c)) {
+                return value::undefined();
+            }
+            if (const value * held = self->find(rules_key)) {
+                refresh_rule_list(c, *held, sheet->rules);
+                return *held;
+            }
+            const value list = make_rule_list(c, sheet->rules);
+            self->define(rules_key, list, script::attr_none);
+            return list;
+        },
+        {}, script::attr_configurable);
     // `rules` is the legacy alias and must be the SAME object.
     sheet_proto->define_accessor("rules",
                                  value::object(cx.allocate<script::native_object>(
@@ -329,149 +355,163 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                          return c.lookup_property(self, "cssRules");
                                      })),
                                  value::undefined(), script::attr_configurable);
-    method(sheet_proto, "insertRule", [this, origin_dirty](context & c, std::span<value> args) {
-        css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
-        if (args.empty()) {
-            c.throw_error("TypeError", "insertRule requires a rule");
-            return value::undefined();
-        }
-        const std::string text = c.to_string(args[0]);
-        // `insertRule(text)` and `insertRule(text, undefined)` ARE THE SAME
-        // CALL. `index` is an optional unsigned long defaulting to 0, and Web
-        // IDL says an `undefined` passed for an optional argument means the
-        // default was not supplied - it is not `ToNumber(undefined)`, which is
-        // NaN and was answering IndexSizeError for a perfectly ordinary
-        // insertion. `insertRule-no-index.html` and its four siblings are one
-        // subtest each of exactly that.
-        const double asked =
-            args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
-        if (!(asked >= 0) || asked > static_cast<double>(sheet->rules.size())) {
-            throw_dom_exception(c, "IndexSizeError", "the index is past the end of the sheet");
-            return value::undefined();
-        }
-        const auto at = static_cast<std::size_t>(asked);
-        std::string error;
-        const std::size_t made = parse_one_rule(
-            static_cast<std::size_t>(slot_index(as_object(c.current_this()), sheet_key)), text,
-            error);
-        if (made == no_index) {
-            throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
-                                "the text is not a single CSS rule");
-            return value::undefined();
-        }
-        const std::uint32_t kind = css_rule_store_[made]->type;
-        if (kind == import_rule && sheet->constructed) {
-            // "@import rules are not allowed in a constructed stylesheet."
-            throw_dom_exception(c, "SyntaxError", "@import is not allowed here");
-            return value::undefined();
-        }
-        // WHAT MAY PRECEDE WHAT - CSSOM 6.3.3 steps 4 and 5, and the two steps
-        // answer different questions. Step 4 is about the POSITION: `@import`
-        // may only go where everything before it is `@charset`, `@layer` or
-        // another `@import`, `@namespace` may additionally follow those, and
-        // everything else may only go after all of them. Step 5 is about the
-        // WHOLE LIST: a `@namespace` may not be added to a sheet that already
-        // has a style rule in it at all, wherever the insertion point is,
-        // because the namespace would change what the existing selectors mean.
-        // `at-namespace.html` is one assertion of exactly that and says so in
-        // its title.
-        const auto rule_type = [this, sheet](std::size_t i) {
-            const std::size_t which = sheet->rules[i];
-            return which < css_rule_store_.size() ? css_rule_store_[which]->type : 0;
-        };
-        const auto before_ok = [&](std::uint32_t allowed_a, std::uint32_t allowed_b) {
-            for (std::size_t i = 0; i < at; ++i) {
-                const std::uint32_t each = rule_type(i);
-                if (each != allowed_a && each != allowed_b) { return false; }
+    set_method(
+        cx, *sheet_proto, "insertRule",
+        [this, origin_dirty](context & c, std::span<value> args) {
+            css_sheet_record * sheet = receiver_sheet(c);
+            if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
+            if (args.empty()) {
+                c.throw_error("TypeError", "insertRule requires a rule");
+                return value::undefined();
             }
-            return true;
-        };
-        bool allowed = true;
-        if (kind == import_rule) {
-            allowed = before_ok(import_rule, import_rule);
-        } else if (kind == namespace_rule) {
-            allowed = before_ok(import_rule, namespace_rule);
-        } else {
-            // Nothing else may be inserted BEFORE an `@import` or a
-            // `@namespace`, so every rule from the insertion point on must be
-            // neither.
-            for (std::size_t i = at; i < sheet->rules.size(); ++i) {
-                const std::uint32_t each = rule_type(i);
-                if (each == import_rule || each == namespace_rule) { allowed = false; }
+            const std::string text = c.to_string(args[0]);
+            // `insertRule(text)` and `insertRule(text, undefined)` ARE THE SAME
+            // CALL. `index` is an optional unsigned long defaulting to 0, and Web
+            // IDL says an `undefined` passed for an optional argument means the
+            // default was not supplied - it is not `ToNumber(undefined)`, which is
+            // NaN and was answering IndexSizeError for a perfectly ordinary
+            // insertion. `insertRule-no-index.html` and its four siblings are one
+            // subtest each of exactly that.
+            const double asked =
+                args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
+            if (!(asked >= 0) || asked > static_cast<double>(sheet->rules.size())) {
+                throw_dom_exception(c, "IndexSizeError", "the index is past the end of the sheet");
+                return value::undefined();
             }
-        }
-        if (!allowed) {
-            throw_dom_exception(c, "HierarchyRequestError", "that rule may not go there");
-            return value::undefined();
-        }
-        if (kind == namespace_rule) {
-            for (std::size_t i = 0; i < sheet->rules.size(); ++i) {
-                const std::uint32_t each = rule_type(i);
-                if (each != import_rule && each != namespace_rule) {
-                    throw_dom_exception(c, "InvalidStateError",
-                                        "the sheet already has rules a namespace would change");
-                    return value::undefined();
+            const auto at = static_cast<std::size_t>(asked);
+            std::string error;
+            const std::size_t made = parse_one_rule(
+                static_cast<std::size_t>(slot_index(as_object(c.current_this()), sheet_key)), text,
+                error);
+            if (made == no_index) {
+                throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
+                                    "the text is not a single CSS rule");
+                return value::undefined();
+            }
+            const std::uint32_t kind = css_rule_store_[made]->type;
+            if (kind == import_rule && sheet->constructed) {
+                // "@import rules are not allowed in a constructed stylesheet."
+                throw_dom_exception(c, "SyntaxError", "@import is not allowed here");
+                return value::undefined();
+            }
+            // WHAT MAY PRECEDE WHAT - CSSOM 6.3.3 steps 4 and 5, and the two steps
+            // answer different questions. Step 4 is about the POSITION: `@import`
+            // may only go where everything before it is `@charset`, `@layer` or
+            // another `@import`, `@namespace` may additionally follow those, and
+            // everything else may only go after all of them. Step 5 is about the
+            // WHOLE LIST: a `@namespace` may not be added to a sheet that already
+            // has a style rule in it at all, wherever the insertion point is,
+            // because the namespace would change what the existing selectors mean.
+            // `at-namespace.html` is one assertion of exactly that and says so in
+            // its title.
+            const auto rule_type = [this, sheet](std::size_t i) {
+                const std::size_t which = sheet->rules[i];
+                return which < css_rule_store_.size() ? css_rule_store_[which]->type : 0;
+            };
+            const auto before_ok = [&](std::uint32_t allowed_a, std::uint32_t allowed_b) {
+                for (std::size_t i = 0; i < at; ++i) {
+                    const std::uint32_t each = rule_type(i);
+                    if (each != allowed_a && each != allowed_b) { return false; }
+                }
+                return true;
+            };
+            bool allowed = true;
+            if (kind == import_rule) {
+                allowed = before_ok(import_rule, import_rule);
+            } else if (kind == namespace_rule) {
+                allowed = before_ok(import_rule, namespace_rule);
+            } else {
+                // Nothing else may be inserted BEFORE an `@import` or a
+                // `@namespace`, so every rule from the insertion point on must be
+                // neither.
+                for (std::size_t i = at; i < sheet->rules.size(); ++i) {
+                    const std::uint32_t each = rule_type(i);
+                    if (each == import_rule || each == namespace_rule) { allowed = false; }
                 }
             }
-        }
-        sheet->rules.insert(sheet->rules.begin() + static_cast<std::ptrdiff_t>(at), made);
-        style_sheets_changed();
-        return value::number(asked);
-    });
-    method(sheet_proto, "deleteRule", [this, origin_dirty](context & c, std::span<value> args) {
-        css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
-        if (args.empty()) {
-            c.throw_error("TypeError", "deleteRule requires an index");
-            return value::undefined();
-        }
-        const double asked = context::to_number(args[0]);
-        if (!(asked >= 0) || asked >= static_cast<double>(sheet->rules.size())) {
-            throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
-            return value::undefined();
-        }
-        // THE MIRROR OF THE INSERT RULE, CSSOM 6.3.4: removing a `@namespace`
-        // from a sheet that has anything but `@import` and `@namespace` in it
-        // would change what the remaining selectors mean, so it is refused.
-        const std::size_t going = sheet->rules[static_cast<std::size_t>(asked)];
-        if (going < css_rule_store_.size() && css_rule_store_[going]->type == namespace_rule) {
-            for (const std::size_t each : sheet->rules) {
-                const std::uint32_t kind =
-                    each < css_rule_store_.size() ? css_rule_store_[each]->type : 0;
-                if (kind != import_rule && kind != namespace_rule) {
-                    throw_dom_exception(c, "InvalidStateError",
-                                        "the sheet has rules that namespace would change");
-                    return value::undefined();
+            if (!allowed) {
+                throw_dom_exception(c, "HierarchyRequestError", "that rule may not go there");
+                return value::undefined();
+            }
+            if (kind == namespace_rule) {
+                for (std::size_t i = 0; i < sheet->rules.size(); ++i) {
+                    const std::uint32_t each = rule_type(i);
+                    if (each != import_rule && each != namespace_rule) {
+                        throw_dom_exception(c, "InvalidStateError",
+                                            "the sheet already has rules a namespace would change");
+                        return value::undefined();
+                    }
                 }
             }
-        }
-        detach_rule(css_rule_store_, going);
-        sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
-        style_sheets_changed();
-        return value::undefined();
-    });
+            sheet->rules.insert(sheet->rules.begin() + static_cast<std::ptrdiff_t>(at), made);
+            style_sheets_changed();
+            return value::number(asked);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *sheet_proto, "deleteRule",
+        [this, origin_dirty](context & c, std::span<value> args) {
+            css_sheet_record * sheet = receiver_sheet(c);
+            if (sheet == nullptr || origin_dirty(c)) { return value::undefined(); }
+            if (args.empty()) {
+                c.throw_error("TypeError", "deleteRule requires an index");
+                return value::undefined();
+            }
+            const double asked = context::to_number(args[0]);
+            if (!(asked >= 0) || asked >= static_cast<double>(sheet->rules.size())) {
+                throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
+                return value::undefined();
+            }
+            // THE MIRROR OF THE INSERT RULE, CSSOM 6.3.4: removing a `@namespace`
+            // from a sheet that has anything but `@import` and `@namespace` in it
+            // would change what the remaining selectors mean, so it is refused.
+            const std::size_t going = sheet->rules[static_cast<std::size_t>(asked)];
+            if (going < css_rule_store_.size() && css_rule_store_[going]->type == namespace_rule) {
+                for (const std::size_t each : sheet->rules) {
+                    const std::uint32_t kind =
+                        each < css_rule_store_.size() ? css_rule_store_[each]->type : 0;
+                    if (kind != import_rule && kind != namespace_rule) {
+                        throw_dom_exception(c, "InvalidStateError",
+                                            "the sheet has rules that namespace would change");
+                        return value::undefined();
+                    }
+                }
+            }
+            detach_rule(css_rule_store_, going);
+            sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
+            style_sheets_changed();
+            return value::undefined();
+        },
+        script::attr_builtin);
     // The two legacy IE spellings CSSOM keeps: `removeRule` is `deleteRule` with
     // a default index, and `addRule` builds a rule out of two strings and always
     // answers -1.
-    method(sheet_proto, "removeRule", [](context & c, std::span<value> args) {
-        const value self = c.current_this();
-        const value method_value = c.lookup_property(self, "deleteRule");
-        const value index = args.empty() ? value::number(0) : args[0];
-        const value forwarded[1] = {index};
-        return c.call(method_value, forwarded, self);
-    });
-    method(sheet_proto, "addRule", [](context & c, std::span<value> args) {
-        const value self = c.current_this();
-        const std::string selector = args.empty() ? std::string{"undefined"} : c.to_string(args[0]);
-        const std::string block = args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
-        const value length = c.lookup_property(c.lookup_property(self, "cssRules"), "length");
-        const value index = args.size() > 2 ? args[2] : length;
-        const value method_value = c.lookup_property(self, "insertRule");
-        const value forwarded[2] = {c.string(selector + " { " + block + " }"), index};
-        (void)c.call(method_value, forwarded, self);
-        return value::number(-1);
-    });
+    set_method(
+        cx, *sheet_proto, "removeRule",
+        [](context & c, std::span<value> args) {
+            const value self = c.current_this();
+            const value method_value = c.lookup_property(self, "deleteRule");
+            const value index = args.empty() ? value::number(0) : args[0];
+            const value forwarded[1] = {index};
+            return c.call(method_value, forwarded, self);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *sheet_proto, "addRule",
+        [](context & c, std::span<value> args) {
+            const value self = c.current_this();
+            const std::string selector =
+                args.empty() ? std::string{"undefined"} : c.to_string(args[0]);
+            const std::string block =
+                args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
+            const value length = c.lookup_property(c.lookup_property(self, "cssRules"), "length");
+            const value index = args.size() > 2 ? args[2] : length;
+            const value method_value = c.lookup_property(self, "insertRule");
+            const value forwarded[2] = {c.string(selector + " { " + block + " }"), index};
+            (void)c.call(method_value, forwarded, self);
+            return value::number(-1);
+        },
+        script::attr_builtin);
     // The two differ in HOW they refuse, not in what they refuse: `replaceSync`
     // THROWS a NotAllowedError and `replace` returns a promise REJECTED with
     // one. `CSSStyleSheet-constructable-replace-on-regular-sheet.html` asserts
@@ -485,27 +525,33 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         style_sheets_changed();
         return true;
     };
-    method(sheet_proto, "replaceSync", [this, replace_rules](context & c, std::span<value> args) {
-        if (!replace_rules(c, args)) {
-            throw_dom_exception(c, "NotAllowedError",
-                                "replace is only allowed on a constructed stylesheet");
-        }
-        return value::undefined();
-    });
-    method(sheet_proto, "replace", [this, replace_rules](context & c, std::span<value> args) {
-        // The work is synchronous - there is no subresource to fetch, `@import`
-        // being ignored - so the promise is already settled. What matters to a
-        // page is that it IS a promise, that it resolves with the sheet, and
-        // that a refusal arrives as a rejection.
-        const value self = c.current_this();
-        if (!replace_rules(c, args)) {
-            return c.make_promise(make_dom_exception(c, "NotAllowedError",
-                                                     "replace is only allowed on a "
-                                                     "constructed stylesheet"),
-                                  true);
-        }
-        return c.make_promise(self, false);
-    });
+    set_method(
+        cx, *sheet_proto, "replaceSync",
+        [this, replace_rules](context & c, std::span<value> args) {
+            if (!replace_rules(c, args)) {
+                throw_dom_exception(c, "NotAllowedError",
+                                    "replace is only allowed on a constructed stylesheet");
+            }
+            return value::undefined();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *sheet_proto, "replace",
+        [this, replace_rules](context & c, std::span<value> args) {
+            // The work is synchronous - there is no subresource to fetch, `@import`
+            // being ignored - so the promise is already settled. What matters to a
+            // page is that it IS a promise, that it resolves with the sheet, and
+            // that a refusal arrives as a rejection.
+            const value self = c.current_this();
+            if (!replace_rules(c, args)) {
+                return c.make_promise(make_dom_exception(c, "NotAllowedError",
+                                                         "replace is only allowed on a "
+                                                         "constructed stylesheet"),
+                                      true);
+            }
+            return c.make_promise(self, false);
+        },
+        script::attr_builtin);
 
     // --- CSSRule and its subclasses
     script::object_object * rule_proto = interface("CSSRule", nullptr, nullptr);
@@ -529,28 +575,40 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             }
         }
     }
-    getter(rule_proto, "type", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return value::number(rule == nullptr ? 0 : static_cast<double>(rule->type));
-    });
-    getter(rule_proto, "cssText", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return c.string(rule == nullptr ? std::string{} : rule_css_text(*rule));
-    });
-    getter(rule_proto, "parentRule", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr || rule->parent >= css_rule_store_.size()) { return value::null(); }
-        return rule_object_for(c, rule->parent);
-    });
-    getter(rule_proto, "parentStyleSheet", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr || rule->sheet >= css_sheets_.size()) { return value::null(); }
-        return sheet_object_for(c, rule->sheet);
-    });
+    define_getter(
+        cx, *rule_proto, "type",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return value::number(rule == nullptr ? 0 : static_cast<double>(rule->type));
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *rule_proto, "cssText",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule_css_text(*rule));
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *rule_proto, "parentRule",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr || rule->parent >= css_rule_store_.size()) { return value::null(); }
+            return rule_object_for(c, rule->parent);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *rule_proto, "parentStyleSheet",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr || rule->sheet >= css_sheets_.size()) { return value::null(); }
+            return sheet_object_for(c, rule->sheet);
+        },
+        {}, script::attr_configurable);
 
     script::object_object * style_rule_proto = interface("CSSStyleRule", "CSSRule", nullptr);
-    accessor(
-        style_rule_proto, "selectorText",
+    define_getter(
+        cx, *style_rule_proto, "selectorText",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             return c.string(rule == nullptr ? std::string{} : rule->selector);
@@ -580,7 +638,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                  : collapse_whitespace(text, html_whitespace);
             style_sheets_changed();
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     // `.style`, ON EVERY RULE WHOSE BLOCK IS DECLARATIONS - which is five of
     // them and was one. CSSOM gives a CSSStyleDeclaration to CSSStyleRule,
     // CSSFontFaceRule, CSSPageRule, CSSKeyframeRule and CSSCounterStyleRule
@@ -589,8 +648,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // `@font-face`, and nine of its nine subtests died on `getPropertyValue is
     // undefined` rather than on anything it set out to test.
     const auto declaration_accessor = [&](script::object_object * on) {
-        accessor(
-            on, "style",
+        define_getter(
+            cx, *on, "style",
             [this](context & c, std::span<value>) {
                 // [SameObject], and LAZY. The declaration object is where the
                 // ~290 property accessors are reachable from, and a sheet with
@@ -614,107 +673,121 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 const value declarations = c.lookup_property(self, "style");
                 c.store_property(declarations, "cssText", a.empty() ? c.string("") : a[0]);
                 return value::undefined();
-            });
+            },
+            script::attr_configurable);
     };
     declaration_accessor(style_rule_proto);
 
     script::object_object * grouping_proto = interface("CSSGroupingRule", "CSSRule", nullptr);
-    getter(grouping_proto, "cssRules", [this](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        const css_rule_record * rule = receiver_rule(c);
-        if (self == nullptr || rule == nullptr) { return value::undefined(); }
-        if (const value * held = self->find(rules_key)) {
-            refresh_rule_list(c, *held, rule->children);
-            return *held;
-        }
-        const value list = make_rule_list(c, rule->children);
-        self->define(rules_key, list, script::attr_none);
-        return list;
-    });
+    define_getter(
+        cx, *grouping_proto, "cssRules",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            const css_rule_record * rule = receiver_rule(c);
+            if (self == nullptr || rule == nullptr) { return value::undefined(); }
+            if (const value * held = self->find(rules_key)) {
+                refresh_rule_list(c, *held, rule->children);
+                return *held;
+            }
+            const value list = make_rule_list(c, rule->children);
+            self->define(rules_key, list, script::attr_none);
+            return list;
+        },
+        {}, script::attr_configurable);
     // insertRule/deleteRule ON THE GROUP, which is the same pair of methods
     // CSSStyleSheet has and NOT the same list: a rule inserted here becomes a
     // child of the group and never a sibling of it. `@media print {}` followed
     // by `rule.insertRule(...)` is how `css/cssom/serialize-media-rule.html`
     // builds every one of its fixtures.
-    method(grouping_proto, "insertRule", [this](context & c, std::span<value> args) {
-        css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return value::undefined(); }
-        if (args.empty()) {
-            c.throw_error("TypeError", "insertRule requires a rule");
+    set_method(
+        cx, *grouping_proto, "insertRule",
+        [this](context & c, std::span<value> args) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            if (args.empty()) {
+                c.throw_error("TypeError", "insertRule requires a rule");
+                return value::undefined();
+            }
+            const std::string text = c.to_string(args[0]);
+            // `undefined` for an optional argument is the DEFAULT, not
+            // `ToNumber(undefined)` - see the sheet's `insertRule`.
+            const double asked =
+                args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
+            // THE INDEX IS CHECKED BEFORE THE TEXT IS PARSED, which is the order
+            // CSSOM 6.4.3 gives and which `CSSGroupingRule-insertRule.html` asserts
+            // by passing a deliberate syntax error at an out-of-range index and
+            // demanding the IndexSizeError.
+            if (!(asked >= 0) || asked > static_cast<double>(rule->children.size())) {
+                throw_dom_exception(c, "IndexSizeError", "the index is past the end of the rule");
+                return value::undefined();
+            }
+            const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+            std::string error;
+            const std::size_t made = parse_one_rule(rule->sheet, text, error);
+            if (made == no_index) {
+                throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
+                                    "the text is not a single CSS rule");
+                return value::undefined();
+            }
+            // "If new rule cannot be inserted at index because the rule is not
+            // allowed there, throw a HierarchyRequestError." `@import` and
+            // `@namespace` are top-level rules and a grouping rule is not the top
+            // level. The record is dropped rather than orphaned - it was appended a
+            // moment ago and nothing else has seen it.
+            const std::uint32_t kind = css_rule_store_[made]->type;
+            if (kind == import_rule || kind == namespace_rule) {
+                if (made + 1 == css_rule_store_.size()) { css_rule_store_.pop_back(); }
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "that rule is not allowed inside a grouping rule");
+                return value::undefined();
+            }
+            css_rule_store_[made]->parent = self;
+            rule->children.insert(rule->children.begin() + static_cast<std::ptrdiff_t>(asked),
+                                  made);
+            style_sheets_changed();
+            return value::number(asked);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *grouping_proto, "deleteRule",
+        [this](context & c, std::span<value> args) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            if (args.empty()) {
+                c.throw_error("TypeError", "deleteRule requires an index");
+                return value::undefined();
+            }
+            const double asked = context::to_number(args[0]);
+            if (!(asked >= 0) || asked >= static_cast<double>(rule->children.size())) {
+                throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
+                return value::undefined();
+            }
+            detach_rule(css_rule_store_, rule->children[static_cast<std::size_t>(asked)]);
+            rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
+            style_sheets_changed();
             return value::undefined();
-        }
-        const std::string text = c.to_string(args[0]);
-        // `undefined` for an optional argument is the DEFAULT, not
-        // `ToNumber(undefined)` - see the sheet's `insertRule`.
-        const double asked =
-            args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
-        // THE INDEX IS CHECKED BEFORE THE TEXT IS PARSED, which is the order
-        // CSSOM 6.4.3 gives and which `CSSGroupingRule-insertRule.html` asserts
-        // by passing a deliberate syntax error at an out-of-range index and
-        // demanding the IndexSizeError.
-        if (!(asked >= 0) || asked > static_cast<double>(rule->children.size())) {
-            throw_dom_exception(c, "IndexSizeError", "the index is past the end of the rule");
-            return value::undefined();
-        }
-        const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
-        std::string error;
-        const std::size_t made = parse_one_rule(rule->sheet, text, error);
-        if (made == no_index) {
-            throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
-                                "the text is not a single CSS rule");
-            return value::undefined();
-        }
-        // "If new rule cannot be inserted at index because the rule is not
-        // allowed there, throw a HierarchyRequestError." `@import` and
-        // `@namespace` are top-level rules and a grouping rule is not the top
-        // level. The record is dropped rather than orphaned - it was appended a
-        // moment ago and nothing else has seen it.
-        const std::uint32_t kind = css_rule_store_[made]->type;
-        if (kind == import_rule || kind == namespace_rule) {
-            if (made + 1 == css_rule_store_.size()) { css_rule_store_.pop_back(); }
-            throw_dom_exception(c, "HierarchyRequestError",
-                                "that rule is not allowed inside a grouping rule");
-            return value::undefined();
-        }
-        css_rule_store_[made]->parent = self;
-        rule->children.insert(rule->children.begin() + static_cast<std::ptrdiff_t>(asked), made);
-        style_sheets_changed();
-        return value::number(asked);
-    });
-    method(grouping_proto, "deleteRule", [this](context & c, std::span<value> args) {
-        css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return value::undefined(); }
-        if (args.empty()) {
-            c.throw_error("TypeError", "deleteRule requires an index");
-            return value::undefined();
-        }
-        const double asked = context::to_number(args[0]);
-        if (!(asked >= 0) || asked >= static_cast<double>(rule->children.size())) {
-            throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
-            return value::undefined();
-        }
-        detach_rule(css_rule_store_, rule->children[static_cast<std::size_t>(asked)]);
-        rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
-        style_sheets_changed();
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
     script::object_object * condition_proto =
         interface("CSSConditionRule", "CSSGroupingRule", nullptr);
-    getter(condition_proto, "conditionText", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return c.string(""); }
-        // "The conditionText of a CSSMediaRule is its media's mediaText" -
-        // CSSOM 6.4.4. Only `@supports` answers from `prelude`, its condition
-        // being a `<supports-condition>` and not a media query list.
-        if (rule->type == media_rule) {
-            return c.string(serialize_media_query_list(rule->media_queries));
-        }
-        return c.string(rule->prelude);
-    });
+    define_getter(
+        cx, *condition_proto, "conditionText",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return c.string(""); }
+            // "The conditionText of a CSSMediaRule is its media's mediaText" -
+            // CSSOM 6.4.4. Only `@supports` answers from `prelude`, its condition
+            // being a `<supports-condition>` and not a media query list.
+            if (rule->type == media_rule) {
+                return c.string(serialize_media_query_list(rule->media_queries));
+            }
+            return c.string(rule->prelude);
+        },
+        {}, script::attr_configurable);
     script::object_object * media_rule_proto =
         interface("CSSMediaRule", "CSSConditionRule", nullptr);
-    accessor(
-        media_rule_proto, "media",
+    define_getter(
+        cx, *media_rule_proto, "media",
         [this](context & c, std::span<value>) {
             script::object_object * self = as_object(c.current_this());
             if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
@@ -724,7 +797,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             const value list = c.lookup_property(c.current_this(), "media");
             c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     (void)interface("CSSSupportsRule", "CSSConditionRule", nullptr);
     // --- CSSContainerRule, css-conditional-5. The prelude is `<container-name>?
     // <container-query>`: a name is an identifier and a query begins with `(`
@@ -742,10 +816,14 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         const std::string_view whole = rule->prelude;
         return c.string(collapse_whitespace(named ? whole.substr(at) : whole, html_whitespace));
     };
-    getter(container_proto, "containerName",
-           [container_part](context & c, std::span<value>) { return container_part(c, true); });
-    getter(container_proto, "containerQuery",
-           [container_part](context & c, std::span<value>) { return container_part(c, false); });
+    define_getter(
+        cx, *container_proto, "containerName",
+        [container_part](context & c, std::span<value>) { return container_part(c, true); }, {},
+        script::attr_configurable);
+    define_getter(
+        cx, *container_proto, "containerQuery",
+        [container_part](context & c, std::span<value>) { return container_part(c, false); }, {},
+        script::attr_configurable);
     declaration_accessor(interface("CSSFontFaceRule", "CSSRule", nullptr));
 
     // --- CSSImportRule, CSSOM 6.4.7
@@ -754,17 +832,25 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // parsed - a CSSStyleSheet of its own with its own rules, as every engine
     // answers, and null only for an import a constructed sheet was given.
     script::object_object * import_proto = interface("CSSImportRule", "CSSRule", nullptr);
-    getter(import_proto, "href", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return c.string(rule == nullptr ? std::string{} : rule->selector);
-    });
-    getter(import_proto, "styleSheet", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr || rule->imported_sheet >= css_sheets_.size()) { return value::null(); }
-        return sheet_object_for(c, rule->imported_sheet);
-    });
-    accessor(
-        import_proto, "media",
+    define_getter(
+        cx, *import_proto, "href",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->selector);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *import_proto, "styleSheet",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr || rule->imported_sheet >= css_sheets_.size()) {
+                return value::null();
+            }
+            return sheet_object_for(c, rule->imported_sheet);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *import_proto, "media",
         [this](context & c, std::span<value>) {
             script::object_object * self = as_object(c.current_this());
             if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
@@ -774,7 +860,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             const value list = c.lookup_property(c.current_this(), "media");
             c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     // `layerName` and `supportsText` are NULL when the import has neither,
     // which is the difference CSSOM draws between "no layer" and "an anonymous
     // one" - `@import url(a) layer` has a layer whose name is the empty string.
@@ -794,30 +881,39 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             }
         }
     };
-    getter(import_proto, "layerName",
-           [import_part](context & c, std::span<value>) { return import_part(c, "layer", true); });
-    getter(import_proto, "supportsText", [import_part](context & c, std::span<value>) {
-        return import_part(c, "supports", false);
-    });
+    define_getter(
+        cx, *import_proto, "layerName",
+        [import_part](context & c, std::span<value>) { return import_part(c, "layer", true); }, {},
+        script::attr_configurable);
+    define_getter(
+        cx, *import_proto, "supportsText",
+        [import_part](context & c, std::span<value>) { return import_part(c, "supports", false); },
+        {}, script::attr_configurable);
 
     // --- CSSNamespaceRule, CSSOM 6.4.9. A DEFAULT namespace has no prefix, and
     // the empty string is how CSSOM reports that - not `null`.
     script::object_object * namespace_proto = interface("CSSNamespaceRule", "CSSRule", nullptr);
-    getter(namespace_proto, "prefix", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return c.string(rule == nullptr ? std::string{} : rule->selector);
-    });
-    getter(namespace_proto, "namespaceURI", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return c.string(rule == nullptr ? std::string{} : rule->prelude);
-    });
+    define_getter(
+        cx, *namespace_proto, "prefix",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->selector);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *namespace_proto, "namespaceURI",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->prelude);
+        },
+        {}, script::attr_configurable);
 
     // --- CSSPageRule. A grouping rule in CSSOM's current draft and a plain
     // CSSRule in the 2011 one; the draft is what Chrome exposes.
     script::object_object * page_proto = interface("CSSPageRule", "CSSGroupingRule", nullptr);
     declaration_accessor(page_proto);
-    accessor(
-        page_proto, "selectorText",
+    define_getter(
+        cx, *page_proto, "selectorText",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             return c.string(rule == nullptr ? std::string{} : rule->prelude);
@@ -834,12 +930,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             rule->prelude = parsed;
             style_sheets_changed();
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
 
     // --- CSSKeyframesRule and CSSKeyframeRule
     script::object_object * keyframes_proto = interface("CSSKeyframesRule", "CSSRule", nullptr);
-    accessor(
-        keyframes_proto, "name",
+    define_getter(
+        cx, *keyframes_proto, "name",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             return c.string(rule == nullptr ? std::string{} : rule->prelude);
@@ -850,7 +947,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             rule->prelude = collapse_whitespace(arg_string(c, a, 0), html_whitespace);
             style_sheets_changed();
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     // The list is made with the rule object (make_rule_object), because the
     // rule is itself indexed - `keyframes[0]` - and MIRRORS it after each read
     // and each write.
@@ -866,32 +964,40 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         mirror_rule_list(*self);
         return *self->find(rules_key);
     };
-    getter(keyframes_proto, "cssRules",
-           [keyframes_list](context & c, std::span<value>) { return keyframes_list(c); });
-    getter(keyframes_proto, "length", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return value::number(rule == nullptr ? 0 : static_cast<double>(rule->children.size()));
-    });
+    define_getter(
+        cx, *keyframes_proto, "cssRules",
+        [keyframes_list](context & c, std::span<value>) { return keyframes_list(c); }, {},
+        script::attr_configurable);
+    define_getter(
+        cx, *keyframes_proto, "length",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return value::number(rule == nullptr ? 0 : static_cast<double>(rule->children.size()));
+        },
+        {}, script::attr_configurable);
     // `appendRule` takes a whole keyframe and `deleteRule`/`findRule` take a
     // keyText - NOT an index, which is what makes this trio different from
     // every other insert/delete pair in the CSSOM.
-    method(keyframes_proto, "appendRule", [this, keyframes_list](context & c, std::span<value> a) {
-        css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return value::undefined(); }
-        const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
-        std::string error;
-        const std::size_t made =
-            parse_one_rule(rule->sheet, "@keyframes _ {" + arg_string(c, a, 0) + "}", error);
-        if (made == no_index || css_rule_store_[made]->children.empty()) {
+    set_method(
+        cx, *keyframes_proto, "appendRule",
+        [this, keyframes_list](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+            std::string error;
+            const std::size_t made =
+                parse_one_rule(rule->sheet, "@keyframes _ {" + arg_string(c, a, 0) + "}", error);
+            if (made == no_index || css_rule_store_[made]->children.empty()) {
+                return value::undefined();
+            }
+            const std::size_t frame = css_rule_store_[made]->children.front();
+            css_rule_store_[frame]->parent = self;
+            rule->children.push_back(frame);
+            (void)keyframes_list(c);
+            style_sheets_changed();
             return value::undefined();
-        }
-        const std::size_t frame = css_rule_store_[made]->children.front();
-        css_rule_store_[frame]->parent = self;
-        rule->children.push_back(frame);
-        (void)keyframes_list(c);
-        style_sheets_changed();
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
     const auto keyframe_at = [this](context & c, const std::string & key) -> std::size_t {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return no_index; }
@@ -903,31 +1009,36 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         }
         return no_index;
     };
-    method(keyframes_proto, "findRule", [this, keyframe_at](context & c, std::span<value> a) {
-        css_rule_record * rule = receiver_rule(c);
-        // "Return the LAST rule that matches", which is why the search above
-        // walks backwards: a keyframes rule may name the same key twice.
-        const std::size_t found =
-            keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
-        if (rule == nullptr || found == no_index) { return value::null(); }
-        return rule_object_for(c, rule->children[found]);
-    });
-    method(keyframes_proto, "deleteRule",
-           [this, keyframe_at, keyframes_list](context & c, std::span<value> a) {
-               css_rule_record * rule = receiver_rule(c);
-               const std::size_t found =
-                   keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
-               if (rule == nullptr || found == no_index) { return value::undefined(); }
-               detach_rule(css_rule_store_, rule->children[found]);
-               rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
-               (void)keyframes_list(c);
-               style_sheets_changed();
-               return value::undefined();
-           });
+    set_method(
+        cx, *keyframes_proto, "findRule",
+        [this, keyframe_at](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            // "Return the LAST rule that matches", which is why the search above
+            // walks backwards: a keyframes rule may name the same key twice.
+            const std::size_t found =
+                keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
+            if (rule == nullptr || found == no_index) { return value::null(); }
+            return rule_object_for(c, rule->children[found]);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *keyframes_proto, "deleteRule",
+        [this, keyframe_at, keyframes_list](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            const std::size_t found =
+                keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
+            if (rule == nullptr || found == no_index) { return value::undefined(); }
+            detach_rule(css_rule_store_, rule->children[found]);
+            rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
+            (void)keyframes_list(c);
+            style_sheets_changed();
+            return value::undefined();
+        },
+        script::attr_builtin);
     script::object_object * keyframe_proto = interface("CSSKeyframeRule", "CSSRule", nullptr);
     declaration_accessor(keyframe_proto);
-    accessor(
-        keyframe_proto, "keyText",
+    define_getter(
+        cx, *keyframe_proto, "keyText",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             return c.string(rule == nullptr ? std::string{} : rule->selector);
@@ -938,7 +1049,8 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             rule->selector = collapse_whitespace(arg_string(c, a, 0), html_whitespace);
             style_sheets_changed();
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     declaration_accessor(interface("CSSCounterStyleRule", "CSSRule", nullptr));
 
     // --- CSSFontFeatureValuesRule, CSS Fonts 4 §11.2
@@ -958,16 +1070,19 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         [this, feature_type](context & c) -> std::pair<css_rule_record *, std::string> {
         return {receiver_rule(c), feature_type(c)};
     };
-    getter(feature_map_proto, "size", [feature_entries](context & c, std::span<value>) {
-        const auto [rule, type] = feature_entries(c);
-        double n = 0;
-        if (rule != nullptr) {
-            for (const css_rule_record::feature_value & f : rule->features) {
-                if (f.type == type) { n += 1; }
+    define_getter(
+        cx, *feature_map_proto, "size",
+        [feature_entries](context & c, std::span<value>) {
+            const auto [rule, type] = feature_entries(c);
+            double n = 0;
+            if (rule != nullptr) {
+                for (const css_rule_record::feature_value & f : rule->features) {
+                    if (f.type == type) { n += 1; }
+                }
             }
-        }
-        return value::number(n);
-    });
+            return value::number(n);
+        },
+        {}, script::attr_configurable);
     const auto find_feature = [](css_rule_record & rule, const std::string & type,
                                  const std::string & name) {
         return std::find_if(rule.features.begin(), rule.features.end(),
@@ -975,70 +1090,81 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                 return f.type == type && f.name == name;
                             });
     };
-    method(feature_map_proto, "get",
-           [feature_entries, find_feature](context & c, std::span<value> a) {
-               const auto [rule, type] = feature_entries(c);
-               if (rule == nullptr) { return value::undefined(); }
-               const auto it = find_feature(*rule, type, arg_string(c, a, 0));
-               if (it == rule->features.end()) { return value::undefined(); }
-               const value made = c.make_array();
-               auto * items = static_cast<script::array_object *>(made.as_heap());
-               for (const double n : it->numbers) { items->items.push_back(value::number(n)); }
-               return made;
-           });
-    method(feature_map_proto, "has",
-           [feature_entries, find_feature](context & c, std::span<value> a) {
-               const auto [rule, type] = feature_entries(c);
-               return value::boolean(rule != nullptr &&
-                                     find_feature(*rule, type, arg_string(c, a, 0)) !=
-                                         rule->features.end());
-           });
-    method(feature_map_proto, "set",
-           [this, feature_entries, find_feature](context & c, std::span<value> a) {
-               const auto [rule, type] = feature_entries(c);
-               if (rule == nullptr || a.size() < 2) { return c.current_this(); }
-               css_rule_record::feature_value entry;
-               entry.type = type;
-               entry.name = arg_string(c, a, 0);
-               if (a[1].is_array()) {
-                   for (const value each :
-                        static_cast<script::array_object *>(a[1].as_heap())->items) {
-                       entry.numbers.push_back(context::to_number(each));
-                   }
-               } else {
-                   entry.numbers.push_back(context::to_number(a[1]));
-               }
-               const auto it = find_feature(*rule, type, entry.name);
-               if (it == rule->features.end()) {
-                   rule->features.push_back(std::move(entry));
-               } else {
-                   it->numbers = std::move(entry.numbers);
-               }
-               style_sheets_changed();
-               return c.current_this();
-           });
-    method(feature_map_proto, "delete",
-           [this, feature_entries, find_feature](context & c, std::span<value> a) {
-               const auto [rule, type] = feature_entries(c);
-               if (rule == nullptr) { return value::boolean(false); }
-               const auto it = find_feature(*rule, type, arg_string(c, a, 0));
-               if (it == rule->features.end()) { return value::boolean(false); }
-               rule->features.erase(it);
-               style_sheets_changed();
-               return value::boolean(true);
-           });
-    method(feature_map_proto, "clear", [this, feature_entries](context & c, std::span<value>) {
-        const auto [rule, type] = feature_entries(c);
-        if (rule == nullptr) { return value::undefined(); }
-        std::erase_if(rule->features,
-                      [&](const css_rule_record::feature_value & f) { return f.type == type; });
-        style_sheets_changed();
-        return value::undefined();
-    });
+    set_method(
+        cx, *feature_map_proto, "get",
+        [feature_entries, find_feature](context & c, std::span<value> a) {
+            const auto [rule, type] = feature_entries(c);
+            if (rule == nullptr) { return value::undefined(); }
+            const auto it = find_feature(*rule, type, arg_string(c, a, 0));
+            if (it == rule->features.end()) { return value::undefined(); }
+            const value made = c.make_array();
+            auto * items = static_cast<script::array_object *>(made.as_heap());
+            for (const double n : it->numbers) { items->items.push_back(value::number(n)); }
+            return made;
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *feature_map_proto, "has",
+        [feature_entries, find_feature](context & c, std::span<value> a) {
+            const auto [rule, type] = feature_entries(c);
+            return value::boolean(rule != nullptr &&
+                                  find_feature(*rule, type, arg_string(c, a, 0)) !=
+                                      rule->features.end());
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *feature_map_proto, "set",
+        [this, feature_entries, find_feature](context & c, std::span<value> a) {
+            const auto [rule, type] = feature_entries(c);
+            if (rule == nullptr || a.size() < 2) { return c.current_this(); }
+            css_rule_record::feature_value entry;
+            entry.type = type;
+            entry.name = arg_string(c, a, 0);
+            if (a[1].is_array()) {
+                for (const value each :
+                     static_cast<script::array_object *>(a[1].as_heap())->items) {
+                    entry.numbers.push_back(context::to_number(each));
+                }
+            } else {
+                entry.numbers.push_back(context::to_number(a[1]));
+            }
+            const auto it = find_feature(*rule, type, entry.name);
+            if (it == rule->features.end()) {
+                rule->features.push_back(std::move(entry));
+            } else {
+                it->numbers = std::move(entry.numbers);
+            }
+            style_sheets_changed();
+            return c.current_this();
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *feature_map_proto, "delete",
+        [this, feature_entries, find_feature](context & c, std::span<value> a) {
+            const auto [rule, type] = feature_entries(c);
+            if (rule == nullptr) { return value::boolean(false); }
+            const auto it = find_feature(*rule, type, arg_string(c, a, 0));
+            if (it == rule->features.end()) { return value::boolean(false); }
+            rule->features.erase(it);
+            style_sheets_changed();
+            return value::boolean(true);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *feature_map_proto, "clear",
+        [this, feature_entries](context & c, std::span<value>) {
+            const auto [rule, type] = feature_entries(c);
+            if (rule == nullptr) { return value::undefined(); }
+            std::erase_if(rule->features,
+                          [&](const css_rule_record::feature_value & f) { return f.type == type; });
+            style_sheets_changed();
+            return value::undefined();
+        },
+        script::attr_builtin);
     script::object_object * feature_values_proto =
         interface("CSSFontFeatureValuesRule", "CSSRule", nullptr);
-    accessor(
-        feature_values_proto, "fontFamily",
+    define_getter(
+        cx, *feature_values_proto, "fontFamily",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             return c.string(rule == nullptr ? std::string{} : rule->prelude);
@@ -1049,25 +1175,28 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             rule->prelude = style::css::serialize_font_family(arg_string(c, a, 0));
             style_sheets_changed();
             return value::undefined();
-        });
+        },
+        script::attr_configurable);
     for (const auto & [idl, type] :
          {std::pair{"annotation", "annotation"}, std::pair{"characterVariant", "character-variant"},
           std::pair{"historicalForms", "historical-forms"}, std::pair{"ornaments", "ornaments"},
           std::pair{"styleset", "styleset"}, std::pair{"stylistic", "stylistic"},
           std::pair{"swash", "swash"}}) {
         const std::string type_name{type};
-        getter(feature_values_proto, idl,
-               [type_name, feature_map_proto](context & c, std::span<value>) {
-                   script::object_object * self = as_object(c.current_this());
-                   const std::size_t at = slot_index(self, rule_key);
-                   const value made = c.make_object();
-                   script::object_object * obj = as_object(made);
-                   if (obj == nullptr) { return made; }
-                   obj->prototype = value::object(feature_map_proto);
-                   obj->define(rule_key, value::number(static_cast<double>(at)), script::attr_none);
-                   obj->define(feature_key, c.string(type_name), script::attr_none);
-                   return made;
-               });
+        define_getter(
+            cx, *feature_values_proto, idl,
+            [type_name, feature_map_proto](context & c, std::span<value>) {
+                script::object_object * self = as_object(c.current_this());
+                const std::size_t at = slot_index(self, rule_key);
+                const value made = c.make_object();
+                script::object_object * obj = as_object(made);
+                if (obj == nullptr) { return made; }
+                obj->prototype = value::object(feature_map_proto);
+                obj->define(rule_key, value::number(static_cast<double>(at)), script::attr_none);
+                obj->define(feature_key, c.string(type_name), script::attr_none);
+                return made;
+            },
+            {}, script::attr_configurable);
     }
 
     // --- CSSStyleDeclaration, and the three blocks that inherit it
@@ -1143,18 +1272,25 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
           "page-orientation", "marks", "bleed"}) {
         both_spellings(page_descriptors_proto, name);
     }
-    getter(declaration_proto, "length", [this](context & c, std::span<value>) {
-        const css_rule_record * rule = receiver_rule(c);
-        return value::number(rule == nullptr ? 0 : static_cast<double>(rule->declarations.size()));
-    });
-    getter(declaration_proto, "parentRule", [this](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        const std::size_t at = slot_index(self, rule_key);
-        if (at >= css_rule_store_.size()) { return value::null(); }
-        return rule_object_for(c, at);
-    });
-    accessor(
-        declaration_proto, "cssText",
+    define_getter(
+        cx, *declaration_proto, "length",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return value::number(rule == nullptr ? 0
+                                                 : static_cast<double>(rule->declarations.size()));
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *declaration_proto, "parentRule",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            const std::size_t at = slot_index(self, rule_key);
+            if (at >= css_rule_store_.size()) { return value::null(); }
+            return rule_object_for(c, at);
+        },
+        {}, script::attr_configurable);
+    define_getter(
+        cx, *declaration_proto, "cssText",
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             return c.string(rule == nullptr
@@ -1172,58 +1308,75 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
             return value::undefined();
-        });
-    method(declaration_proto, "item", [](context & c, std::span<value> a) {
-        const value held = collection_item(c, a);
-        // CSSOM's `item` answers the EMPTY STRING past the end here, unlike the
-        // collections above whose `item` answers null.
-        return held.is_null() ? c.string("") : held;
-    });
-    method(declaration_proto, "getPropertyValue", [this](context & c, std::span<value> a) {
-        const css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return c.string(""); }
-        return c.string(style::css::declaration_value(rule->declarations, asked_name(c, a)));
-    });
-    method(declaration_proto, "getPropertyPriority", [this](context & c, std::span<value> a) {
-        const css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return c.string(""); }
-        return c.string(style::css::declaration_priority(rule->declarations, asked_name(c, a)));
-    });
-    method(declaration_proto, "setProperty", [this](context & c, std::span<value> a) {
-        css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return value::undefined(); }
-        // [LegacyNullToEmptyString] on both `value` and `priority`, and
-        // `priority` is optional: null is "", and an undefined priority is the
-        // default "" rather than the string "undefined" - which was refusing
-        // the whole call. An undefined VALUE is the string "undefined", which
-        // no grammar accepts, so it is a no-op by a different route.
-        const auto text = [&](std::size_t i) {
-            return i < a.size() && !a[i].is_null() ? c.to_string(a[i]) : std::string{};
-        };
-        const std::string priority = a.size() > 2 && a[2].is_undefined() ? std::string{} : text(2);
-        // "If priority is not the empty string and is not an ASCII
-        // case-insensitive match for 'important', return" - CSSOM 6.7.2.
-        if (!priority.empty() && !ascii_iequals(priority, "important")) {
+        },
+        script::attr_configurable);
+    set_method(
+        cx, *declaration_proto, "item",
+        [](context & c, std::span<value> a) {
+            const value held = collection_item(c, a);
+            // CSSOM's `item` answers the EMPTY STRING past the end here, unlike the
+            // collections above whose `item` answers null.
+            return held.is_null() ? c.string("") : held;
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *declaration_proto, "getPropertyValue",
+        [this](context & c, std::span<value> a) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return c.string(""); }
+            return c.string(style::css::declaration_value(rule->declarations, asked_name(c, a)));
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *declaration_proto, "getPropertyPriority",
+        [this](context & c, std::span<value> a) {
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return c.string(""); }
+            return c.string(style::css::declaration_priority(rule->declarations, asked_name(c, a)));
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *declaration_proto, "setProperty",
+        [this](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            // [LegacyNullToEmptyString] on both `value` and `priority`, and
+            // `priority` is optional: null is "", and an undefined priority is the
+            // default "" rather than the string "undefined" - which was refusing
+            // the whole call. An undefined VALUE is the string "undefined", which
+            // no grammar accepts, so it is a no-op by a different route.
+            const auto text = [&](std::size_t i) {
+                return i < a.size() && !a[i].is_null() ? c.to_string(a[i]) : std::string{};
+            };
+            const std::string priority =
+                a.size() > 2 && a[2].is_undefined() ? std::string{} : text(2);
+            // "If priority is not the empty string and is not an ASCII
+            // case-insensitive match for 'important', return" - CSSOM 6.7.2.
+            if (!priority.empty() && !ascii_iequals(priority, "important")) {
+                return value::undefined();
+            }
+            if (store_declaration(*rule, asked_name(c, a), text(1), !priority.empty())) {
+                refresh_declaration_object(c, c.current_this());
+                style_sheets_changed();
+            }
             return value::undefined();
-        }
-        if (store_declaration(*rule, asked_name(c, a), text(1), !priority.empty())) {
-            refresh_declaration_object(c, c.current_this());
-            style_sheets_changed();
-        }
-        return value::undefined();
-    });
-    method(declaration_proto, "removeProperty", [this](context & c, std::span<value> a) {
-        css_rule_record * rule = receiver_rule(c);
-        if (rule == nullptr) { return c.string(""); }
-        bool removed = false;
-        const std::string was =
-            style::css::remove_declaration(rule->declarations, asked_name(c, a), removed);
-        if (removed) {
-            refresh_declaration_object(c, c.current_this());
-            style_sheets_changed();
-        }
-        return c.string(was);
-    });
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *declaration_proto, "removeProperty",
+        [this](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return c.string(""); }
+            bool removed = false;
+            const std::string was =
+                style::css::remove_declaration(rule->declarations, asked_name(c, a), removed);
+            if (removed) {
+                refresh_declaration_object(c, c.current_this());
+                style_sheets_changed();
+            }
+            return c.string(was);
+        },
+        script::attr_builtin);
 }
 
 } // namespace ctbrowser::shell

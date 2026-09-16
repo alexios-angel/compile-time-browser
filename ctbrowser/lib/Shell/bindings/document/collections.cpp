@@ -154,7 +154,7 @@ namespace {
 } // namespace
 
 std::string dom_bindings::namespace_of(node_id id) const {
-    if (const auto it = namespaces_.find(pack(id)); it != namespaces_.end()) { return it->second; }
+    if (const auto it = namespaces_.find(id.key()); it != namespaces_.end()) { return it->second; }
     switch (doc_->read().element_ns(id)) {
     case node_ns::svg: return std::string{svg_namespace};
     case node_ns::html: return std::string{xhtml_namespace};
@@ -165,10 +165,6 @@ std::string dom_bindings::namespace_of(node_id id) const {
     case node_ns::other: break;
     }
     return {};
-}
-
-std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
-    return parse_ordered_tokens(text);
 }
 
 std::vector<node_id> dom_bindings::all_by_class(node_id root,
@@ -182,7 +178,8 @@ std::vector<node_id> dom_bindings::all_by_class(node_id root,
     // getElementsByClassName-14.htm, a doctype-less page with `class="a A"`.
     const bool quirks = doc_->quirks();
     const auto has_every = [&](node_id at) {
-        const std::vector<std::string> held = ordered_set(txn.attribute_value(at, class_attribute));
+        const std::vector<std::string> held =
+            parse_ordered_tokens(txn.attribute_value(at, class_attribute));
         return std::ranges::all_of(tokens, [&](const std::string & want) {
             return std::ranges::any_of(held, [&](const std::string & one) {
                 return quirks ? ascii_iequals(one, want) : one == want;
@@ -415,12 +412,6 @@ value dom_bindings::make_live_collection(context & cx,
     };
     // Allocating in the context the CALL arrives in, not the one captured at
     // creation: `refresh` outlives this frame.
-    const auto native_in = [](context & in, std::string name, script::native_fn fn) {
-        return value::object(in.allocate<script::native_object>(std::move(name), std::move(fn)));
-    };
-    const auto native = [&cx, native_in](std::string name, script::native_fn fn) {
-        return native_in(cx, std::move(name), std::move(fn));
-    };
 
     // The first member whose id - or, for an HTML element, name - is `want`.
     const auto named_member = [this](const std::vector<node_id> & found, std::string_view want) {
@@ -437,7 +428,7 @@ value dom_bindings::make_live_collection(context & cx,
     };
 
     // BRING THE TARGET'S OWN PROPERTIES UP TO DATE, when the document moved.
-    const auto refresh = [this, target, held, named, named_member, native_in, member](context & c) {
+    const auto refresh = [this, target, held, named, named_member, member](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == held->version && held->version != 0) { return; }
         held->version = now;
@@ -446,12 +437,12 @@ value dom_bindings::make_live_collection(context & cx,
         // member it names at call time.
         for (std::size_t i = held->indices; i < held->members.size(); ++i) {
             target->define_accessor(std::to_string(i),
-                                    native_in(c, std::to_string(i),
-                                              [held, i, member](context & inner, std::span<value>) {
-                                                  return i < held->members.size()
-                                                             ? member(inner, held->members[i])
-                                                             : value::undefined();
-                                              }),
+                                    native(c, std::to_string(i),
+                                           [held, i, member](context & inner, std::span<value>) {
+                                               return i < held->members.size()
+                                                          ? member(inner, held->members[i])
+                                                          : value::undefined();
+                                           }),
                                     value::undefined(),
                                     script::attr_enumerable | script::attr_configurable);
         }
@@ -484,10 +475,10 @@ value dom_bindings::make_live_collection(context & cx,
             if (target->find(key) != nullptr) { continue; } // an expando
             target->define_accessor(
                 key,
-                native_in(c, key,
-                          [this, held, named_member, key](context & inner, std::span<value>) {
-                              return wrap(inner, named_member(held->members, key));
-                          }),
+                native(c, key,
+                       [this, held, named_member, key](context & inner, std::span<value>) {
+                           return wrap(inner, named_member(held->members, key));
+                       }),
                 value::undefined(), script::attr_configurable);
         }
         held->names = std::move(keys);
@@ -498,7 +489,7 @@ value dom_bindings::make_live_collection(context & cx,
     // trap below would be obliged to report, and this one is nobody's business.
     target->define(
         collection_state_key,
-        native("collection",
+        native(cx, "collection",
                [this, held, named_member, refresh, member](context & c, std::span<value> a) {
                    refresh(c);
                    const std::string what = arg_string(c, a, 0);
@@ -527,7 +518,8 @@ value dom_bindings::make_live_collection(context & cx,
     // indices.
     refresh(cx);
 
-    handler->set("get", native("get", [held, refresh, member](context & c, std::span<value> args) {
+    handler->set("get",
+                 native(cx, "get", [held, refresh, member](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::undefined(); }
                      refresh(c);
                      const std::string key = c.to_string(args[1]);
@@ -541,7 +533,7 @@ value dom_bindings::make_live_collection(context & cx,
     // HTMLCollection's indexed properties have no setter, so a non-strict
     // assignment is silently ignored. Anything else is an expando on the
     // target, which is how `list.item = "pass"` shadows the prototype's.
-    handler->set("set", native("set", [](context & c, std::span<value> args) {
+    handler->set("set", native(cx, "set", [](context & c, std::span<value> args) {
                      if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
                      const std::string key = c.to_string(args[1]);
                      if (key == "length" || whole_index(key).has_value()) {
@@ -552,28 +544,29 @@ value dom_bindings::make_live_collection(context & cx,
                  }));
     // `in` AND hasOwnProperty both come here (builtins/objects/object.cpp): an
     // own key of the refreshed target, or something the prototype answers.
-    handler->set("has", native("has", [refresh](context & c, std::span<value> args) {
+    handler->set("has", native(cx, "has", [refresh](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::boolean(false); }
                      refresh(c);
                      return value::boolean(c.has_property(args[0], args[1]));
                  }));
-    handler->set("getOwnPropertyDescriptor",
-                 native("getOwnPropertyDescriptor", [refresh](context & c, std::span<value> args) {
-                     if (args.size() < 2) { return value::undefined(); }
-                     refresh(c);
-                     script::context::property_descriptor found;
-                     if (!c.own_property(args[0], c.to_string(args[1]), found)) {
-                         return value::undefined();
-                     }
-                     return c.from_property_descriptor(found);
-                 }));
+    handler->set(
+        "getOwnPropertyDescriptor",
+        native(cx, "getOwnPropertyDescriptor", [refresh](context & c, std::span<value> args) {
+            if (args.size() < 2) { return value::undefined(); }
+            refresh(c);
+            script::context::property_descriptor found;
+            if (!c.own_property(args[0], c.to_string(args[1]), found)) {
+                return value::undefined();
+            }
+            return c.from_property_descriptor(found);
+        }));
     // `Object.getOwnPropertyNames(list)` AFTER A MUTATION nothing else has read
     // through: the keys are the refreshed target's, in its order - the indices
     // first, as WebIDL's [[OwnPropertyKeys]] has them, then the names and any
     // expando (NodeList-live-mutations.window.js). Symbol keys are the hidden
     // state slot's, and are left to the target - see document/named_access.cpp
     // for why a symbol is not rebuilt here.
-    handler->set("ownKeys", native("ownKeys", [refresh](context & c, std::span<value> args) {
+    handler->set("ownKeys", native(cx, "ownKeys", [refresh](context & c, std::span<value> args) {
                      const value out = c.make_array();
                      if (args.empty() || !args[0].is_object()) { return out; }
                      refresh(c);

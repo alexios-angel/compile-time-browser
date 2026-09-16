@@ -18,18 +18,18 @@ value dom_bindings::wrap(context & cx, node_id id) {
     // no-op after the first success, and the reason it is HERE is that this is
     // the earliest thing a page can do that needs one.
     ensure_dom_interfaces(cx);
-    if (const auto it = wrappers_.find(pack(id)); it != wrappers_.end()) {
+    if (const auto it = wrappers_.find(id.key()); it != wrappers_.end()) {
         refresh_element(cx, *it->second, id);
         return value::object(it->second);
     }
     // A node whose wrapper was adopted into another document IS that object
     // still - the other document refreshes it. See adopted_away_.
-    if (const auto it = adopted_away_.find(pack(id)); it != adopted_away_.end()) {
+    if (const auto it = adopted_away_.find(id.key()); it != adopted_away_.end()) {
         return value::object(it->second);
     }
     auto * obj = cx.allocate<script::object_object>();
     value wrapper = value::object(obj);
-    obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));
+    obj->set(std::string{handle_property}, value::number(static_cast<double>(id.key())));
     // WHICH INTERFACE THIS NODE IS. `HTMLCanvasElement.prototype` for a canvas,
     // `Text.prototype` for a text node, `HTMLElement.prototype` for a tag with
     // no interface of its own - and every one of those chains down to
@@ -107,18 +107,14 @@ value dom_bindings::wrap(context & cx, node_id id) {
         }
     }
     refresh_element(cx, *obj, id);
-    wrappers_.emplace(pack(id), obj);
+    wrappers_.emplace(id.key(), obj);
     return wrapper;
-}
-
-std::uint64_t dom_bindings::pack(node_id id) {
-    return (static_cast<std::uint64_t>(id.generation) << 32) | id.slot;
 }
 
 node_id dom_bindings::unpack(std::uint64_t bits) {
     node_id id;
-    id.slot = static_cast<std::uint32_t>(bits & 0xFFFFFFFFu);
-    id.generation = static_cast<std::uint32_t>(bits >> 32);
+    id.slot = static_cast<std::uint32_t>(bits >> 32);
+    id.generation = static_cast<std::uint32_t>(bits & 0xFFFFFFFFu);
     return id;
 }
 
@@ -242,16 +238,7 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
 
 rect dom_bindings::box_of(node_id id) const {
     if (fragments_ == nullptr) { return rect{}; }
-    const auto find = [&](auto && self, const layout::fragment & f, float dx,
-                          float dy) -> std::optional<rect> {
-        const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
-        if (f.source == id) { return box; }
-        for (const auto & child : f.children) {
-            if (const std::optional<rect> hit = self(self, child, box.x, box.y)) { return hit; }
-        }
-        return std::nullopt;
-    };
-    return find(find, *fragments_, 0, 0).value_or(rect{});
+    return absolute_rect_of(*fragments_, id).value_or(rect{});
 }
 
 std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
@@ -279,7 +266,7 @@ std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
 // event would build the whole document's worth of them for a mousemove.
 value dom_bindings::value_of_wrapper(node_id id) const {
     if (!id) { return value::undefined(); }
-    const auto it = wrappers_.find(pack(id));
+    const auto it = wrappers_.find(id.key());
     return it == wrappers_.end() || it->second == nullptr ? value::undefined()
                                                           : value::object(it->second);
 }

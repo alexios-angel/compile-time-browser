@@ -88,17 +88,9 @@ void dom_bindings::install_character_data(context & cx) {
     auto * proto = static_cast<script::object_object *>(character_data.as_heap());
     auto * text_proto = static_cast<script::object_object *>(text_interface.as_heap());
 
-    const auto native = [&cx](const std::string & name, script::native_fn fn) {
-        return value::object(cx.allocate<script::native_object>(name, std::move(fn)));
-    };
     // NOT ENUMERABLE, which is what { writable, configurable } spells: an IDL
     // operation is a built-in, and `Body-FrameSet-Event-Handlers.html` counts
     // what a `for...in` over a node reports against the IDL.
-    const auto method = [&native](script::object_object & on, const std::string & name,
-                                  script::native_fn fn) {
-        on.set(name, native(name, std::move(fn)));
-        on.set_attrs(name, script::attr_builtin);
-    };
 
     // THE RECEIVER'S TEXT. False when `this` is not a character data node - a
     // wrapper for a node that has since been collected, or one of these methods
@@ -167,7 +159,7 @@ void dom_bindings::install_character_data(context & cx) {
     // `length` IS IN CODE UNITS and so is every offset below it. See
     // to_units: for ASCII it is the byte count and for nothing else.
     proto->define_accessor("length",
-                           native("length",
+                           native(cx, "length",
                                   [data_of](context & c, std::span<value>) {
                                       dom_bindings * self = nullptr;
                                       node_id id;
@@ -177,102 +169,117 @@ void dom_bindings::install_character_data(context & cx) {
                                   }),
                            value::undefined());
 
-    method(*proto, "substringData", [this, data_of](context & c, std::span<value> a) {
-        // TWO REQUIRED ARGUMENTS, and the arity TypeError is a subtest by name:
-        // `substringData(0)` throws where `substringData(0, 0)` answers "".
-        if (a.size() < 2) {
-            c.throw_error("TypeError", "substringData needs an offset and a count");
-            return value::undefined();
-        }
-        // CONVERTED FIRST, THEN THE NODE IS READ. WebIDL converts a call's
-        // arguments before the operation runs, and a page can tell: a `toString`
-        // on an argument may edit the very node this is about to measure.
-        const auto offset = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[0])));
-        auto count = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[1])));
-        dom_bindings * self = nullptr;
-        node_id id;
-        std::u16string text;
-        (void)data_of(c, self, id, text);
-        const auto length = static_cast<unsigned long long>(text.size());
-        if (offset > length) {
-            throw_dom_exception(c, "IndexSizeError",
-                                "substringData: offset " + std::to_string(offset) +
-                                    " is past the end of " + std::to_string(length) +
-                                    " code units");
-            return value::undefined();
-        }
-        if (count > length - offset) { count = length - offset; }
-        return c.string(from_units(std::u16string_view{text}.substr(
-            static_cast<std::size_t>(offset), static_cast<std::size_t>(count))));
-    });
+    set_method(
+        cx, *proto, "substringData",
+        [this, data_of](context & c, std::span<value> a) {
+            // TWO REQUIRED ARGUMENTS, and the arity TypeError is a subtest by name:
+            // `substringData(0)` throws where `substringData(0, 0)` answers "".
+            if (a.size() < 2) {
+                c.throw_error("TypeError", "substringData needs an offset and a count");
+                return value::undefined();
+            }
+            // CONVERTED FIRST, THEN THE NODE IS READ. WebIDL converts a call's
+            // arguments before the operation runs, and a page can tell: a `toString`
+            // on an argument may edit the very node this is about to measure.
+            const auto offset = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[0])));
+            auto count = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[1])));
+            dom_bindings * self = nullptr;
+            node_id id;
+            std::u16string text;
+            (void)data_of(c, self, id, text);
+            const auto length = static_cast<unsigned long long>(text.size());
+            if (offset > length) {
+                throw_dom_exception(c, "IndexSizeError",
+                                    "substringData: offset " + std::to_string(offset) +
+                                        " is past the end of " + std::to_string(length) +
+                                        " code units");
+                return value::undefined();
+            }
+            if (count > length - offset) { count = length - offset; }
+            return c.string(from_units(std::u16string_view{text}.substr(
+                static_cast<std::size_t>(offset), static_cast<std::size_t>(count))));
+        },
+        script::attr_builtin);
 
-    method(*proto, "appendData", [data_of, replace_data](context & c, std::span<value> a) {
-        if (a.empty()) {
-            c.throw_error("TypeError", "appendData needs the data to append");
+    set_method(
+        cx, *proto, "appendData",
+        [data_of, replace_data](context & c, std::span<value> a) {
+            if (a.empty()) {
+                c.throw_error("TypeError", "appendData needs the data to append");
+                return value::undefined();
+            }
+            const std::string with = c.to_string(a[0]);
+            dom_bindings * self = nullptr;
+            node_id id;
+            std::u16string text;
+            if (!data_of(c, self, id, text)) { return value::undefined(); }
+            // AT THE END, WHICH CANNOT THROW: the offset IS the length.
+            (void)replace_data(c, *self, id, text, "appendData", static_cast<double>(text.size()),
+                               0.0, with);
             return value::undefined();
-        }
-        const std::string with = c.to_string(a[0]);
-        dom_bindings * self = nullptr;
-        node_id id;
-        std::u16string text;
-        if (!data_of(c, self, id, text)) { return value::undefined(); }
-        // AT THE END, WHICH CANNOT THROW: the offset IS the length.
-        (void)replace_data(c, *self, id, text, "appendData", static_cast<double>(text.size()), 0.0,
-                           with);
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
 
-    method(*proto, "insertData", [data_of, replace_data](context & c, std::span<value> a) {
-        if (a.size() < 2) {
-            c.throw_error("TypeError", "insertData needs an offset and the data to insert");
+    set_method(
+        cx, *proto, "insertData",
+        [data_of, replace_data](context & c, std::span<value> a) {
+            if (a.size() < 2) {
+                c.throw_error("TypeError", "insertData needs an offset and the data to insert");
+                return value::undefined();
+            }
+            // IN ARGUMENT ORDER, INTO NAMED LOCALS, AND BEFORE THE NODE IS READ.
+            // WebIDL converts a call's arguments left to right and a page can SEE
+            // that order - the corpus asserts it with a `toString` that records
+            // when it ran - while the order C++ evaluates a call's own arguments in
+            // is unspecified. Reading the node afterwards matters for the same
+            // reason: a `toString` may have edited it.
+            const double offset = c.to_number_value(a[0]);
+            const std::string with = c.to_string(a[1]);
+            dom_bindings * self = nullptr;
+            node_id id;
+            std::u16string text;
+            if (!data_of(c, self, id, text)) { return value::undefined(); }
+            (void)replace_data(c, *self, id, text, "insertData", offset, 0.0, with);
             return value::undefined();
-        }
-        // IN ARGUMENT ORDER, INTO NAMED LOCALS, AND BEFORE THE NODE IS READ.
-        // WebIDL converts a call's arguments left to right and a page can SEE
-        // that order - the corpus asserts it with a `toString` that records
-        // when it ran - while the order C++ evaluates a call's own arguments in
-        // is unspecified. Reading the node afterwards matters for the same
-        // reason: a `toString` may have edited it.
-        const double offset = c.to_number_value(a[0]);
-        const std::string with = c.to_string(a[1]);
-        dom_bindings * self = nullptr;
-        node_id id;
-        std::u16string text;
-        if (!data_of(c, self, id, text)) { return value::undefined(); }
-        (void)replace_data(c, *self, id, text, "insertData", offset, 0.0, with);
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
 
-    method(*proto, "deleteData", [data_of, replace_data](context & c, std::span<value> a) {
-        if (a.size() < 2) {
-            c.throw_error("TypeError", "deleteData needs an offset and a count");
+    set_method(
+        cx, *proto, "deleteData",
+        [data_of, replace_data](context & c, std::span<value> a) {
+            if (a.size() < 2) {
+                c.throw_error("TypeError", "deleteData needs an offset and a count");
+                return value::undefined();
+            }
+            const double offset = c.to_number_value(a[0]);
+            const double count = c.to_number_value(a[1]);
+            dom_bindings * self = nullptr;
+            node_id id;
+            std::u16string text;
+            if (!data_of(c, self, id, text)) { return value::undefined(); }
+            (void)replace_data(c, *self, id, text, "deleteData", offset, count, std::string{});
             return value::undefined();
-        }
-        const double offset = c.to_number_value(a[0]);
-        const double count = c.to_number_value(a[1]);
-        dom_bindings * self = nullptr;
-        node_id id;
-        std::u16string text;
-        if (!data_of(c, self, id, text)) { return value::undefined(); }
-        (void)replace_data(c, *self, id, text, "deleteData", offset, count, std::string{});
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
 
-    method(*proto, "replaceData", [data_of, replace_data](context & c, std::span<value> a) {
-        if (a.size() < 3) {
-            c.throw_error("TypeError", "replaceData needs an offset, a count and the data");
+    set_method(
+        cx, *proto, "replaceData",
+        [data_of, replace_data](context & c, std::span<value> a) {
+            if (a.size() < 3) {
+                c.throw_error("TypeError", "replaceData needs an offset, a count and the data");
+                return value::undefined();
+            }
+            const double offset = c.to_number_value(a[0]);
+            const double count = c.to_number_value(a[1]);
+            const std::string with = c.to_string(a[2]);
+            dom_bindings * self = nullptr;
+            node_id id;
+            std::u16string text;
+            if (!data_of(c, self, id, text)) { return value::undefined(); }
+            (void)replace_data(c, *self, id, text, "replaceData", offset, count, with);
             return value::undefined();
-        }
-        const double offset = c.to_number_value(a[0]);
-        const double count = c.to_number_value(a[1]);
-        const std::string with = c.to_string(a[2]);
-        dom_bindings * self = nullptr;
-        node_id id;
-        std::u16string text;
-        if (!data_of(c, self, id, text)) { return value::undefined(); }
-        (void)replace_data(c, *self, id, text, "replaceData", offset, count, with);
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
 
     // --- Text, WHICH IS CharacterData PLUS TWO -----------------------------
 
@@ -280,40 +287,43 @@ void dom_bindings::install_character_data(context & cx) {
     // and goes straight after it. The new node has NO PARENT when this one has
     // none - "Split root" asserts exactly that - which is why the insertion is
     // conditional rather than the obvious appendChild.
-    method(*text_proto, "splitText", [this, data_of](context & c, std::span<value> a) {
-        const auto offset =
-            static_cast<unsigned long long>(to_uint32(c.to_number_value(arg(a, 0))));
-        dom_bindings * self = nullptr;
-        node_id id;
-        std::u16string text;
-        if (!data_of(c, self, id, text)) { return value::null(); }
-        const auto length = static_cast<unsigned long long>(text.size());
-        if (offset > length) {
-            throw_dom_exception(c, "IndexSizeError",
-                                "splitText: offset " + std::to_string(offset) +
-                                    " is past the end of " + std::to_string(length) +
-                                    " code units");
-            return value::null();
-        }
-        const auto at = static_cast<std::size_t>(offset);
-        const node_id made = self->doc_->create_text(from_units(text.substr(at)));
-        (void)self->doc_->set_text(id, from_units(text.substr(0, at)));
-        node_id parent;
-        node_id next;
-        {
-            const auto txn = self->doc_->read();
-            parent = txn.parent(id);
-            if (parent) {
-                const std::span<const node_id> kids = txn.children(parent);
-                for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
-                    if (kids[i] == id) { next = kids[i + 1]; }
+    set_method(
+        cx, *text_proto, "splitText",
+        [this, data_of](context & c, std::span<value> a) {
+            const auto offset =
+                static_cast<unsigned long long>(to_uint32(c.to_number_value(arg(a, 0))));
+            dom_bindings * self = nullptr;
+            node_id id;
+            std::u16string text;
+            if (!data_of(c, self, id, text)) { return value::null(); }
+            const auto length = static_cast<unsigned long long>(text.size());
+            if (offset > length) {
+                throw_dom_exception(c, "IndexSizeError",
+                                    "splitText: offset " + std::to_string(offset) +
+                                        " is past the end of " + std::to_string(length) +
+                                        " code units");
+                return value::null();
+            }
+            const auto at = static_cast<std::size_t>(offset);
+            const node_id made = self->doc_->create_text(from_units(text.substr(at)));
+            (void)self->doc_->set_text(id, from_units(text.substr(0, at)));
+            node_id parent;
+            node_id next;
+            {
+                const auto txn = self->doc_->read();
+                parent = txn.parent(id);
+                if (parent) {
+                    const std::span<const node_id> kids = txn.children(parent);
+                    for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
+                        if (kids[i] == id) { next = kids[i + 1]; }
+                    }
                 }
             }
-        }
-        if (parent) { (void)self->insert_node(parent, made, next); }
-        self->mutated();
-        return self->wrap(c, made);
-    });
+            if (parent) { (void)self->insert_node(parent, made, next); }
+            self->mutated();
+            return self->wrap(c, made);
+        },
+        script::attr_builtin);
 
     // `wholeText`: the CONTIGUOUS RUN of Text siblings this node is in,
     // concatenated. An element between two text nodes ends the run, which is
@@ -321,7 +331,7 @@ void dom_bindings::install_character_data(context & cx) {
     // in the middle of three text nodes and re-reads all three.
     text_proto->define_accessor(
         "wholeText",
-        native("wholeText",
+        native(cx, "wholeText",
                [data_of](context & c, std::span<value>) {
                    dom_bindings * self = nullptr;
                    node_id id;

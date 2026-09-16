@@ -207,7 +207,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         bool moved = here.moved;
         if (txn.kind(here.at).value_or(node_kind::text) == node_kind::element &&
             txn.element_ns(here.at) == node_ns::html) {
-            const std::uint64_t key = pack(here.at);
+            const std::uint64_t key = here.at.key();
             const auto found = custom_elements_.find(key);
             if (found == custom_elements_.end()) {
                 const std::size_t index = custom_definition_for(txn, here.at);
@@ -298,7 +298,7 @@ void dom_bindings::flush_custom_element_reactions() {
     while (!custom_reactions_.empty()) {
         const custom_element_reaction reaction = std::move(custom_reactions_.front());
         custom_reactions_.erase(custom_reactions_.begin());
-        const auto found = custom_elements_.find(pack(reaction.target));
+        const auto found = custom_elements_.find(reaction.target.key());
         if (found == custom_elements_.end()) { continue; }
         // COPIED OUT: a callback may define another element and grow the
         // vector under a reference.
@@ -367,13 +367,13 @@ void dom_bindings::install_custom_elements(context & cx) {
             // object, done to the instance `new` made, whose prototype is the
             // author's class.
             auto * obj = static_cast<script::object_object *>(self.as_heap());
-            obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(made))));
+            obj->set(std::string{handle_property}, value::number(static_cast<double>(made.key())));
             install_element_views(c, *obj, made);
             refresh_element(c, *obj, made);
-            wrappers_.emplace(pack(made), obj);
+            wrappers_.emplace(made.key(), obj);
             custom_element_state state;
             state.definition = index;
-            custom_elements_.emplace(pack(made), std::move(state));
+            custom_elements_.emplace(made.key(), std::move(state));
             return self;
         });
     html_element_ctor->set("prototype", value::object(html_element_proto));
@@ -383,11 +383,6 @@ void dom_bindings::install_custom_elements(context & cx) {
 
     // --- CustomElementRegistry.prototype -----------------------------------
     auto * registry_proto = cx.allocate<script::object_object>();
-    const auto method = [&cx, registry_proto](const char * name, script::native_fn fn) {
-        registry_proto->define(
-            name, value::object(cx.allocate<script::native_object>(name, std::move(fn))),
-            script::attr_builtin);
-    };
     const auto defined = [this](std::string_view name) {
         for (std::size_t i = 0; i < custom_definitions_.size(); ++i) {
             if (custom_definitions_[i].name == name) { return i; }
@@ -395,157 +390,176 @@ void dom_bindings::install_custom_elements(context & cx) {
         return npos;
     };
 
-    method("define", [this, defined](context & c, std::span<value> args) -> value {
-        // In the specification's order: the constructor, the name, the name
-        // twice over, the `extends`, then the prototype and its callbacks.
-        const value ctor = arg(args, 1);
-        if (!ctor.is_callable()) {
-            c.throw_error("TypeError", "Failed to execute 'define' on 'CustomElementRegistry': "
-                                       "parameter 2 is not of type 'Function'.");
-            return value::undefined();
-        }
-        const std::string name = arg_string(c, args, 0);
-        if (!is_valid_custom_element_name(name)) {
-            throw_dom_exception(c, "SyntaxError",
-                                "'" + name + "' is not a valid custom element name");
-            return value::undefined();
-        }
-        if (defined(name) != npos) {
-            throw_dom_exception(c, "NotSupportedError",
-                                "the name '" + name + "' has already been used with this registry");
-            return value::undefined();
-        }
-        for (const custom_element_definition & def : custom_definitions_) {
-            if (def.constructor.bits() == ctor.bits()) {
-                throw_dom_exception(c, "NotSupportedError",
-                                    "this constructor has already been used with this registry");
+    set_method(
+        cx, *registry_proto, "define",
+        [this, defined](context & c, std::span<value> args) -> value {
+            // In the specification's order: the constructor, the name, the name
+            // twice over, the `extends`, then the prototype and its callbacks.
+            const value ctor = arg(args, 1);
+            if (!ctor.is_callable()) {
+                c.throw_error("TypeError", "Failed to execute 'define' on 'CustomElementRegistry': "
+                                           "parameter 2 is not of type 'Function'.");
                 return value::undefined();
             }
-        }
-        std::string local_name = name;
-        const value options = arg(args, 2);
-        if (options.is_object()) {
-            const value extends = c.lookup_property(options, "extends");
-            if (c.failed()) { return value::undefined(); }
-            if (!extends.is_undefined() && !extends.is_null()) {
-                local_name = c.to_string(extends);
-                if (is_valid_custom_element_name(local_name)) {
-                    throw_dom_exception(c, "NotSupportedError",
-                                        "'" + local_name +
-                                            "' is a custom element name, not a "
-                                            "built-in element to extend");
+            const std::string name = arg_string(c, args, 0);
+            if (!is_valid_custom_element_name(name)) {
+                throw_dom_exception(c, "SyntaxError",
+                                    "'" + name + "' is not a valid custom element name");
+                return value::undefined();
+            }
+            if (defined(name) != npos) {
+                throw_dom_exception(c, "NotSupportedError",
+                                    "the name '" + name +
+                                        "' has already been used with this registry");
+                return value::undefined();
+            }
+            for (const custom_element_definition & def : custom_definitions_) {
+                if (def.constructor.bits() == ctor.bits()) {
+                    throw_dom_exception(
+                        c, "NotSupportedError",
+                        "this constructor has already been used with this registry");
                     return value::undefined();
                 }
             }
-        }
-        const value prototype = c.lookup_property(ctor, "prototype");
-        if (c.failed()) { return value::undefined(); }
-        if (!prototype.is_object()) {
-            c.throw_error("TypeError", "Failed to execute 'define' on 'CustomElementRegistry': "
-                                       "The 'prototype' property is not an object");
-            return value::undefined();
-        }
-        custom_element_definition def;
-        def.name = name;
-        def.local_name = local_name;
-        def.constructor = ctor;
-        def.prototype = prototype;
-        const auto callback = [&](const char * which, value & into) {
-            into = c.lookup_property(prototype, which);
-            if (c.failed()) { return false; }
-            if (!into.is_undefined() && !into.is_callable()) {
-                c.throw_error("TypeError", std::string{"Failed to execute 'define' on "
-                                                       "'CustomElementRegistry': '"} +
-                                               which + "' is not a function");
-                return false;
-            }
-            return true;
-        };
-        if (!callback("connectedCallback", def.connected) ||
-            !callback("disconnectedCallback", def.disconnected) ||
-            !callback("adoptedCallback", def.adopted) ||
-            !callback("attributeChangedCallback", def.attribute_changed) ||
-            !callback("connectedMoveCallback", def.connected_move)) {
-            return value::undefined();
-        }
-        if (def.attribute_changed.is_callable()) {
-            const value observed = c.lookup_property(ctor, "observedAttributes");
-            if (c.failed()) { return value::undefined(); }
-            if (!observed.is_undefined()) {
-                const value items = c.iterable_values(observed);
-                if (items.is_array()) {
-                    for (const value & entry :
-                         static_cast<script::array_object *>(items.as_heap())->items) {
-                        def.observed_attributes.push_back(c.to_string(entry));
+            std::string local_name = name;
+            const value options = arg(args, 2);
+            if (options.is_object()) {
+                const value extends = c.lookup_property(options, "extends");
+                if (c.failed()) { return value::undefined(); }
+                if (!extends.is_undefined() && !extends.is_null()) {
+                    local_name = c.to_string(extends);
+                    if (is_valid_custom_element_name(local_name)) {
+                        throw_dom_exception(c, "NotSupportedError",
+                                            "'" + local_name +
+                                                "' is a custom element name, not a "
+                                                "built-in element to extend");
+                        return value::undefined();
                     }
                 }
             }
-        }
-        custom_definitions_.push_back(std::move(def));
-        // The candidates in the document are upgraded, then whenDefined settles.
-        react_custom_elements();
-        if (const auto waiting = when_defined_.find(name); waiting != when_defined_.end()) {
-            const std::vector<value> promises = std::move(waiting->second);
-            when_defined_.erase(waiting);
-            for (const value & promise : promises) { c.settle_promise(promise, ctor, false); }
-        }
-        sync_custom_element_roots();
-        return value::undefined();
-    });
-
-    method("get", [this, defined](context & c, std::span<value> args) {
-        const std::size_t index = defined(arg_string(c, args, 0));
-        return index == npos ? value::undefined() : custom_definitions_[index].constructor;
-    });
-
-    method("getName", [this](context &, std::span<value> args) {
-        const value ctor = arg(args, 0);
-        for (const custom_element_definition & def : custom_definitions_) {
-            if (def.constructor.bits() == ctor.bits()) { return cx_->string(def.name); }
-        }
-        return value::null();
-    });
-
-    method("whenDefined", [this, defined](context & c, std::span<value> args) {
-        const std::string name = arg_string(c, args, 0);
-        if (!is_valid_custom_element_name(name)) {
-            return c.make_promise(
-                make_dom_exception(c, "SyntaxError",
-                                   "'" + name + "' is not a valid custom element name"),
-                true);
-        }
-        if (const std::size_t index = defined(name); index != npos) {
-            return c.make_promise(custom_definitions_[index].constructor, false);
-        }
-        const value promise = c.make_pending_promise();
-        when_defined_[name].push_back(promise);
-        sync_custom_element_roots();
-        return promise;
-    });
-
-    method("upgrade", [this](context & c, std::span<value> args) {
-        if (custom_definitions_.empty()) { return value::undefined(); }
-        node_id root = handle_of(arg(args, 0));
-        if (!root && arg(args, 0).is_object_like() && document_.is_object_like() &&
-            arg(args, 0).bits() == document_.bits()) {
-            root = doc_->root();
-        }
-        if (!root) {
-            c.throw_error("TypeError", "Failed to execute 'upgrade' on 'CustomElementRegistry': "
-                                       "parameter 1 is not of type 'Node'.");
+            const value prototype = c.lookup_property(ctor, "prototype");
+            if (c.failed()) { return value::undefined(); }
+            if (!prototype.is_object()) {
+                c.throw_error("TypeError", "Failed to execute 'define' on 'CustomElementRegistry': "
+                                           "The 'prototype' property is not an object");
+                return value::undefined();
+            }
+            custom_element_definition def;
+            def.name = name;
+            def.local_name = local_name;
+            def.constructor = ctor;
+            def.prototype = prototype;
+            const auto callback = [&](const char * which, value & into) {
+                into = c.lookup_property(prototype, which);
+                if (c.failed()) { return false; }
+                if (!into.is_undefined() && !into.is_callable()) {
+                    c.throw_error("TypeError", std::string{"Failed to execute 'define' on "
+                                                           "'CustomElementRegistry': '"} +
+                                                   which + "' is not a function");
+                    return false;
+                }
+                return true;
+            };
+            if (!callback("connectedCallback", def.connected) ||
+                !callback("disconnectedCallback", def.disconnected) ||
+                !callback("adoptedCallback", def.adopted) ||
+                !callback("attributeChangedCallback", def.attribute_changed) ||
+                !callback("connectedMoveCallback", def.connected_move)) {
+                return value::undefined();
+            }
+            if (def.attribute_changed.is_callable()) {
+                const value observed = c.lookup_property(ctor, "observedAttributes");
+                if (c.failed()) { return value::undefined(); }
+                if (!observed.is_undefined()) {
+                    const value items = c.iterable_values(observed);
+                    if (items.is_array()) {
+                        for (const value & entry :
+                             static_cast<script::array_object *>(items.as_heap())->items) {
+                            def.observed_attributes.push_back(c.to_string(entry));
+                        }
+                    }
+                }
+            }
+            custom_definitions_.push_back(std::move(def));
+            // The candidates in the document are upgraded, then whenDefined settles.
+            react_custom_elements();
+            if (const auto waiting = when_defined_.find(name); waiting != when_defined_.end()) {
+                const std::vector<value> promises = std::move(waiting->second);
+                when_defined_.erase(waiting);
+                for (const value & promise : promises) { c.settle_promise(promise, ctor, false); }
+            }
+            sync_custom_element_roots();
             return value::undefined();
-        }
-        {
-            const auto txn = doc_->read();
-            const node_id top = root_of_tree(txn, root, true);
-            for (auto & [key, state] : custom_elements_) { state.visited = false; }
-            walk_custom_elements(txn, root,
-                                 top == txn.root() || txn.kind(top).value_or(node_kind::element) ==
-                                                          node_kind::document);
-        }
-        flush_custom_element_reactions();
-        return value::undefined();
-    });
+        },
+        script::attr_builtin);
+
+    set_method(
+        cx, *registry_proto, "get",
+        [this, defined](context & c, std::span<value> args) {
+            const std::size_t index = defined(arg_string(c, args, 0));
+            return index == npos ? value::undefined() : custom_definitions_[index].constructor;
+        },
+        script::attr_builtin);
+
+    set_method(
+        cx, *registry_proto, "getName",
+        [this](context &, std::span<value> args) {
+            const value ctor = arg(args, 0);
+            for (const custom_element_definition & def : custom_definitions_) {
+                if (def.constructor.bits() == ctor.bits()) { return cx_->string(def.name); }
+            }
+            return value::null();
+        },
+        script::attr_builtin);
+
+    set_method(
+        cx, *registry_proto, "whenDefined",
+        [this, defined](context & c, std::span<value> args) {
+            const std::string name = arg_string(c, args, 0);
+            if (!is_valid_custom_element_name(name)) {
+                return c.make_promise(
+                    make_dom_exception(c, "SyntaxError",
+                                       "'" + name + "' is not a valid custom element name"),
+                    true);
+            }
+            if (const std::size_t index = defined(name); index != npos) {
+                return c.make_promise(custom_definitions_[index].constructor, false);
+            }
+            const value promise = c.make_pending_promise();
+            when_defined_[name].push_back(promise);
+            sync_custom_element_roots();
+            return promise;
+        },
+        script::attr_builtin);
+
+    set_method(
+        cx, *registry_proto, "upgrade",
+        [this](context & c, std::span<value> args) {
+            if (custom_definitions_.empty()) { return value::undefined(); }
+            node_id root = handle_of(arg(args, 0));
+            if (!root && arg(args, 0).is_object_like() && document_.is_object_like() &&
+                arg(args, 0).bits() == document_.bits()) {
+                root = doc_->root();
+            }
+            if (!root) {
+                c.throw_error("TypeError",
+                              "Failed to execute 'upgrade' on 'CustomElementRegistry': "
+                              "parameter 1 is not of type 'Node'.");
+                return value::undefined();
+            }
+            {
+                const auto txn = doc_->read();
+                const node_id top = root_of_tree(txn, root, true);
+                for (auto & [key, state] : custom_elements_) { state.visited = false; }
+                walk_custom_elements(txn, root,
+                                     top == txn.root() ||
+                                         txn.kind(top).value_or(node_kind::element) ==
+                                             node_kind::document);
+            }
+            flush_custom_element_reactions();
+            return value::undefined();
+        },
+        script::attr_builtin);
 
     auto * registry_ctor = cx.allocate<script::native_object>(
         "CustomElementRegistry", [](context & c, std::span<value>) {

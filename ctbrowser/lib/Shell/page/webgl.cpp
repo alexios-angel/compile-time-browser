@@ -45,10 +45,6 @@ bool webgl_context::ok() const {
     return device_.ok();
 }
 
-const std::string & webgl_context::device_error() const {
-    return device_.error();
-}
-
 int webgl_context::width() const {
     return device_.width();
 }

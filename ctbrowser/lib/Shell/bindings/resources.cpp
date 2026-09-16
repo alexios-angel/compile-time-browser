@@ -53,17 +53,8 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
                 [this, id, property, natural_only, horizontal, decoded](context &,
                                                                         std::span<value>) {
                     if (!natural_only) {
-                        const auto txn = doc_->read();
-                        const std::string_view text =
-                            txn.attribute_value(id, atoms_->intern(property));
-                        double parsed = 0;
-                        bool any = false;
-                        for (const char c : text) {
-                            if (c < '0' || c > '9') { break; }
-                            parsed = parsed * 10 + (c - '0');
-                            any = true;
-                        }
-                        if (any) { return value::number(parsed); }
+                        const long long given = size_attribute(doc_->read(), id, property, -1);
+                        if (given >= 0) { return value::number(static_cast<double>(given)); }
                     }
                     const std::shared_ptr<const paint::bitmap> image = decoded();
                     if (!image) { return value::number(0); }
@@ -208,21 +199,7 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
         break;
     }
     case read_kind::array_buffer: {
-        // The shape install_typed_arrays recognises, so `new Uint8Array(result)`
-        // is a view over these bytes rather than a copy of nothing.
-        auto * buffer = cx.allocate<script::object_object>();
-        value stored = cx.make_array();
-        auto * items = static_cast<script::array_object *>(stored.as_heap());
-        items->elements = script::element_kind::u8;
-        items->items.reserve(bytes.size());
-        for (const char b : bytes) {
-            items->items.push_back(
-                value::number(static_cast<double>(static_cast<unsigned char>(b))));
-        }
-        buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
-        buffer->set("length", value::number(static_cast<double>(bytes.size())));
-        buffer->set("__bytes", stored);
-        reader->set("result", value::object(buffer));
+        reader->set("result", make_array_buffer(cx, std::as_bytes(std::span{bytes})));
         break;
     }
     }
@@ -428,6 +405,75 @@ value dom_bindings::make_rejection(context & cx, const std::string & message) {
     error->set("message", cx.string(message));
     error->set("name", cx.string("TypeError"));
     return cx.make_promise(value::object(error), true);
+}
+
+value dom_bindings::make_response(context & cx, const std::string & url, int status,
+                                  const std::string & content_type, std::vector<std::byte> body) {
+    auto * response = cx.allocate<script::object_object>();
+    response->set("url", cx.string(url));
+    response->set("status", value::number(status));
+    response->set("ok", value::boolean(status >= 200 && status < 300));
+    response->set("statusText", cx.string(status == 200 ? "OK" : status == 404 ? "Not Found" : ""));
+    response->set("type", cx.string("basic"));
+    // `headers` IS AN OBJECT with get() and has(), not a string. A page does
+    // `res.headers.get('content-type')`, and the only header this engine
+    // knows is the content type - so it answers that one and reports every
+    // other as absent rather than pretending.
+    {
+        auto * headers = cx.allocate<script::object_object>();
+        headers->set("__contentType", cx.string(content_type));
+        const auto is_content_type = [](std::string_view wanted) {
+            return ascii_iequals(wanted, "content-type");
+        };
+        set_method(cx, *headers, "get",
+                   [content_type, is_content_type](context & c, std::span<value> a) {
+                       if (!is_content_type(arg_string(c, a, 0)) || content_type.empty()) {
+                           return value::null();
+                       }
+                       return c.string(content_type);
+                   });
+        set_method(cx, *headers, "has",
+                   [content_type, is_content_type](context & c, std::span<value> a) {
+                       return value::boolean(is_content_type(arg_string(c, a, 0)) &&
+                                             !content_type.empty());
+                   });
+        response->set("headers", value::object(headers));
+    }
+
+    const std::string text{reinterpret_cast<const char *>(body.data()), body.size()};
+    set_method(cx, *response, "text", [text](context & c, std::span<value>) {
+        return c.make_promise(c.string(text), false);
+    });
+    set_method(cx, *response, "json", [text](context & c, std::span<value>) {
+        // Through the standard library's JSON.parse, so one parser decides
+        // what JSON means here.
+        const value parser = c.global("JSON");
+        if (parser.is_object()) {
+            if (value * parse =
+                    static_cast<script::object_object *>(parser.as_heap())->find("parse")) {
+                const value text_value = c.string(text);
+                const value args[1] = {text_value};
+                return c.make_promise(c.call(*parse, args), false);
+            }
+        }
+        return c.make_promise(value::undefined(), false);
+    });
+    // The bytes, three ways a caller may ask for them. `bytes()` is the
+    // newest and p5 prefers it when present; `arrayBuffer()` is what
+    // everything else uses, and `blob()` is what an object URL is made from.
+    set_method(cx, *response, "bytes", [body](context & c, std::span<value>) {
+        return c.make_promise(make_u8_array(c, body), false);
+    });
+    set_method(cx, *response, "arrayBuffer", [body](context & c, std::span<value>) {
+        return c.make_promise(make_array_buffer(c, body), false);
+    });
+    // A REAL Blob - `instanceof Blob` was false, and p5's loadBlob probe only
+    // ever read as passing because the throw in its `.then` was lost rather
+    // than delivered as a rejection.
+    set_method(cx, *response, "blob", [this, body, content_type](context & c, std::span<value>) {
+        return c.make_promise(make_blob(c, make_u8_array(c, body), content_type), false);
+    });
+    return cx.make_promise(value::object(response), false);
 }
 
 } // namespace ctbrowser::shell

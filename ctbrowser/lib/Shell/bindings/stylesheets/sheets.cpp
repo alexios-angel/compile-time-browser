@@ -42,7 +42,7 @@ std::string_view dom_bindings::preferred_sheet_title() {
 }
 
 bool dom_bindings::link_explicitly_enabled(node_id id) const {
-    return std::ranges::find(enabled_links_, pack(id)) != enabled_links_.end();
+    return std::ranges::find(enabled_links_, id.key()) != enabled_links_.end();
 }
 
 std::string dom_bindings::resolve_sheet_href(std::string_view base, std::string_view reference) {
@@ -176,28 +176,28 @@ value dom_bindings::style_sheet_list(context & cx) {
     }
     internals->set("list", target);
     auto * handler = cx.allocate<script::object_object>();
-    const auto trap = [&](const char * name, script::native_fn fn) {
-        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
-    trap("get", [this](context & c, std::span<value> args) {
+    set_method(cx, *handler, "get", [this](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::undefined(); }
         sync_style_sheets(c);
         return c.lookup_property(args[0], c.to_string(args[1]));
     });
-    trap("has", [this](context & c, std::span<value> args) {
+    set_method(cx, *handler, "has", [this](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::boolean(false); }
         sync_style_sheets(c);
         return value::boolean(c.has_property(args[0], args[1]));
     });
-    trap("getOwnPropertyDescriptor", [this](context & c, std::span<value> args) {
-        if (args.size() < 2) { return value::undefined(); }
-        sync_style_sheets(c);
-        script::context::property_descriptor found;
-        if (!c.own_property(args[0], c.to_string(args[1]), found)) { return value::undefined(); }
-        return c.from_property_descriptor(found);
-    });
+    set_method(cx, *handler, "getOwnPropertyDescriptor",
+               [this](context & c, std::span<value> args) {
+                   if (args.size() < 2) { return value::undefined(); }
+                   sync_style_sheets(c);
+                   script::context::property_descriptor found;
+                   if (!c.own_property(args[0], c.to_string(args[1]), found)) {
+                       return value::undefined();
+                   }
+                   return c.from_property_descriptor(found);
+               });
     // An index and `length` are read-only; anything else is an expando.
-    trap("set", [](context & c, std::span<value> args) {
+    set_method(cx, *handler, "set", [](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         const std::string key = c.to_string(args[1]);
         if (key == "length" ||
@@ -319,7 +319,7 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                     if (is_style) {
                         for (const node_id child : txn.children(at)) {
                             made.text += txn.text(child);
-                            made.children += std::to_string(pack(child)) + ',';
+                            made.children += std::to_string(child.key()) + ',';
                         }
                     }
                     found.push_back(std::move(made));
@@ -344,15 +344,15 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
             std::uint64_t earliest = 0;
             for (const found_sheet & each : found) {
                 if (each.title.empty()) { continue; }
-                if (css_preferred_title_.empty() || pack(each.owner) < earliest) {
+                if (css_preferred_title_.empty() || each.owner.key() < earliest) {
                     css_preferred_title_ = each.title;
-                    earliest = pack(each.owner);
+                    earliest = each.owner.key();
                 }
             }
         }
     }
     for (const found_sheet & each : found) {
-        const std::uint64_t key = pack(each.owner);
+        const std::uint64_t key = each.owner.key();
         const auto it = css_sheet_by_owner_.find(key);
         bool fresh = false;
         std::size_t at = no_index;
@@ -453,11 +453,7 @@ void dom_bindings::install_style_sheets(context & cx) {
                 const value target = c.make_array();
                 internals->set("adopted", target);
                 auto * handler = c.allocate<script::object_object>();
-                const auto trap = [&](const char * name, script::native_fn fn) {
-                    handler->set(name, value::object(
-                                           c.allocate<script::native_object>(name, std::move(fn))));
-                };
-                trap("set", [this](context & cx2, std::span<value> args) {
+                set_method(c, *handler, "set", [this](context & cx2, std::span<value> args) {
                     if (args.size() < 3) { return value::boolean(false); }
                     const std::string key = cx2.to_string(args[1]);
                     const bool index =
@@ -478,12 +474,13 @@ void dom_bindings::install_style_sheets(context & cx) {
                     style_sheets_changed();
                     return value::boolean(true);
                 });
-                trap("deleteProperty", [this](context & cx2, std::span<value> args) {
-                    if (args.size() < 2) { return value::boolean(false); }
-                    const bool gone = cx2.delete_own_property(args[0], cx2.to_string(args[1]));
-                    style_sheets_changed();
-                    return value::boolean(gone);
-                });
+                set_method(
+                    c, *handler, "deleteProperty", [this](context & cx2, std::span<value> args) {
+                        if (args.size() < 2) { return value::boolean(false); }
+                        const bool gone = cx2.delete_own_property(args[0], cx2.to_string(args[1]));
+                        style_sheets_changed();
+                        return value::boolean(gone);
+                    });
                 const value view =
                     value::object(c.allocate<script::proxy_object>(target, value::object(handler)));
                 internals->set("adopted_view", view);

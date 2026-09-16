@@ -165,14 +165,13 @@ void dom_bindings::reconcile_frames() {
             const auto txn = doc_->read();
             src = std::string{txn.attribute_value(id, atoms_->intern("src"))};
         }
-        const std::uint64_t key = pack(id);
         const auto seen =
-            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.key == key; });
+            std::ranges::find_if(frames_, [&](const auto & entry) { return entry.element == id; });
         if (seen != frames_.end() && seen->src == src) {
             still.push_back(*seen);
             continue;
         }
-        still.push_back(frame_entry{key, src, load_frame(*cx_, id, src)});
+        still.push_back(frame_entry{id, src, load_frame(*cx_, id, src)});
     }
     // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
     // secondary bindings stay in `secondary_documents_` because a page may
@@ -319,9 +318,6 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // "`call` is undefined" about a method that had thrown correctly.
     auto * frame_window = cx.allocate<script::object_object>();
     auto * handler = cx.allocate<script::object_object>();
-    const auto trap = [&](const char * name, script::native_fn fn) {
-        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
-    };
     // NOT THE PAGE'S BROWSING-CONTEXT STATE, though. `location`, `history`
     // and their kin are per-context, and this frame has none (see the header):
     // handing back the page's would let `frame.contentWindow.location.href =
@@ -334,7 +330,7 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         }
         return c.has_global(name);
     };
-    trap("get", [shared_global](context & c, std::span<value> args) {
+    set_method(cx, *handler, "get", [shared_global](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
@@ -344,7 +340,7 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         }
         return c.lookup_property(args[0], name);
     });
-    trap("has", [shared_global](context & c, std::span<value> args) {
+    set_method(cx, *handler, "has", [shared_global](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);

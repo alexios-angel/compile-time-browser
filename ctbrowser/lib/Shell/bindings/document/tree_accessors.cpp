@@ -20,14 +20,6 @@ using namespace detail;
 // `document.title = "x"; assert_equals(document.title, "x")` is the entire
 // shape of html/dom's nine title tests.
 void dom_bindings::install_tree_accessors(context & cx, script::object_object & doc) {
-    const auto accessor = [&](std::string name, script::native_fn read, script::native_fn write) {
-        doc.define_accessor(
-            name, value::object(cx.allocate<script::native_object>(name, std::move(read))),
-            write == nullptr
-                ? value::undefined()
-                : value::object(cx.allocate<script::native_object>(name, std::move(write))));
-    };
-
     // `document.documentElement` and `document.body`, BOTH RE-READ.
     //
     // They were written once at install, on the grounds that the node never
@@ -50,19 +42,16 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
     // at all. The root of a document that was never parsed is the Document
     // node itself, which is not an element, and that is what makes
     // `createDocument(null, "").documentElement === null` true.
-    accessor(
-        "documentElement",
-        [this](context & c, std::span<value>) {
-            const auto txn = doc_->read();
-            const node_id root = txn.root();
-            if (txn.kind(root).value_or(node_kind::document) != node_kind::element) {
-                return value::null();
-            }
-            return wrap(c, root);
-        },
-        nullptr);
-    accessor(
-        "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
+    define_getter(cx, doc, "documentElement", [this](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        const node_id root = txn.root();
+        if (txn.kind(root).value_or(node_kind::document) != node_kind::element) {
+            return value::null();
+        }
+        return wrap(c, root);
+    });
+    define_getter(
+        cx, doc, "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
         [this](context & c, std::span<value> a) {
             const node_id fresh = handle_of(arg(a, 0));
             // WebIDL first: anything that is not an element at all - a string
@@ -130,8 +119,8 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
         if (txn.element_ns(root) != node_ns::html) { return node_id{}; }
         return txn.local_name(root) == "html" ? root : node_id{};
     };
-    accessor(
-        "dir",
+    define_getter(
+        cx, doc, "dir",
         [this, html_element](context & c, std::span<value>) {
             const node_id html = html_element();
             if (!html) { return c.string(""); }
@@ -160,8 +149,8 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             return doc_->read().local_name(found) == "body" ? found : node_id{};
         };
         const std::string attribute{content};
-        accessor(
-            idl,
+        define_getter(
+            cx, doc, idl,
             [this, body, attribute](context & c, std::span<value>) {
                 const node_id element = body();
                 if (!element) { return c.string(""); }
@@ -195,8 +184,8 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
     // Strip-and-collapsed by the GETTER and not by the setter, which is why
     // `document.title = "two  spaces"` reads back as "two spaces" while the
     // text node still holds what was written (document.title-03.html).
-    accessor(
-        "title",
+    define_getter(
+        cx, doc, "title",
         [this](context & c, std::span<value>) {
             const node_id title = title_element();
             return c.string(title ? collapse_whitespace(text_content(title), html_whitespace)
