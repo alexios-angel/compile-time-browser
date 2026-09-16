@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -167,6 +168,37 @@ struct value_check {
 // `getComputedStyle` reports - css/cssom's serialize-values and
 // font-family-serialization-001 ask for it from each side.
 [[nodiscard]] std::string serialize_font_family(std::string_view text);
+
+// --- COLOURS, CSS Color 4 and 5 ---------------------------------------------
+//
+// `check_declaration` already serialises a `<color>` the way `el.style` reads
+// it back; these are the other two answers about one. Both understand the
+// whole grammar - the legacy and modern rgb()/hsl()/hwb(), lab()/lch()/
+// oklab()/oklch(), color() over the predefined spaces, color-mix(), the
+// relative colour syntax, light-dark(), alpha() and contrast-color().
+struct length_context;
+struct color_context {
+    // What `currentcolor` means here, as computed colour text (`rgb(255, 0,
+    // 0)`); empty leaves a colour that needs it unresolved.
+    std::string_view current_color;
+    // The bases for a `calc()` in a channel (`sign(1em - 10px)`); null is the
+    // defaults.
+    const length_context * lengths = nullptr;
+};
+// THE SPECIFIED SERIALISATION of a `<color>` on its own - what a colour
+// inside a gradient or a shadow reads back as - or empty for text that is
+// not one.
+[[nodiscard]] std::string serialize_color(std::string_view text);
+// THE COMPUTED VALUE, CSS Color 4 §15: a legacy colour as `rgb()`/`rgba()`,
+// every other as its own function or `color()`, `none` kept, calc() folded.
+// Empty when `specified` is not a colour or cannot be resolved here.
+[[nodiscard]] std::string computed_color(std::string_view specified, const color_context & ctx);
+// The same colour as sRGB, unclamped, for whoever paints it.
+struct srgb_color {
+    float r = 0, g = 0, b = 0, a = 1;
+};
+[[nodiscard]] std::optional<srgb_color> resolve_color(std::string_view specified,
+                                                      const color_context & ctx);
 
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.

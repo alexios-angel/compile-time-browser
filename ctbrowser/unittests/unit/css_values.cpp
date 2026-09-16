@@ -104,7 +104,7 @@ void test_the_things_that_must_survive() {
     // render that works today.
     ok("margin", "10px 20px", "10px 20px");         // a shorthand is freeform
     ok("border", "1px solid red", "1px solid red"); // ...and so is this one
-    ok("color", "#0d6efd", "#0d6efd");              // colours are not modelled yet
+    ok("color", "#0d6efd", "rgb(13, 110, 253)");    // a hex colour is a legacy sRGB colour
     ok("width", "var(--w)", "var(--w)");            // substitution defers the answer
     ok("width", "calc(100% - 10px)", "calc(100% - 10px)");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
@@ -419,7 +419,7 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
     // A relative colour's channel keywords are values inside its math, and
     // nowhere else (CSS Color 5 §relative-colors, random-serialize).
-    ok("color", "rgb(from red calc(r + 30) g b)", "rgb(from red calc(r + 30) g b)");
+    ok("color", "rgb(from red calc(r + 30) g b)", "rgb(from red calc(30 + r) g b)");
     bad("color", "rgb(calc(r + 1) 0 0)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
     // ...but a calc-size() INSIDE another math function is a syntax error
@@ -558,8 +558,10 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
     ok("width", "calc(min(1%, 2%) + max(3%, 4%) + 10%)", "calc(10% + min(1%, 2%) + max(3%, 4%))");
     ok("width", "max((min(10%, 30px) + 10px) * 2 + 10px, 5em + 5%)",
        "max(10px + (2 * (10px + min(10%, 30px))), 5% + 5em)");
-    // ...and a leaf's own calc() stays a leaf: nothing is hoisted but numbers.
-    ok("width", "calc(pow(2, sign(1em - 18px)) * 1px)", "calc(pow(2, sign(1em - 18px)) * 1px)");
+    // ...and a leaf's own calc() stays a leaf: nothing is hoisted but numbers,
+    // and a product writes its numeric factor first (css-color's
+    // `calc(10deg * sign(1em - 10px))`).
+    ok("width", "calc(pow(2, sign(1em - 18px)) * 1px)", "calc(1px * pow(2, sign(1em - 18px)))");
     // A signed zero keeps its sign through the tree, and a unit whose
     // canonical spelling would lose digits keeps the author's: the cascade
     // parses this text again (signs-abs-computed, typed_arithmetic).
@@ -586,7 +588,7 @@ void test_a_percentage_needs_a_property_that_takes_one() {
     ok("transform", "translate(50%)", "translate(50%)");
     ok("background-position", "calc(50% - 1px)", "calc(50% - 1px)");
     // ...and a percentage OUTSIDE a math function is not this rule's business.
-    ok("color", "hsl(calc(1deg) 82% 43%)", "hsl(calc(1deg) 82% 43%)");
+    ok("color", "hsl(calc(1deg) 82% 43%)", "rgb(200, 23, 20)");
 
     // `line-height` and `tab-size` are why the two <number>-and-<length> kinds
     // are two: `line-height: 50%` is half the font size and `tab-size: 50%` is
@@ -980,9 +982,9 @@ void test_colour_function_arity() {
     bad("color", "rgb(1, 2)");
     bad("color", "hsl(1 2 3 4 5)");
     ok("color", "rgb(1, 2, 3)", "rgb(1, 2, 3)");
-    ok("color", "rgb(1 2 3 / 0.5)", "rgb(1 2 3 / 0.5)");
+    ok("color", "rgb(1 2 3 / 0.5)", "rgba(1, 2, 3, 0.5)");
     ok("color", "rgba(1, 2, 3, 0.5)", "rgba(1, 2, 3, 0.5)");
-    ok("color", "rgb(calc(1 + 1) 2 3)", "rgb(calc(2) 2 3)");
+    ok("color", "rgb(calc(1 + 1) 2 3)", "rgb(2, 2, 3)");
     ok("color", "rgb(from red r g b)", "rgb(from red r g b)");
     ok("color", "color(srgb 1 0 0)", "color(srgb 1 0 0)");
 }

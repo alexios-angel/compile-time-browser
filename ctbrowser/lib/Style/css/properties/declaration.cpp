@@ -242,12 +242,24 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // and refusing it would be exactly the 80%-right grammar this table exists
     // not to be.
     if (p->kind == k::color) {
-        // `invert` is CSS 2.1's outline colour and nothing else's.
-        if (ascii_iequals(property, "outline-color") && ascii_iequals(text, "invert")) {
-            return yes("invert");
+        // The property's own keywords beside the colour: `invert` is CSS
+        // 2.1's outline colour, `auto` is caret-color's and accent-color's.
+        if (found.significant.size() == 1) {
+            const css_token & only = ts.tokens[found.significant.front()];
+            if (only.type == token_type::ident && has_keyword(p->keywords, ts.text_of(only))) {
+                return yes(ascii_lower_copy(ts.text_of(only)));
+            }
         }
         std::string serialized;
         if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
+        return {};
+    }
+
+    // `display` IS TWO KEYWORDS WITH A SHORT FORM (display.cpp): `inline
+    // flow-root` is `inline-block` and `flow list-item` is `list-item`.
+    if (ascii_iequals(property, "display")) {
+        std::string serialized;
+        if (match_display(ts, found, serialized)) { return yes(std::move(serialized)); }
         return {};
     }
 

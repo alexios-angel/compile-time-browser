@@ -23,6 +23,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -97,5 +98,10 @@ struct scan {
 // Defined in color.cpp.
 [[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
                                std::string_view normalized, std::string & out);
+// `display`'s two-value grammar and its short forms. Defined in display.cpp.
+[[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
+// The rows of the property table beyond table.cpp's core set, grouped by
+// module. Defined in table_modules.cpp.
+[[nodiscard]] std::span<const property_syntax> module_properties() noexcept;
 
 } // namespace ctbrowser::style::css::detail
