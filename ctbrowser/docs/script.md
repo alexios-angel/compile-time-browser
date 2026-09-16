@@ -447,13 +447,34 @@ change the native backend sees as a divergence until it follows.
   initialiser expression and pattern default, so strict code assigning to an
   undeclared name inside one made a global; a `not_declaring` guard clears
   it for defaults, computed keys, member targets and every nested frame.
-* **Annex B.3.3.** A function declared in a nested block of a sloppy
-  function also has a var binding of the function, written when the
-  declaration is evaluated - unless a parameter or a lexical declaration of
-  an enclosing block has the name (`predeclare_locals` keeps
-  `annex_b_functions`; a classic script lists block-nested names in
-  `hoisted_vars`). `var x;` at a script's top level STILL writes undefined
+* **Annex B.3.3 is two steps, and they are separate.** A function declared
+  in a nested block of sloppy code also has a var binding - of the enclosing
+  function, or a global of the script - which is CREATED at entry when
+  nothing of that name exists yet (`predeclare_locals` hoists it; a classic
+  script lists the names in `hoisted_vars`) and WRITTEN when the declaration
+  is evaluated (`compile_function_decl` copies the block binding through
+  `annex_b_functions`). Only a PARAMETER or a LEXICAL declaration stops
+  both; a `var` or another function declaration of the name means the
+  binding is already there and the write still happens, and `arguments` is
+  never given one. The shadow walk (`each_block_function`) counts every
+  construct that binds lexically between the body and the declaration: a
+  block's `let`/`const`/`class`, a block's own function declarations (14.2.1,
+  so a deeper one gets nothing), a `for` head, a DESTRUCTURING catch
+  parameter (a simple one is B.3.5's relaxation and lets the extension
+  through), the whole body of a `switch` as one scope, and a script's own
+  top-level lexical names. `if (x) function f() {}` is B.3.4 and gets a
+  scope of its own, so the declaration never writes an enclosing binding.
+  A BLOCK OF A CLASSIC SCRIPT IS A SCOPE like any other - only
+  `scope_marks.size() <= 1` is the script's own level, where a declaration
+  IS the global. `var x;` at a script's top level STILL writes undefined
   (`statements/dispatch.cpp` says which native prover needs the write).
+* **A Module's ModuleItemList.** `import` and `export` are ModuleItems and
+  not Statements (16.2.1), so the early-error pass refuses either one
+  nested in a block, a clause or a function body, and refuses both outright
+  in a classic script. A module's top-level function declarations are
+  LEXICALLY declared there, so two of a name are a redeclaration where a
+  script allows them; its ExportedNames may not repeat; and every
+  ExportedBinding without a `from` must be something the module declares.
 * **%GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction%** exist
   (`proto_kind::generator_function` etc.; `context::function_proto_kind`):
   a `function*`'s [[Prototype]] and `.constructor` are its intrinsic, its
