@@ -127,13 +127,24 @@ struct classInitialization {
                 return refuse(
                     "static getter needs a unique local capture-free getter without a setter");
             }
+            ctjs::SetPropertyOp getterHome;
             for (mlir::OpOperand & use : closure.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                if (use.getOwner() != definition || use.getOperandNumber() != 1) {
+                if (use.getOwner() == definition && use.getOperandNumber() == 1) { continue; }
+                auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                if (getterHome || !write || use.getOperandNumber() != 0 ||
+                    ctjs::constantKey(write.getKey()) != "__home" ||
+                    write.getValue() != helper.getArgs().front() ||
+                    write->getBlock() != helper->getBlock() || !closure->isBeforeInBlock(write) ||
+                    !write->isBeforeInBlock(helper)) {
                     return refuse("static getter callable identity escapes its definition");
                 }
+                getterHome = write;
             }
+            // The body census below forbids observing this metadata. Keep the
+            // exact source assignment in the setup proof before erasing it.
+            if (getterHome) { setup.insert(getterHome); }
             auto & entry = fn.getBody().front();
             if (entry.getNumArguments() != 3 || !entry.getArgument(ctjs::arg_callee).use_empty() ||
                 !entry.getArgument(ctjs::arg_new_target).use_empty()) {
@@ -232,6 +243,7 @@ struct classInitialization {
         llvm::SmallVector<ctjs::ConstructOp> instances;
         llvm::StringMap<ctjs::DefineAccessorOp> staticDefinitions;
         llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
+        llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
         for (mlir::OpOperand & use : closure.getResult().getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
@@ -273,6 +285,8 @@ struct classInitialization {
                 home = write;
             } else if (use.getOperandNumber() == 2 && key == "constructor" && !backedge) {
                 backedge = write;
+            } else if (use.getOperandNumber() == 2 && key == "__home") {
+                getterHomes.push_back(write); // Rechecked against exact getters below.
             } else {
                 return refuse("class methods, static fields or repeated setup remain unsupported");
             }
@@ -285,6 +299,12 @@ struct classInitialization {
             return refuse("class setup needs its exact fresh prototype, constructor and home");
         }
         if (!staticGetters(staticDefinitions, staticReads, call)) { return false; }
+        for (ctjs::SetPropertyOp write : getterHomes) {
+            if (!step()) { return false; }
+            if (!setup.contains(write)) {
+                return refuse("class constructor reaches an unrelated getter home");
+            }
+        }
         llvm::StringSet<> methodKeys;
         llvm::SmallVector<ctjs::SetPropertyOp> definitions;
         for (mlir::OpOperand & use : prototype.getResult().getUses()) {

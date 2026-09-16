@@ -13,8 +13,8 @@ from CTNative.harness import find_compilers, run
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 from Target.Cpp.harness import FLAGS
 
-# The implementation hook, inherited static getter and function metadata have
-# separate Node/VM observations. A refusal cannot equate the two engines.
+# The implementation hook and function metadata retain separate Node/VM
+# observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
     "empty": (7, 7),
     "number": (92, 92),
@@ -57,7 +57,7 @@ OBSERVATIONS = {
     "prototype-alias": (11, 11),
     "field-initializer": (7, 7),
     "inherited": (7, 7),
-    "static-getter": (1, 0),
+    "static-getter": (1, 1),
     "constructor-identity": (1, 1),
     "descriptor": (0, 0),
     "static-constant": (7, 7),
@@ -334,6 +334,28 @@ def check_getter_parent(args, source, manifest):
         dict(manifest, module_sha256=host.fingerprint(args.opt, forged)),
         success=False,
     )
+    text = source.read_text()
+    definition = re.search(r'ctjs.define_accessor "NAME" on (%\w+) get (%\w+) set (%\w+)', text)
+    if not definition:
+        raise RuntimeError("getter home control lost its NAME definition")
+    constructor, getter, undefined = definition.groups()
+    home = re.search(rf"(?m)^([ \t]*ctjs.set_property {getter}\[%\w+\], ){constructor}$", text)
+    if not home:
+        raise RuntimeError("getter home control lost its source assignment")
+    for label, replacement in (
+        ("wrong-getter-home", home[1] + undefined),
+        ("repeated-getter-home", home[0] + "\n" + home[0]),
+    ):
+        altered = args.work / f"{label}.mlir"
+        altered.write_text(text[: home.start()] + replacement + text[home.end() :])
+        prepare(
+            args,
+            label,
+            altered,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, altered)),
+            success=False,
+        )
+    return 3
 
 
 def check_executable(args, name, native, expected):
@@ -418,8 +440,7 @@ def main():
         prepared = prepare(args, name, structured, manifest, success=name in POSITIVES)
         preparation_refusals += name not in POSITIVES
         if name == "static-chain":
-            check_getter_parent(args, structured, manifest)
-            preparation_refusals += 1
+            preparation_refusals += check_getter_parent(args, structured, manifest)
         if name == "empty":
             check_overflow_input(args, structured)
             for label, control, options in (
