@@ -1998,9 +1998,14 @@ private:
     // the two trees rather than a stored list: see the file.
     [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
     // Every `<template shadowrootmode>` under `within` turned into the shadow
-    // root it declares. `setHTMLUnsafe` runs it; `innerHTML` deliberately
-    // does not.
-    void attach_declarative_shadow_roots(node_id within);
+    // root it declares, IN `doc` - which is the scratch document a fragment
+    // was parsed into. `setHTMLUnsafe` runs it; `innerHTML` deliberately does
+    // not.
+    void attach_declarative_shadow_roots(document & doc, node_id within);
+    // `innerHTML` plus those roots, and the copy that carries them across.
+    void set_html_unsafe(node_id target, std::string_view markup);
+    void copy_shadow_trees(const document & src, const read_txn & from, node_id source,
+                           node_id made);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
