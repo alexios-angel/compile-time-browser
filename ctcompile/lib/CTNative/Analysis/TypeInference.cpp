@@ -657,6 +657,12 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
 
+    if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);
+        object && domEntry_ && domEntry_->jsonObject(object)) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{JsonType::get(c)}));
+        return mlir::success();
+    }
+
     if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && domEntry_) {
         if (const auto * edge = domEntry_->call(call)) {
             const mlir::Type type =

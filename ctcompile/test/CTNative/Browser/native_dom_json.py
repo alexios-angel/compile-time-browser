@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Original M's normalization and Config's JSON typeof observation as native C++.
+"""Original M's normalization and Config's JSON typeof/spread as native C++.
 
 The decode and parse calls become nested invokes on one success path; either
 failure returns the original String. Normalization owns ctbrowser::json_value;
-typeof returns String or Boolean observations, compared against Node and the VM.
+typeof and guarded spreads are compared against Node and the VM.
 """
 
 import argparse
@@ -55,7 +55,18 @@ BOOTSTRAP_F = """    function F(t) {
         return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
     }"""
 BOOTSTRAP_GET = "        getDataAttribute: (t, e) => M(t.getAttribute(`data-bs-${F(e)}`))"
+BOOTSTRAP_SPREAD = '..."object" == typeof i ? i : {}'
+BOOTSTRAP_SPREAD_LAST = '..."object" == typeof t ? t : {}'
 ATTRIBUTE_HELPERS = BOOTSTRAP_M + "\n" + BOOTSTRAP_F + "\nconst H = {\n" + BOOTSTRAP_GET + "\n};\n"
+PARSED_CONFIG = ATTRIBUTE_HELPERS + 'const i = H.getDataAttribute(element, "config"); '
+CONFIG_SPREAD = "{" + BOOTSTRAP_SPREAD + "}"
+SPREAD_CASES = {
+    "json_config_spread": PARSED_CONFIG + f"return {CONFIG_SPREAD};",
+    "json_spread_typeof": PARSED_CONFIG + f"return typeof {CONFIG_SPREAD};",
+    "json_config_spread_chain": PARSED_CONFIG
+    + 'const t = H.getDataAttribute(element, "later"); '
+    + f"return {{{BOOTSTRAP_SPREAD}, {BOOTSTRAP_SPREAD_LAST}}};",
+}
 GET = "element.getAttribute('data-bs-config')"
 NULLABLE_JOIN = (
     "const saved = element.getAttribute('x'); if ('string' != typeof saved) return saved; "
@@ -80,6 +91,7 @@ ATTRIBUTE_CASES = {
     # Preserve the former refusal body, including its earlier DOM observation.
     "json_nullable_join": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
     + NULLABLE_JOIN,
+    **SPREAD_CASES,
 }
 SOURCES.update(
     (name, f"function {name}(element) {{ {body} }}\n") for name, body in ATTRIBUTE_CASES.items()
@@ -105,6 +117,21 @@ INPUTS = tuple(value for value, _ in numbers.VALUES) + (
     "%5B1%2C",
     "a\0b",
 )
+SPREAD_INPUTS = INPUTS + (
+    "{}",
+    "[]",
+    '[10,{"saved":["é",null]},false]',
+    '{"z":0,"2":"two","a":1,"10":"ten","2":"last","z":9}',
+    '{"4294967295":"not-index","01":"leading","4294967294":"max",'
+    '"0":"zero","-0":"negative","10":"ten","2":"two","__proto__":{"safe":true}}',
+    '{"__proto__":{"nested":[{"saved":"original"},false]},'
+    '"saved":{"deep":[1,2,3]},"__proto__":{"last":"owned"}}',
+    '{"a\\u0000b":{"saved":"a\\u0000b"}}',
+)
+LATER_INPUT = (
+    '{"z":"last","0":"zero","2":"second","tail":{"kept":[true,null]},'
+    '"__proto__":{"safe":"later"}}'
+)
 OBSERVE = """
 function observe(result) {
     if (typeof result === 'number') {
@@ -118,12 +145,20 @@ function observe(result) {
 """
 
 
+def inputs_for(name):
+    if name in SPREAD_CASES:
+        return SPREAD_INPUTS
+    return INPUTS if name in ATTRIBUTE_CASES else (None, "")
+
+
 def check_oracles(args):
     source = "".join(SOURCES.values()) + OBSERVE
     names, observations = [], []
     for name in SOURCES:
-        inputs = INPUTS if name in ATTRIBUTE_CASES else (None, "")
+        inputs = inputs_for(name)
         trace = "get:data-bs-config" if name in ATTRIBUTE_CASES else "has:good"
+        if name == "json_config_spread_chain":
+            trace += "|get:data-bs-later"
         if name in ("json_nullable_join", "json_config_typeof"):
             trace = "has:good|" + ("get:x" if name == "json_nullable_join" else trace)
         for value in inputs:
@@ -133,7 +168,8 @@ def check_oracles(args):
                 f"var {label} = (function() {{ "
                 f"const queries = []; const result = {name}({{hasAttribute(key) {{ "
                 f"queries.push('has:' + key); return {str(value is not None).lower()}; "
-                f"}}, getAttribute(key) {{ queries.push('get:' + key); return {json.dumps(value)}; }} }}); "
+                "}, getAttribute(key) { queries.push('get:' + key); "
+                f"return key === 'data-bs-later' ? {json.dumps(LATER_INPUT)} : {json.dumps(value)}; }} }}); "
                 f"if (queries.join('|') !== {json.dumps(trace)}) throw new Error('JSON prefix order'); "
                 "return observe(result); })();\n"
             )
@@ -247,7 +283,7 @@ def client(name, entry, owned):
         else "atom_table atoms; document doc{atoms};"
     )
     call = "session.invoke(element)" if owned else entry + "(element)"
-    inputs = INPUTS if name in ATTRIBUTE_CASES else (None, "")
+    inputs = inputs_for(name)
     samples = ", ".join(
         (
             "std::nullopt"
@@ -266,11 +302,19 @@ def client(name, entry, owned):
                 if (input) { assert(doc.set_attribute(node, good, "")); }
                 else { assert(doc.remove_attribute(node, good)); }
 """
+    later_setup = later_change = ""
+    if name == "json_config_spread_chain":
+        later_setup = (
+            'const auto later = doc.atoms().intern("data-bs-later"); '
+            f"assert(doc.set_attribute(node, later, {numbers.cpp_string(LATER_INPUT)}));"
+        )
+        later_change = 'assert(doc.set_attribute(node, later, "later"));'
     result_type = {
         "json_number_not": "bool",
         "json_attribute_typeof": "std::string",
         "json_config_typeof_direct": "bool",
         "json_config_typeof": "bool",
+        "json_spread_typeof": "std::string",
     }.get(name, "json_value")
     return f"""
     {{
@@ -285,12 +329,14 @@ def client(name, entry, owned):
                 if (input) {{ assert(doc.set_attribute(node, state, *input)); }}
                 else {{ assert(doc.remove_attribute(node, state)); }}
                 {earlier_read}
+                {later_setup}
                 (void)doc.take_writes();
                 const auto version = doc.version();
                 auto result = {call};
                 static_assert(std::is_same_v<decltype(result), {result_type}>);
                 assert(doc.version() == version && doc.take_writes().empty());
                 assert(doc.set_attribute(node, state, "later"));
+                {later_change}
                 survivors.emplace_back(std::move(result));
             }}
         }}
@@ -300,6 +346,36 @@ def client(name, entry, owned):
 
 
 REFUSALS = {
+    "json_spread_branch_cell_write": PARSED_CONFIG
+    + "let t; if (element.hasAttribute('good')) t = H.getDataAttribute(element, 'later'); "
+    + f"return {{{BOOTSTRAP_SPREAD}, {BOOTSTRAP_SPREAD_LAST}}};",
+    "json_spread_late_cell_write": PARSED_CONFIG
+    + f"let t; const result = {{{BOOTSTRAP_SPREAD}, {BOOTSTRAP_SPREAD_LAST}}}; "
+    + "t = H.getDataAttribute(element, 'later'); return result;",
+    "json_spread_members": PARSED_CONFIG + f"const result = {CONFIG_SPREAD}; return result.saved;",
+    "json_spread_source_write": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; i.saved = 1; return result;",
+    "json_spread_target_write": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; result.saved = 1; return result;",
+    "json_spread_source_alias_write": PARSED_CONFIG
+    + f"const alias = i.saved; const result = {CONFIG_SPREAD}; alias.changed = 1; return result;",
+    "json_spread_target_alias_write": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; const alias = result; alias.saved = 1; return result;",
+    "json_spread_branch_target_write": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; "
+    + "const target = element.hasAttribute('good') ? result : {}; target.saved = 1; return result;",
+    "json_spread_source_identity": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; return result === i;",
+    "json_spread_nested_identity": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; return result.saved === i.saved;",
+    "json_spread_source_capture": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; return () => i;",
+    "json_spread_target_capture": PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; return () => result;",
+    "json_spread_unknown_source": "return {...element};",
+    "json_spread_unguarded": PARSED_CONFIG + "return {...i};",
+    "json_spread_string": PARSED_CONFIG + 'return {..."string" == typeof i ? i : {}};',
+    "json_spread_unknown_target": PARSED_CONFIG + "return Object.assign(element, i);",
     "json_typeof_members": ATTRIBUTE_HELPERS
     + 'const parsed = H.getDataAttribute(element, "config"); '
     + 'if ("object" == typeof parsed) return parsed.saved; return null;',
@@ -344,9 +420,16 @@ def main():
         raise RuntimeError("native DOM JSON gate requires nm")
     vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     if any(
-        source not in vendor.read_text() for source in (BOOTSTRAP_M, BOOTSTRAP_F, BOOTSTRAP_GET)
+        source not in vendor.read_text()
+        for source in (
+            BOOTSTRAP_M,
+            BOOTSTRAP_F,
+            BOOTSTRAP_GET,
+            BOOTSTRAP_SPREAD,
+            BOOTSTRAP_SPREAD_LAST,
+        )
     ):
-        raise RuntimeError("Bootstrap M/F/getDataAttribute source pin changed")
+        raise RuntimeError("Bootstrap M/F/getDataAttribute/Config spread source pin changed")
     expected = check_oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -359,6 +442,7 @@ def main():
         "json_attribute_typeof": intrinsics,
         "json_config_typeof_direct": intrinsics,
         "json_config_typeof": intrinsics,
+        **dict.fromkeys(SPREAD_CASES, intrinsics),
     }
     prepared = [
         (
@@ -509,6 +593,7 @@ def main():
         ),
     }
     premises["json_config_typeof_direct"] = premises["json_bootstrap_m"]
+    premises["json_config_spread"] = premises["json_bootstrap_m"]
     for name, variants in premises.items():
         _, ir, contract = next(row for row in prepared if row[0] == name)
         for index, names in enumerate(variants):

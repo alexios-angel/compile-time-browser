@@ -54,6 +54,8 @@ module {
         input.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
         input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
         input.walk([&](ctjs::InvokeOp invoke) { empty &= !proof.invocation(invoke); });
+        input.walk([&](ctjs::CreateObjectOp object) { empty &= !proof.jsonObject(object); });
+        input.walk([&](ctjs::CopyPropsOp copy) { empty &= !proof.jsonCopy(copy); });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isTokenList(read.getResult());
         });
@@ -228,8 +230,150 @@ module {
                   "JSON primitive proof keeps source and optional producer unchanged");
         }
     }
+    const std::string spread = R"MLIR(
+    %kind = ctjs.unary typeof %answer
+    %word = ctjs.constant #ctjs.string<"object">
+    %same = ctjs.compare eq %word, %kind
+    %isObject = ctjs.truthy %same
+    %selected = scf.if %isObject -> (!ctjs.value) {
+      scf.yield %answer : !ctjs.value
+    } else {
+      %empty = ctjs.create_object
+      scf.yield %empty : !ctjs.value
+    }
+    %target = ctjs.create_object
+    ctjs.copy_props %selected into %target
+    ctjs.return %target)MLIR";
+    const auto spreadSource = [&](const std::string & tail) {
+        return replaced(source, "ctjs.return %answer", tail);
+    };
+    const auto checkSpread = [&](const std::string & tail) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(spreadSource(tail), &context);
+        check(static_cast<bool>(input), "DOM JSON spread fixture parses");
+        if (!input) { return; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            request.provider = provider;
+            DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "guarded JSON aggregates spread into fresh owning objects");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n%s\n", tail.c_str(), proof.reason().str().c_str());
+                continue;
+            }
+            unsigned objects = 0, copies = 0;
+            input->walk([&](ctjs::CreateObjectOp object) {
+                check(proof.jsonObject(object), "every fresh JSON target has exact evidence");
+                ++objects;
+            });
+            input->walk([&](ctjs::CopyPropsOp copy) {
+                check(proof.jsonCopy(copy), "every JSON spread retains its exact operation");
+                ++copies;
+            });
+            check(objects != 0 && copies != 0, "JSON spread fixture exercises both capabilities");
+            check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+                  "JSON spread reproduces its exact proof budget");
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*input, request, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "every incomplete JSON spread proof withholds all evidence");
+            }
+            check(hostContractFingerprint(*input) == request.moduleSha256,
+                  "JSON spread proof and budget failures retain the complete source");
+        }
+    };
+    checkSpread(spread);
+    checkSpread(replaced(spread, "eq %word, %kind", "strict_eq %kind, %word"));
+    checkSpread(replaced(spread, "ctjs.return %target",
+                         "ctjs.copy_props %selected into %target\n    ctjs.return %target"));
+    checkSpread(replaced(spread, "%target = ctjs.create_object",
+                         "%target = ctjs.create_object\n    %early = ctjs.unary typeof %target"));
+    checkSpread(replaced(spread, "scf.yield %answer : !ctjs.value",
+                         "%local = ctjs.create_object\n"
+                         "      ctjs.copy_props %answer into %local\n"
+                         "      scf.yield %local : !ctjs.value"));
+    auto inverted = replaced(spread, "%isObject = ctjs.truthy %same",
+                             "%notObject = ctjs.unary not %same\n"
+                             "    %isObject = ctjs.truthy %notObject");
+    inverted = replaced(inverted, "scf.yield %answer : !ctjs.value",
+                        "%fallback = ctjs.create_object\n"
+                        "      scf.yield %fallback : !ctjs.value");
+    inverted = replaced(inverted, "%empty = ctjs.create_object\n      scf.yield %empty",
+                        "scf.yield %answer");
+    checkSpread(inverted);
+    const auto refuseSpread = [&](const std::string & tail) { refused(spreadSource(tail)); };
+    for (llvm::StringRef unproved : {"%answer", "%text", "%element"}) {
+        refuseSpread(replaced(spread, "ctjs.copy_props %selected into %target",
+                              "ctjs.copy_props " + unproved.str() + " into %target"));
+    }
+    // The object tag includes null and arrays; it is no permission for arbitrary members.
+    refuseSpread(replaced(spread, "ctjs.return %target",
+                          "%member = ctjs.get_property %selected[%word]\n"
+                          "    ctjs.return %target"));
+    refuseSpread(replaced(spread, "ctjs.return %target",
+                          "ctjs.set_property %target[%word], %text\n    ctjs.return %target"));
+    refuseSpread(replaced(spread, "ctjs.return %target",
+                          "%identity = ctjs.compare strict_eq %target, %selected\n"
+                          "    ctjs.return %target"));
+    refuseSpread(replaced(spread, "ctjs.copy_props %selected into %target",
+                          "ctjs.copy_props %target into %target"));
+    refuseSpread(replaced(spread, "ctjs.copy_props %selected into %target",
+                          "ctjs.copy_props %target into %selected"));
+    refuseSpread(replaced(spread, "scf.yield %answer : !ctjs.value",
+                          "%local = ctjs.create_object\n"
+                          "      ctjs.copy_props %local into %answer\n"
+                          "      scf.yield %answer : !ctjs.value"));
+    refuseSpread(replaced(spread, "%empty = ctjs.create_object\n      scf.yield %empty",
+                          "scf.yield %answer"));
+    refuseSpread(
+        replaced(spread, "%empty = ctjs.create_object\n      scf.yield %empty", "scf.yield %text"));
+    // Deep-value branch joins cannot alias a target that is written afterward.
+    const std::string earlyAlias = R"MLIR(
+    %alias = scf.if %isObject -> (!ctjs.value) {
+      scf.yield %target : !ctjs.value
+    } else {
+      %other = ctjs.create_object
+      scf.yield %other : !ctjs.value
+    }
+    ctjs.copy_props %selected into %target)MLIR";
+    refuseSpread(replaced(replaced(spread, "ctjs.copy_props %selected into %target", earlyAlias),
+                          "ctjs.return %target", "ctjs.return %alias"));
+    refuseSpread(replaced(spread, "ctjs.return %target",
+                          "%later = ctjs.create_object\n"
+                          "    ctjs.copy_props %target into %later\n"
+                          "    ctjs.copy_props %selected into %target\n"
+                          "    ctjs.return %later"));
+    refuseSpread(replaced(spread, "ctjs.copy_props %selected into %target", R"MLIR(
+    scf.if %isObject {
+      ctjs.copy_props %selected into %target
+    })MLIR"));
     check(hostContractFingerprint(*module) == contract.moduleSha256,
           "JSON proof and exhausted attempts leave original source unchanged");
+    auto branchWrite = mlir::parseSourceString<mlir::ModuleOp>(R"MLIR(
+module {
+  ctjs.func @parse$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %undefined = ctjs.constant #ctjs.undefined
+    %cell = ctjs.create_cell %undefined
+    %true = ctjs.constant #ctjs.boolean<true>
+    %condition = ctjs.truthy %true
+    scf.if %condition {
+      ctjs.cell_set %cell, %undefined
+      scf.yield
+    }
+    %read = ctjs.cell_get %cell
+    ctjs.return %read
+  }
+}
+)MLIR",
+                                                               &context);
+    check(static_cast<bool>(branchWrite), "branch-local capture writer fixture parses");
+    if (branchWrite) {
+        auto error = expandDOMHelpers(*branchWrite, "parse$0", 100000);
+        check(llvm::toString(std::move(error)).find("nonlocal or unordered uses") !=
+                  std::string::npos,
+              "capture write locality is checked before comparing its order with any read");
+    }
 }
 
 } // namespace ctcompile::test::host_contract

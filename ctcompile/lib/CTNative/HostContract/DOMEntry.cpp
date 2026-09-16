@@ -135,6 +135,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         jsonIntrinsic,
         jsonParse,
         json,
+        jsonAggregate, // The typeof object alternatives: null, array or object.
         numberToString,
         number,
         string,
@@ -148,6 +149,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<ctjs::InvokeOp> provedInvocations;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
+    std::vector<ctjs::CreateObjectOp> provedJSONObjects;
+    std::vector<ctjs::CopyPropsOp> provedJSONCopies;
     std::vector<mlir::Value> provedOptionalStrings;
     std::vector<HostDOMStringRefinement> provedRefinements;
     std::vector<mlir::Value> provedStrings;
@@ -242,21 +245,26 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         if (!spend()) { return false; }
                         const bool first = &region == &branch.getThenRegion();
                         mlir::Value refined;
+                        Kind previous = Kind::implicit;
                         const auto restore = llvm::make_scope_exit([&] {
                             if (!refined) { return; }
                             // Look up by key: recursive visits can rehash both maps.
-                            values[refined] = Kind::optionalString;
+                            values[refined] = previous;
                             activeRefinements.erase(refined);
                         });
                         if (auto predicate = predicates.find(branch.getCondition());
                             predicate != predicates.end() &&
-                            hasKind(predicate->second.optional, Kind::optionalString)) {
+                            (hasKind(predicate->second.optional, Kind::optionalString) ||
+                             hasKind(predicate->second.optional, Kind::json))) {
                             // Reserve save/restore and the new evidence before visiting.
                             if (!spend() || !spend() || !spend()) { return false; }
                             refined = predicate->second.optional;
+                            previous = values[refined];
                             const bool present = first == predicate->second.stringOnTrue;
-                            values[refined] = present ? Kind::string : Kind::null;
-                            if (present) {
+                            values[refined] = previous == Kind::json
+                                                  ? (present ? Kind::jsonAggregate : Kind::json)
+                                                  : (present ? Kind::string : Kind::null);
+                            if (present && previous == Kind::optionalString) {
                                 activeRefinements[refined] = provedRefinements.size();
                                 provedRefinements.push_back({&region.front(), refined, {}});
                             }
@@ -279,7 +287,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             if (kind != Kind::boolean && kind != Kind::number &&
                                 kind != Kind::string && kind != Kind::null &&
                                 kind != Kind::optionalString && kind != Kind::undefined &&
-                                kind != Kind::json) {
+                                kind != Kind::json && kind != Kind::jsonAggregate) {
                                 refusal =
                                     "DOM entry branch cannot carry a borrowed or callable value";
                                 return false;
@@ -289,6 +297,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 continue;
                             }
                             if (joined[index] == kind) { continue; }
+                            const auto json = [](Kind k) {
+                                return k == Kind::json || k == Kind::jsonAggregate;
+                            };
                             const auto jsonScalar = [](Kind k) {
                                 return k == Kind::string || k == Kind::boolean ||
                                        k == Kind::number || k == Kind::null ||
@@ -296,8 +307,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             };
                             // Primitive arms become owning JSON alternatives. Undefined
                             // and borrowed browser values have no JSON representation.
-                            if ((joined[index] == Kind::json && jsonScalar(kind)) ||
-                                (jsonScalar(joined[index]) && kind == Kind::json)) {
+                            if ((json(joined[index]) && (json(kind) || jsonScalar(kind))) ||
+                                (jsonScalar(joined[index]) && json(kind))) {
                                 joined[index] = Kind::json;
                                 continue;
                             }
@@ -421,6 +432,23 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     }
                     continue;
                 }
+                if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
+                    values[object.getResult()] = Kind::jsonAggregate;
+                    provedJSONObjects.push_back(object);
+                    continue;
+                }
+                if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(operation)) {
+                    auto target = copy.getTarget().getDefiningOp<ctjs::CreateObjectOp>();
+                    if (!target || target->getBlock() != copy->getBlock() ||
+                        copy.getTarget() == copy.getSource() ||
+                        !hasKind(copy.getSource(), Kind::jsonAggregate)) {
+                        refusal = "DOM JSON spread requires a fresh local target and an "
+                                  "object-tagged JSON source";
+                        return false;
+                    }
+                    provedJSONCopies.push_back(copy);
+                    continue;
+                }
                 if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
                     if (depth || entered) {
                         refusal = "DOM entry has more than one shadow frame";
@@ -452,7 +480,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                          !hasKind(result.getValue(), Kind::number) &&
                          !hasKind(result.getValue(), Kind::string) &&
                          !hasKind(result.getValue(), Kind::optionalString) &&
-                         !hasKind(result.getValue(), Kind::json))) {
+                         !hasKind(result.getValue(), Kind::json) &&
+                         !hasKind(result.getValue(), Kind::jsonAggregate))) {
                         refusal =
                             "DOM entry return must be a scalar with no borrowed browser handle";
                         return false;
@@ -682,12 +711,14 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     (hasKind(unary.getOperand(), Kind::optionalString) ||
                      hasKind(unary.getOperand(), Kind::string) ||
                      hasKind(unary.getOperand(), Kind::null) ||
-                     hasKind(unary.getOperand(), Kind::json))) {
+                     hasKind(unary.getOperand(), Kind::json) ||
+                     hasKind(unary.getOperand(), Kind::jsonAggregate))) {
                     if (!spend()) { return false; }
                     values[unary.getResult()] = Kind::string;
-                    // JSON's "object" includes null and arrays; only the optional
-                    // String carrier supplies a two-way narrowing predicate.
-                    if (hasKind(unary.getOperand(), Kind::optionalString)) {
+                    // JSON's object tag includes null and arrays, never member
+                    // authority. It permits only their own-data spread.
+                    if (hasKind(unary.getOperand(), Kind::optionalString) ||
+                        hasKind(unary.getOperand(), Kind::json)) {
                         typeQueries[unary.getResult()] = unary.getOperand();
                     }
                     continue;
@@ -716,9 +747,13 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             if (!spend()) { return false; }
                             const auto found = typeQueries.find(query);
                             const auto name = ctjs::constantKey(literal);
-                            if (found != typeQueries.end() &&
-                                (name == "string" || name == "object")) {
-                                predicates[compare.getResult()] = {found->second, name == "string"};
+                            if (found != typeQueries.end()) {
+                                const bool json = hasKind(found->second, Kind::json);
+                                if ((!json && (name == "string" || name == "object")) ||
+                                    (json && name == "object")) {
+                                    predicates[compare.getResult()] = {found->second,
+                                                                       json || name == "string"};
+                                }
                             }
                         }
                         values[compare.getResult()] = Kind::boolean;
@@ -769,6 +804,26 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         };
         if (!visit(visit, block, 0, {})) { return; }
     }
+    // Joins and source spreads copy trees by value. A mutable target must
+    // finish every write before any such observation can snapshot it. No
+    // member/identity observation or descendant mutation passed the census,
+    // so the final single owning result cannot distinguish shallow aliases.
+    for (ctjs::CopyPropsOp copy : provedJSONCopies) {
+        for (mlir::OpOperand & use : copy.getTarget().getUses()) {
+            if (!spend()) { return; }
+            auto * user = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+            if (llvm::isa<ctjs::CopyPropsOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
+                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+                continue;
+            }
+            if (!dominance.properlyDominates(copy, user)) {
+                refusal = "DOM JSON target is observed before its final spread write";
+                return;
+            }
+        }
+    }
     optionalStrings = std::move(provedOptionalStrings);
     refinements = std::move(provedRefinements);
     strings = std::move(provedStrings);
@@ -782,6 +837,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     invocations = std::move(provedInvocations);
     methods = std::move(provedMethods);
     calls = std::move(provedCalls);
+    jsonObjects = std::move(provedJSONObjects);
+    jsonCopies = std::move(provedJSONCopies);
 }
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {
@@ -824,6 +881,14 @@ const HostDOMCall * DOMEntryAnalysis::call(ctjs::CallOp operation) const {
         if (call.operation == operation) { return &call; }
     }
     return nullptr;
+}
+
+bool DOMEntryAnalysis::jsonObject(ctjs::CreateObjectOp operation) const {
+    return llvm::is_contained(jsonObjects, operation);
+}
+
+bool DOMEntryAnalysis::jsonCopy(ctjs::CopyPropsOp operation) const {
+    return llvm::is_contained(jsonCopies, operation);
 }
 
 } // namespace ctcompile::ctnative

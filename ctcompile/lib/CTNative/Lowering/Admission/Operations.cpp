@@ -24,6 +24,13 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto object = llvm::dyn_cast<CreateObjectOp>(o);
+            object && domEntry->jsonObject(object)) {
+            return true;
+        }
+        if (auto copy = llvm::dyn_cast<CopyPropsOp>(o); copy && domEntry->jsonCopy(copy)) {
+            return true;
+        }
         if (auto unary = llvm::dyn_cast<UnaryOp>(o);
             unary && unary.getKind() == UnaryKind::TypeOf &&
             carrierOf(typeOf(unary.getOperand())) == carrier::json) {

@@ -29,6 +29,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (map) { mapSchemas[call] = map; }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
+            v.setType(ec::LValueType::get(carrierType(context, carrier::json)));
+            return;
+        }
         if (domStringResults.contains(v)) {
             v.setType(carrierType(context, carrier::string));
             return;
@@ -64,7 +68,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.
-        if (admission::isClosedObject(v)) { return; }
+        if (admission::isClosedObject(v) && carrierOf(typeOf(v)) != carrier::json) { return; }
         // PHASE 59 SLICE 2 STEP 2: A SHARED BINDING IS NOT ITS CARRIER, it
         // is a PLACE holding one. The box in the owning frame becomes an
         // `emitc.lvalue` - the type an emitc.variable has, which load and
@@ -200,6 +204,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     // every OTHER site in the program - so here each object only takes the
     // type of its own site.
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+        if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));

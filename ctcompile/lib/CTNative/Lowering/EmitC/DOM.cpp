@@ -219,6 +219,23 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return ec::ConstantOp::create(at, where, optionalString,
                                       ec::OpaqueAttr::get(context, "std::nullopt"));
     };
+    const auto jsonOwner = ec::LValueType::get(carrierType(context, carrier::json));
+    if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
+        object && object.getResult().getType() == jsonOwner) {
+        swap(ec::VariableOp::create(
+            at, where, object.getResult().getType(),
+            ec::OpaqueAttr::get(context,
+                                "ctbrowser::json_value{ctbrowser::json_value::object{}}")));
+        return true;
+    }
+    if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(operation);
+        copy && copy.getTarget().getType() == jsonOwner) {
+        ec::CallOpaqueOp::create(at, where, mlir::TypeRange{},
+                                 at.getStringAttr("ctnative::copy_json_properties"),
+                                 mlir::ValueRange{copy.getTarget(), copy.getSource()});
+        copy.erase();
+        return true;
+    }
     if (domNulls.contains(operation)) {
         swap(null());
         return true;
@@ -232,6 +249,12 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true;
     }
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+    if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
+        unary.getOperand().getType() == jsonOwner) {
+        // Fresh spread targets stay objects throughout their proved writes.
+        swap(stringConstant(at, where, "object"));
+        return true;
+    }
     if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
         unary.getOperand().getType() == carrierType(context, carrier::json)) {
         const auto stringType = carrierType(context, carrier::string);

@@ -175,6 +175,10 @@ public:
     [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return strings; }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
+    // Fresh owning data objects and guarded spreads, after the complete use
+    // census excludes observable aliases and mutation after a value copy.
+    [[nodiscard]] bool jsonObject(ctjs::CreateObjectOp operation) const;
+    [[nodiscard]] bool jsonCopy(ctjs::CopyPropsOp operation) const;
 
 private:
     std::string refusal;
@@ -190,6 +194,8 @@ private:
     std::vector<mlir::Value> strings;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;
+    std::vector<ctjs::CreateObjectOp> jsonObjects;
+    std::vector<ctjs::CopyPropsOp> jsonCopies;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

@@ -187,6 +187,7 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     std::vector<std::set<std::string>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+            if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
             if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) {
                 return;
             }
