@@ -249,7 +249,12 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst, bool ty
     // declarator that initialises it - `let x = x + 1`, `use(y); const y = 1`
     // - runs before that declarator every time the scope runs, so it is the
     // ReferenceError of 9.1.1.1.6 whenever it runs, `typeof` included.
-    if (n.end > n.begin) {
+    // ONLY IN THE PROGRAM'S OWN TREE: a template substitution is re-parsed
+    // from its own text (current_ast_ is that sub-tree), and its offsets are
+    // relative to the piece, not the program - `${map.keys()}` after `const
+    // map` was a false ReferenceError (ctcompile's string_snapshots fixture,
+    // 2026-09-16).
+    if (n.end > n.begin && current_ast_ == &ast_) {
         if (const local * l = find_local_entry(fn(), n.text);
             l != nullptr && l->initialized_at != 0 && n.begin < l->initialized_at) {
             emit_throw("ReferenceError",
