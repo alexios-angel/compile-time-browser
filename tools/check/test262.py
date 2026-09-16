@@ -78,12 +78,10 @@ SKIP_FEATURES = {
     "Atomics.waitAsync": "$262.agent: one agent, one thread, no SharedArrayBuffer",
     "IsHTMLDDA": "$262.IsHTMLDDA: no [[IsHTMLDDA]] object exists to hand out",
 }
-# A harness include the host cannot make work. detachArrayBuffer.js calls
-# $262.detachArrayBuffer, which throws here - so the test would fail inside the
-# harness rather than measuring anything of its own.
-SKIP_INCLUDES = {
-    "detachArrayBuffer.js": "$262.detachArrayBuffer: this engine has no detach operation",
-}
+# Harness includes the host cannot make work: none since $262.detachArrayBuffer
+# became ArrayBuffer.prototype.transfer (2026-09-16); the table stays for the
+# next one.
+SKIP_INCLUDES: dict[str, str] = {}
 # Flags the host cannot honour. This agent CAN block (it is one synchronous
 # thread), so a test that requires [[CanBlock]] false is not for it.
 SKIP_FLAGS = {
