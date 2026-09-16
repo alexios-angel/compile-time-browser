@@ -752,12 +752,16 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     // `parse_declaration_list`, which a `style` attribute uses - so nothing is
     // parsed here by a rule of its own.
     const std::size_t open = brace_at(trimmed);
-    const std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
-    if (open == std::string_view::npos || close == std::string_view::npos ||
-        !trim(trimmed.substr(close + 1), html_whitespace).empty()) {
-        // No block at all, an unterminated one, or a second rule after the
-        // first - CSSOM asks for exactly one rule and all three are the same
-        // answer.
+    std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
+    // EOF CLOSES AN OPEN BLOCK (CSS Syntax 3 §5.4.9): a sheet cut off inside
+    // `var(--x` still holds its last rule (variable-reference).
+    if (open != std::string_view::npos && close == std::string_view::npos) {
+        close = trimmed.size();
+    }
+    if (open == std::string_view::npos ||
+        (close + 1 < trimmed.size() && !trim(trimmed.substr(close + 1), html_whitespace).empty())) {
+        // No block at all, or a second rule after the first - CSSOM asks for
+        // exactly one rule and both are the same answer.
         css_rule_store_.pop_back();
         error = "SyntaxError";
         return no_index;
