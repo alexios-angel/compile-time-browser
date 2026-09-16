@@ -106,9 +106,13 @@ public:
         interval captures;
         std::vector<std::string> upvalue_names; // parallel to proto().upvalues
         std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
-        // The block-level function names that B.3.3 gave a var binding of
-        // this function too - see predeclare_locals and compile_function_decl.
-        std::vector<std::string> annex_b_functions;
+        // The block-level function DECLARATIONS that B.3.3 gave a var binding
+        // of this function (or, in a script, a global) too - as node indices,
+        // because the same name may be declared in two blocks and only one of
+        // them applicable: `{ function h() {} { function h() {} } }` gives the
+        // inner one nothing, and a list of names could not say so.
+        // See predeclare_locals and compile_function_decl.
+        std::vector<std::int32_t> annex_b_decls;
         std::vector<std::size_t> scope_marks; // locals.size() at each scope entry
         // WIDER THAN THE OPERAND THEY FEED, on purpose: counting in a wider
         // type lets the compiler SAY how many registers were wanted instead
@@ -545,7 +549,7 @@ public:
         const vp::node & n = at(index);
         if (n.kind == vp::nk::func_decl) {
             if (std::find(lexical.begin(), lexical.end(), n.text) == lexical.end()) {
-                each(std::string{n.text});
+                each(std::string{n.text}, index);
             }
             return;
         }

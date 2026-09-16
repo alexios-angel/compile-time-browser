@@ -55,8 +55,8 @@ void compiler_impl::compile_program() {
             std::vector<std::string> lexical;
             each_block_function(
                 ast_.root,
-                [&](std::string n) {
-                    fn().annex_b_functions.push_back(n);
+                [&](std::string n, std::int32_t decl) {
+                    fn().annex_b_decls.push_back(decl);
                     out_.hoisted_vars.push_back(std::move(n));
                 },
                 lexical, true);

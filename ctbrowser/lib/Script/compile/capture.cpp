@@ -274,7 +274,7 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         std::vector<std::string> lexical;
         each_block_function(
             body,
-            [&](std::string name) {
+            [&](std::string name, std::int32_t decl) {
                 // NEVER `arguments`: the arguments object binding is not
                 // something a block's function may create or overwrite
                 // (B.3.3.1 step 1.a.ii.2, "and F is not `arguments`"), and
@@ -282,12 +282,12 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
                 if (name == "arguments") { return; }
                 const bool fresh = find_local_entry(fn(), name) == nullptr;
                 if (fresh) {
-                    hoist(name);
+                    hoist(std::move(name));
                 } else if (std::find(var_scoped.begin(), var_scoped.end(), name) ==
                            var_scoped.end()) {
                     return;
                 }
-                fn().annex_b_functions.push_back(std::move(name));
+                fn().annex_b_decls.push_back(decl);
             },
             lexical, true);
     }

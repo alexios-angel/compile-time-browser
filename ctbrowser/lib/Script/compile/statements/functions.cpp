@@ -152,8 +152,8 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
         // the one predeclare_locals made, the first entry the frame has for
         // the name (the block's own is the last).
         if (block_local && !fn().is_strict &&
-            std::find(fn().annex_b_functions.begin(), fn().annex_b_functions.end(), n.text) !=
-                fn().annex_b_functions.end()) {
+            std::find(fn().annex_b_decls.begin(), fn().annex_b_decls.end(), idx) !=
+                fn().annex_b_decls.end()) {
             if (script_scope) {
                 proto().emit(
                     instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
