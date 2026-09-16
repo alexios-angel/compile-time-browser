@@ -407,6 +407,52 @@ int main() {
             "undefined");
     answers("var r = typeof blockFn; { function blockFn() { return 3; } } return r + blockFn();",
             "undefined3");
+    // A SCRIPT'S BLOCK IS A SCOPE TOO, and the global is a copy the
+    // declaration makes when it runs (B.3.3.2): the block's own binding is
+    // what the function body closes over, and a `let` at the top level - or
+    // in any block on the way down - stops the copy being made at all.
+    answers("{ function scoped() { var was = scoped; scoped = 1;"
+            " return typeof was + ':' + scoped; } } return scoped();",
+            "function:1");
+    answers("let shadowed = 1; { function shadowed() {} } return typeof shadowed;", "number");
+    answers("{ let inner = 1; { function inner() {} } } return typeof inner;", "undefined");
+    answers("'use strict'; { function strictOnly() {} } return typeof strictOnly;", "undefined");
+    // The heads that bind lexically for the block below them: a `for`, a
+    // `switch` body, and a DESTRUCTURING catch parameter - a simple one is
+    // B.3.5's relaxation, so the extension still applies there.
+    answers("function f() { for (let h; ;) { { function h() {} } break; } return typeof h; }"
+            " return f();",
+            "undefined");
+    answers("function f() { switch (0) { default: let h; { function h() {} } }"
+            " return typeof h; } return f();",
+            "undefined");
+    answers("function f() { try { throw {}; } catch ({ h }) { { function h() {} } }"
+            " return typeof h; } return f();",
+            "undefined");
+    answers("function f() { try { throw 0; } catch (h) { { function h() {} } }"
+            " return typeof h; } return f();",
+            "function");
+    // A block's own function declaration is a lexical binding of that block,
+    // so one nested deeper gets no var binding of its own.
+    answers("function f() { { function h() { return 1; } { function h() { return 2; } } }"
+            " return h(); } return f();",
+            "1");
+    // The var binding is only CREATED when nothing has the name; the write
+    // happens whenever a `var` or another function declaration does.
+    answers("function f() { { function h() { return 'inner'; } } var r = h();"
+            " function h() { return 'outer'; } return r; } return f();",
+            "inner");
+    // Two blocks of one name are two applicable declarations: the second
+    // only skips creating the binding again.
+    answers("function f() { { function h() { return 1; } } { function h() { return 2; } }"
+            " return h(); } return f();",
+            "2");
+    // ...and never for `arguments`, whose binding the extension leaves alone.
+    answers("function f() { { function arguments() {} } return typeof arguments; } return f();",
+            "object");
+    // A parameter of the name keeps it, `if` clause or block (B.3.4 makes the
+    // clause a block of its own, so the declaration binds there).
+    answers("function f(p) { if (true) function p() {} return p; } return f(123);", "123");
 
     // --- `using` (9.13): the syntax and the early errors. The disposal
     // itself needs Symbol.dispose, which is not installed yet (see the

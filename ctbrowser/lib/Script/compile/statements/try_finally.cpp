@@ -49,7 +49,7 @@ void compiler_impl::compile_try(const vp::node & n) {
         if (!caught_name.empty()) { declare_local_at(caught_name, caught_reg); }
         // `catch ({message})`: the parameter is a pattern in `b` (14.15.3).
         if (at(catch_clause).b >= 0) {
-            compile_pattern_binding(at(catch_clause).b, caught_reg, true);
+            compile_pattern_binding(at(catch_clause).b, caught_reg, true, true);
         }
         compile_stmt(at(catch_clause).a);
         pop_scope();
@@ -114,7 +114,7 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
         ++handler_depth_;
         emit_catch_filter(caught_reg); // inside the guard, so the finally still runs
         if (at(catch_clause).b >= 0) {
-            compile_pattern_binding(at(catch_clause).b, caught_reg, true);
+            compile_pattern_binding(at(catch_clause).b, caught_reg, true, true);
         }
         compile_stmt(at(catch_clause).a);
         proto().emit(instruction{op::pop_handler});

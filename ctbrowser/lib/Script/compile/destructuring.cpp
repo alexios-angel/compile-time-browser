@@ -26,8 +26,14 @@ void compiler_impl::pattern_names(std::int32_t pat, std::vector<std::string> & o
     }
 }
 
-void compiler_impl::declare_pattern_names(std::int32_t pat) {
-    if (frames_.size() <= 1) { return; } // a declaration there is a global
+void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped) {
+    // A DECLARATION AT A SCRIPT'S TOP LEVEL IS A GLOBAL - unless it is
+    // BLOCK-scoped, which a catch parameter always is and a `let`/`const`
+    // inside a block of a script is too. Withholding the local there bound
+    // `catch ({ f })` and `{ let { a } = o; }` to globals that outlived the
+    // scope they were written in: annexB's global-code `skip-early-err-try`
+    // reads exactly that, a catch parameter still resolving after the try.
+    if (frames_.size() <= 1 && !block_scoped) { return; }
     std::vector<std::string> names;
     pattern_names(pat, names);
     for (std::string & name : names) {
@@ -45,8 +51,9 @@ void compiler_impl::declare_pattern_names(std::int32_t pat) {
     }
 }
 
-void compiler_impl::compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring) {
-    if (declaring) { declare_pattern_names(pat); }
+void compiler_impl::compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring,
+                                            bool block_scoped) {
+    if (declaring) { declare_pattern_names(pat, block_scoped); }
     // A declaration's names at a script's top level are globals written
     // through emit_write - a declaration's own write, see declaring_.
     const bool outer_declaring = declaring_;

@@ -46,13 +46,20 @@ void compiler_impl::compile_program() {
         // global the declaration itself writes, and listing it here as well
         // would show the native prover a var where it expects a function.
         if (!fn().is_strict) {
+            // ...and the script's own `let`/`const`/`class` shadow it, which
+            // is B.3.3.2's "If env.HasLexicalDeclaration(F) is false": `let f
+            // = 1; { function f() {} }` leaves the global alone entirely.
+            // `each_block_function` is handed the program node so it sees
+            // them; `true` says this level's own function declarations are
+            // globals the declaration itself writes, not block functions.
             std::vector<std::string> lexical;
-            for (const std::int32_t stmt : kids(root)) {
-                if (at(stmt).kind == vp::nk::func_decl) { continue; }
-                each_block_function(
-                    stmt, [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); },
-                    lexical);
-            }
+            each_block_function(
+                ast_.root,
+                [&](std::string n, std::int32_t decl) {
+                    fn().annex_b_decls.push_back(decl);
+                    out_.hoisted_vars.push_back(std::move(n));
+                },
+                lexical, true);
         }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),

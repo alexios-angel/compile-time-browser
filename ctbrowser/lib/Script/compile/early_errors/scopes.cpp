@@ -63,7 +63,13 @@ void checker::lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
             for (const std::int32_t d : kids(n)) { bound_names(d, how, out); }
         } else if (n.kind == nk::class_decl && !n.text.empty()) {
             out.push_back(binding{n.text, binding_kind::class_, s});
-        } else if (n.kind == nk::func_decl && !n.text.empty() && kind == list_kind::block) {
+        } else if (n.kind == nk::func_decl && !n.text.empty() &&
+                   (kind == list_kind::block || (kind == list_kind::script && module_()))) {
+            // A MODULE'S TOP LEVEL IS LEXICAL (16.2.1: LexicallyDeclaredNames
+            // of a Module's ModuleItemList is TopLevelLexicallyDeclaredNames
+            // PLUS its function declarations), which is the one place this
+            // differs from a script: `function x() {} function x() {}` is a
+            // redeclaration in a module and legal in a script.
             out.push_back(binding{n.text, binding_kind::function_, s});
         }
     }
@@ -157,6 +163,92 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
         }
     }
     return vars;
+}
+
+// 16.2.1, the two static semantics of a Module's ModuleItemList that no
+// other production has:
+//   - ExportedNames must not contain a duplicate. `export { x }; export { x }`
+//     and `export default x; export { y as default }` name one export twice,
+//     and a module with two of a name cannot be linked.
+//   - every ExportedBinding must be declared by this module. `export { X }`
+//     for an X the module never binds is a SyntaxError, not a lookup that
+//     fails later - and it was a compiler refusal here, which is a different
+//     answer to a different question.
+// `vars` is what check_list handed back for the top level: its `var`s and,
+// in a script, its function declarations.
+void checker::check_module_items(std::int32_t root, const std::vector<binding> & vars) {
+    const std::span<const std::int32_t> items = kids(at(root));
+    std::vector<binding> declared = vars;
+    lexical_names(items, list_kind::script, declared);
+    for (const std::int32_t s : items) {
+        const vp::node & item = at(s);
+        // An imported binding is a binding of this module too, and `export
+        // { a }` may name one (16.2.3: ExportedBindings are resolved against
+        // everything the module declares, imports included).
+        if (item.kind == nk::import_decl) {
+            for (const std::int32_t spec : kids(item)) {
+                declared.push_back(binding{at(spec).text, binding_kind::const_, spec});
+            }
+        }
+        // `export default function f() {}` BINDS f as well as exporting
+        // `default` (16.2.3.7: the HoistableDeclaration's BoundNames). The
+        // parser reads the declaration in expression position, so the name
+        // is on a func_expr or a class node and lexical_names cannot see it.
+        if (item.kind == nk::export_decl && item.c == 1 && item.a >= 0 &&
+            !at(item.a).text.empty()) {
+            declared.push_back(binding{at(item.a).text, binding_kind::const_, item.a});
+        }
+    }
+    const auto is_declared = [&](std::string_view name) {
+        for (const binding & b : declared) {
+            if (b.name == name) { return true; }
+        }
+        return false;
+    };
+
+    std::vector<binding> exported;
+    for (const std::int32_t s : items) {
+        const vp::node & item = at(s);
+        if (item.kind != nk::export_decl) { continue; }
+        if (item.c == 1) { // `export default <anything>`
+            exported.push_back(binding{"default", binding_kind::const_, s});
+            continue;
+        }
+        if (item.c == 2) { // `export * from` names nothing; `export * as ns` names ns
+            for (const std::int32_t spec : kids(item)) {
+                exported.push_back(binding{at(spec).text, binding_kind::const_, spec});
+            }
+            continue;
+        }
+        if (item.a >= 0) { // `export const x = 1`, `export function f() {}`
+            const vp::node & decl = at(item.a);
+            if (decl.kind == nk::var_decl) {
+                for (const std::int32_t d : kids(decl)) {
+                    bound_names(d, binding_kind::const_, exported);
+                }
+            } else if (!decl.text.empty()) {
+                exported.push_back(binding{decl.text, binding_kind::const_, item.a});
+            }
+            continue;
+        }
+        for (const std::int32_t spec : kids(item)) {
+            const vp::node & one = at(spec);
+            exported.push_back(
+                binding{one.a >= 0 ? at(one.a).text : one.text, binding_kind::const_, spec});
+            // WITHOUT `from` the local name must exist here; with one it is
+            // the OTHER module's business and is resolved at link time.
+            if (item.text.empty() && !is_declared(one.text)) {
+                report(quoted(one.text) + " is exported and is not declared in this module", spec);
+            }
+        }
+    }
+    for (std::size_t i = 0; i < exported.size(); ++i) {
+        for (std::size_t j = 0; j < i; ++j) {
+            if (exported[j].name != exported[i].name) { continue; }
+            report(quoted(exported[i].name) + " is exported twice", exported[i].node);
+            break;
+        }
+    }
 }
 
 bool checker::has_use_strict_directive(std::int32_t body) const {
