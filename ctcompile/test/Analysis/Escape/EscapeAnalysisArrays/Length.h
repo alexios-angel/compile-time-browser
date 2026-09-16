@@ -496,10 +496,12 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.boolean<true>",
                                       "#ctjs.null",
                                       "#ctjs.undefined"}) {
-        run({.what = "subtraction requires a bounded Number or canonical String offset",
+        run({.what = "subtraction still refuses unproved or missing indices",
              .body =
                  values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed,
-             .failure = ArrayContentsFailure::UnknownIndex});
+             .failure = literal == "#ctjs.number<13830554455654793216>"
+                            ? ArrayContentsFailure::MissingElement
+                            : ArrayContentsFailure::UnknownIndex});
     }
     run({.what = "negative zero is an exact zero offset without changing the saved length",
          .body = values + "  %one = ctjs.constant #ctjs.number<9223372036854775808>\n" + read +
@@ -1849,7 +1851,12 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        // A direct negative offset now proves growth, which still cannot
+        // authorize holes or discharge the array's retained child.
+        inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub &&
+                        binary.getRhs().getDefiningOp<ctjs::ConstantOp>() == literal
+                    ? ArrayContentsFailure::MissingElement
+                    : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));

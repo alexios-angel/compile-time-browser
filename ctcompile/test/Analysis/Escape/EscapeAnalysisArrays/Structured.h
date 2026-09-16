@@ -510,6 +510,54 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(commuted, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("commuted structured Add still requires its exact induction formal",
            replace(commuted, "add %one, %i", "add %one, %last"));
+    const std::string negativeLiteral = "#ctjs.number<13830554455654793216>";
+    const std::string subtract =
+        "  %minus = ctjs.constant " + negativeLiteral + "\n" +
+        replace(original, "binary_static add %i, %one", "binary sub %i, %minus");
+    const std::string subtractNegated =
+        replace(replace(subtract, "  %minus = ctjs.constant " + negativeLiteral + "\n", ""),
+                "    %step =", "    %minus = ctjs.unary neg %one\n    %step =");
+    for (const std::string & source : {subtract, subtractNegated}) {
+        rows.push_back({.what = "structured negative subtraction preserves reordered aliases",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured negative subtraction discharges unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        rows.push_back({.what = "structured negative subtraction preserves zero-trip starts",
+                        .body = replace(replace(source, "  ctjs.append %y to %a\n", ""),
+                                        "%index = %zero", "%index = %one"),
+                        .arrays = "a:[x]",
+                        .exit = "zero -> {}"});
+    }
+    const auto carriedSubtract =
+        replace(replace(carriedUnit, makeUnit,
+                        "  %unit = ctjs.constant #ctjs.number<13835058055282163712>\n"),
+                "binary_static add %i, %d", "binary sub %i, %d");
+    rows.push_back({.what = "structured held negative strides preserve exact condition transport",
+                    .body = carriedSubtract,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    reject("a structured negative stride must remain unchanged on the backedge",
+           replace(carriedSubtract, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("structured Sub cannot commute its induction operand",
+           replace(subtract, "sub %i, %minus", "sub %minus, %i"));
+    reject("structured Sub cannot borrow a String stride",
+           replace(subtract, negativeLiteral, "#ctjs.string<\"-1\">"));
+    reject("structured Sub cannot borrow a BigInt stride",
+           replace(subtract, negativeLiteral, "#ctjs.bigint<\"-1\">"));
+    reject("structured Sub cannot borrow an unknown stride",
+           replace(subtract, "sub %i, %minus", "sub %i, %p"));
+    reject("a structured computed negative stride needs an independent invariant proof",
+           replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"));
+    reject("structured negative subtraction still bounds its final update",
+           replace(replace(subtract, negativeLiteral, "#ctjs.number<13974669643728551936>"),
+                   "%index = %zero", "%index = %one"));
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
     reject("a structured array backedge must preserve its certified formal",

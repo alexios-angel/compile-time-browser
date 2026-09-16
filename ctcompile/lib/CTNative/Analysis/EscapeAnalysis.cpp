@@ -781,13 +781,20 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 namespace {
 
 // An original Number in the exact array-length range; -0 has index value zero.
-std::optional<std::size_t> boundedNumber(mlir::Value value) {
+// Negation also recognizes the frontend's single Neg of an original literal.
+std::optional<std::size_t> boundedNumber(mlir::Value value, bool negate = false) {
     if (!value) { return std::nullopt; }
+    if (negate) {
+        if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+            unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+            return boundedNumber(unary.getOperand());
+        }
+    }
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     auto number =
         constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue()) : ctjs::NumberAttr{};
     if (number) {
-        const double integer = number.getDouble();
+        const double integer = negate ? -number.getDouble() : number.getDouble();
         if (std::isfinite(integer) && integer >= 0 && integer <= 4294967295.0 &&
             std::floor(integer) == integer) {
             return static_cast<std::size_t>(integer);
@@ -1066,18 +1073,23 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
         auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
         if ((!dynamic && !numeric) || step->getBlock() != body ||
-            (dynamic ? dynamic.getKind() : numeric.getKind()) != ctjs::BinaryKind::Add ||
             (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
             return unsupported;
         }
-        // Normalize only proof operands; the source Add keeps its evaluation
-        // order. Both operands still require the exact Number proof below.
-        const unsigned indexOperand = fromHeader(step->getOperand(0)) == index ? 0U : 1U;
+        const bool subtract = dynamic && dynamic.getKind() == ctjs::BinaryKind::Sub;
+        if (!subtract &&
+            (dynamic ? dynamic.getKind() : numeric.getKind()) != ctjs::BinaryKind::Add) {
+            return unsupported;
+        }
+        // Normalize only Add proof operands; subtraction requires index - stride.
+        // The original source order and exact Number requirements stay intact.
+        const unsigned indexOperand =
+            subtract || fromHeader(step->getOperand(0)) == index ? 0U : 1U;
         if (fromHeader(step->getOperand(indexOperand)) != index) { return unsupported; }
         // A held positive step must survive every backedge unchanged. Read a body
         // formal through its actual header operand before the body has executed.
-        // Both Add forms use the same exact Number proof below. A String or
-        // unknown operand cannot borrow the numeric opcode's certificate.
+        // Add needs a positive Number; Sub needs an original negative Number.
+        // A String or unknown operand cannot borrow an opcode's certificate.
         mlir::Value increment = step->getOperand(1U - indexOperand);
         if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
@@ -1086,7 +1098,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             const mlir::Value next = backedge[argument.getArgNumber()];
             if (next != increment && fromHeader(next) != increment) { return unsupported; }
         }
-        auto stride = boundedNumber(increment);
+        auto stride = boundedNumber(increment, subtract);
         if (!stride) {
             // Repeated producers need their own invariant proof; a prior
             // iteration's saved fact cannot certify a header/body computation.
@@ -1096,7 +1108,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 return unsupported;
             }
             const ContentsValue value = held(increment);
-            stride = value.integerNumber ? value.integerNumber : boundedNumber(value.origin());
+            stride = !subtract && value.integerNumber ? value.integerNumber
+                                                      : boundedNumber(value.origin(), subtract);
         }
         if (!stride || *stride == 0) { return unsupported; }
         // Initialization may be a saved length or an exact arithmetic result.
@@ -1645,6 +1658,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (original && offset && *offset <= *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original - *offset;
+                    } else if (const auto magnitude = boundedNumber(rhs, true);
+                               original && magnitude && *magnitude <= 4294967295ULL - *original) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.integerNumber = *original + *magnitude;
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {

@@ -605,6 +605,71 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                replace(replace(maxStride, "binary_static add %i, %max", opcode + " add %max, %i"),
                        "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     }
+    const std::string negativeLiteral = "#ctjs.number<13830554455654793216>";
+    const std::string subtract =
+        "  %minus = ctjs.constant " + negativeLiteral + "\n" +
+        replace(savedChild, "binary_static add %i, %one", "binary sub %i, %minus");
+    const std::string subtractNegated =
+        replace(replace(subtract, "  %minus = ctjs.constant " + negativeLiteral + "\n", ""),
+                "  %step =", "  %minus = ctjs.unary neg %one\n  %step =");
+    for (const std::string & source : {subtract, subtractNegated}) {
+        run({.what = "subtracting an original negative Number retains the exact returned child",
+             .body = source,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "negative Number subtraction discharges only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        run({.what = "negative subtraction preserves a zero-trip saved child",
+             .body = replace(source, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+             .arrays = "a:[one,x]",
+             .exit = "x -> {x}"});
+    }
+    const auto carriedSubtract =
+        replace(replace(carriedUnit, makeUnit,
+                        "  %unit = ctjs.constant #ctjs.number<13835058055282163712>\n"),
+                "binary_static add %i, %d", "binary sub %i, %d");
+    run({.what = "held negative strides preserve exact backedge transport and overshoot",
+         .body = carriedSubtract,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "negative subtraction preserves its exact final index after array growth",
+         .body = replace(replace(carriedSubtract, "^exit(%sum :", "^exit(%index :"),
+                         "  ctjs.return %result",
+                         "  ctjs.append %zero to %a\n  ctjs.append %zero to %a\n"
+                         "  %after = ctjs.get_property %a[%result]\n  ctjs.return %after"),
+         .arrays = "a:[one,two,three,zero,zero]",
+         .reads = "a[0]=one; a[2]=three; a[4]=zero",
+         .exit = "zero -> {}"});
+    reject("a negative carried stride must remain unchanged",
+           replace(carriedSubtract, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("subtraction cannot commute its induction operand",
+           replace(subtract, "sub %i, %minus", "sub %minus, %i"));
+    reject("subtraction cannot borrow an opaque negative stride",
+           replace(subtract, "sub %i, %minus", "sub %i, %p"));
+    reject("a repeated computed negative stride needs an independent invariant proof",
+           replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"));
+    reject("Neg of a coercible String does not establish an original Number stride",
+           replace(subtractNegated, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"));
+    for (const std::string constant :
+         {"#ctjs.number<0>", "#ctjs.number<4607182418800017408>",
+          "#ctjs.number<13826050856027422720>", "#ctjs.number<13974669643730649088>",
+          "#ctjs.number<18442240474082181120>", "#ctjs.number<9221120237041090560>",
+          "#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">"}) {
+        reject("subtraction requires an original bounded negative integral Number stride",
+               replace(subtract, negativeLiteral, constant));
+    }
+    reject("negative subtraction still bounds the final update before replay",
+           replace(replace(subtract, negativeLiteral, "#ctjs.number<13974669643728551936>"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    reject("a negative stride is not a nonnegative own array index",
+           replace(subtract, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",
