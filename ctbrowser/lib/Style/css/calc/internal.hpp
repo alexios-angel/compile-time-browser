@@ -127,6 +127,22 @@ struct function_span {
 [[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
                                                               bool size_symbol = false);
 
+// IDENTS THAT ARE <number> TERMS OF THEIR OWN while this object lives: the
+// channel keywords of a relative colour (CSS Color 5 §4.1), where `calc(r *
+// .5)` is a value whose specified form is `calc(0.5 * r)`. The symbolic
+// evaluator carries one as the symbol `$r`, and serialize_symbolic writes it
+// back without the marker. Defined in evaluator.cpp.
+// ponytail: a thread-local list rather than a parameter threaded through
+// simplify_math -> evaluate_symbolic -> evaluator; thread it if a second
+// caller appears.
+struct number_symbols_scope {
+    explicit number_symbols_scope(std::span<const std::string_view> names) noexcept;
+    ~number_symbols_scope();
+    number_symbols_scope(const number_symbols_scope &) = delete;
+    number_symbols_scope & operator=(const number_symbols_scope &) = delete;
+};
+[[nodiscard]] bool is_number_symbol(std::string_view key) noexcept; // `$` + the ident
+
 // A <calc-sum> THAT WILL NOT FOLD, simplified over its tree (CSS Values 4
 // §10.12) and written in §10.13's order, without a calc() around it:
 // `(min(10px, 20%) + max(1rem, 2%)) * 2` is `2 * (min(10px, 20%) + max(1rem,

@@ -92,8 +92,12 @@ struct arithmetic {
 // A SYMBOL THAT IS A FUNCTION rather than a unit - `sibling-index()` in a
 // specified value - and a term made only of those.
 [[nodiscard]] bool function_symbol(std::string_view key) noexcept {
-    return key.ends_with("()") || key == "size";
+    return key.ends_with("()") || key == "size" || is_number_symbol(key);
 }
+
+// The idents the symbolic evaluator currently reads as <number> terms - see
+// number_symbols_scope in internal.hpp.
+thread_local std::span<const std::string_view> number_symbols;
 [[nodiscard]] bool function_only(const term & t) noexcept {
     return !t.symbols.empty() && t.value == 0.0 && !t.has_percent &&
            std::ranges::all_of(t.symbols, [](const auto & s) { return function_symbol(s.first); });
@@ -547,6 +551,10 @@ private:
             // magnitude until layout (CSS Values 5 §calc-size).
             out.set_type(numeric_type::length);
             add_symbol(out, "size", 1.0);
+        } else if (basis_ == basis::symbolic && ascii_iequals_any(name, number_symbols)) {
+            // A relative colour's channel keyword: a <number> with no
+            // magnitude until the origin colour is known.
+            add_symbol(out, "$" + ascii_lower_copy(name), 1.0);
         } else {
             return fail();
         }
@@ -1290,6 +1298,16 @@ random_key random_options(std::string_view options, std::string_view property, s
         out.element_scoped = true;
     }
     return out;
+}
+
+number_symbols_scope::number_symbols_scope(std::span<const std::string_view> names) noexcept {
+    number_symbols = names;
+}
+number_symbols_scope::~number_symbols_scope() {
+    number_symbols = {};
+}
+bool is_number_symbol(std::string_view key) noexcept {
+    return key.starts_with('$');
 }
 
 // One expression with NO bases at all - which is what a specified value is
