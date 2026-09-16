@@ -212,6 +212,11 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 continue;
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
+            // A lexical binding is in its dead zone until its declarator has
+            // run: `let y = y + 1` reads it before that, and compile_ident
+            // decides the ReferenceError from this offset (as
+            // predeclare_locals records it for a function body's own).
+            if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
             if (decl.a >= 0) {
                 compile_named_expr(decl.a, r, decl.text);
             } else {
