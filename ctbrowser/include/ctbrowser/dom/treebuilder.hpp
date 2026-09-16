@@ -178,6 +178,15 @@ public:
     using script_hook = std::function<void(node_id)>;
     void set_script_hook(script_hook hook) { on_script_ = std::move(hook); }
 
+    // THE SCRIPTING FLAG (13.2.6.4.4), WHICH IS THE DOCUMENT'S, NOT THE
+    // PARSER'S. It is on for a page - a `<noscript>`'s contents are then RAW
+    // TEXT, because a scripted browser is not going to render them - and off
+    // for a document nothing will ever run a script in: `DOMParser`'s and
+    // `createHTMLDocument`'s. With it off `<noscript>` is an ordinary element
+    // and its children are parsed, which is the whole point of writing a
+    // fallback there.
+    void set_scripting(bool on) noexcept { scripting_ = on; }
+
     // Start a parse. `open` is `document.open()`: the stream stays open after
     // the input is consumed and `write` appends to it until `close`. A page
     // load passes the whole file and false, and returns finished.

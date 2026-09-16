@@ -653,7 +653,7 @@ void document::set_template_content(node_id element, node_id fragment) {
     template_contents_.emplace_back(element, fragment);
 }
 
-std::expected<node_id, dom_error> document::attach_shadow(node_id host, bool open) {
+std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_tree how) {
     const auto txn = read();
     if (!txn.contains(host)) { return std::unexpected{dom_error::no_such_node}; }
     if (txn.kind(host).value_or(node_kind::text) != node_kind::element ||
@@ -664,8 +664,9 @@ std::expected<node_id, dom_error> document::attach_shadow(node_id host, bool ope
     if (shadow_root_of(host)) { return std::unexpected{dom_error::shadow_root_exists}; }
     const node_id root = create_fragment();
     try {
+        how.host = host;
         shadow_roots_.emplace(shadow_key(host), root);
-        shadow_hosts_.emplace(shadow_key(root), shadow_tree{host, open});
+        shadow_hosts_.emplace(shadow_key(root), how);
     } catch (...) {
         shadow_roots_.erase(shadow_key(host));
         shadow_hosts_.erase(shadow_key(root));
@@ -685,6 +686,12 @@ const document::shadow_tree * document::shadow_tree_of(node_id root) const {
     if (!root) { return nullptr; }
     const auto it = shadow_hosts_.find(shadow_key(root));
     return it == shadow_hosts_.end() ? nullptr : &it->second;
+}
+
+void document::set_shadow_declarative(node_id root, bool declarative) {
+    if (!root) { return; }
+    const auto it = shadow_hosts_.find(shadow_key(root));
+    if (it != shadow_hosts_.end()) { it->second.declarative = declarative; }
 }
 
 std::vector<node_id> document::shadow_roots() const {

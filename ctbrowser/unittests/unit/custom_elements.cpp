@@ -62,6 +62,35 @@ void test_define_validates() {
              "NotSupportedError;NotSupportedError;true;undefined;true");
 }
 
+// THE NAME RULE IS "valid element local name" WITH AN ASCII LOWER ALPHA IN
+// FRONT, not the old PotentialCustomElementName: after the first character,
+// anything the HTML tokenizer would read back as a tag name is a name, so
+// punctuation a page could not use before is legal now and only the characters
+// that would END a tag name - and an ASCII capital - are refused. The FIRST
+// character is still [a-z] alone, which is why `_-element` and an accented
+// first letter are not names however valid a local name they are.
+// whatwg/html#7991, measured by
+// custom-elements/registries/valid-custom-element-names.html.
+void test_define_takes_the_modern_name_rule() {
+    CHECK_EQ(said("<html><body><script>"
+                  "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
+                  "function define(n){ return threw(function(){"
+                  "  customElements.define(n, class extends HTMLElement {}); }); }"
+                  "alert(define('a!-element'));"
+                  "alert(define('a\\u0001-element'));"
+                  "alert(define('_-element'));"
+                  "alert(define('\\u00e9-element'));"
+                  "alert(define('a-\\u00e9lement'));"
+                  "alert(define('a -element'));"
+                  "alert(define('a/-element'));"
+                  "alert(define('a>-element'));"
+                  "alert(define('-element'));"
+                  "alert(define('.-element'));"
+                  "</script></body></html>"),
+             "ok;ok;SyntaxError;SyntaxError;ok;SyntaxError;SyntaxError;SyntaxError;SyntaxError;"
+             "SyntaxError");
+}
+
 // A parsed element is upgraded by define(), connectedCallback has run before
 // define() returns, and the wrapper a page held before is the very object
 // that is now an instance of the class.
@@ -179,6 +208,7 @@ void test_a_page_without_a_definition_is_untouched() {
 
 int main() {
     test_define_validates();
+    test_define_takes_the_modern_name_rule();
     test_define_upgrades_what_the_parser_made();
     test_create_element_and_new_construct_through_the_class();
     test_a_customized_built_in_constructs_through_its_interface();
