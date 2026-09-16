@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "check.hpp"
+
 namespace ctcompile::test::owned_global_methods {
 
 namespace ctjs = ctcompile::ctjs;
@@ -168,7 +170,7 @@ module {
 }
 )MLIR";
 
-inline inline HostContract contractFor(mlir::ModuleOp module) {
+inline HostContract contractFor(mlir::ModuleOp module) {
     HostContract contract;
     contract.moduleSha256 = hostContractFingerprint(module);
     contract.entry = "script$0";

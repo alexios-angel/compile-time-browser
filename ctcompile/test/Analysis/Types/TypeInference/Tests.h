@@ -43,6 +43,8 @@
 #include <string>
 #include <vector>
 
+#include "check.hpp"
+
 namespace ctcompile::test::type_inference {
 
 using ctcompile::ctnative::TypeInference;

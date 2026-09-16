@@ -29,6 +29,8 @@
 #include <string>
 #include <tuple>
 
+#include "check.hpp"
+
 namespace ctcompile::test::exception_recovery {
 
 namespace ctjs = ctcompile::ctjs;

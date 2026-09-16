@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <string>
 
+#include "check.hpp"
+
 namespace ctcompile::test::host_contract {
 
 namespace ctjs = ctcompile::ctjs;
@@ -81,7 +83,7 @@ module {
 }
 )MLIR";
 
-inline inline HostContract contractFor(mlir::ModuleOp module) {
+inline HostContract contractFor(mlir::ModuleOp module) {
     HostContract contract;
     contract.moduleSha256 = hostContractFingerprint(module);
     contract.entry = "script$0";

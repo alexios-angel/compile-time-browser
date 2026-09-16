@@ -24,7 +24,6 @@ extern "C" std::remove_pointer_t<aot::ct_aot_entry_fn> ctc_oracleCtor;
 namespace {
 constexpr std::string_view fixture =
 #include "escape-oracle-aot-return.js.inc"
-
     ;
 
 extern "C" std::int32_t legacy_or_failed(aot::ct_aot_ctx * ctx, const aot::ct_aot_site * site,

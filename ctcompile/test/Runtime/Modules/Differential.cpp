@@ -78,7 +78,6 @@ constexpr std::string_view dep_source =
     ;
 constexpr std::string_view user_source =
 #include "module-user.js.inc"
-
     ;
 
 struct installed {

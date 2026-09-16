@@ -84,7 +84,6 @@ namespace {
 
 constexpr std::string_view fixture =
 #include "gc-roots.js.inc"
-
     ;
 
 void report(const char * what, bool ok, const std::string & got, const std::string & want) {
