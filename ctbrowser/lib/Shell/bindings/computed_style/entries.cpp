@@ -40,11 +40,11 @@ constexpr std::array<std::string_view, 12> length_properties{
     return property == "top" || property == "right" || property == "bottom" || property == "left";
 }
 
+// Every property the table types as a `<color>`, and the shorthand of four.
 [[nodiscard]] bool is_color_property(std::string_view property) {
-    return property == "color" || property == "background-color" || property == "border-color" ||
-           property == "border-top-color" || property == "border-right-color" ||
-           property == "border-bottom-color" || property == "border-left-color" ||
-           property == "outline-color" || property == "caret-color";
+    if (property == "border-color") { return true; }
+    const style::css::property_syntax * known = style::css::find_property(property);
+    return known != nullptr && known->kind == style::css::value_kind::color;
 }
 
 // A BORDER WIDTH IS NOT REPORTED AS THE KEYWORD IT WAS WRITTEN AS, and it is not
@@ -471,6 +471,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                     };
                 }
                 conditions.canonical_color = [](std::string_view text) {
+                    const std::string computed = style::css::computed_color(text, {});
+                    if (!computed.empty()) { return computed; }
                     const std::optional<color> c = paint::parse_color(text);
                     return c ? color_text(*c) : std::string{text};
                 };
@@ -503,6 +505,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                         : nullptr;
                 registration != nullptr &&
                 registration->syntax.find("<color>") != std::string::npos) {
+                if (std::string computed = style::css::computed_color(text, {});
+                    !computed.empty()) {
+                    return computed;
+                }
                 if (const std::optional<color> c = paint::parse_color(text)) {
                     return color_text(*c);
                 }
@@ -905,8 +911,31 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "box-shadow" || property == "text-shadow") {
             return shadow_text(text, at.font_size, property == "box-shadow");
         }
-        // 4. COLOURS, resolved so the two engines' spellings converge.
+        // 4. COLOURS, CSS Color 4 §15's computed value: a legacy colour as
+        //    `rgb()`, `lab()` and the rest as themselves, `color-mix()` and a
+        //    relative colour resolved against this element's `color` - which
+        //    is what `currentcolor` means inside one, and the parent's when
+        //    the property IS `color` (the caller substituted a bare one).
         if (is_color_property(property)) {
+            style::css::length_context bases;
+            bases.font_size = at.font_size;
+            bases.root_font_size = at.root_font_size;
+            bases.viewport_width = static_cast<float>(viewport_width_);
+            bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+            style::css::color_context ctx;
+            ctx.lengths = &bases;
+            std::string own_color;
+            if (property != "color") {
+                const std::string_view declared_color = trim(declared("color"), html_whitespace);
+                own_color = declared_color.empty() || ascii_iequals(declared_color, "currentcolor")
+                                ? std::string{"rgb(0, 0, 0)"}
+                                : style::css::computed_color(declared_color, {});
+                if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
+                ctx.current_color = own_color;
+            }
+            if (std::string computed = style::css::computed_color(text, ctx); !computed.empty()) {
+                return computed;
+            }
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
             if (const std::optional<color> c = system_color(text)) { return color_text(*c); }
             return std::string{text};
