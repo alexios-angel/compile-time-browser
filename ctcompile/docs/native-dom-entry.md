@@ -257,16 +257,20 @@ intrinsic declarations refuse. A JSON result may join with a definite String,
 Boolean, Number, null or optional String. Each alternative becomes an owning
 `ctbrowser::json_value`; optional Strings copy their bytes only in the selected
 present arm, while absence becomes JSON null. Undefined, borrowed and callable
-alternatives still refuse. Truthiness, `typeof`, equality and property observations
-of JSON results are not yet admitted.
+alternatives still refuse. Under the complete DOM proof, `typeof` observes the
+owning variant and returns an owning String: Boolean, Number and String alternatives
+report their scalar tags; null, arrays and objects all report `"object"`. The tag
+supports existing String equality but never narrows JSON to object-only members.
+JSON truthiness, equality, coercion and property observations remain refused.
 
 With all three initial intrinsics (`Number`, `decodeURIComponent`, `JSON`), the
 complete original M helper and `H.getDataAttribute(element, "config")` compile.
 M retains its Boolean/Number/null prefix, saved nullable guard, original lookup
 order and failure snapshots. H reuses the existing proof for F's original
 regexp/callback replacement when the constant key has no match, then calls the
-public DOM attribute core. Matching or live F keys remain refused. Config's next
-`"object" == typeof parsed` observation is outside the current JSON proof.
+public DOM attribute core. Matching or live F keys remain refused. Config's
+`"object" == typeof parsed` observation compiles; the following branch-local empty
+object and JSON object spread remain outside the current proof.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
@@ -324,7 +328,9 @@ Template concatenation also reuses ordinary owning String addition when both
 operands are proved Strings. Original Bootstrap H `setDataAttribute` and
 `removeDataAttribute` compose with captured F, including a factory-exported entry
 table. Nullable values, objects, Numbers and Booleans do not gain implicit template
-conversion. H's live M normalization and dataset enumeration remain unproved.
+conversion. H's `getDataAttribute` composes with original M for a proved constant
+no-match key such as `"config"`. Matching/live keys and dataset enumeration remain
+unproved.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private

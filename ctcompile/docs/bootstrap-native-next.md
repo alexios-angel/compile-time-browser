@@ -2,42 +2,60 @@
 
 ## Current boundary, 2026-09-16
 
-**32032893** compiles original M and
-`H.getDataAttribute(element, "config")` through the public Core/DOM APIs. Number
-truthiness, Boolean/Number/null branches, the saved optional-String guard and
-URI/JSON failure snapshots retain source behavior. Results own their JSON trees
-and bytes, with ordinary RAII and no Script/VM/GC dependency. Original F's
-constant-key no-match proof already existed and is reused.
+**c127ba96** compiles Config's original
+`"object" == typeof H.getDataAttribute(element, "config")` and the String tag.
+Original M/H retain their nullable guards, source lookup order and both failure
+snapshots. Emitted C++ observes an owning `ctbrowser::json_value` through standard
+variant alternatives and returns an owning String. Null, arrays and objects all
+report `"object"`; this does not prove object-only member access.
 
-The JSON gate passes **12 sources / 219 Node-VM observations / 8 GCC-Clang binaries /
-144 refusals**, both providers/policies/layouts and a post-document lifetime
-sanitizer. Focused **2/2 proof CTests / 4/4 lit PASS**; complete **375-step build / 288/288 CTests (2339.80s) / 252/252 lit
-(2056.50s) PASS**, wrapper exit **0**.
-Frozen implementation hashes match. [The DOM contract](native-dom-entry.md)
-describes the supported operations; [HANDOFF](HANDOFF.md) records measurements.
+Focused **3/3 proof CTests (3.88s) / 3/3 lit (55.27s) PASS**. JSON covers **15 sources /
+342 Node-VM observations / 8 GCC-Clang binaries / 172 refusals**, both
+providers/policies/layouts and post-document lifetime sanitization.
+Integrated build and **288/288 CTests (2252.04s) / 251/251 lit (1973.33s) PASS**, wrapper
+exit **0**. All **1,720 frozen source/submodule hashes** match the devbox and integrated
+**4c4f8e7b**; documentation changed afterward.
+The gate includes Claude's **28878c6c / 0b1e0911** EmitC audit and its shared plain
+C++ helper header. [The DOM contract](native-dom-entry.md) describes admission;
+[HANDOFF](HANDOFF.md) records integration and evidence.
 
-**Next: Config's JSON-result `typeof`.** The original `_mergeConfigObj` performs
-`"object" == typeof H.getDataAttribute(element, "config")`. H now compiles to one
-native function in all four provider/policy modes, but adding that observation
-still refuses at `ctjs.unary`. Preserve null/array/object behavior in the proof.
-Original M retains 24 nine-register blocks and handler ^bb12 before preparation.
+**Exact next native boundary:** adding Config's following spread
+`{..."object" == typeof parsed ? parsed : {}}` refuses in all four modes at
+`DOM helper branch contains an unproved local identity`. The branch-local empty
+object reaches `DOMSource.cpp` before the final `copy_props` proof. Preparation
+currently rejects the nested constructor; its later object census also assumes
+every top-level constructor is a callable method holder and erases it. Preserve
+proved data constructors through both stages, then require complete entry proof
+of the spread and ownership. Null contributes no entries, arrays contribute indexed
+entries, and the object tag alone grants no member proof. The existing escape
+`CopyProps` certificate covers fresh fixed own-data objects, not runtime JSON keys
+or enumeration order; generic native lowering has no `CopyPropsOp` case. Reuse
+`carrier::json` ownership, explicitly constructing its object alternative for `{}`
+(default `json_value{}` is null), and prove key order and overwrite behavior.
+Spread is shallow: copying or moving an owning tree also needs a proof that surviving
+aliases cannot distinguish it. Preserve numeric/duplicate/`__proto__` keys, array
+indices without `length`, fallback inputs and post-document ownership in source tests.
+Then compose dataset/config merging through the existing public `dom/dataset.hpp`.
+Original M still has **24 nine-register blocks / handler ^bb12** before preparation.
+Matching/live F keys, inherited static/object-valued defaults, initialization,
+retained callbacks and the application driver remain open. Pending browser/runtime
+branches remain Claude-owned and require fresh differential validation when landed.
 
-After that, prove JSON object spreads and dataset/config merging. Public
-`ctbrowser/dom/dataset.hpp` already supplies the dataset implementation; extend
-the native boundary to call it. Matching/live F keys remain refused separately.
-Inherited static/object-valued defaults, initialization, retained callbacks and
-the application driver remain open.
+**42a2bd80** independently extends the existing array induction proof to
+`length > index`, preserving strictness, source evaluation order and all ownership
+checks. Fifteen CFG/SCF cases and an original-source recorder/claims oracle pass;
+the new oracle reports 9/9 observed sites, 3/5 precision and zero violations.
 
-**40f1f3ef** completes the independent hoisted-declaration prerequisite recorded
-in Claude's 03:53 journal: host-prefix proofs no longer need the synthetic
-Undefined write for `var x;`. Declarations establish binding identity, never an
-initial value or intrinsic authority. Runtime changes remain Claude-owned.
+**40f1f3ef** already supplies the hoisted-declaration prerequisite for retiring
+Claude's temporary bare-var write restoration in **7ad52ce2**. Runtime changes
+remain Claude-owned.
 
 Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
 with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
-observations and the unchanged VM inheritance failure. All **1,123 escape rows**
-match the current pinned baseline. Reports are unchanged except for Button's test
-path after the lit migration. No full-bundle gain is claimed.
+observations and the unchanged VM inheritance failure. Their measured reports and
+all **1,123 escape rows** are identical to `/tmp/ctcompile-m-gate/`; historical
+escape precision remains **40/172**, with zero violations. No full-bundle gain
+is claimed.
 
 The earlier milestones below are historical context, not alternative next steps.
 

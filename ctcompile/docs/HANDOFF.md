@@ -6,6 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Config JSON tags and reversed array guards, 2026-09-16 UTC
+
+Continued the exact Config `typeof` boundary recorded in **cb002682**, HANDOFF,
+plan00 and the 07:09:54 AGENT-SYNC journal. The starting tree was clean; both
+commit histories and unmerged branches confirmed the interrupted September 7
+and JSON-chain work were already resolved. Three agents split native regressions,
+proof review and an independent escape-analysis increment. Root recovered two
+service-limited test drafts, reviewed them and ran the gates. No browser/VM source
+was changed by this work.
+
+**c127ba96** compiles `"object" == typeof H.getDataAttribute(element, "config")`
+and the String tag itself. The complete DOM proof authorizes the observation;
+generic JsonType and JSON member access remain refused. Emission reads the owning
+`json_value.data` with standard `holds_alternative`, without a variant copy at
+the observation. Null, arrays and objects all report `"object"`. The original M/H
+source, nullable guard, lookup order and both failure snapshots remain intact.
+Two initial emitter gate failures are archived; the final form reuses ordinary
+deferred member emission before the conditional expression, with no printer change.
+
+**42a2bd80** accepts the equivalent strict array guard `length > index` through
+the shared CFG/SCF induction proof. It preserves source operand order, Number,
+start/stride, array stability, retained children and complete-budget requirements.
+Fifteen CFG/SCF cases and one original-source oracle were added. The new oracle
+observes **9/9 sites, 3/5 precision and zero violations**; it keeps the returned
+child escaping and the inclusive guard conservative. Array suites now cover
+**567 dense / 102 induction / 90 structured rows**, with **21,925 / 8,211 / 5,414**
+conservative budget cutoffs respectively.
+
+Focused **3/3 proof CTests (3.88s) / 3/3 lit (55.27s) PASS**. JSON covers **15 sources /
+342 Node-VM observations / 8 GCC-Clang binaries / 172 refusals**, both
+providers/policies/layouts and post-document lifetime sanitization.
+
+Claude integrated **28878c6c / 0b1e0911** during the first full gate, followed by
+the **4c4f8e7b** documentation update. The audit centralizes plain C++ helpers in
+`ctcompile/CTNative/Runtime/ctnative.hpp`, removes source-name provenance and
+requires combined drivers to hoist `CTNATIVE_` defines with includes. JSON `typeof`
+now keys on its carrier; the removed flag controlled include selection.
+Independent integration review found no Script/VM/AOT dependency or ownership
+change. The pre-audit build and 288/288 CTests (253 lit) passed, but the final
+source check detected the concurrent merge and the wrapper exited **1**. Its
+results in `/tmp/ctcompile-config-typeof/` are not a gate for the current tip.
+
+Integrated build and **288/288 CTests (2252.04s) / 251/251 lit (1973.33s) PASS**, wrapper
+exit **0**. All **1,720 frozen source/submodule hashes** match the devbox and integrated
+**4c4f8e7b**; documentation changed afterward.
+Stable formatter 23.1.1 passes **831 C++ / 103 Python / 105 web**. The required
+pinned formatter retains the existing **nine-file / 26-diagnostic** baseline.
+Evidence: `/tmp/ctcompile-config-integrated/` (`gate.log`, `gate.exit`, manifests,
+`full-last-test.log`, `native-json.cpp`, `next-measured.json`, `measured.json`).
+
+Fresh full Bootstrap remains **19/574 native / 0 of 43 globals**, both policies,
+with no skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node
+observations and the unchanged VM inheritance failure. Their measured reports and
+all **1,123 escape rows** are identical to `/tmp/ctcompile-m-gate/`; historical
+escape precision remains **40/172**, with zero violations. No full-bundle gain
+is claimed.
+
+**Exact next native boundary:** adding Config's following spread
+`{..."object" == typeof parsed ? parsed : {}}` refuses in all four modes at
+`DOM helper branch contains an unproved local identity`. The branch-local empty
+object reaches `DOMSource.cpp` before the final `copy_props` proof. Preparation
+currently rejects the nested constructor; its later object census also assumes
+every top-level constructor is a callable method holder and erases it. Preserve
+proved data constructors through both stages, then require complete entry proof
+of the spread and ownership. Null contributes no entries, arrays contribute indexed
+entries, and the object tag alone grants no member proof. The existing escape
+`CopyProps` certificate covers fresh fixed own-data objects, not runtime JSON keys
+or enumeration order; generic native lowering has no `CopyPropsOp` case. Reuse
+`carrier::json` ownership, explicitly constructing its object alternative for `{}`
+(default `json_value{}` is null), and prove key order and overwrite behavior.
+Spread is shallow: copying or moving an owning tree also needs a proof that surviving
+aliases cannot distinguish it. Preserve numeric/duplicate/`__proto__` keys, array
+indices without `length`, fallback inputs and post-document ownership in source tests.
+Then compose dataset/config merging through the existing public `dom/dataset.hpp`.
+Original M still has **24 nine-register blocks / handler ^bb12** before preparation.
+Matching/live F keys, inherited static/object-valued defaults, initialization,
+retained callbacks and the application driver remain open. Pending browser/runtime
+branches remain Claude-owned and require fresh differential validation when landed.
+The entries below are historical checkpoints.
+
 ## Original Bootstrap attribute normalization, 2026-09-16 UTC
 
 Resumed **codex-m-finish's four dirty M-prefix files**, identified through the
