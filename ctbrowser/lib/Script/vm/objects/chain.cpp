@@ -196,7 +196,7 @@ bool context::has_property(value target, value key) {
 }
 
 bool context::has_property(value target, const std::string & name) {
-    if (target.is_kind(heap_kind::proxy)) { return has_property(target, string(name)); }
+    if (target.is_kind(heap_kind::proxy)) { return has_property(target, key_value(name)); }
     // `#x in o` (13.10.1): the brand check, not the chain walk.
     if (is_private_key(name)) [[unlikely]] {
         return target.is_object_like() && private_element_present(target, name);

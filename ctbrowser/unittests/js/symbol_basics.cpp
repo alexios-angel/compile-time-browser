@@ -71,6 +71,15 @@ int main() {
     js_expect("Symbol.keyFor(Symbol(\"k\"))", "undefined"); // never registered
     js_expect("typeof Symbol.prototype", "object");
 
+    // --- a proxy trap is handed the SYMBOL, not its internal spelling ---------
+    js_expect("var seen = []; var p = new Proxy({}, { get: function (t, k) { seen.push(typeof k);"
+              " return 1; }, has: function (t, k) { seen.push(typeof k); return true; } });"
+              " p[Symbol.iterator]; p.x; Symbol.iterator in p; seen.join()",
+              "symbol,string,symbol");
+    js_expect("var got; new Proxy({}, { get: function (t, k) { got = k; } })[Symbol.iterator];"
+              " got === Symbol.iterator",
+              "true");
+
     // --- KNOWN WRONG: a symbol must REFUSE implicit conversion ----------------
     // `"" + sym` and `sym + 1` are specified to throw TypeError, and that is a
     // feature: it is what stops a symbol silently reaching page output. Here

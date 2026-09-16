@@ -142,7 +142,7 @@ bool context::own_property(value target, const std::string & name, property_desc
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "getOwnPropertyDescriptor");
         if (!trap.is_callable()) { return own_property(p->target, name, out); }
-        const value args[2] = {p->target, string(name)};
+        const value args[2] = {p->target, key_value(name)};
         const value answer = call(trap, args, p->handler);
         if (answer.is_undefined()) { return false; }
         if (!answer.is_object_like()) {
@@ -366,7 +366,7 @@ bool context::delete_own_property(value target, const std::string & name) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "deleteProperty");
         if (!trap.is_callable()) { return delete_own_property(p->target, name); }
-        const value args[2] = {p->target, string(name)};
+        const value args[2] = {p->target, key_value(name)};
         return truthy(call(trap, args, p->handler));
     }
     if (target.is_object()) {
@@ -459,7 +459,7 @@ bool context::define_own_property(value target, const std::string & name,
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "defineProperty");
         if (!trap.is_callable()) { return define_own_property(p->target, name, wanted); }
-        const value args[3] = {p->target, string(name), from_property_descriptor(wanted)};
+        const value args[3] = {p->target, key_value(name), from_property_descriptor(wanted)};
         return truthy(call(trap, args, p->handler));
     }
 

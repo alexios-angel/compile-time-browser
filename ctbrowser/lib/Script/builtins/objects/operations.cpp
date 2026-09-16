@@ -27,23 +27,9 @@ namespace {
 
 } // namespace
 
-// A PROPERTY KEY AS A VALUE: the string, or the symbol rebuilt from its key -
-// which IS its identity (value.hpp), so it is `===` to the one the property
-// was defined with. Object.getOwnPropertySymbols and Reflect.ownKeys share it.
+// See context::key_value.
 [[nodiscard]] value key_value(context & cx, const std::string & key) {
-    if (key.starts_with(symbol_key_prefix)) {
-        const std::size_t at = key.find(':', symbol_key_prefix.size());
-        return value::object(cx.allocate<symbol_object>(
-            at == std::string::npos ? std::string{} : key.substr(at + 1), key));
-    }
-    if (key.starts_with("@@for:")) {
-        return value::object(cx.allocate<symbol_object>(key.substr(6), key));
-    }
-    if (key.starts_with("@@")) {
-        // A well-known symbol's [[Description]] is "Symbol.iterator" (6.1.5.1).
-        return value::object(cx.allocate<symbol_object>("Symbol." + key.substr(2), key));
-    }
-    return cx.string(key);
+    return cx.key_value(key);
 }
 
 // EVERY OWN KEY OF ANY VALUE, including the synthesised ones. An array

@@ -72,6 +72,22 @@ bool context::private_element_present(value target, const std::string & key) {
     return own_property(target, brand, found);
 }
 
+value context::key_value(const std::string & key) {
+    if (key.starts_with(symbol_key_prefix)) {
+        const std::size_t at = key.find(':', symbol_key_prefix.size());
+        return value::object(allocate<symbol_object>(
+            at == std::string::npos ? std::string{} : key.substr(at + 1), key));
+    }
+    if (key.starts_with("@@for:")) {
+        return value::object(allocate<symbol_object>(key.substr(6), key));
+    }
+    if (key.starts_with("@@")) {
+        // A well-known symbol's [[Description]] is "Symbol.iterator" (6.1.5.1).
+        return value::object(allocate<symbol_object>("Symbol." + key.substr(2), key));
+    }
+    return string(key);
+}
+
 value context::get_with_receiver(value base, const std::string & name, value receiver) {
     int depth = 0;
     for (value at = base; at.is_object_like() && depth < 64; ++depth) {
@@ -79,7 +95,7 @@ value context::get_with_receiver(value base, const std::string & name, value rec
             auto * p = static_cast<proxy_object *>(at.as_heap());
             const value trap = proxy_trap(at, "get");
             if (trap.is_callable()) {
-                const value args[3] = {p->target, string(name), receiver};
+                const value args[3] = {p->target, key_value(name), receiver};
                 return call(trap, args, p->handler);
             }
             at = p->target;
@@ -183,7 +199,7 @@ value context::lookup_property(value target, const std::string & name) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "get");
         if (trap.is_callable()) {
-            const value args[3] = {p->target, string(name), target};
+            const value args[3] = {p->target, key_value(name), target};
             return call(trap, args, p->handler);
         }
         return lookup_property(p->target, name);

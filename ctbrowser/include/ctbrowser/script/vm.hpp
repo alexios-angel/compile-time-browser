@@ -1215,6 +1215,11 @@ public:
     // `a["length"]` to disagree.
     // NOT const: an accessor on the chain is called, and that re-enters the VM.
     [[nodiscard]] value lookup_property(value target, const std::string & name);
+    // A PROPERTY KEY AS A VALUE: the string, or the symbol rebuilt from its
+    // key - which IS its identity (value.hpp), so it is `===` to the one the
+    // property was defined with. What a proxy trap, Reflect.ownKeys and
+    // Object.getOwnPropertySymbols hand to script.
+    [[nodiscard]] value key_value(const std::string & key);
     // Assign through the chain, honouring a setter. Returns false when nothing
     // took the write, so the caller can fall back to defining an own property.
     bool assign_through_accessor(value target, const std::string & name, value v);
