@@ -359,11 +359,13 @@ void dom_bindings::fire_animation_event(std::size_t index, std::string_view type
     // The interface's prototype, off its global constructor: the event
     // interfaces are not in the node-interface registry `interface_prototype`
     // reads, and `instanceof AnimationEvent` is what a page asks.
+    // The constructor is a native, whose `prototype` is an own slot rather
+    // than a property the chain walk finds - the same read `instanceof` does.
     if (const value ctor = cx_->global(transition ? "TransitionEvent" : "AnimationEvent");
-        ctor.is_object()) {
-        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
-            object->prototype = proto;
-        }
+        ctor.is_kind(script::heap_kind::native)) {
+        const value * proto =
+            static_cast<script::native_object *>(ctor.as_heap())->find("prototype");
+        if (proto != nullptr && proto->is_object()) { object->prototype = *proto; }
     }
     object->set(transition ? "propertyName" : "animationName", cx_->string(a.name));
     object->set("elapsedTime", value::number(elapsed_ms / 1000.0));
@@ -376,7 +378,22 @@ void dom_bindings::fire_animation_event(std::size_t index, std::string_view type
 void dom_bindings::update_css_animations(const read_txn & txn, const style::style_map & before,
                                          const style::style_map & after) {
     if (cx_ == nullptr || selector_engine_ == nullptr) { return; }
-    for (animation_record & a : animations_) { a.seen = false; }
+    // WHO OWNS WHAT, once: a page in the interpolation harness holds hundreds
+    // of elements and hundreds of live records, and asking "this element's
+    // records" by scanning the list per element made a flush quadratic.
+    owned_.clear();
+    for (std::size_t i = 0; i < animations_.size(); ++i) {
+        animation_record & a = animations_[i];
+        a.seen = false;
+        if (a.kind != animation_kind::script && play_state(a) != "idle") {
+            owned_[a.owner.key()].push_back(i);
+        }
+    }
+    static const std::vector<std::size_t> nothing;
+    const auto mine = [&](node_id node) -> const std::vector<std::size_t> & {
+        const auto it = owned_.find(node.key());
+        return it == owned_.end() ? nothing : it->second;
+    };
     std::size_t order = 0;
     const auto walk = [&](auto && self, node_id node) -> void {
         if (txn.kind(node).value_or(node_kind::comment) == node_kind::element) {
@@ -388,23 +405,26 @@ void dom_bindings::update_css_animations(const read_txn & txn, const style::styl
                     was != before.end() ? was->second : style::computed_style_ptr{};
                 if (previous == now->second) {
                     // Unchanged: everything it owns stays, at its new place.
-                    for (animation_record & a : animations_) {
-                        if (a.kind != animation_kind::script && a.owner == node) {
-                            a.seen = true;
-                            a.tree_order = here;
-                        }
+                    for (const std::size_t i : mine(node)) {
+                        animations_[i].seen = true;
+                        animations_[i].tree_order = here;
                     }
                 } else {
+                    const std::vector<std::size_t> & records = mine(node);
                     if (previous) {
                         // The before-change style: the previous text with the
                         // running animations sampled on top, at this moment.
-                        const auto current = animated_values(
-                            node, 16.0f, [&](std::string_view property) -> std::string_view {
-                                return previous->get(atoms_->intern(property));
-                            });
-                        update_css_transitions(node, here, *previous, *now->second, current);
+                        std::vector<std::pair<std::string, std::string>> current;
+                        if (!records.empty()) {
+                            current = animated_values(
+                                node, 16.0f, [&](std::string_view property) -> std::string_view {
+                                    return previous->get(atoms_->intern(property));
+                                });
+                        }
+                        update_css_transitions(node, here, *previous, *now->second, current,
+                                               records);
                     }
-                    update_css_animation_list(node, here, *now->second);
+                    update_css_animation_list(node, here, *now->second, records);
                 }
             }
         }
@@ -425,7 +445,8 @@ void dom_bindings::update_css_animations(const read_txn & txn, const style::styl
 void dom_bindings::update_css_transitions(
     node_id element, std::size_t tree_order, const style::computed_style & before,
     const style::computed_style & after,
-    const std::vector<std::pair<std::string, std::string>> & current) {
+    const std::vector<std::pair<std::string, std::string>> & current,
+    const std::vector<std::size_t> & records) {
     const shorthand_lists whole = read_shorthand(after.get(atoms_->intern("transition")), false);
     const auto list = [&](std::string_view property, const items & from_shorthand) {
         items own = items_of(after.get(atoms_->intern(property)));
@@ -439,9 +460,8 @@ void dom_bindings::update_css_transitions(
     // THE COMMON CASE IS NOTHING: `transition-property` is `all` on every
     // element, so every changed element arrives here, and a duration of 0s
     // with no transition already running is a page that asked for none.
-    const bool owns_one = std::ranges::any_of(animations_, [&](const animation_record & a) {
-        return a.kind == animation_kind::css_transition && a.owner == element &&
-               play_state(a) != "idle";
+    const bool owns_one = std::ranges::any_of(records, [&](std::size_t i) {
+        return animations_[i].kind == animation_kind::css_transition;
     });
     if (!owns_one) {
         bool any_positive = false;
@@ -494,10 +514,9 @@ void dom_bindings::update_css_transitions(
             for (const std::string_view longhand : longhands) { consider(longhand); }
         }
     }
-    for (const animation_record & a : animations_) {
-        if (a.kind == animation_kind::css_transition && a.owner == element &&
-            play_state(a) != "idle") {
-            consider(a.name);
+    for (const std::size_t i : records) {
+        if (animations_[i].kind == animation_kind::css_transition) {
+            consider(animations_[i].name);
         }
     }
 
@@ -519,10 +538,10 @@ void dom_bindings::update_css_transitions(
                                        (properties.empty() && covered_by_all(property)));
         // The element's transition for this property, running or completed.
         std::size_t existing = no_record;
-        for (std::size_t i = 0; i < animations_.size(); ++i) {
+        for (const std::size_t i : records) {
             const animation_record & a = animations_[i];
-            if (a.kind == animation_kind::css_transition && a.owner == element &&
-                a.name == property && play_state(a) != "idle") {
+            if (a.kind == animation_kind::css_transition && a.name == property &&
+                play_state(a) != "idle") {
                 existing = i;
             }
         }
@@ -628,7 +647,8 @@ void dom_bindings::update_css_transitions(
 }
 
 void dom_bindings::update_css_animation_list(node_id element, std::size_t tree_order,
-                                             const style::computed_style & after) {
+                                             const style::computed_style & after,
+                                             const std::vector<std::size_t> & records) {
     const shorthand_lists whole = read_shorthand(after.get(atoms_->intern("animation")), true);
     const auto list = [&](std::string_view property, const items & from_shorthand) {
         items own = items_of(after.get(atoms_->intern(property)));
@@ -693,9 +713,9 @@ void dom_bindings::update_css_animation_list(node_id element, std::size_t tree_o
 
         // The record at this index, kept while its name is the same.
         std::size_t index = no_record;
-        for (std::size_t r = 0; r < animations_.size(); ++r) {
+        for (const std::size_t r : records) {
             const animation_record & a = animations_[r];
-            if (a.kind == animation_kind::css_animation && a.owner == element && a.position == i &&
+            if (a.kind == animation_kind::css_animation && a.position == i &&
                 play_state(a) != "idle") {
                 if (a.name == name) {
                     index = r;

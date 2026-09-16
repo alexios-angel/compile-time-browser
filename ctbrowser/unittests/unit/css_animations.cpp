@@ -142,7 +142,7 @@ void test_a_css_animation_is_sampled_at_the_flush() {
     // A list interpolates item by item when the shapes agree.
     is("t.style.animationName = 'shadow'; t.style.animationDuration = '100s';"
        " t.style.animationDelay = '-50s';",
-       "getComputedStyle(t).boxShadow", "rgb(0, 0, 0) 5px 10px");
+       "getComputedStyle(t).boxShadow", "rgb(0, 0, 0) 5px 10px 0px 0px");
     // The constructor is not callable.
     is("",
        "(function () { try { new CSSAnimation(); return 'no'; } catch (e) { return e.name; } })()",

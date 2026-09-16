@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -916,12 +917,17 @@ private:
     // Its event, if it is a CSS-owned one, fires from the next tick.
     void cancel_record(std::size_t index);
     // The element's `animation-*` / `transition-*` lists, and the records it owns.
+    // `records` are the element's own live CSS records (owned_), indexed once
+    // per update rather than searched for per element.
     void update_css_transitions(node_id element, std::size_t tree_order,
                                 const style::computed_style & before,
                                 const style::computed_style & after,
-                                const std::vector<std::pair<std::string, std::string>> & current);
+                                const std::vector<std::pair<std::string, std::string>> & current,
+                                const std::vector<std::size_t> & records);
     void update_css_animation_list(node_id element, std::size_t tree_order,
-                                   const style::computed_style & after);
+                                   const style::computed_style & after,
+                                   const std::vector<std::size_t> & records);
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> owned_;
     void fire_animation_event(std::size_t index, std::string_view type, double elapsed_ms);
 
     // `Animation`, `KeyframeEffect`, `DocumentTimeline`, `document.timeline`,
