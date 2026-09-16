@@ -50,7 +50,6 @@
 #include <ctbrowser/dom/element.hpp>
 #include <ctbrowser/dom/token_list.hpp>
 #include <ctbrowser/style/css/parser.hpp>
-#include <ctbrowser/style/engine.hpp>
 #endif
 
 using js_num = double;
@@ -719,7 +718,11 @@ inline bool contains(ctbrowser::element_ref element, ctbrowser::element_ref othe
     return element.owner == other.owner &&
            element.owner->read().is_ancestor_of(element.id, other.id);
 }
-inline void require_style(ctbrowser::element_ref element, ctbrowser::style::engine & style) {
+// THE SELECTOR ENGINE IS NOT INCLUDED HERE. ctbrowser/style/engine.hpp costs
+// about as much to parse as the rest of a DOM program put together, so a
+// program that takes a `ctbrowser::style::engine &` includes it itself, after
+// this header, and these three instantiate against it there.
+template <class Style> void require_style(ctbrowser::element_ref element, Style & style) {
     if (&style.atoms() != &element.owner->atoms()) {
         throw std::invalid_argument("DOM selector engine uses another atom table");
     }
@@ -731,13 +734,14 @@ inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref e
     if (bad) { throw std::invalid_argument("DOM selector is invalid"); }
     return parsed;
 }
-inline bool matches(ctbrowser::element_ref element, ctbrowser::style::engine & style,
-                    std::string_view selector) {
+template <class Style>
+bool matches(ctbrowser::element_ref element, Style & style, std::string_view selector) {
     const auto parsed = parse_selector(element, selector);
     return style.element_matches(element.owner->read(), element.id, parsed.selectors);
 }
-inline ctbrowser::element_ref closest(ctbrowser::element_ref element,
-                                      ctbrowser::style::engine & style, std::string_view selector) {
+template <class Style>
+ctbrowser::element_ref closest(ctbrowser::element_ref element, Style & style,
+                               std::string_view selector) {
     const auto parsed = parse_selector(element, selector);
     const auto found = style.closest(element.owner->read(), element.id, parsed.selectors);
     return found ? ctbrowser::element_ref{element.owner, found} : ctbrowser::element_ref{};

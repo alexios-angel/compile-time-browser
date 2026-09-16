@@ -164,6 +164,13 @@ void lowering::declareGlobals() {
     }
     if (needsDOM) { ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMDefine)); }
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
+    // The selector engine is the one ctbrowser header the runtime leaves to
+    // the program (it is as heavy as everything else together); a program
+    // spells `ctbrowser::style::engine &` only when it has a style parameter.
+    if (!domStyleParameters.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("ctbrowser/style/engine.hpp"),
+                              b.getUnitAttr());
+    }
     if (needsObjectIdentity) {
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityDefinition()));
     }
