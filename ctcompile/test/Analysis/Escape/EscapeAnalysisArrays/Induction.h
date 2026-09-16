@@ -85,6 +85,24 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .reads = "a[0]=one; a[1]=x",
          .exit = "zero -> {}"},
         "x");
+    const std::string reversed =
+        replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
+    run({.what = "reversed strict length guards retain the original returned child",
+         .body = reversed,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "reversed strict guards discharge only unreturned children",
+         .body = replace(reversed, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "a reversed strict guard preserves a zero-trip start",
+         .body = replace(reversed, "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+         .arrays = "a:[one,x]",
+         .exit = "zero -> {}"},
+        "x");
     const std::string makeStart =
         "  %start = ctjs.binary sub %one, %one {storage_test_id = \"start\"}\n";
     const std::string computed =
@@ -319,6 +337,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[]",
          .exit = "zero -> {}"});
     const std::string nonzeroStride = replace(nonzeroStart, "add %i, %one", "add %i, %three");
+    run({.what = "reversed strict guards preserve a nonzero start and stride overshoot",
+         .body = replace(nonzeroStride, "compare lt %index, %length", "compare gt %length, %index"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[1]=two",
+         .exit = "added -> {}"});
     run({.what = "a nonzero start computes its exact stride overshoot relative to that start",
          .body = replace(replace(nonzeroStride, "^exit(%sum :", "^exit(%index :"),
                          "  ctjs.return %result",
@@ -439,6 +462,16 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    "add %i, %max", "add %i, %overflow"));
     reject("inclusive guards do not prove an own index",
            replace(original, "compare lt", "compare le"));
+    reject("reversed inclusive guards do not prove an own index",
+           replace(reversed, "compare gt", "compare ge"));
+    reject("greater-than guards still require length on the left",
+           replace(reversed, "compare gt %length, %index", "compare gt %index, %length"));
+    reject("reversed strict guards cannot use a different bound",
+           replace(reversed, "compare gt %length, %index", "compare gt %two, %index"));
+    reject("reversed strict guards cannot conceal a length mutation",
+           replace(reversed, "  %read =", "  ctjs.set_property %base[%key], %zero\n  %read ="));
+    reject("reversed strict guards still check every indexed read",
+           replace(reversed, "%base[%i]", "%base[%two]"), ArrayContentsFailure::MissingElement);
     reject("inverted guards do not borrow strict induction",
            replace(original, "compare lt %index, %length", "compare lt %length, %index"));
     reject("an unknown entry index does not borrow literal zero",

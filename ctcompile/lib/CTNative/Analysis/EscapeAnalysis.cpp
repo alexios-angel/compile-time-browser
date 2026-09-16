@@ -1026,12 +1026,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
         auto compare =
             truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-        if (!compare || compare.getKind() != ctjs::CompareKind::Lt ||
+        if (!compare ||
+            (compare.getKind() != ctjs::CompareKind::Lt &&
+             compare.getKind() != ctjs::CompareKind::Gt) ||
             truthy->getBlock() != header || compare->getBlock() != header) {
             return unsupported;
         }
-        auto index = llvm::dyn_cast<mlir::BlockArgument>(compare.getLhs());
-        auto length = compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>();
+        // Normalize only the proof operands. The original comparison and its
+        // evaluation order stay intact, with both operands independently proved Numbers.
+        const bool reversed = compare.getKind() == ctjs::CompareKind::Gt;
+        auto index =
+            llvm::dyn_cast<mlir::BlockArgument>(reversed ? compare.getRhs() : compare.getLhs());
+        auto length =
+            (reversed ? compare.getLhs() : compare.getRhs()).getDefiningOp<ctjs::GetPropertyOp>();
         const mlir::Value array = length ? length.getObject() : mlir::Value{};
         auto carriedArray = llvm::dyn_cast_if_present<mlir::BlockArgument>(array);
         auto directArray =

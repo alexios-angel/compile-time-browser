@@ -149,6 +149,18 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const std::string reversed =
+        replace(original, "compare lt %index, %length", "compare gt %length, %index");
+    rows.push_back({.what = "structured reversed strict guards preserve reordered aliases",
+                    .body = reversed,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured reversed strict guards preserve zero-trip starts",
+                    .body = replace(replace(reversed, "  ctjs.append %y to %a\n", ""),
+                                    "%index = %zero", "%index = %one"),
+                    .arrays = "a:[x]",
+                    .exit = "zero -> {}"});
     const std::string computedStart = prefix + "  %start = ctjs.unary plus %zero\n" +
                                       replace(loop, "%index = %zero", "%index = %start") +
                                       "  ctjs.return %result\n";
@@ -417,6 +429,14 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(computedUnit, makeUnit, ""), "    %step =", makeUnit + "    %step ="));
     reject("a structured inclusive guard does not prove an own index",
            replace(original, "compare lt", "compare le"));
+    reject("a structured reversed inclusive guard does not prove an own index",
+           replace(reversed, "compare gt", "compare ge"));
+    reject("a structured greater-than guard still requires length on the left",
+           replace(reversed, "compare gt %length, %index", "compare gt %index, %length"));
+    reject("a structured reversed strict guard cannot hide a bound change",
+           replace(reversed, "    %read =",
+                   "    %name = ctjs.constant #ctjs.string<\"length\">\n"
+                   "    ctjs.set_property %base[%name], %zero\n    %read ="));
     reject("a structured guard must read the current array length",
            replace(original, "compare lt %index, %length", "compare lt %index, %one"));
     reject("a structured loop cannot start with an unknown Number",
@@ -472,6 +492,12 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    rows.push_back(
+        {.what = "reversed strict guards also support direct structured array aliases",
+         .body = replace(direct, "compare lt %index, %length", "compare gt %length, %index"),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
     rows.push_back({.what = "direct-array structured induction preserves a nonzero start",
                     .body = replace(direct, "%index = %zero", "%index = %one"),
                     .arrays = "a:[x,y]",

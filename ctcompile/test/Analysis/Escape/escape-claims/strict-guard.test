@@ -1,0 +1,46 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name strict-guard
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-strict-guard.claims
+
+// The source comparison keeps its operand order. The complete proof may release
+// a read child only when it is not returned, while an inclusive bound stays
+// conservative even though this particular execution releases its child.
+// IMPORT-LABEL: ctjs.func @released$
+// IMPORT: ctjs.compare gt
+// IMPORT-LABEL: ctjs.func @returned$
+// IMPORT: ctjs.compare gt
+// IMPORT-LABEL: ctjs.func @inclusive$
+// IMPORT: ctjs.compare ge
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function released() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; array.length > i; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+function returned() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; array.length > i; i++) {
+        saved = array[i];
+    }
+    return saved;
+}
+function inclusive() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; array.length >= i; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+released();
+var retained = returned();
+inclusive();
