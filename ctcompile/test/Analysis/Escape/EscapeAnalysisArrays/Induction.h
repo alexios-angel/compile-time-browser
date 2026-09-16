@@ -670,6 +670,80 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     reject("a negative stride is not a nonnegative own array index",
            replace(subtract, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
+    const std::string makeNegative = "  %magnitude = ctjs.binary add %one, %one\n"
+                                     "  %unit = ctjs.unary neg %magnitude\n";
+    const auto carriedNegative = replace(replace(carriedUnit, makeUnit, makeNegative),
+                                         "binary_static add %i, %d", "binary sub %i, %d");
+    run({.what = "Neg of a held bounded Number preserves its exact CFG stride",
+         .body = carriedNegative,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "a held Neg stride preserves its final overshoot after array growth",
+         .body = replace(replace(carriedNegative, "^exit(%sum :", "^exit(%index :"),
+                         "  ctjs.return %result",
+                         "  ctjs.append %zero to %a\n  ctjs.append %zero to %a\n"
+                         "  %after = ctjs.get_property %a[%result]\n  ctjs.return %after"),
+         .arrays = "a:[one,two,three,zero,zero]",
+         .reads = "a[0]=one; a[2]=three; a[4]=zero",
+         .exit = "zero -> {}"});
+    run({.what = "a held Neg stride keeps its source length snapshot after shrink",
+         .body = replace(carriedNegative, makeNegative,
+                         "  %seed = ctjs.create_array [%one, %one] {storage_test_id = \"seed\"}\n"
+                         "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                         "  %magnitude = ctjs.get_property %seed[%name]\n"
+                         "  %unit = ctjs.unary neg %magnitude\n"
+                         "  ctjs.set_property %seed[%name], %zero\n"),
+         .arrays = "a:[one,two,three]; seed:[]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    const std::string makeNegativeUnit = "  %magnitude = ctjs.unary plus %one\n"
+                                         "  %minus = ctjs.unary neg %magnitude\n";
+    const auto negativeChild =
+        replace(replace(savedChild, "  cf.br ^header", makeNegativeUnit + "  cf.br ^header"),
+                "binary_static add %i, %one", "binary sub %i, %minus");
+    run({.what = "a computed Neg stride retains the original final child",
+         .body = negativeChild,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "a computed Neg stride discharges only the unreturned child",
+         .body = replace(negativeChild, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "a zero-trip Neg stride preserves the original saved child",
+         .body = replace(negativeChild, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+         .arrays = "a:[one,x]",
+         .exit = "x -> {x}"});
+    reject("a held Neg stride must remain identical across the CFG backedge",
+           replace(carriedNegative, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("a repeated Neg of a computed Number needs independent invariance",
+           replace(replace(negativeChild, "  %minus = ctjs.unary neg %magnitude\n", ""),
+                   "  %step =", "  %minus = ctjs.unary neg %magnitude\n  %step ="));
+    reject("a negative snapshot is not an own array index",
+           replace(negativeChild, "%base[%i]", "%base[%minus]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("Add cannot borrow a negative magnitude as a positive stride",
+           replace(negativeChild, "binary sub %i, %minus", "binary add %i, %minus"));
+    for (const std::string constant :
+         {"#ctjs.number<0>", "#ctjs.number<13830554455654793216>",
+          "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
+          "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
+        reject("a computed Neg stride requires a bounded strictly positive Number input",
+               replace(negativeChild, "#ctjs.number<4607182418800017408>", constant));
+    }
+    reject("Neg of an unknown producer cannot supply a bounded stride",
+           replace(negativeChild, "unary neg %magnitude", "unary neg %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("a held Neg stride cannot overflow on its final update",
+           replace(replace(negativeChild, "  %magnitude = ctjs.unary plus %one",
+                           "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                           "  %magnitude = ctjs.unary plus %maximum"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",

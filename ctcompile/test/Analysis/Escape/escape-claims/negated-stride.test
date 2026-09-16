@@ -1,0 +1,83 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negated-stride
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negated-stride.claims
+
+// The source keeps its computed Neg and Sub. Saved magnitudes retain the
+// original Number value; coercible String input supplies no bounded fact.
+// IMPORT-LABEL: ctjs.func @released$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @returned$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @snapshotReleased$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @snapshotReturned$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @coercible$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function released() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var magnitude = 1 + 1, step = -magnitude;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function returned() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var magnitude = 1 + 1, step = -magnitude;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function snapshotReleased() {
+    var child = {}, array = [child, child, child], saved = 0, seed = [1, 1];
+    var magnitude = seed.length, step = -magnitude;
+    seed.length = 0;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function snapshotReturned() {
+    var child = {}, array = [child, child, child], saved = 0, seed = [1, 1];
+    var magnitude = seed.length, step = -magnitude;
+    seed.length = 0;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function coercible() {
+    var child = {}, array = [child, child, child], saved = 0, magnitude = "2";
+    var step = -magnitude;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+released();
+var retained = returned();
+snapshotReleased();
+var snapshotRetained = snapshotReturned();
+coercible();

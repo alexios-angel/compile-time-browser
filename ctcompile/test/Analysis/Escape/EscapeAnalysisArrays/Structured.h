@@ -558,6 +558,73 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject("structured negative subtraction still bounds its final update",
            replace(replace(subtract, negativeLiteral, "#ctjs.number<13974669643728551936>"),
                    "%index = %zero", "%index = %one"));
+    const std::string makeNegative = "  %magnitude = ctjs.binary add %one, %one\n"
+                                     "  %unit = ctjs.unary neg %magnitude\n";
+    const auto carriedNegative = replace(replace(carriedUnit, makeUnit, makeNegative),
+                                         "binary_static add %i, %d", "binary sub %i, %d");
+    rows.push_back({.what = "a held Neg stride survives reordered structured transport",
+                    .body = carriedNegative,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "structured predecessor Neg strides preserve separate child identities",
+                    .body = replace(carriedNegative, makeNegative,
+                                    "  %unit = scf.if %flag -> (!ctjs.value) {\n"
+                                    "    %magnitude = ctjs.binary add %one, %one\n"
+                                    "    %negative = ctjs.unary neg %magnitude\n"
+                                    "    scf.yield %negative : !ctjs.value\n"
+                                    "  } else {\n"
+                                    "    %negative = ctjs.unary neg %one\n"
+                                    "    scf.yield %negative : !ctjs.value\n  }\n"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x; a[1]=y",
+                    .exit = "x -> {x}; y -> {y}"});
+    const auto savedNegative =
+        replace(replace(savedUnit, "  %unit = ctjs.get_property %seed[%name]",
+                        "  %magnitude = ctjs.get_property %seed[%name]\n"
+                        "  %unit = ctjs.unary neg %magnitude"),
+                "binary_static add %i, %unit", "binary sub %i, %unit");
+    rows.push_back({.what = "a structured Neg stride retains its source length before shrink",
+                    .body = savedNegative,
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured Neg stride snapshots discharge unreturned children",
+                    .body = replace(savedNegative, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "a zero-trip structured Neg stride keeps its original result",
+                    .body = replace(replace(savedNegative, "  ctjs.append %y to %a\n", ""),
+                                    "%index = %zero", "%index = %one"),
+                    .arrays = "a:[x]; seed:[]",
+                    .exit = "zero -> {}"});
+    reject("a held Neg stride must remain identical across structured yields",
+           replace(carriedNegative, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    const auto directNegative = replace(replace(computedUnit, makeUnit, makeNegative),
+                                        "binary_static add %i, %unit", "binary sub %i, %unit");
+    reject("a repeated structured Neg producer cannot borrow a prior iteration",
+           replace(replace(directNegative, "  %unit = ctjs.unary neg %magnitude\n", ""),
+                   "    %step =", "    %unit = ctjs.unary neg %magnitude\n    %step ="));
+    reject("a structured negative snapshot cannot become an own array index",
+           replace(savedNegative, "%base[%i]", "%base[%unit]"), ArrayContentsFailure::UnknownIndex);
+    reject("structured Add cannot borrow a negative magnitude as a positive step",
+           replace(carriedNegative, "binary sub %i, %d", "binary add %i, %d"));
+    for (const std::string constant :
+         {"#ctjs.number<0>", "#ctjs.number<13830554455654793216>",
+          "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
+          "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
+        reject("structured Neg requires an independently bounded positive Number producer",
+               replace(carriedNegative, "ctjs.binary add %one, %one", "ctjs.constant " + constant));
+    }
+    reject("structured Neg of an unknown producer cannot supply a stride",
+           replace(carriedNegative, "unary neg %magnitude", "unary neg %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("a structured Neg stride still bounds its final exact update",
+           replace(replace(carriedNegative, "ctjs.binary add %one, %one",
+                           "ctjs.constant #ctjs.number<4751297606873776128>"),
+                   "%index = %zero", "%index = %one"));
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
     reject("a structured array backedge must preserve its certified formal",

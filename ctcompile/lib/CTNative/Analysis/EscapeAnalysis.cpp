@@ -884,6 +884,8 @@ struct ContentsValue {
     ContentsKind kind = ContentsKind::Identity;
     // Exact bounded Numbers survive simultaneous successor transport and replay.
     std::optional<std::size_t> integerNumber = std::nullopt;
+    // A negative Number's magnitude is never an own index or nonnegative start.
+    std::optional<std::size_t> negativeIntegerNumber = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {
@@ -1108,8 +1110,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 return unsupported;
             }
             const ContentsValue value = held(increment);
-            stride = !subtract && value.integerNumber ? value.integerNumber
-                                                      : boundedNumber(value.origin(), subtract);
+            stride = subtract ? value.negativeIntegerNumber : value.integerNumber;
+            if (!stride) { stride = boundedNumber(value.origin(), subtract); }
         }
         if (!stride || *stride == 0) { return unsupported; }
         // Initialization may be a saved length or an exact arithmetic result.
@@ -1479,6 +1481,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // operand alias or structural-edge liveness fact.
                 ContentsKind kind = ContentsKind::NonBigInt;
                 std::optional<std::size_t> integerNumber;
+                std::optional<std::size_t> negativeIntegerNumber;
                 switch (unary.getKind()) {
                 case ctjs::UnaryKind::Not:
                 case ctjs::UnaryKind::Void: break;
@@ -1521,15 +1524,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
                     if (unary.getKind() != ctjs::UnaryKind::BitNot) {
-                        // Plus preserves an exact Number; Neg preserves its
-                        // bounded index/length only at zero. Keep the original
-                        // signed value; coercions supply no bounded fact.
+                        // Neg keeps a bounded positive Number's magnitude
+                        // separately from own-index facts. The held snapshot
+                        // survives source mutation; coercions supply no fact.
                         integerNumber = input.integerNumber ? input.integerNumber
                                                             : boundedNumber(input.origin());
-                        if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
+                        if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber &&
+                            *integerNumber != 0) {
+                            negativeIntegerNumber = integerNumber;
                             integerNumber.reset();
                         }
-                        if (integerNumber && !spend()) {
+                        if ((integerNumber || negativeIntegerNumber) && !spend()) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
                     }
@@ -1537,7 +1542,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.values[unary.getResult()] = {unary.getResult(), kind, integerNumber};
+                state.values[unary.getResult()] = {unary.getResult(), kind, integerNumber,
+                                                   negativeIntegerNumber};
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
@@ -1658,7 +1664,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (original && offset && *offset <= *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original - *offset;
-                    } else if (const auto magnitude = boundedNumber(rhs, true);
+                    } else if (const auto magnitude = right.negativeIntegerNumber
+                                                          ? right.negativeIntegerNumber
+                                                          : boundedNumber(rhs, true);
                                original && magnitude && *magnitude <= 4294967295ULL - *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original + *magnitude;
