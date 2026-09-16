@@ -152,3 +152,58 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+
+## SIZING: box-sizing, the intrinsic keywords, calc-size() (2026-09-16)
+
+**A stated size names the content box unless `box-sizing: border-box`** (CSS UI
+3 §3.1). Every stated `width`, `height`, `min-*`, `max-*` and `flex-basis` used
+to be read as the BORDER box regardless — right only on a page that sets
+border-box on `*`, which Bootstrap does and which is why nothing noticed. The
+two box models meet in exactly two helpers in `layout/algorithm.hpp`:
+`border_box_size` (a number, plus the axis's padding and border under
+content-box) and `calc_over_content` (a content size run through a calc-size()
+calculation, see below). Every formatting context resolves its sizes through
+them: `outer_width_of`/`width_bound`/`outer_intrinsic` for blocks,
+`clamp_used_height` and `block_flow::arrange` for heights, step 3 of
+`flex_flow::arrange` and `column_cross_size` for flex, `position.cpp` for an
+absolutely positioned width. `box_node::border_box` is the parsed property.
+The unit tests that modelled Bootstrap (`flex_basics`, the bootstrap grid) now
+say `* { box-sizing: border-box }` in their sheet, as Bootstrap does.
+
+**The keywords** (`min-content`, `max-content`, `fit-content`; `stretch` is
+`auto`) are units of `layout::length`. On the inline axis
+`intrinsic_border_width` answers them from `measure_box`; on the block axis a
+keyword height behaves as `auto` (CSS Sizing 3 §5.1) and `has_definite_height`
+says so — the box builder no longer erases keyword heights, because a
+calc-size() over one still has a calculation to run. A keyword `min-height` /
+`max-height` is applied by `clamp_used_height` over the automatic height once
+the content is laid out. `flex-basis: content` is the max-content size.
+
+**`calc-size(<basis>, <calc-sum>)`** (CSS Values 5 §10.2) is carried IN
+`length`: the existing fields are the basis and four more are the calculation
+as a linear function of `size` — `size_factor * size + calc_percent% + calc_px
++ calc_em`. A plain length is the identity, so nothing that never wrote
+calc-size() sees a difference, `calc-size(auto, size)` IS `auto`, and
+`is_auto()` is false for `calc-size(auto, size * 2)` because the auto size is
+its input. A numeric or `any` basis resolves through `resolve()` as before; a
+keyword or `auto` basis is `is_intrinsic()` and the formatting context supplies
+the size — the available width for a block's `auto`, shrink-to-fit for an
+inline-level or out-of-flow box, the content size on a flex item's own axis,
+and the main size property for `flex-basis: calc-size(auto, …)`. Nesting
+composes at parse time (`parse_calc_size`); `size` is measured in the
+box-sizing box and so is the answer, which is what makes `calc-size(auto, size
+* 2)` double the content box under content-box and the border box under
+border-box (calc-size-width-box-sizing). A percentage in the calculation
+against an indefinite height is zero, as Chrome answers. `fit-content(<length-
+percentage>)` keeps its argument in the same `length` (`fit_bound` is its unit)
+and clamps it between the two content sizes. Ceilings: a replaced element
+ignores a calc-size() over `auto` (it takes its intrinsic size); `calc-size(auto,
+…)` on `min-width` takes the block rule for `auto` rather than the automatic
+minimum; a flex container's own `min-height`/`max-height` are still not applied.
+
+**An absolutely positioned box inside a relative INLINE** is placed against the
+inline's fragment (CSS 2.1 §10.1 rule 4): `position.cpp` already treated every
+positioned fragment as an anchor, and inlines here are one fragment each. What
+was missing was `inset-inline-start`/`-end`: the cascade keeps the logical
+longhand as its own declaration and nothing mapped it, so the box builder reads
+it as the physical side's fallback in the one writing mode there is.
