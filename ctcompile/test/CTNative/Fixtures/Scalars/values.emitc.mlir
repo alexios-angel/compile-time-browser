@@ -91,7 +91,7 @@
 // a bool, has no meaning on a std::string, and has nothing to act on for a
 // global whose proven type is `undefined` or `null`. Each must FAIL NAMING ITS
 // GLOBAL (compilation-unit.py's --mutate-as). `third` AND NOT `answer` FOR THE
-// NUMBER: the number mutation is an insertion in front of the first print, so
+// NUMBER - the number mutation is an insertion in front of the first print, so
 // it is invisible to a global the printing has already read - which the FIRST
 // global in sorted order always has been; the driver refuses that case by
 // name and the VACUOUS proof is what shows it does, so the next author does
