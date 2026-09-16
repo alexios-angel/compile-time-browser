@@ -371,6 +371,24 @@ void dom_bindings::update_css_transitions(
     const items delays = list("transition-delay", whole.delay);
     const items easings = list("transition-timing-function", whole.easing);
     const items behaviors = list("transition-behavior", whole.behavior);
+    // THE COMMON CASE IS NOTHING: `transition-property` is `all` on every
+    // element, so every changed element arrives here, and a duration of 0s
+    // with no transition already running is a page that asked for none.
+    const bool owns_one = std::ranges::any_of(animations_, [&](const animation_record & a) {
+        return a.kind == animation_kind::css_transition && a.owner == element &&
+               play_state(a) != "idle";
+    });
+    if (!owns_one) {
+        bool any_positive = false;
+        const std::size_t count = std::max(durations.size(), delays.size());
+        for (std::size_t i = 0; i < count; ++i) {
+            if (time_ms(item_at(durations, i, "0s"), 0) + time_ms(item_at(delays, i, "0s"), 0) >
+                0) {
+                any_positive = true;
+            }
+        }
+        if (!any_positive) { return; }
+    }
     const bool none = std::ranges::any_of(
         properties, [](const std::string & p) { return ascii_iequals(p, "none"); });
     const bool all =
