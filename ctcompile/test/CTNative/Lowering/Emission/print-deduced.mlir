@@ -39,7 +39,7 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 // (ops inside emitc.func print without their dialect prefix)
 //
 // CHECK: module attributes {ctnative.deduced_count = 4 : i64}
-// CHECK: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
+// CHECK: emitc.include <"cmath">
 // CHECK-NEXT: emitc.include <"type_traits">
 // CHECK-NEXT: emitc.verbatim "#ifndef CTCOMPILE_NO_TYPE_PINS
 // CHECK: "emitc.constant"() <{value = 2.000000e+00 : f64}> : () -> f64
@@ -57,7 +57,7 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 
 // --- the C++: auto where marked, a pin after each, the type everywhere else -
 //
-// CPP: #include "ctcompile/CTNative/Runtime/ctnative.hpp"
+// CPP: #include <cmath>
 // CPP-NEXT: #include <type_traits>
 // CPP-NEXT: #ifndef CTCOMPILE_NO_TYPE_PINS
 // CPP-NEXT: #define CTCOMPILE_PIN(name, site, ...) static_assert(std::is_same_v<decltype(name), __VA_ARGS__>, "ctcompile: " #name " @ " site)

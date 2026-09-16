@@ -168,13 +168,15 @@ def main():
                 )
                 assert "ctnative::make_map<std::string, std::string>()" in cpp
                 assert "ctnative::make_map<bool, std::string>()" in cpp
-                assert "nullable_string map_get(" in cpp
+                # The String payload read is the runtime header's; the program
+                # spells its owning carrier, not the helper's definition.
+                assert "ctnative::nullable_string" in cpp
             if fixture == "mixed-values":
                 assert "ctnative::make_map<double, std::variant<bool, std::string>>()" in cpp
                 assert len(re.findall(r"\bctnative::map_set\(", cpp)) == 2
                 assert "ctnative::map_size(" in cpp
             if fixture == "string-values":
-                assert "std::vector<std::string> map_values(" in cpp
+                assert "std::vector<std::string>" in cpp
                 # String values stay owning snapshots even while a separate
                 # numeric key projection is safely deforested.
                 assert re.search(r"= ctnative::map_values\(", cpp)

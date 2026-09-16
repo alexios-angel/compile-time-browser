@@ -145,7 +145,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
             ]
         )
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
-        assert "struct nullable_string" in cpp
+        assert '#include "ctcompile/CTNative/Runtime/ctnative.hpp"' in cpp
         assert carrier in cpp
         assert "ctbrowser::script" not in cpp
         if symbol == "mixedNullableRead":
