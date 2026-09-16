@@ -2271,6 +2271,77 @@ void dom_bindings::install_control_methods(context & cx) {
             b->mutated();
             return value::undefined();
         });
+    // `value`, `checked` and `files` ON THE PROTOTYPE, for the inputs the
+    // wrapper installs no own accessor on - a hidden input has none, so its
+    // value read `undefined` - and `indeterminate`, a slot on the wrapper.
+    // Where the wrapper's own accessor exists it shadows these, as it must.
+    accessor(
+        "HTMLInputElement", "value",
+        [at, value_of](context & c, std::span<value>) {
+            const auto where = at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return c.string(""); }
+            const auto txn = b->doc_->read();
+            return c.string(value_of(txn, b, id));
+        },
+        [at, store_value](context & c, std::span<value> a) {
+            const auto where = at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::undefined(); }
+            {
+                const auto txn = b->doc_->read();
+                const value given = arg(a, 0);
+                store_value(txn, b, id, given.is_null() ? std::string{} : c.to_string(given));
+            }
+            b->mutated();
+            return value::undefined();
+        });
+    accessor(
+        "HTMLInputElement", "checked",
+        [at](context & c, std::span<value>) {
+            const auto where = at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::boolean(false); }
+            const auto txn = b->doc_->read();
+            return value::boolean(b->forms_->state_of(txn, *b->atoms_, id).checked);
+        },
+        [at](context & c, std::span<value> a) {
+            const auto where = at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::undefined(); }
+            {
+                const auto txn = b->doc_->read();
+                b->forms_->state_of(txn, *b->atoms_, id).checked = context::truthy(arg(a, 0));
+            }
+            b->wrote_to_control_ = true;
+            b->mutated();
+            return value::undefined();
+        });
+    accessor("HTMLInputElement", "files",
+             [](context &, std::span<value>) { return value::null(); });
+    accessor(
+        "HTMLInputElement", "indeterminate",
+        [at, slot_of](context & c, std::span<value>) {
+            const auto where = at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::boolean(false); }
+            return value::boolean(context::truthy(slot_of(c, b, id, "__indeterminate")));
+        },
+        [at, set_slot](context & c, std::span<value> a) {
+            const auto where = at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (id) {
+                set_slot(c, b, id, "__indeterminate", value::boolean(context::truthy(arg(a, 0))));
+            }
+            return value::undefined();
+        });
+
     // stepUp / stepDown, HTML 4.10.5.3.
     const auto step_by = [this, at, input_type, number_types, step_of, step_base_of, bound_of,
                           to_number, value_of, is_step_aligned, text_of_number,

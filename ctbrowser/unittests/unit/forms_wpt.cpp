@@ -26,7 +26,7 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <output id=o>out</output>
 <fieldset id=fs><legend><input id=inlegend></legend><input id=infs></fieldset>
 </form>
-<input id=outside form=f name=outside value=z>
+<input id=outside form=f name=outside value=z><input type=hidden id=hid value=q>
 </body></html>)";
 
 void is(const std::string & expression, const std::string & expected) {
@@ -175,6 +175,12 @@ void test_input_numbers_and_dates() {
        " try { t.stepUp(); } catch (e) { o.push(e.name); }"
        " return o.join(); })()",
        "4,6,2,6,8,true,TypeError,true,InvalidStateError");
+    // hidden.html: a hidden input's value is its attribute, it has no files
+    // and no list; `indeterminate` is plain state.
+    is("(function () { var h = document.getElementById('hid'); var o = [h.value, h.files, h.list,"
+       " h.willValidate, h.indeterminate]; h.value = 'w'; h.indeterminate = true;"
+       " o.push(h.value, h.getAttribute('value'), h.indeterminate); return o.join(); })()",
+       "q,,,false,false,w,q,true");
     is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
        "'2020-02-29';"
        " var o = [d.valueAsNumber, d.valueAsDate.getUTCFullYear(), d.valueAsDate.getUTCDate()];"
