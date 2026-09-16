@@ -385,10 +385,18 @@ value dom_bindings::make_live_collection(context & cx,
     // `undefined` and `instanceof HTMLCollection` was false for the first
     // collection a page made and true for every one after it.
     ensure_dom_interfaces(cx);
-    const bool named = interface_name == "HTMLCollection";
-    if (const value proto = interface_prototype(interface_name); proto.is_object()) {
-        install_collection_prototype(cx, *static_cast<script::object_object *>(proto.as_heap()),
+    // THE THREE HTML COLLECTIONS ARE HTMLCollections with more on top -
+    // HTMLOptionsCollection and HTMLFormControlsCollection chain to it, and
+    // RadioNodeList to NodeList - so `length`, `item` and `namedItem` go on
+    // the base prototype once and the derived one carries only its own.
+    const bool named = interface_name != "NodeList" && interface_name != "RadioNodeList";
+    const bool form_controls = interface_name == "HTMLFormControlsCollection";
+    if (const value base = interface_prototype(named ? "HTMLCollection" : "NodeList");
+        base.is_object()) {
+        install_collection_prototype(cx, *static_cast<script::object_object *>(base.as_heap()),
                                      named);
+    }
+    if (const value proto = interface_prototype(interface_name); proto.is_object()) {
         target->prototype = proto;
     }
 
@@ -426,9 +434,37 @@ value dom_bindings::make_live_collection(context & cx,
         }
         return node_id{};
     };
+    // ...and, for HTMLFormControlsCollection (HTML 4.10.20.1), EVERY such
+    // member: one is the element, several are a RadioNodeList over them,
+    // none is null.
+    const auto all_named = [this](const std::vector<node_id> & found, std::string_view want) {
+        std::vector<node_id> matching;
+        const auto txn = doc_->read();
+        const atom id = atoms_->intern("id");
+        const atom name = atoms_->intern("name");
+        for (const node_id at : found) {
+            if (txn.attribute_value(at, id) == want || txn.attribute_value(at, name) == want) {
+                matching.push_back(at);
+            }
+        }
+        return matching;
+    };
+    const auto named_value = [this, named_member, form_controls, all_named,
+                              held](context & c, const std::vector<node_id> & found,
+                                    std::string_view want) -> value {
+        if (!form_controls) { return wrap(c, named_member(found, want)); }
+        const std::vector<node_id> matching = all_named(found, want);
+        if (matching.empty()) { return value::null(); }
+        if (matching.size() == 1) { return wrap(c, matching.front()); }
+        // Live over the form's controls, re-walked: the ones answering to the
+        // name at each read.
+        return make_live_collection(
+            c, [all_named, held, key = std::string{want}] { return all_named(held->live(), key); },
+            "RadioNodeList");
+    };
 
     // BRING THE TARGET'S OWN PROPERTIES UP TO DATE, when the document moved.
-    const auto refresh = [this, target, held, named, named_member, member](context & c) {
+    const auto refresh = [this, target, held, named, named_value, member](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == held->version && held->version != 0) { return; }
         held->version = now;
@@ -476,8 +512,8 @@ value dom_bindings::make_live_collection(context & cx,
             target->define_accessor(
                 key,
                 native(c, key,
-                       [this, held, named_member, key](context & inner, std::span<value>) {
-                           return wrap(inner, named_member(held->members, key));
+                       [held, named_value, key](context & inner, std::span<value>) {
+                           return named_value(inner, held->members, key);
                        }),
                 value::undefined(), script::attr_configurable);
         }
@@ -487,31 +523,30 @@ value dom_bindings::make_live_collection(context & cx,
     // The hidden state property the prototype's members reach the walk through.
     // CONFIGURABLE, and only that: a non-configurable key is one the ownKeys
     // trap below would be obliged to report, and this one is nobody's business.
-    target->define(
-        collection_state_key,
-        native(cx, "collection",
-               [this, held, named_member, refresh, member](context & c, std::span<value> a) {
-                   refresh(c);
-                   const std::string what = arg_string(c, a, 0);
-                   if (what == "length") {
-                       return value::number(static_cast<double>(held->members.size()));
-                   }
-                   if (what == "item") {
-                       const double at = arg_number(a, 1);
-                       if (at < 0 || at >= static_cast<double>(held->members.size())) {
-                           return value::null();
-                       }
-                       return member(c, held->members[static_cast<std::size_t>(at)]);
-                   }
-                   if (what == "namedItem") {
-                       const std::string want = arg_string(c, a, 1);
-                       const node_id found =
-                           want.empty() ? node_id{} : named_member(held->members, want);
-                       return found ? wrap(c, found) : value::null();
-                   }
-                   return value::undefined();
-               }),
-        script::attr_configurable);
+    target->define(collection_state_key,
+                   native(cx, "collection",
+                          [held, named_value, refresh, member](context & c, std::span<value> a) {
+                              refresh(c);
+                              const std::string what = arg_string(c, a, 0);
+                              if (what == "length") {
+                                  return value::number(static_cast<double>(held->members.size()));
+                              }
+                              if (what == "item") {
+                                  const double at = arg_number(a, 1);
+                                  if (at < 0 || at >= static_cast<double>(held->members.size())) {
+                                      return value::null();
+                                  }
+                                  return member(c, held->members[static_cast<std::size_t>(at)]);
+                              }
+                              if (what == "namedItem") {
+                                  const std::string want = arg_string(c, a, 1);
+                                  if (want.empty()) { return value::null(); }
+                                  const value found = named_value(c, held->members, want);
+                                  return found.is_undefined() ? value::null() : found;
+                              }
+                              return value::undefined();
+                          }),
+                   script::attr_configurable);
 
     // ONCE NOW: `Object.getOwnPropertyNames(list)` reads the target through no
     // trap at all, and a collection nothing has touched must already own its
