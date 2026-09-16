@@ -65,6 +65,12 @@ constexpr dom_interface interface_table[] = {
     // bindings/document/traversal.cpp.
     {"TreeWalker", "", ""},
     {"NodeIterator", "", ""},
+    // DOM 5's ranges. `Range` and `StaticRange` are globals install_range
+    // made - constructible, adopted here - and this is what chains both to
+    // AbstractRange, which is made here and constructs nothing.
+    {"AbstractRange", "", ""},
+    {"Range", "AbstractRange", ""},
+    {"StaticRange", "AbstractRange", ""},
 
     // EVERY TAG THAT IS A PLAIN HTMLElement, listed rather than left to the
     // fallback, so that anything NOT here can be told apart from them: HTML
