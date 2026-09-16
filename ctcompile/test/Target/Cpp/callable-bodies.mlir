@@ -8,15 +8,15 @@
 // unknown capture use must keep the lifted function's per-call value copy.
 
 //--- callables.mlir
-#text = loc(fused<{ctnative.source_name = "text"}>["callable-creation.js":1:1])
-#seed = loc(fused<{ctnative.source_name = "seed"}>["callable-creation.js":2:1])
-#first = loc(fused<{ctnative.source_name = "first"}>["callable-creation.js":3:1])
-#second = loc(fused<{ctnative.source_name = "second"}>["callable-creation.js":4:1])
-#offset = loc(fused<{ctnative.source_name = "offset"}>["callable-creation.js":5:1])
-#after = loc(fused<{ctnative.source_name = "after"}>["callable-creation.js":6:1])
-#lambda = loc(fused<{ctnative.source_name = "ctn_lambda"}>["callable-creation.js":7:1])
-#lambda_version = loc(fused<{ctnative.source_name = "ctn_lambda_1"}>["callable-creation.js":7:2])
-module attributes {ctnative.readable_names, ctnative.const_bindings} {
+#text = loc("callable-creation.js":1:1)
+#seed = loc("callable-creation.js":2:1)
+#first = loc("callable-creation.js":3:1)
+#second = loc("callable-creation.js":4:1)
+#offset = loc("callable-creation.js":5:1)
+#after = loc("callable-creation.js":6:1)
+#lambda = loc("callable-creation.js":7:1)
+#lambda_version = loc("callable-creation.js":7:2)
+module attributes {ctnative.const_bindings} {
   emitc.include "callable-body-fixture.h"
   emitc.declare_func @inline_target
   emitc.declare_func @mutable_target
@@ -42,7 +42,7 @@ module attributes {ctnative.readable_names, ctnative.const_bindings} {
     %closure = emitc.call_opaque "ctn_bind_inline"(%seed) {ctnative.const_operands = array<i32: 0>} : (i32) -> !emitc.opaque<"ctnative::ctn_env_inline">
     emitc.return %closure : !emitc.opaque<"ctnative::ctn_env_inline">
   }
-  // Generated names must neither shadow source bindings nor each other.
+  // Two creations from one binder are two locals; the lambda name stays inside.
   emitc.func @anonymous_names(%seed: i32 loc(#lambda), %offset: i32 loc(#lambda_version)) -> i32 {
     %first = emitc.call_opaque "ctn_bind_inline"(%seed) {ctnative.callable_create = @inline_target, ctnative.const_operands = array<i32: 0>} : (i32) -> !emitc.opaque<"ctnative::ctn_env_inline">
     %second = emitc.call_opaque "ctn_bind_inline"(%offset) {ctnative.callable_create = @inline_target, ctnative.const_operands = array<i32: 0>} : (i32) -> !emitc.opaque<"ctnative::ctn_env_inline">
@@ -129,7 +129,7 @@ module attributes {ctnative.readable_names, ctnative.const_bindings} {
   emitc.func @string_target(%text: !emitc.opaque<"std::string">) -> i32 attributes {
       ctnative.callable_body = {type = "ctnative::ctn_env_string", binder = "ctn_bind_string", name = "ctn_lambda", captures = ["capture_text"], parameters = []}} {
     %length = emitc.call_opaque "text_length"(%text) {ctnative.const_operands = array<i32: 0>} : (!emitc.opaque<"std::string">) -> i32
-    // Deliberately reuse the outer source name in the independent lambda scope.
+    // The independent lambda scope allocates its own locals.
     %innerSeed = "emitc.constant"() {value = 2 : i32} : () -> i32 loc(#seed)
     %answer = emitc.add %length, %innerSeed : (i32, i32) -> i32
     emitc.return %answer : i32
@@ -175,7 +175,7 @@ module attributes {ctnative.readable_names, ctnative.const_bindings} {
 }
 
 //--- invalid.mlir
-module attributes {ctnative.readable_names, ctnative.const_bindings} {
+module attributes {ctnative.const_bindings} {
   emitc.func @invalid(%seed: i32, %delta: i32) -> i32 attributes {
       ctnative.callable_body = {type = "ctnative::ctn_env_invalid", binder = "ctn_bind_invalid", name = "ctn_lambda", captures = ["duplicate"], parameters = ["duplicate"]}} {
     %sum = emitc.add %seed, %delta : (i32, i32) -> i32
@@ -184,7 +184,7 @@ module attributes {ctnative.readable_names, ctnative.const_bindings} {
 }
 
 //--- invalid-creation.mlir
-module attributes {ctnative.readable_names, ctnative.const_bindings} {
+module attributes {ctnative.const_bindings} {
   emitc.func @bad_marker(%seed: i32) -> !emitc.opaque<"ctnative::ctn_env_invalid"> {
     %closure = emitc.call_opaque "ctn_bind_invalid"(%seed) {ctnative.callable_create = "not a symbol reference"} : (i32) -> !emitc.opaque<"ctnative::ctn_env_invalid">
     emitc.return %closure : !emitc.opaque<"ctnative::ctn_env_invalid">
@@ -192,7 +192,7 @@ module attributes {ctnative.readable_names, ctnative.const_bindings} {
 }
 
 //--- invalid-signature.mlir
-module attributes {ctnative.readable_names, ctnative.const_bindings} {
+module attributes {ctnative.const_bindings} {
   emitc.func @bad_signature(%seed: i32) -> i32 attributes {
       ctnative.callable_body = {type = "ctnative::ctn_env_bad_signature", binder = "ctn_bind_bad_signature", name = "ctn_lambda", captures = ["capture_seed"], parameters = []}} {
     emitc.return %seed : i32

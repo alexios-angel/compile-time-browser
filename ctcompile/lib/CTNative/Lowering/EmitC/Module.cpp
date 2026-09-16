@@ -141,7 +141,6 @@ void lowering::declareGlobals() {
     // A presentation policy only: retain typed constants through every
     // optimization and let the C++ printer choose their literal spelling.
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
-    module->setAttr("ctnative.readable_names", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
     needsObjectIdentity |= needsObjectValue;

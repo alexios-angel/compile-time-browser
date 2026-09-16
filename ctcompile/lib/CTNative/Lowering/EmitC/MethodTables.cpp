@@ -4,48 +4,11 @@
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 
-std::string callableSourceName(mlir::Value value) {
-    std::string result;
-    bool conflict = false;
-    value.getLoc()->walk([&](mlir::Location location) -> mlir::WalkResult {
-        auto fused = llvm::dyn_cast<mlir::FusedLoc>(location);
-        if (!fused) { return mlir::WalkResult::advance(); }
-        auto metadata = llvm::dyn_cast_or_null<mlir::DictionaryAttr>(fused.getMetadata());
-        if (!metadata) { return mlir::WalkResult::advance(); }
-        auto name = metadata.getAs<mlir::StringAttr>("ctnative.source_name");
-        if (auto index = llvm::dyn_cast<mlir::OpResult>(value)) {
-            if (auto array = metadata.getAs<mlir::ArrayAttr>("ctnative.source_names")) {
-                if (index.getResultNumber() < array.size()) {
-                    name = llvm::dyn_cast<mlir::StringAttr>(array[index.getResultNumber()]);
-                }
-            }
-        }
-        if (!name || name.empty()) { return mlir::WalkResult::advance(); }
-        conflict |= !result.empty() && result != name.getValue();
-        result = name.str();
-        return mlir::WalkResult::advance();
-    });
-    return conflict ? std::string{} : result;
-}
-
 std::string callableLocal(llvm::StringRef prefix, llvm::StringRef hint, unsigned fallback,
                           llvm::StringSet<> & occupied) {
     // A generated prefix prevents keywords and standard-header macros from
-    // shadowing C++ code. Encoding every non-alphanumeric byte also prevents
-    // reserved double underscores; a suffix resolves sanitized collisions.
-    std::string base = prefix.str();
-    constexpr char hex[] = "0123456789abcdef";
-    for (char ch : hint) {
-        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
-            base += ch;
-        } else {
-            const auto byte = static_cast<unsigned char>(ch);
-            base += 'u';
-            base += hex[byte >> 4];
-            base += hex[byte & 15];
-        }
-    }
-    if (hint.empty()) { base += std::to_string(fallback); }
+    // shadowing C++ code; a suffix resolves a collision with a program symbol.
+    const std::string base = prefix.str() + (hint.empty() ? std::to_string(fallback) : hint.str());
     std::string result = base;
     unsigned suffix = 2;
     while (!occupied.insert(result).second) { result = base + "_" + std::to_string(suffix++); }
@@ -114,17 +77,14 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
     llvm::SmallVector<std::string> captureNames;
     llvm::StringSet<> occupied;
     for (const auto & named : names) { occupied.insert(named.second); }
-    for (auto [i, capture] : llvm::enumerate(made.getUpvalues())) {
-        captureNames.push_back(namedLambda ? callableLocal("capture_", callableSourceName(capture),
-                                                           static_cast<unsigned>(i), occupied)
+    for (unsigned i = 0; i < captures; ++i) {
+        captureNames.push_back(namedLambda ? callableLocal("capture_", "", i, occupied)
                                            : "cap" + std::to_string(i));
     }
     for (unsigned i = 3 + static_cast<unsigned>(captures); i < entry.getNumArguments(); ++i) {
         params.push_back(callableTypeSpelling(typeOf(entry.getArgument(i))));
         const auto index = static_cast<unsigned>(paramNames.size());
-        paramNames.push_back(namedLambda ? callableLocal("argument_",
-                                                         callableSourceName(entry.getArgument(i)),
-                                                         index, occupied)
+        paramNames.push_back(namedLambda ? callableLocal("argument_", "", index, occupied)
                                          : "arg" + std::to_string(index));
     }
     const auto lambdaName = callableLocal("ctn_", "lambda", 0, occupied);

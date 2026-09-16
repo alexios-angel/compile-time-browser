@@ -60,11 +60,18 @@ def main():
             "omitted_argument",
         ]:
             assert function_body(cpp, name).count("static_cast<void>") == 1, (label, name, cpp)
-        assert "static_cast<void>(input)" not in function_body(cpp, "unused"), cpp
-        assert "static_cast<void>(ignored)" in function_body(cpp, "unused"), cpp
-        assert "touch(input)" in function_body(cpp, "other_callee"), cpp
+        # Locals are v<N>; the parameters are whatever the signature says.
+        ignored, used = re.search(
+            r"\bunused\(int32_t(?: const)? (\w+), int32_t(?: const)? (\w+)\) \{", cpp
+        ).groups()
+        assert f"static_cast<void>({used})" not in function_body(cpp, "unused"), cpp
+        assert f"static_cast<void>({ignored})" in function_body(cpp, "unused"), cpp
+        touched = re.search(r"\bother_callee\(int32_t(?: const)? (\w+)\) \{", cpp).group(1)
+        assert f"touch({touched})" in function_body(cpp, "other_callee"), cpp
         if label == "parameters":
-            assert 'CTCOMPILE_PIN(answer, "unused-parameters.js:3:1", int32_t const);' in cpp, cpp
+            assert re.search(
+                r'CTCOMPILE_PIN\(v\d+, "unused-parameters.js:3:1", int32_t const\);', cpp
+            ), cpp
         compile_and_run(label, cpp, MAIN)
 
     cleaned = (args.fixtures / "cleanup.cpp").read_text()

@@ -13,9 +13,6 @@ add_library(ctcompile-target-cpp
   Const/Bindings.cpp
   Const/Types.cpp
   Const/Uses.cpp
-  Names/Hints.cpp
-  Names/Identifiers.cpp
-  Names/SourceNames.cpp
   ReadableFloat.cpp
   TranslateToCpp.cpp
   TranslateRegistration.cpp)

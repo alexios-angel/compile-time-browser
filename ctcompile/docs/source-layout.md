@@ -23,7 +23,8 @@ where fixtures and shared build helpers belong.
 | Provider paths | `lib/CTNative/HostContract/Provider*` and `PrefixMutations.cpp` | Private Map transactions, ordered diagnostic snapshots, bounded primitive callback effects and atomic global post-state |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
 | Native exceptions | `lib/CTNative/Lowering/Exceptions/` | Bounded handler recovery using LLVM CFG-to-SCF, homogeneous primitive payload/effect admission, transactional rollback and owning catch-state storage |
-| Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions, module declarations and runtime helper text |
+| Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions and module declarations |
+| Native runtime | `include/ctcompile/CTNative/Runtime/ctnative.hpp` | The one header every generated program includes: nullable scalars and strings, dense arrays, object values, Map storage and helpers, owned-global and method-table accessors, and the DOM section behind `CTNATIVE_DOM` |
 | Object value carriers | `lib/CTNative/Lowering/ObjectValues/` | Identity/scalar union classification, fixed scalar field layouts and owning runtime helpers |
 | String value carriers | `lib/CTNative/Lowering/StringValues/` | Nullable owning strings, scalar consumers and ordered string snapshot helpers |
 | Object identity flow | `lib/CTNative/Analysis/NativeObject/` | Map payload and structured schema edges, closed field/environment proof and bounded inert-slot proof |
@@ -32,7 +33,6 @@ where fixtures and shared build helpers belong.
 | Owning table slots | `lib/CTNative/Analysis/OwnedMethodTableSlots.*` | Bounded confined-owner and initialization proof, explicitly consumed by returned-table flow and rebuilt for native admission |
 | Boxed emission | `lib/CTJS/Lowering/EmitC/` | Admission, function setup, operation dispatch, status handling, roots and constants |
 | C++ literals | `include/ctcompile/Support/CppLiterals.hpp` and `lib/Target/Cpp/ReadableFloat.*` | Shared byte-preserving string escaping and native shortest round-trip float spelling |
-| C++ source names | `lib/CTJS/Import/Bytecode/SourceNames.*` and `lib/Target/Cpp/Names/` | Register-scope name provenance, name propagation through native values and collision-free C++ allocation |
 | C++ const bindings | `lib/Target/Cpp/Const/` and `lib/CTNative/Lowering/EmitC/Calls.cpp` | Backward binding-mutability data flow, lvalue/capture aliases and native helper operand ABI contracts |
 | C++ callable bodies | `lib/Target/Cpp/Callables/` | Final-IR lambda bodies at creation sites, validated bounded expansion, independent nested printer state and retained helper/function references |
 | C++ exception regions | `lib/Target/Cpp/Exceptions/` | Typed native try/throw printing with scoped catch declarations and collision-safe names |

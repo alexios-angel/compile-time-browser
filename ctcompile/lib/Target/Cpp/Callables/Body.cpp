@@ -1,14 +1,21 @@
 #include "Body.h"
 #include "../Const/Bindings.h"
-#include "../Names/SourceNames.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::cpp {
 namespace {
 
+// The lowering spells every name with a generated prefix (ctn_, capture_,
+// argument_), so a plain identifier check is the whole validation.
 bool identifier(llvm::StringRef value) {
-    return !value.empty() && localIdentifier(value) == value;
+    const auto word = [](char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               ch == '_';
+    };
+    return !value.empty() && !(value.front() >= '0' && value.front() <= '9') &&
+           llvm::all_of(value, word);
 }
 
 } // namespace

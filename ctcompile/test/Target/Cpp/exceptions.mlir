@@ -31,7 +31,7 @@
 // RUN: not ctjs-opt %t/throw-type.mlir 2>&1 | FileCheck %s --check-prefix=THROW-TYPE
 // RUN: not ctjs-opt %t/throw-fallthrough.mlir 2>&1 | FileCheck %s --check-prefix=THROW-FALLTHROUGH
 
-// The source parameter named ctnative must not hide the exception namespace.
+// Locals are v<N>; the exception object is its own ctn_exception_<N>.
 // COMMON-LABEL: void throw_number(
 // COMMON-SAME: js_num const [[THROWN:[A-Za-z_][A-Za-z_0-9]*]]) {
 // COMMON-NEXT: throw ctnative::js_exception{[[THROWN]]};
@@ -39,45 +39,45 @@
 // COMMON-NEXT: }
 // COMMON-LABEL: js_num caught_value(
 // COMMON-SAME: js_num const [[INPUT:[A-Za-z_][A-Za-z_0-9]*]]) {
-// COMMON-NEXT: js_num storage = 0.0;
+// COMMON-NEXT: js_num [[STORAGE:v[0-9]+]] = 0.0;
 // COMMON-NEXT: try {
 // COMMON-NEXT: if (true) {
-// EXPLICIT-NEXT: js_num const payload = [[INPUT]] + 1.0;
-// DEDUCED-NEXT: auto const payload = [[INPUT]] + 1.0;
-// DEDUCED-NEXT: CTCOMPILE_PIN(payload, "native-exceptions.js:2:1", js_num const);
-// COMMON-NEXT: throw ctnative::js_exception{payload};
+// EXPLICIT-NEXT: js_num const [[PAYLOAD:v[0-9]+]] = [[INPUT]] + 1.0;
+// DEDUCED-NEXT: auto const [[PAYLOAD:v[0-9]+]] = [[INPUT]] + 1.0;
+// DEDUCED-NEXT: CTCOMPILE_PIN([[PAYLOAD]], "native-exceptions.js:2:1", js_num const);
+// COMMON-NEXT: throw ctnative::js_exception{[[PAYLOAD]]};
 // COMMON-NEXT: }{{$}}
-// COMMON-NEXT: } catch (ctnative::js_exception<js_num> const & [[EXCEPTION:[A-Za-z_][A-Za-z_0-9]*]]) {
-// COMMON-NEXT: js_num const [[CAUGHT:[A-Za-z_][A-Za-z_0-9]*]] = [[EXCEPTION]].value;
-// EXPLICIT-NEXT: js_num const recovered = [[CAUGHT]] + 2.0;
-// DEDUCED-NEXT: auto const recovered = [[CAUGHT]] + 2.0;
-// DEDUCED-NEXT: CTCOMPILE_PIN(recovered, "native-exceptions.js:3:1", js_num const);
-// COMMON-NEXT: storage = recovered;
+// COMMON-NEXT: } catch (ctnative::js_exception<js_num> const & [[EXCEPTION:ctn_exception_[0-9]+]]) {
+// COMMON-NEXT: js_num const [[CAUGHT:v[0-9]+]] = [[EXCEPTION]].value;
+// EXPLICIT-NEXT: js_num const [[RECOVERED:v[0-9]+]] = [[CAUGHT]] + 2.0;
+// DEDUCED-NEXT: auto const [[RECOVERED:v[0-9]+]] = [[CAUGHT]] + 2.0;
+// DEDUCED-NEXT: CTCOMPILE_PIN([[RECOVERED]], "native-exceptions.js:3:1", js_num const);
+// COMMON-NEXT: [[STORAGE]] = [[RECOVERED]];
 // COMMON-NEXT: }{{$}}
-// COMMON-NEXT: js_num const answer = storage;
-// COMMON-NEXT: return answer;
+// COMMON-NEXT: js_num const [[ANSWER:v[0-9]+]] = [[STORAGE]];
+// COMMON-NEXT: return [[ANSWER]];
 
 // Hoisted results stay mutable, while the catch argument still initializes
 // within the handler. A try block must not hide the hoisted result mappings.
 // HOISTED-LABEL: js_num caught_value(
 // HOISTED-SAME: js_num const [[INPUT:[A-Za-z_][A-Za-z_0-9]*]]) {
-// HOISTED-NEXT: js_num storage;
-// HOISTED-NEXT: js_num payload;
-// HOISTED-NEXT: js_num recovered;
-// HOISTED-NEXT: js_num answer;
-// HOISTED-NEXT: storage = 0.0;
+// HOISTED-NEXT: js_num [[STORAGE:v[0-9]+]];
+// HOISTED-NEXT: js_num [[PAYLOAD:v[0-9]+]];
+// HOISTED-NEXT: js_num [[RECOVERED:v[0-9]+]];
+// HOISTED-NEXT: js_num [[ANSWER:v[0-9]+]];
+// HOISTED-NEXT: [[STORAGE]] = 0.0;
 // HOISTED-NEXT: try {
 // HOISTED-NEXT: if (true) {
-// HOISTED-NEXT: payload = [[INPUT]] + 1.0;
-// HOISTED-NEXT: throw ctnative::js_exception{payload};
+// HOISTED-NEXT: [[PAYLOAD]] = [[INPUT]] + 1.0;
+// HOISTED-NEXT: throw ctnative::js_exception{[[PAYLOAD]]};
 // HOISTED-NEXT: }{{$}}
-// HOISTED-NEXT: } catch (ctnative::js_exception<js_num> const & [[EXCEPTION:[A-Za-z_][A-Za-z_0-9]*]]) {
-// HOISTED-NEXT: js_num const [[CAUGHT:[A-Za-z_][A-Za-z_0-9]*]] = [[EXCEPTION]].value;
-// HOISTED-NEXT: recovered = [[CAUGHT]] + 2.0;
-// HOISTED-NEXT: storage = recovered;
+// HOISTED-NEXT: } catch (ctnative::js_exception<js_num> const & [[EXCEPTION:ctn_exception_[0-9]+]]) {
+// HOISTED-NEXT: js_num const [[CAUGHT:v[0-9]+]] = [[EXCEPTION]].value;
+// HOISTED-NEXT: [[RECOVERED]] = [[CAUGHT]] + 2.0;
+// HOISTED-NEXT: [[STORAGE]] = [[RECOVERED]];
 // HOISTED-NEXT: }{{$}}
-// HOISTED-NEXT: answer = storage;
-// HOISTED-NEXT: return answer;
+// HOISTED-NEXT: [[ANSWER]] = [[STORAGE]];
+// HOISTED-NEXT: return [[ANSWER]];
 
 // EMPTY-REGION: error: 'ctnative.cpp_try' op requires one block in each try and catch region
 // EMPTY-BLOCK: error: {{.*(empty block|non-empty block|terminator).*}}
@@ -89,17 +89,17 @@
 // THROW-FALLTHROUGH: error: 'ctnative.cpp_throw' op must be immediately followed by the enclosing region terminator
 
 //--- valid.mlir
-#namespace = loc(fused<{ctnative.source_name = "ctnative"}>["native-exceptions.js":1:1])
-#input = loc(fused<{ctnative.source_name = "ctn_exception_2"}>["native-exceptions.js":1:2])
-#caught = loc(fused<{ctnative.source_name = "ctn_exception_3"}>["native-exceptions.js":1:3])
-#payload = loc(fused<{ctnative.source_name = "payload"}>["native-exceptions.js":2:1])
-#recovered = loc(fused<{ctnative.source_name = "recovered"}>["native-exceptions.js":3:1])
-#storage = loc(fused<{ctnative.source_name = "storage"}>["native-exceptions.js":4:1])
-#answer = loc(fused<{ctnative.source_name = "answer"}>["native-exceptions.js":5:1])
-module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.numeric_alias} {
+#namespace = loc("native-exceptions.js":1:1)
+#input = loc("native-exceptions.js":1:2)
+#caught = loc("native-exceptions.js":1:3)
+#payload = loc("native-exceptions.js":2:1)
+#recovered = loc("native-exceptions.js":3:1)
+#storage = loc("native-exceptions.js":4:1)
+#answer = loc("native-exceptions.js":5:1)
+module attributes {ctnative.const_bindings, ctnative.numeric_alias} {
   emitc.include <"cmath">
   emitc.include <"stdexcept">
-  emitc.verbatim "using js_num = double;\0Anamespace ctnative { template <class T> struct js_exception { T value; }; }\0A#define ctn_exception_1 invalid_exception_name +"
+  emitc.verbatim "using js_num = double;\0Anamespace ctnative { template <class T> struct js_exception { T value; }; }"
   emitc.verbatim "void raise_foreign() { throw std::runtime_error(\22foreign\22); }"
   emitc.verbatim "void mutate_number(js_num & value) { value += 2.0; }"
   emitc.func @throw_number(%number: f64 loc(#namespace)) {

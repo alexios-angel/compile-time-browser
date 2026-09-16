@@ -82,7 +82,7 @@ On the devbox, the default-policy fixture folds 17 expressions and three
 branches in 294 symbolic steps without exhaustion. Both variants produce all
 eight expected numeric observations and contain no ctbrowser symbols. Generated
 C++ decreases from 7,859 to 7,022 bytes (10.7%) with the
-[readable literal policy](native-literals.md), [source names](native-source-names.md)
+[readable literal policy](native-literals.md)
 and [const bindings](native-const-bindings.md),
 plus the native `js_num` alias and final removal of redundant parameter casts.
 These replace the preceding 7,924/7,087-byte measurements;
