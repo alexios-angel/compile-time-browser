@@ -2,7 +2,7 @@
 """Regenerate ctbrowser/lib/Shell/net/idna_table.inc - the UTS #46 tables the
 URL parser's `domain to ASCII` runs on.
 
-Four tables, all of them DATA published by Unicode:
+Five tables, all of them DATA published by Unicode:
 
   * IdnaMappingTable.txt, collapsed to the four statuses the URL Standard's
     parameters leave (UseSTD3ASCIIRules false, Transitional_Processing false):
@@ -12,6 +12,7 @@ Four tables, all of them DATA published by Unicode:
   * General_Category=M, for "a label must not begin with a combining mark".
   * Canonical_Combining_Class=9 (Virama), for the first ContextJ rule.
   * Joining_Type, for the second: (L|D) T* ZWNJ T* (R|D).
+  * Bidi_Class, for CheckBidi (RFC 5893): every class a valid label may carry.
 
     python3 tools/gen/idna_table.py > ctbrowser/lib/Shell/net/idna_table.inc
 
@@ -112,6 +113,37 @@ def joining_ranges():
     return out
 
 
+# Bidi_Class, for CheckBidi (RFC 5893, UTS #46 5.4). Only the classes a valid
+# label can carry are named; a code point in no range is L (the default), which
+# is right because every other class is disallowed in a label anyway. unicodedata
+# carries Bidi_Class directly, like the two properties above.
+BIDI_CODE = {
+    "R": "R",
+    "AL": "A",
+    "AN": "N",
+    "EN": "E",
+    "ES": "S",
+    "CS": "C",
+    "ET": "T",
+    "ON": "O",
+    "BN": "B",
+    "NSM": "M",
+}
+
+
+def bidi_ranges():
+    out = []
+    for cp in range(0x110000):
+        code = BIDI_CODE.get(unicodedata.bidirectional(chr(cp)))
+        if code is None:  # L and every disallowed class fall to the default
+            continue
+        if out and out[-1][1] == cp - 1 and out[-1][2] == code:
+            out[-1][1] = cp
+        else:
+            out.append([cp, cp, code])
+    return out
+
+
 def print_pairs(name, pairs, comment):
     print("// %s" % comment)
     print("constexpr char32_t %s[][2] = {" % name)
@@ -157,6 +189,15 @@ def main():
     print("// ContextJ rule: (L|D) T* ZWNJ T* (R|D)).")
     print("constexpr joining_range joining_ranges[] = {")
     for first, last, kind in joining_ranges():
+        print("    {0x%X, 0x%X, '%s'}," % (first, last, kind))
+    print("};")
+    print()
+    print("// Bidi_Class as CheckBidi (RFC 5893) reads it: R, AL='A', AN='N',")
+    print("// EN='E', ES='S', CS='C', ET='T', ON='O', BN='B', NSM='M'. A code")
+    print("// point in no range is L - the default - and so is every class a")
+    print("// valid label cannot carry.")
+    print("constexpr bidi_range bidi_ranges[] = {")
+    for first, last, kind in bidi_ranges():
         print("    {0x%X, 0x%X, '%s'}," % (first, last, kind))
     print("};")
     print("// clang-format on")
