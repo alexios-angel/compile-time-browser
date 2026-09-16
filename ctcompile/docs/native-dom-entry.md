@@ -59,9 +59,9 @@ and other namespace URIs remain in Shell and are not covered by this public
 node-handle contract.
 
 The generated helper projects keys from public `ctbrowser::dataset_entries`.
-Keys preserve attribute order, including numeric names, and exclude namespaced
-attributes and unsupported uppercase names. An empty dataset returns an empty
-vector. The result owns its bytes after attribute mutation and document destruction.
+Keys preserve attribute order, including numeric names. Current public DOM behavior
+excludes namespaced attributes and unsupported uppercase names. An empty dataset
+returns an empty vector. The result owns its bytes after attribute mutation and document destruction.
 No DOMStringMap object, VM value or collector is created.
 
 The complete source proof requires the original Object/keys identity and receiver.
@@ -76,7 +76,10 @@ The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
 Proxy. Chromium independently confirms attribute order and live saved-dataset
 keys. Shell's current binding instead refills an ordinary proxy target on dataset
 lookup; its numeric sorting and stale saved enumeration are a separate runtime
-boundary, not evidence from those source-double comparisons.
+boundary, not evidence from those source-double comparisons. A further Chromium
+witness includes namespaced `data-hidden` and `p:data-other` attributes; the shared
+DOM core skips them. Native retains that platform limitation. The fixture
+expectations must change when the core gains namespace support.
 
 The emitted translation unit exports the selected function without a launcher.
 Local helpers with structured `if`/`else` bodies may be expanded at their original
@@ -380,8 +383,9 @@ operands are proved Strings. Original Bootstrap H `setDataAttribute` and
 `removeDataAttribute` compose with captured F, including a factory-exported entry
 table. Nullable values, objects, Numbers and Booleans do not gain implicit template
 conversion. H's `getDataAttribute` composes with original M for a proved constant
-no-match key such as `"config"`. Matching/live keys and dataset enumeration remain
-unproved.
+no-match key such as `"config"`. Matching/live keys and the full dataset filtering
+and iteration in `getDataAttributes` remain unproved; dataset key snapshots have
+the separate complete proof above.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private

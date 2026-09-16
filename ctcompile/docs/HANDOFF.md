@@ -6,6 +6,87 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Dataset key snapshots and dynamic Add induction, 2026-09-16 UTC
+
+Continued **c5682b0f** and the **10:24:07 AGENT-SYNC** next-boundary journal.
+The starting tree was clean; both histories and unmerged branches were checked.
+Earlier interrupted work was already landed or explicitly superseded. Three agents
+were delegated independent work; service limits stopped their drafts before edits.
+Root implemented and gated both concerns. Two agents later reviewed the proofs;
+one found a dominance flaw in a negative test, corrected before the final gate.
+
+**2dbd73b6** compiles `Object.keys(element.dataset)` into an owning
+`std::vector<std::string>` through public `ctbrowser::dataset_entries`. The explicit
+`dataset_parameters` subset contracts HTML/SVG inputs, validated before source
+effects; original Object/keys identity and receiver are mandatory. Attribute order,
+numeric keys, current public DOM namespace/uppercase exclusions, saved snapshots
+after mutation and post-document ownership pass. A saved dataset alias cannot
+cross a DOM mutation before enumeration. No Script/VM/GC, DOMStringMap implementation or new dependency
+is emitted. MathML namespace URIs remain in Shell, outside this contract.
+
+**3d80df96** accepts dynamic Add latches (`i += 1`) under the same exact bounded
+Number start, positive stride, final-update and retention proof as static Add.
+String/BigInt/unknown operands, zero stride and unsupported updates remain refused.
+The new original-source oracle reports **15/15 sites, 6/8 precision, zero violations**;
+the historical fixture remains **40/172 precision**, zero violations. Array suites
+cover **567 dense / 131 induction / 103 structured rows**, with **21,925 / 10,077 /
+5,979** conservative budget cutoffs.
+
+Focused **2/2 proof/runtime CTests (0.33s), 2/2 lit (81.59s) PASS**.
+Dataset: **five Node/VM source-double observations, eight GCC/Clang binaries,
+160 native observations, lifetime sanitizer and 50 refusals**, both providers,
+policies and layouts, HTML and SVG. JSON remains **18 sources / 486 observations /
+eight binaries / 260 refusals**. Every insufficient dataset proof budget withholds
+all evidence. The source-double uses a DOMStringMap-shaped `ownKeys` Proxy.
+
+**Real-browser witness:** Chromium preserves `[bsZ,10,2,01,"",__proto__]` and
+adds `later` when enumerating a saved dataset after mutation. Existing Shell/VM
+sorts that prefix to `[2,10,bsZ,01,"",__proto__]` and omits `later`. Both differences
+were measured with Playwright and the existing ctdrive, and journaled for Claude.
+A further Chromium witness includes namespaced `data-hidden` and `p:data-other`
+attributes in HTML/SVG dataset keys. Existing public DOM `dataset_entries` and
+`dataset_value` skip namespaced attributes; Shell delegates to that same core.
+Native retains this shared platform limitation. Its fixture expectations must move
+with a future core fix; namespace-witness.html/log/json records the discrepancy.
+No browser/runtime source or expectations changed; full WPT/test262 was not rerun.
+
+The first full run found one stale refusal in `array_borrow.py`: bounded `i += 2`
+now passes the same induction proof. **beb5c1db** executes that source with
+Node/VM/native observations and copy controls; a String stride remains refused.
+The repaired borrow suite passes **80 native executions / 24 copy controls /
+38 refusals**, with **1/1 array CTest (0.84s) and 2/2 lit (56.21s)**. Initial
+**287/288 CTests (2325.81s), 253/254 lit (2049.19s), wrapper 8** are archived as
+`full-failed-1.*`; compiler code was unchanged. The complete suite was rerun.
+
+Complete build, **288/288 CTests (2307.84s), 254/254 lit
+(2039.47s) PASS**, wrapper **0**. All **1,725 frozen input hashes**
+match local and devbox sources before this documentation update. Stable formatter
+23.1.1 passes **832 C++ / 104 Python / 105 web**; required pinned formatter retains
+the byte-identical **nine-file / 26-diagnostic** baseline. Evidence:
+`/tmp/ctcompile-dataset-keys/` (logs/exits, manifests, measured.json, generated C++,
+next source probes and browser-witness.json).
+
+Fresh full Bootstrap stays **19/574 native / 0 of 43 globals**, without skipping or
+pruning. DOM Data stays **7/7**; Button **4/86**, with 22 Node observations and its
+known VM inheritance failure. Those reports and all **1,123 historical escape rows**
+are byte-identical to the prior gate. No full-bundle improvement is claimed.
+
+**Exact next native boundary:** the original
+`Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))`
+refuses all four provider/policy modes at **DOM helper callable escapes or its call
+shape is unsupported**. Prove the original `Array.prototype.filter` and
+`String.prototype.startsWith` identities, default Array species, and callback use
+over the owning key snapshot without exporting the callback.
+Full `H.getDataAttributes` still first refuses **DOM helper completion requires
+acyclic structured source**, even with Object and dataset_parameters supplied.
+Then prove original iteration, dynamic key normalization, live dataset value reads
+(Undefined/prototype semantics), M composition and dynamic writes (`__proto__`
+assignment is a setter, unlike spread). Original M retains **24 nine-register
+blocks / handler ^bb12**. Matching/live F keys, r(e), inherited defaults and
+initialization, retained callbacks and the application driver remain open.
+
+Earlier entries below are historical checkpoints.
+
 ## Guarded Config spreads and recovered escape work, 2026-09-16 UTC
 
 Resumed the interrupted 09:13/09:15 Config-spread and negated-guard drafts,

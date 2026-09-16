@@ -1,6 +1,34 @@
 # What native Bootstrap needs next
 
-## Current boundary: guarded Config spread, 2026-09-16
+## Current boundary: dataset keys, 2026-09-16
+
+**2dbd73b6 / 3d80df96, 2026-09-16 UTC:** owning HTML/SVG dataset key snapshots
+through public DOM, and exact bounded Number dynamic Add induction. Dataset input
+namespaces and original Object.keys are explicit host premises. Five source-double
+observations, eight native binaries/160 observations, lifetime sanitizer/50 refusals;
+new escape oracle 15/15 sites, 6/8 precision, zero violations. **beb5c1db** replaces
+the stale `i += 2` refusal with executed borrow/identity coverage, while String
+strides still refuse (80 native executions / 24 copy controls / 38 refusals).
+The first full run exposed only that stale expectation; its logs are archived and
+the complete suite was rerun.
+Full **288/288 CTests (2307.84s), 254/254 lit (2039.47s), wrapper 0**;
+1,725 frozen hashes verified. Stable formatting passes; pinned baseline unchanged.
+Bootstrap **19/574, 0/43 globals**, Data **7/7**, Button **4/86**, and all 1,123
+historical escape rows are unchanged. No browser/runtime edits or full-bundle gain.
+
+**Next:** original dataset `.filter(t => t.startsWith("bs") &&
+!t.startsWith("bsConfig"))` refuses callback escape in all four modes; prove callback
+and intrinsic identities, including default Array species, over the key snapshot.
+Full H still refuses loop completion.
+Live value reads need Undefined/prototype semantics, then M normalization and dynamic
+writes; `__proto__` assignment differs from own-data spread. Inheritance/defaults,
+retained callbacks and driver remain open. Real Chromium/Shell comparison measured
+numeric-key ordering and stale saved-dataset differences. Chromium also includes
+namespaced data attributes that the shared DOM core skips; native retains that
+platform limitation. All three differences are journaled for Claude.
+Details in HANDOFF and `/tmp/ctcompile-dataset-keys/measured.json`.
+
+## Previous boundary: guarded Config spread, 2026-09-16
 
 **fcd4a0c2 / 344b514d: guarded Config spreads and negated finite guards,
 2026-09-16 UTC.** Recovered the abandoned 09:15:56 drafts before new work.
