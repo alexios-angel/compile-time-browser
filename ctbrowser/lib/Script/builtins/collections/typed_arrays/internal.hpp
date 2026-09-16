@@ -1,6 +1,6 @@
 #pragma once
 // Private to lib/Script/builtins/collections/typed_arrays/: what ArrayBuffer,
-// %TypedArray%, the eleven concrete constructors, DataView and the Uint8Array
+// %TypedArray%, the twelve concrete constructors, DataView and the Uint8Array
 // base64/hex statics share. The one-file typed_arrays.cpp of 2026-09-08 was
 // split here on 2026-09-12 when it grew the rest of clauses 23.2, 25.1 and
 // 25.3.
@@ -41,7 +41,9 @@
 // PLACE, so the aliasing a page then relies on is real. Owning is the
 // default because lib/Shell reads `items` off the typed arrays a page hands
 // it (readPixels, putImageData) and a view's `items` is empty by design.
-// Every accessor below takes both shapes.
+// A Number kind's owning `items` are numbers; a BigInt kind's are
+// bigint_objects, which Shell never sees. Every accessor below takes both
+// shapes.
 
 #include "../../internal.hpp"
 
@@ -132,12 +134,25 @@ void register_view(context & cx, array_object * store, array_object * view);
 [[nodiscard]] inline std::size_t typed_array_length(array_object * arr) {
     return arr->length();
 }
-// One element, read and written the way the VM's own index path does it:
-// undefined past the current length, coerced to the kind on write and
-// dropped past the length. The ToNumber of the value is the CALLER's - it can
-// run script, and the specification orders it before the index check.
-[[nodiscard]] value typed_array_get(array_object * arr, std::size_t i);
+// THE ELEMENTS, either storage shape, any kind. The read and the coercing
+// write are value.hpp's typed_element_get / typed_element_set, which the VM
+// shares. Between them, for the methods that must coerce ONCE and then
+// write many times (`fill`, `with`), or coerce before a bounds check the
+// coercion's script could move: coerce_for_kind is the kind's conversion of
+// a value to a primitive - ToNumber, or ToBigInt for a BigInt kind (a
+// Number there is the TypeError 7.1.13 names) - false with the throw in
+// flight; typed_array_put stores such a primitive at i, wrapped to the
+// kind, dropped past the length, running no script. typed_array_set is the
+// Number kinds' put over a double, for the byte codecs and the loops that
+// never see a bigint.
+[[nodiscard]] bool coerce_for_kind(context & cx, element_kind kind, value v, value & out);
+void typed_array_put(context & cx, array_object * arr, std::size_t i, value coerced);
 void typed_array_set(array_object * arr, std::size_t i, double v);
+// The [[ContentType]] check of 23.2.4.1 step 6, 23.2.3.26.1 and 23.2.5.1.2:
+// false with the TypeError in flight when one is a BigInt array and the
+// other is not.
+[[nodiscard]] bool same_content_type(context & cx, element_kind a, element_kind b,
+                                     const char * method);
 // A fresh typed array of `kind` OWNING `length` zero elements; undefined with
 // a RangeError in flight when it cannot be made.
 [[nodiscard]] value allocate_typed_array(context & cx, element_kind kind, double length);
@@ -165,9 +180,10 @@ void typed_array_set(array_object * arr, std::size_t i, double v);
 // A relative index the way `slice` and `fill` clamp one: negative from the
 // end, then into [0, len].
 [[nodiscard]] std::size_t relative_index(double rel, std::size_t len);
-// SortCompare over numbers with an optional comparator; a bottom-up merge sort
-// that survives any comparator. False with a throw in flight.
-[[nodiscard]] bool sort_numbers(context & cx, std::vector<double> & work, value comparator);
+// SortCompare (23.2.4.7) over the elements as primitives - numbers, or
+// bigints for a BigInt kind - with an optional comparator; a bottom-up merge
+// sort that survives any comparator. False with a throw in flight.
+[[nodiscard]] bool sort_elements(context & cx, std::vector<value> & work, value comparator);
 
 // The installers, called in order from install_typed_arrays.
 void install_array_buffer(context & cx);

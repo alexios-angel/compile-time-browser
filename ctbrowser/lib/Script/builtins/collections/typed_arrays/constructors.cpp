@@ -1,7 +1,8 @@
 // ctbrowser.script builtins - %TypedArray% (ECMA-262 23.2.1-23.2.2), the
-// nine concrete constructors (23.2.5-23.2.7), and the element accessors every
-// file in this directory reads through. internal.hpp says how a typed array
-// is laid out; the prototype methods are prototype.cpp's.
+// twelve concrete constructors (23.2.5-23.2.7), and the element accessors
+// every file in this directory and the VM's index paths read through.
+// internal.hpp says how a typed array is laid out; the prototype methods are
+// prototype.cpp's.
 //
 // 123 uses in p5.js - Uint8Array for pixels, Float32Array for matrices - and
 // `new Uint32Array(n)` is what stopped the bundle once localStorage was
@@ -9,14 +10,12 @@
 // uploads `view.subarray(0, used)`, so a view is a window onto shared bytes
 // and never a copy.
 //
-// WHAT THE VM DOES NOT HAVE, and where it shows: element_kind has no BigInt or
-// Float16 member, so BigInt64Array, BigUint64Array and Float16Array are not
-// installed (the harness tests each with `typeof`); a typed array is an
+// WHAT THE VM DOES NOT HAVE, and where it shows: a typed array is an
 // array_object whose [[Prototype]] is found through its kind's global, so a
 // subclass instance cannot be one; and lookup_property answers `buffer`,
 // `length`, `byteLength` and `byteOffset` for a view before any prototype
 // getter is asked, so `ta.buffer` is a fresh wrapper each read. Each is a
-// change to value.hpp or vm/objects/, not to this directory.
+// change to vm/objects/, not to this directory.
 
 #include "internal.hpp"
 
@@ -38,22 +37,15 @@ constexpr spec kinds[] = {
     {"Uint32Array", element_kind::u32},
     {"Float32Array", element_kind::f32},
     {"Float64Array", element_kind::f64},
+    {"Float16Array", element_kind::f16},
+    {"BigInt64Array", element_kind::big_i64},
+    {"BigUint64Array", element_kind::big_u64},
 };
 
 [[nodiscard]] value view_slot(array_object * arr, std::string_view key) {
     if (!arr->named) { return value::undefined(); }
     const value * found = arr->named->find(key);
     return found == nullptr ? value::undefined() : *found;
-}
-
-// Set(O, Pk, v, true) on a typed array: ToNumber FIRST (it can run script),
-// then the bounds check against the length as it is AFTER that script ran.
-[[nodiscard]] bool set_element_value(context & cx, array_object * arr, std::size_t i, value v) {
-    if (!numeric_arg(cx, v)) { return false; }
-    const double n = cx.to_number_value(v);
-    if (cx.throw_pending()) { return false; }
-    typed_array_set(arr, i, n);
-    return true;
 }
 
 // IteratorToList (7.4.13) over GetIteratorFromMethod (7.4.4): the values as a
@@ -90,7 +82,7 @@ constexpr spec kinds[] = {
     for (double k = 0; k < len; k += 1) {
         const value v = cx.lookup_index(source, value::number(k));
         if (cx.throw_pending()) { return value::undefined(); }
-        if (!set_element_value(cx, arr, static_cast<std::size_t>(k), v)) {
+        if (!typed_element_set(cx, *arr, static_cast<std::size_t>(k), v)) {
             return value::undefined();
         }
     }
@@ -114,12 +106,13 @@ constexpr spec kinds[] = {
     if (is_typed_array(first)) {
         array_object * src = validate_typed_array(c, first, name);
         if (src == nullptr) { return value::undefined(); }
+        if (!same_content_type(c, kind, src->elements, name)) { return value::undefined(); }
         const std::size_t len = typed_array_length(src);
         const value out = allocate_typed_array(c, kind, static_cast<double>(len));
         if (out.is_undefined()) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         for (std::size_t i = 0; i < len; ++i) {
-            typed_array_set(made, i, context::to_number(typed_array_get(src, i)));
+            typed_array_put(c, made, i, typed_element_get(c, *src, i));
         }
         return out;
     }
@@ -262,7 +255,7 @@ constexpr spec kinds[] = {
             v = c.call(mapper, args, this_arg);
             if (c.throw_pending()) { return value::undefined(); }
         }
-        if (!set_element_value(c, made, static_cast<std::size_t>(k), v)) {
+        if (!typed_element_set(c, *made, static_cast<std::size_t>(k), v)) {
             return value::undefined();
         }
     }
@@ -280,7 +273,7 @@ constexpr spec kinds[] = {
     if (out.is_undefined()) { return out; }
     auto * made = static_cast<array_object *>(out.as_heap());
     for (std::size_t k = 0; k < a.size(); ++k) {
-        if (!set_element_value(c, made, k, a[k])) { return value::undefined(); }
+        if (!typed_element_set(c, *made, k, a[k])) { return value::undefined(); }
     }
     return out;
 }
@@ -332,12 +325,6 @@ array_object * validate_typed_array(context & cx, value v, const char * method, 
     return arr;
 }
 
-value typed_array_get(array_object * arr, std::size_t i) {
-    if (i >= arr->length()) { return value::undefined(); }
-    if (arr->is_view()) { return value::number(view_get(*arr, i)); }
-    return arr->items[i];
-}
-
 void typed_array_set(array_object * arr, std::size_t i, double v) {
     if (i >= arr->length()) { return; }
     if (arr->is_view()) {
@@ -347,10 +334,61 @@ void typed_array_set(array_object * arr, std::size_t i, double v) {
     // AN INTEGER KIND HAS NO -0: coerce_element's wrap answers -0 for -0, which
     // a view's byte store cannot hold and an owning array must not either.
     double coerced = coerce_element(arr->elements, v);
-    if (coerced == 0 && arr->elements != element_kind::f32 && arr->elements != element_kind::f64) {
+    if (coerced == 0 && arr->elements != element_kind::f16 && arr->elements != element_kind::f32 &&
+        arr->elements != element_kind::f64) {
         coerced = 0;
     }
     arr->items[i] = value::number(coerced);
+}
+
+bool coerce_for_kind(context & cx, element_kind kind, value v, value & out) {
+    if (is_bigint_kind(kind)) {
+        if (v.is_kind(heap_kind::bigint)) {
+            out = v;
+            return true;
+        }
+        bigint n;
+        if (!to_bigint(cx, v, n)) { return false; }
+        out = value::object(cx.allocate<bigint_object>(std::move(n)));
+        return true;
+    }
+    if (v.is_number()) {
+        out = v;
+        return true;
+    }
+    if (!numeric_arg(cx, v)) { return false; }
+    const double n = cx.to_number_value(v);
+    if (cx.throw_pending()) { return false; }
+    out = value::number(n);
+    return true;
+}
+
+void typed_array_put(context & cx, array_object * arr, std::size_t i, value coerced) {
+    if (!is_bigint_kind(arr->elements)) {
+        typed_array_set(arr, i, coerced.is_number() ? coerced.as_number() : 0);
+        return;
+    }
+    if (i >= arr->length() || !coerced.is_kind(heap_kind::bigint)) { return; }
+    // ToBigInt64 / ToBigUint64: the value modulo 2^64, then signed or not.
+    const bigint & digits = static_cast<bigint_object *>(coerced.as_heap())->digits;
+    const std::uint64_t raw = bigint_to_uint64_wrap(digits);
+    if (arr->is_view()) {
+        view_set_raw(*arr, i, raw);
+        return;
+    }
+    bigint wrapped = arr->elements == element_kind::big_i64 ? bigint{static_cast<std::int64_t>(raw)}
+                                                            : bigint{raw};
+    // The one it was handed when the wrap changed nothing - a bigint is
+    // immutable, so sharing it is invisible and saves the allocation.
+    arr->items[i] =
+        wrapped == digits ? coerced : value::object(cx.allocate<bigint_object>(std::move(wrapped)));
+}
+
+bool same_content_type(context & cx, element_kind a, element_kind b, const char * method) {
+    if (is_bigint_kind(a) == is_bigint_kind(b)) { return true; }
+    cx.throw_error("TypeError",
+                   std::string{method} + ": cannot mix BigInt and Number typed array elements");
+    return false;
 }
 
 value make_typed_array_view(context & cx, element_kind kind, array_object * store,
@@ -385,7 +423,12 @@ value allocate_typed_array(context & cx, element_kind kind, double length) {
     const value out = cx.make_array();
     auto * arr = static_cast<array_object *>(out.as_heap());
     arr->elements = kind;
-    arr->items.assign(static_cast<std::size_t>(length), value::number(0));
+    // ONE 0n shared by every element of a BigInt kind: a bigint is immutable,
+    // and a fresh allocation per element would make `new BigInt64Array(n)`
+    // n allocations for nothing.
+    const value zero = is_bigint_kind(kind) ? value::object(cx.allocate<bigint_object>(bigint{0}))
+                                            : value::number(0);
+    arr->items.assign(static_cast<std::size_t>(length), zero);
     return out;
 }
 
@@ -408,7 +451,7 @@ array_object * ensure_store(context & cx, array_object * arr) {
     slots.define(view_offset_key, value::number(0), attr_none);
     slots.define(view_length_key, value::number(static_cast<double>(len)), attr_none);
     register_view(cx, store, arr);
-    for (std::size_t i = 0; i < len; ++i) { view_set(*arr, i, context::to_number(held[i])); }
+    for (std::size_t i = 0; i < len; ++i) { typed_array_put(cx, arr, i, held[i]); }
     return store;
 }
 
@@ -441,8 +484,44 @@ value typed_array_species_create(context & cx, array_object * exemplar, std::spa
     const value fallback = typed_array_constructor(cx, exemplar->elements);
     const value ctor = species_constructor(cx, value::object(exemplar), fallback);
     if (ctor.is_undefined()) { return value::undefined(); }
-    return typed_array_create_from_constructor(cx, ctor, args, write);
+    const value made = typed_array_create_from_constructor(cx, ctor, args, write);
+    if (made.is_undefined()) { return made; }
+    // Step 6: a species that answers the other content type is refused.
+    if (!same_content_type(cx, exemplar->elements,
+                           static_cast<array_object *>(made.as_heap())->elements,
+                           "TypedArray species constructor")) {
+        return value::undefined();
+    }
+    return made;
 }
+
+} // namespace ctbrowser::script::builtins_detail
+
+namespace ctbrowser::script {
+
+value typed_element_get(context & cx, const array_object & arr, std::size_t i) {
+    if (i >= arr.length()) { return value::undefined(); }
+    if (!arr.is_view()) { return arr.items[i]; }
+    switch (arr.elements) {
+    case element_kind::big_i64:
+        return value::object(
+            cx.allocate<bigint_object>(bigint{static_cast<std::int64_t>(view_get_raw(arr, i))}));
+    case element_kind::big_u64:
+        return value::object(cx.allocate<bigint_object>(bigint{view_get_raw(arr, i)}));
+    default: return value::number(view_get(arr, i));
+    }
+}
+
+bool typed_element_set(context & cx, array_object & arr, std::size_t i, value v) {
+    value coerced = value::undefined();
+    if (!builtins_detail::coerce_for_kind(cx, arr.elements, v, coerced)) { return false; }
+    builtins_detail::typed_array_put(cx, &arr, i, coerced);
+    return true;
+}
+
+} // namespace ctbrowser::script
+
+namespace ctbrowser::script::builtins_detail {
 
 void install_typed_arrays(context & cx) {
     using detail::method;
@@ -451,8 +530,8 @@ void install_typed_arrays(context & cx) {
     install_array_buffer(cx);
 
     // %TypedArray%, 23.2.1: a constructor that only ever throws, whose
-    // `prototype` carries every method the nine kinds share, and which is the
-    // [[Prototype]] of all nine.
+    // `prototype` carries every method the twelve kinds share, and which is
+    // the [[Prototype]] of all twelve.
     object_object * typed_proto = new_table(cx);
     auto * typed_ctor = cx.allocate<native_object>("TypedArray", [](context & c, std::span<value>) {
         c.throw_error("TypeError", "Abstract class TypedArray not directly constructable");

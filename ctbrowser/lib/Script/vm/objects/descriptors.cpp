@@ -199,8 +199,14 @@ bool context::own_property(value target, const std::string & name, property_desc
         if (object_object::array_index_key(name, at)) {
             if (arr->is_view()) {
                 if (at < arr->length()) {
-                    out =
-                        property_descriptor::data(value::number(view_get(*arr, at)), attr_default);
+                    // 10.4.5.1: { [[Writable]]: true, [[Enumerable]]: true,
+                    // [[Configurable]]: true } around the element - a bigint
+                    // for a BigInt kind, which is why the read is not
+                    // view_get's double.
+                    out = property_descriptor::data(is_bigint_kind(arr->elements)
+                                                        ? typed_element_get(*this, *arr, at)
+                                                        : value::number(view_get(*arr, at)),
+                                                    attr_default);
                     out.virtual_slot = true;
                     return true;
                 }
@@ -463,6 +469,26 @@ bool context::define_own_property(value target, const std::string & name,
         return truthy(call(trap, args, p->handler));
     }
 
+    // 10.4.5.3: A TYPED ARRAY'S INTEGER INDEX is its own algorithm, before
+    // ValidateAndApplyPropertyDescriptor. The index must be valid now, the
+    // descriptor may not make the element non-configurable, non-enumerable,
+    // an accessor or read-only, and a value goes through the kind's coercion
+    // (TypedArraySetElement) - which may throw, and answers true past it.
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        if (std::uint32_t at = 0;
+            arr->elements != element_kind::none && object_object::array_index_key(name, at)) {
+            if (at >= arr->length()) { return false; }
+            if ((wanted.has_configurable && !wanted.configurable) ||
+                (wanted.has_enumerable && !wanted.enumerable) || wanted.is_accessor() ||
+                (wanted.has_writable && !wanted.writable)) {
+                return false;
+            }
+            if (wanted.has_value) { (void)typed_element_set(*this, *arr, at, wanted.held); }
+            return true;
+        }
+    }
+
     property_descriptor current;
     const bool exists = own_property(target, name, current);
 
@@ -603,10 +629,6 @@ bool context::define_own_property(value target, const std::string & name,
         }
         std::uint32_t at = 0;
         if (object_object::array_index_key(name, at)) {
-            if (arr->is_view()) {
-                if (at < arr->length() && wanted.has_value) { view_set(*arr, at, to_number(held)); }
-                return true;
-            }
             if (!array_slot_for_define(*arr, at, exists)) { return false; }
             if (at >= arr->items.size()) {
                 // Recorded sparse (array_object::dense_limit); attributes dropped.
