@@ -220,8 +220,12 @@ void dom_bindings::install_selection(context & cx) {
                 store_range(c, value::undefined(), false);
                 return value::undefined();
             }
-            if (!rooted_here(node)) { return value::undefined(); }
+            // VALIDATE, THEN ABORT - in that order, which is observable: a
+            // detached node with an offset past its end is an IndexSizeError
+            // and NOT a silent no-op, because the specification checks the
+            // node kind and the offset before it asks where the node is.
             const value made = range_at(c, node, value::number(arg_number(a, 1)));
+            if (c.throw_pending() || !rooted_here(node)) { return value::undefined(); }
             if (made.is_object()) { store_range(c, made, false); }
             return value::undefined();
         });
@@ -292,6 +296,12 @@ void dom_bindings::install_selection(context & cx) {
         store_range(c, made, side < 0);
         return value::undefined();
     });
+    // `selectAllChildren(node)`: (node, 0) to (node, THE NUMBER OF CHILDREN) -
+    // which is not `selectNodeContents`, and the difference is a text node.
+    // Range's "length" is a text node's DATA length, so selectNodeContents on
+    // one selects its text; selectAllChildren counts children and selects
+    // nothing. selectAllChildren.html asserts `focusOffset ===
+    // node.childNodes.length` for every node it has, text nodes included.
     method("selectAllChildren", [this, rooted_here](context & c, std::span<value> a) {
         const value node = arg(a, 0);
         if (!node.is_object()) {
@@ -299,10 +309,15 @@ void dom_bindings::install_selection(context & cx) {
                                        "parameter 1 is not of type 'Node'.");
             return value::undefined();
         }
-        if (!rooted_here(node)) { return value::undefined(); }
+        const node_id id = is_the_document(node) ? doc_->document_node() : handle_of(node);
+        const auto children = id ? doc_->read().children(id).size() : 0u;
         const value made = create_range(c);
-        (void)call_on(c, made, "selectNodeContents", {node});
+        // A doctype is an InvalidNodeTypeError, and it comes from `setStart`
+        // before anything is asked about where the node is.
+        (void)call_on(c, made, "setStart", {node, value::number(0)});
         if (c.throw_pending()) { return value::undefined(); }
+        (void)call_on(c, made, "setEnd", {node, value::number(static_cast<double>(children))});
+        if (c.throw_pending() || !rooted_here(node)) { return value::undefined(); }
         store_range(c, made, false);
         return value::undefined();
     });
