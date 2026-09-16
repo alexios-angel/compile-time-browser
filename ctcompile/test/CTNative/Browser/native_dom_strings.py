@@ -1506,10 +1506,14 @@ def emitted(args, module, name, *, optional_read=True, uri_call=False):
             r"nullable_scalar|nullable_string|std::variant|shared_ptr|weak_ptr|invoke_callable|\bmain\s*\(",
             cpp,
         )
-        # get_attribute returns std::optional<std::string> by its definition in
-        # the runtime header; a program that discards the read spells no
-        # optional of its own, so the helper's name is the whole check.
-        or (optional_read and "ctnative::get_attribute" not in cpp)
+        # The optional String is get_attribute's return type in the runtime
+        # header, so a program shows it either by calling the helper or by
+        # carrying std::optional<std::string> itself (a branch over a null).
+        or (
+            optional_read
+            and "ctnative::get_attribute" not in cpp
+            and "std::optional<std::string>" not in cpp
+        )
         or (not optional_read and "ctnative::has_attribute" not in cpp)
         or (uri_call and re.search(r"\bcatch\s*\(", cpp))
         or (
