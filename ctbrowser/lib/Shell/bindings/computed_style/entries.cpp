@@ -916,10 +916,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    relative colour resolved against this element's `color` - which
         //    is what `currentcolor` means inside one, and the parent's when
         //    the property IS `color` (the caller substituted a bare one).
-        if (is_color_property(property)) {
+        //    An `<image>` list is the same walk over each gradient's colours,
+        //    with its lengths in pixels (CSS Images 4).
+        const bool image_property = property == "background-image" || property == "mask-image" ||
+                                    property == "border-image-source" ||
+                                    property == "list-style-image";
+        if (is_color_property(property) || image_property) {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
+            bases.line_height = at.box != nullptr ? at.box->line_height : at.font_size * 1.25f;
             bases.viewport_width = static_cast<float>(viewport_width_);
             bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
             style::css::color_context ctx;
@@ -932,6 +938,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                 : style::css::computed_color(declared_color, {});
                 if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
                 ctx.current_color = own_color;
+            }
+            if (image_property) {
+                if (std::string computed = style::css::computed_image(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
             }
             if (std::string computed = style::css::computed_color(text, ctx); !computed.empty()) {
                 return computed;

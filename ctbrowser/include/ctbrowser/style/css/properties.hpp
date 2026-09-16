@@ -193,6 +193,10 @@ struct color_context {
 // every other as its own function or `color()`, `none` kept, calc() folded.
 // Empty when `specified` is not a colour or cannot be resolved here.
 [[nodiscard]] std::string computed_color(std::string_view specified, const color_context & ctx);
+// THE COMPUTED VALUE OF AN `<image>` LIST (CSS Images 3 and 4): each
+// gradient's colours computed, its lengths in pixels and its angles in
+// degrees, a `url()` as written. Empty for text with no image this models.
+[[nodiscard]] std::string computed_image(std::string_view specified, const color_context & ctx);
 // The same colour as sRGB, unclamped, for whoever paints it.
 struct srgb_color {
     float r = 0, g = 0, b = 0, a = 1;

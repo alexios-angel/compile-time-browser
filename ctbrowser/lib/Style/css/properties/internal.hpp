@@ -91,13 +91,21 @@ struct scan {
                                   std::string_view text);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
 // `invalid`, when given, is set for a value whose `url()` modifiers are wrong.
+// [begin, end) restricts the walk to a run of tokens; `text` is what a token
+// with no source span falls back to.
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
-                                                 bool * invalid = nullptr);
+                                                 bool * invalid = nullptr, std::size_t begin = 0,
+                                                 std::size_t end = static_cast<std::size_t>(-1));
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
 // Defined in color.cpp.
 [[nodiscard]] bool match_color(const token_stream & ts, const scan & found,
                                std::string_view normalized, std::string & out);
+// An `<image>` list - gradients, image(), cross-fade(), light-dark(), a url()
+// or an unknown image function kept as written. False when nothing in the
+// list is modelled, so the caller keeps the author's bytes. Defined in
+// image.cpp.
+[[nodiscard]] bool match_image_list(const token_stream & ts, const scan & found, std::string & out);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by

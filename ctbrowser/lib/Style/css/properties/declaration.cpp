@@ -223,6 +223,20 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
+    // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
+    // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
+    // method and `radial-gradient(at bottom right, ...)` writes `at right
+    // bottom`; a list with no gradient in it keeps the author's bytes.
+    if (p->kind == k::freeform &&
+        ascii_iequals_any(property, {"background-image", "mask-image", "border-image-source",
+                                     "list-style-image"})) {
+        std::string serialized;
+        if (match_image_list(ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // `font-family` IS FREEFORM WITH ONE EXTRA RULE: its strings are the one
     // place CSSOM unquotes a string on the way back out. `'Lucida Grande'`
     // reads back as `Lucida Grande`, and serialize-values asks for it.

@@ -815,9 +815,11 @@ namespace detail {
 }
 
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
-                                                 bool * invalid) {
+                                                 bool * invalid, std::size_t begin,
+                                                 std::size_t end) {
     std::string out;
     out.reserve(text.size());
+    if (end > ts.tokens.size()) { end = ts.tokens.size(); }
     std::pair<std::size_t, std::size_t> skip{0, 0};
     // A NEGATIVE ZERO INSIDE A MATH FUNCTION KEEPS ITS SIGN. A lone `-0` is
     // `0` (serialize-values), but `sign(calc(-0))` is -0 and `1 / sign(...)`
@@ -833,7 +835,7 @@ namespace detail {
         return math_from != 0 && value == 0 && std::signbit(value) ? std::string{"-0"}
                                                                    : number_text(value);
     };
-    for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
+    for (std::size_t i = begin; i < end; ++i) {
         const css_token & t = ts.tokens[i];
         if (t.type == token_type::eof) { break; }
         if (i >= skip.first && i < skip.second) { continue; }
