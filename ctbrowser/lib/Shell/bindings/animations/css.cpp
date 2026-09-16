@@ -296,9 +296,14 @@ void dom_bindings::fire_animation_event(std::size_t index, std::string_view type
     const value event = make_event(*cx_, type, a.owner);
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("cancelable", value::boolean(false));
-    if (const value proto = interface_prototype(transition ? "TransitionEvent" : "AnimationEvent");
-        proto.is_object()) {
-        object->prototype = proto;
+    // The interface's prototype, off its global constructor: the event
+    // interfaces are not in the node-interface registry `interface_prototype`
+    // reads, and `instanceof AnimationEvent` is what a page asks.
+    if (const value ctor = cx_->global(transition ? "TransitionEvent" : "AnimationEvent");
+        ctor.is_object()) {
+        if (const value proto = cx_->lookup_property(ctor, "prototype"); proto.is_object()) {
+            object->prototype = proto;
+        }
     }
     object->set(transition ? "propertyName" : "animationName", cx_->string(a.name));
     object->set("elapsedTime", value::number(elapsed_ms / 1000.0));

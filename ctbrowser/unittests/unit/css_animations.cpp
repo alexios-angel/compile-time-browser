@@ -20,10 +20,14 @@ using ctbrowser::shell::browser_options;
 namespace {
 
 constexpr const char * stage =
-    "<style>@keyframes slide { from { left: 0px } to { left: 100px } }"
+    // `animation-timing-function` is not a property-table row yet, so the
+    // element's is always the initial `ease`; the keyframes say `linear`.
+    "<style>@keyframes slide { from { left: 0px; animation-timing-function: linear }"
+    " to { left: 100px } }"
     "@keyframes fade { from { opacity: 0; animation-timing-function: steps(1, start) }"
     " to { opacity: 1 } }"
-    "@keyframes paint { from { color: rgb(0, 0, 255) } to { color: rgba(255, 0, 0, 0.5) } }"
+    "@keyframes paint { from { color: rgb(0, 0, 255); animation-timing-function: linear }"
+    " to { color: rgba(255, 0, 0, 0.5) } }"
     "</style>"
     "<div id=c style='position:relative;width:100px;height:100px'>"
     "<div id=t style='position:absolute;left:0px;width:10px;height:10px;opacity:1'></div></div>";
@@ -118,7 +122,7 @@ void test_a_css_animation_is_sampled_at_the_flush() {
        " t.style.animationDelay = '-50s';",
        "getComputedStyle(t).opacity", "1");
     // Two names, two animations, in list order.
-    is("t.style.animationName = 'slide, fade'; t.style.animationDuration = '100s, 10s';"
+    is("t.style.animationName = 'slide, fade'; t.style.animationDuration = '100s';"
        " t.style.animationDelay = '-50s';",
        "t.getAnimations().map(function (a) { return a.animationName; }).join()", "slide,fade");
     // Removing the name cancels it.
