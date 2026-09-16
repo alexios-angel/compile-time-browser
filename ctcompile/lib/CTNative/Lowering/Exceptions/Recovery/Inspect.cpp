@@ -164,24 +164,56 @@ bool recovery::inspectInvocation(ctjs::CheckOp check) {
     return true;
 }
 
-ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function, unsigned maxSteps) {
+ExceptionInvocationSource inspectSingleInvocationRegion(ctjs::FuncOp function, unsigned maxSteps,
+                                                        unsigned maxCalls) {
     recovery attempt{function, maxSteps, ExceptionRecoveryMode::CheckedInvocations};
     recovery::tail normal, caught;
     ExceptionInvocationSource result;
     if (attempt.inspect() && attempt.collect(normal, attempt.push.getBody(), true, false) &&
         attempt.collect(caught, attempt.push.getHandler(), false, true) &&
         attempt.partition(normal, caught)) {
-        if (attempt.throws != 0 || attempt.invocations.size() != 1) {
-            attempt.reject(
-                "native invocation source needs one checked call and no explicit throws");
-        } else if (attempt.spend(uint64_t(attempt.prefix.size()) + normal.blocks.size() +
-                                 caught.blocks.size())) {
-            const auto [check, call] = *attempt.invocations.begin();
+        // Every checked call must sit on the one straight-line success path
+        // from the handler installation; a call reachable any other way refuses.
+        llvm::SmallVector<std::pair<mlir::Operation *, ctjs::CheckOp>> chain;
+        llvm::DenseSet<mlir::Block *> walked;
+        for (auto * block = attempt.push.getBody(); block && walked.insert(block).second;) {
+            if (!attempt.spend()) { break; }
+            auto * terminator = block->getTerminator();
+            if (auto check = llvm::dyn_cast<ctjs::CheckOp>(terminator)) {
+                if (auto found = attempt.invocations.find(check.getOperation());
+                    found != attempt.invocations.end()) {
+                    chain.emplace_back(found->second, check);
+                }
+                block = check.getCont();
+            } else if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(terminator)) {
+                block = branch.getDest();
+            } else {
+                block = nullptr;
+            }
+        }
+        if (maxCalls == 0 || attempt.throws != 0 || attempt.invocations.size() != 1) {
+            if (maxCalls <= 1 || attempt.throws != 0 || attempt.invocations.empty() ||
+                attempt.invocations.size() > maxCalls) {
+                attempt.reject(
+                    maxCalls <= 1
+                        ? "native invocation source needs one checked call and no explicit throws"
+                        : "native invocation source needs a bounded chain of checked calls and no "
+                          "explicit throws");
+            } else if (chain.size() != attempt.invocations.size()) {
+                attempt.reject("native invocation chain must lie on one success path");
+            }
+        } else if (chain.empty()) {
+            chain.emplace_back(attempt.invocations.begin()->second,
+                               llvm::cast<ctjs::CheckOp>(attempt.invocations.begin()->first));
+        }
+        if (attempt.refusal.empty() && attempt.spend(uint64_t(attempt.prefix.size()) +
+                                                     normal.blocks.size() + caught.blocks.size())) {
             result.push = attempt.push;
             result.landing = attempt.landing;
             result.frame = attempt.frame;
-            result.call = call;
-            result.check = llvm::cast<ctjs::CheckOp>(check);
+            result.call = chain.front().first;
+            result.check = chain.front().second;
+            result.chain = std::move(chain);
             llvm::append_range(result.prefix, attempt.prefix);
             result.normal = std::move(normal.blocks);
             result.caught = std::move(caught.blocks);
