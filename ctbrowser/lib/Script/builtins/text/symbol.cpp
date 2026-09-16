@@ -258,31 +258,14 @@ void install_symbol(context & cx) {
         return value::object(c.allocate<bigint_object>(*parsed));
     });
     // 21.2.2.1-2 BigInt.asIntN / asUintN (bits, bigint): ToIndex(bits), then
-    // ToBigInt(bigint) - 7.1.13: a Number is a TypeError here where the
-    // constructor above converts it, a string parses or is a SyntaxError -
-    // then the value modulo 2^bits, signed for asIntN.
+    // ToBigInt(bigint) - bigint.hpp's, shared with the BigInt typed arrays
+    // and DataView; a Number is a TypeError there where the constructor
+    // above converts it - then the value modulo 2^bits, signed for asIntN.
     const auto wrap_bits = [](context & c, std::span<value> a, bool is_signed) {
         double bits = 0;
         if (!to_index(c, arg_at(a, 0), bits)) { return value::undefined(); }
-        std::optional<bigint> n;
-        value v = arg_at(a, 1);
-        if (v.is_object_like()) {
-            if (!c.to_primitive_hint(v, "number", v)) { return value::undefined(); }
-        }
-        if (v.is_kind(heap_kind::bigint)) {
-            n = static_cast<bigint_object *>(v.as_heap())->digits;
-        } else if (v.is_boolean()) {
-            n = bigint{v.as_boolean() ? 1 : 0};
-        } else if (v.is_string()) {
-            n = bigint_from_string(static_cast<string_object *>(v.as_heap())->text);
-            if (!n) {
-                c.throw_error("SyntaxError", "Cannot convert this string to a BigInt");
-                return value::undefined();
-            }
-        } else {
-            c.throw_error("TypeError", "Cannot convert " + c.to_string(v) + " to a BigInt");
-            return value::undefined();
-        }
+        std::optional<bigint> n{bigint{}};
+        if (!to_bigint(c, arg_at(a, 1), *n)) { return value::undefined(); }
         if (bits == 0) { return value::object(c.allocate<bigint_object>(bigint{0})); }
         // A width past the value's own is the value itself (or, negative and
         // unsigned, 2^bits + n): computed without materialising 2^(2^53).
