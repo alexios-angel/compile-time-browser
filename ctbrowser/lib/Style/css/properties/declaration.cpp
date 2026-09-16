@@ -249,6 +249,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // THE GRID GRAMMARS (grid.cpp): track lists, lines, areas and auto-flow.
+    if (p->kind == k::freeform && ascii_istarts_with(property, "grid-")) {
+        std::string serialized;
+        if (match_grid(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // A `<filter-value-list>` (filter.cpp): `blur()` fills in its argument,
     // `grayscale(300%)` is `grayscale(100%)`, `blur(-1px)` is refused.
     if (p->kind == k::freeform && ascii_iequals_any(property, {"filter", "backdrop-filter"})) {

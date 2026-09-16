@@ -13,6 +13,7 @@
 using ctbrowser::style::css::check_declaration;
 using ctbrowser::style::css::color_context;
 using ctbrowser::style::css::computed_filter;
+using ctbrowser::style::css::computed_grid;
 using ctbrowser::style::css::declaration_block;
 using ctbrowser::style::css::declaration_value;
 using ctbrowser::style::css::length_context;
@@ -111,6 +112,60 @@ void test_the_small_shorthands() {
     CHECK_EQ(declaration_value(block, "text-wrap"), std::string{"nowrap balance"});
 }
 
+void test_grid() {
+    ok("grid-template-columns", "repeat(1, [] 10px [])", "repeat(1, 10px)");
+    ok("grid-template-columns", "[] 150px [] 1fr []", "150px 1fr");
+    ok("grid-template-columns", "repeat(auto-fit, [three] minmax(max-content, 6em) [four])",
+       "repeat(auto-fit, [three] minmax(max-content, 6em) [four])");
+    ok("grid-template-columns", "minmax(calc(0.5em + 10px), 5fr)",
+       "minmax(calc(0.5em + 10px), 5fr)");
+    ok("grid-auto-rows", "fit-content(1px) minmax(2px, 3px) 4px",
+       "fit-content(1px) minmax(2px, 3px) 4px");
+    bad("grid-template-columns", "-10px");
+    bad("grid-template-columns", "minmax(5fr, 10px)");
+    bad("grid-template-columns", "[one]");
+    bad("grid-template-columns", "[one] 10px [two] [three]");
+    bad("grid-template-columns", "repeat(auto-fill, 10px) repeat(auto-fit, 20%)");
+    bad("grid-template-columns", "[auto] 1px");
+    bad("grid-template-columns", "auto repeat(auto-fill, auto) auto");
+    bad("grid-template-columns", "repeat(20%)");
+    bad("grid-auto-columns", "[a] 1px");
+    ok("grid-row-start", "span 1 i", "span i");
+    ok("grid-row-start", "calc(1.1) -a-", "1 -a-");
+    ok("grid-column-end", "\\31st", "\\31 st");
+    bad("grid-column-start", "0");
+    bad("grid-column-start", "5 5");
+    bad("grid-column-start", "first last");
+    ok("grid-template-areas", "\"a  b\" \"c d\"", "\"a b\" \"c d\"");
+    bad("grid-template-areas", "\"a a\" \"a b\"");
+    bad("grid-template-areas", "\"a b\" \"c\"");
+    ok("grid-auto-flow", "dense", "row dense");
+    bad("grid-auto-flow", "row row");
+    length_context lengths;
+    color_context ctx;
+    ctx.lengths = &lengths;
+    CHECK_EQ(computed_grid("grid-template-columns",
+                           "[a] 1em repeat(auto-fill, 2em [b] 3em) 4em [d]", ctx),
+             std::string{"[a] 16px repeat(auto-fill, 32px [b] 48px) 64px [d]"});
+    lengths.font_size = 40;
+    CHECK_EQ(computed_grid("grid-auto-columns", "calc(10px - 0.5em)", ctx), std::string{"0px"});
+    CHECK_EQ(computed_grid("grid-auto-columns", "calc(10px + 0.5em)", ctx), std::string{"30px"});
+    CHECK_EQ(computed_grid("grid-row-start", "span calc(-1)", ctx), std::string{"span 1"});
+    declaration_block block;
+    CHECK(set_declaration(block, "grid-column", "10", false));
+    CHECK_EQ(declaration_value(block, "grid-column-start"), std::string{"10"});
+    CHECK_EQ(declaration_value(block, "grid-column-end"), std::string{"auto"});
+    CHECK_EQ(declaration_value(block, "grid-column"), std::string{"10"});
+    CHECK(set_declaration(block, "grid-column", "first", false));
+    CHECK_EQ(declaration_value(block, "grid-column-end"), std::string{"first"});
+    CHECK_EQ(declaration_value(block, "grid-column"), std::string{"first"});
+    CHECK(set_declaration(block, "grid-area", "auto / i / 2 j", false));
+    CHECK_EQ(declaration_value(block, "grid-column-end"), std::string{"i"});
+    CHECK_EQ(declaration_value(block, "grid-area"), std::string{"auto / i / 2 j"});
+    CHECK(!set_declaration(block, "grid-column", "0 / 5", false));
+    CHECK(!set_declaration(block, "grid-area", "auto / auto / auto / auto / auto", false));
+}
+
 void test_filters() {
     ok("filter", "blur()", "blur()");
     ok("filter", "blur(0)", "blur(0px)");
@@ -154,6 +209,7 @@ int main() {
     test_display();
     test_box_alignment();
     test_the_small_shorthands();
+    test_grid();
     test_filters();
     REPORT("css_grammar_values");
 }

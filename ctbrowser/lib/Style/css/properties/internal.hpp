@@ -116,6 +116,15 @@ struct scan {
                                    const scan & found, std::string & out);
 [[nodiscard]] bool split_place(std::string_view shorthand, std::string_view value,
                                std::string & align, std::string & justify);
+// CSS Grid 2's track lists, grid lines, template areas and auto-flow; the
+// split and fold of grid-row / grid-column / grid-area. Defined in grid.cpp.
+// `match_grid` answers false for a property it does not model and an empty
+// `out` for an invalid value.
+[[nodiscard]] bool match_grid(std::string_view property, const token_stream & ts,
+                              const scan & found, std::string & out);
+[[nodiscard]] bool split_grid_lines(std::string_view shorthand, std::string_view value,
+                                    std::vector<std::string> & out);
+[[nodiscard]] std::string fold_grid_lines(std::span<const std::string> lines);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by

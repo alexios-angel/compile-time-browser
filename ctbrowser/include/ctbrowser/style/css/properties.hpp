@@ -200,6 +200,11 @@ struct color_context {
 // THE COMPUTED VALUE OF A `<filter-value-list>` (Filter Effects 1 §11): the
 // percentages as numbers, the lengths in pixels, a shadow's colour first.
 [[nodiscard]] std::string computed_filter(std::string_view specified, const color_context & ctx);
+// THE COMPUTED VALUE OF A GRID TRACK LIST OR GRID LINE for an element that
+// is not a grid container (CSS Grid 2): lengths in pixels, a calc() folded.
+// Empty for a property or value this does not model.
+[[nodiscard]] std::string computed_grid(std::string_view property, std::string_view specified,
+                                        const color_context & ctx);
 // The same colour as sRGB, unclamped, for whoever paints it.
 struct srgb_color {
     float r = 0, g = 0, b = 0, a = 1;

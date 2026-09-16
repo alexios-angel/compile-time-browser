@@ -922,7 +922,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                     property == "border-image-source" ||
                                     property == "list-style-image";
         const bool filter_property = property == "filter" || property == "backdrop-filter";
-        if (is_color_property(property) || image_property || filter_property) {
+        const bool grid_property =
+            property == "grid-template-columns" || property == "grid-template-rows" ||
+            property == "grid-auto-columns" || property == "grid-auto-rows" ||
+            property == "grid-row-start" || property == "grid-row-end" ||
+            property == "grid-column-start" || property == "grid-column-end";
+        if (is_color_property(property) || image_property || filter_property || grid_property) {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -942,6 +947,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             if (image_property) {
                 if (std::string computed = style::css::computed_image(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (grid_property) {
+                if (std::string computed = style::css::computed_grid(property, text, ctx);
                     !computed.empty()) {
                     return computed;
                 }
