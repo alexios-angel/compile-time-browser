@@ -387,13 +387,17 @@ void dom_bindings::install_selection(context & cx) {
     // selection.
     if (const value document_proto = interface_prototype("Document"); document_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(document_proto.as_heap());
-        set_method(
-            cx, *on, "getSelection",
-            [selection_value](context & c, std::span<value>) {
+        // RETAINED HERE TOO. A captured `value` is invisible to the collector,
+        // and a page may delete the `getSelection` global - which would
+        // otherwise leave this method holding a swept object.
+        auto * method = cx.allocate<script::native_object>(
+            "getSelection", [selection_value](context & c, std::span<value>) {
                 const value view = c.lookup_property(c.current_this(), "defaultView");
                 return view.is_object() ? selection_value : value::null();
-            },
-            script::attr_builtin);
+            });
+        method->retained.push_back(selection_value);
+        on->set("getSelection", value::object(method));
+        on->set_attrs("getSelection", script::attr_builtin);
     }
 }
 
