@@ -144,6 +144,33 @@ constexpr void append_utf8(std::string & out, char32_t cp) {
     }
 }
 
+// WTF-8 CONCATENATION (WTF-8 §4.3): a high surrogate ending one piece and a
+// low surrogate starting the next - `ED A0..AF xx` then `ED B0..BF xx` -
+// are one code point once they meet, as the UTF-16 they stand for would be.
+// Rewrites in place; a text with no ED byte is untouched at the cost of one
+// memchr.
+inline void join_surrogates(std::string & text) {
+    std::size_t at = text.find('\xED');
+    while (at != std::string::npos && at + 5 < text.size()) {
+        const auto b1 = static_cast<unsigned char>(text[at + 1]);
+        const auto b3 = static_cast<unsigned char>(text[at + 3]);
+        const auto b4 = static_cast<unsigned char>(text[at + 4]);
+        if (b1 >= 0xA0 && b1 <= 0xAF && b3 == 0xED && b4 >= 0xB0 && b4 <= 0xBF) {
+            const auto b2 = static_cast<unsigned char>(text[at + 2]);
+            const auto b5 = static_cast<unsigned char>(text[at + 5]);
+            const char32_t high = 0xD000u | ((b1 & 0x3Fu) << 6) | (b2 & 0x3Fu);
+            const char32_t low = 0xD000u | ((b4 & 0x3Fu) << 6) | (b5 & 0x3Fu);
+            const char32_t cp = 0x10000u + ((high - 0xD800u) << 10) + (low - 0xDC00u);
+            std::string four;
+            append_utf8(four, cp);
+            text.replace(at, 6, four);
+            at = text.find('\xED', at + 4);
+            continue;
+        }
+        at = text.find('\xED', at + 1);
+    }
+}
+
 // One code point out of UTF-8, advancing `at` past it. A truncated or
 // malformed sequence yields the lead byte itself and advances by one, so bad
 // input is REJECTED rather than approximated: a name check sees a value no

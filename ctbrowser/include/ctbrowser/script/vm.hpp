@@ -15,6 +15,7 @@
 #include <system_error>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 
 #include <ctbrowser/script/bytecode.hpp>
@@ -418,6 +419,10 @@ public:
         return p;
     }
     [[nodiscard]] value string(std::string s) {
+        // Two halves of a surrogate pair that met here - `'\uD800' +
+        // '\uDC00'`, String.fromCharCode(0xD800, 0xDC00) - are one code
+        // point, as they would be in UTF-16 (core's join_surrogates).
+        ctbrowser::join_surrogates(s);
         return value::object(allocate<string_object>(std::move(s)));
     }
     [[nodiscard]] value make_object() { return value::object(allocate<object_object>()); }
