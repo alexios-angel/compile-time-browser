@@ -1052,3 +1052,99 @@ each smaller: 544 early errors, 348 wrong `SameValue`s (classes), 193
 "Expected a SyntaxError" (139 in direct eval), 154 `import.source`/
 `import.defer` (parsed as a broken `import.meta`), 126 missing TypeErrors,
 94 missing ReferenceErrors.
+
+## Measured at `9c70aaa0` — 2026-09-16, the four round-one branches merged
+
+The four agent branches of 2026-09-13 (`docs/plans/wpt-next.md` §1: T typed
+arrays, P promise/proxy/iterator/disposable, W dom/html, E `test/language`)
+merged onto `ctcompile-v1` `09341902` - which carries the ponytail audit of
+2026-09-15/16 (Script dedups, plain DOM node payloads, the bindings helpers) -
+as `c5682f32`, `20f17da4`, `247a7c53`, `9c70aaa0`, the ctjs gitlink at
+`69cc3d8`. Same instrument (devbox, 4 workers, 10 s timeout, 2 GB cap,
+`tools/check/test262-baseline.sh` over the whole corpus). Areas with fewer
+than 93 files are in the JSON and not in the table:
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `language` | 23,726 | 19829 | **21,402** | +1573 | 2,302 | 0/1/0 | 21 |
+| `annexB` | 1,086 | 369 | **378** | +9 | 665 | 1/0/0 | 42 |
+| `built-ins/Temporal` | 4,603 | 0 | **0** | +0 | 4,603 | 0/0/0 | 0 |
+| `built-ins/Object` | 3,411 | 3284 | **3,300** | +16 | 109 | 0/0/0 | 2 |
+| `built-ins/Array` | 3,082 | 2774 | **2,800** | +26 | 265 | 0/1/0 | 16 |
+| `built-ins/RegExp` | 1,879 | 938 | **939** | +1 | 925 | 3/0/0 | 12 |
+| `built-ins/TypedArray` | 1,446 | 1 | **752** | +751 | 555 | 0/0/0 | 139 |
+| `built-ins/String` | 1,223 | 1149 | **1,156** | +7 | 64 | 0/0/0 | 3 |
+| `built-ins/TypedArrayConstructors` | 738 | 74 | **280** | +206 | 328 | 0/0/0 | 130 |
+| `built-ins/Promise` | 732 | 257 | **721** | +464 | 10 | 0/0/0 | 1 |
+| `built-ins/Iterator` | 654 | 13 | **608** | +595 | 45 | 0/0/0 | 1 |
+| `built-ins/Date` | 594 | 580 | **583** | +3 | 8 | 0/0/0 | 3 |
+| `built-ins/DataView` | 561 | 0 | **438** | +438 | 4 | 0/0/0 | 119 |
+| `built-ins/Function` | 509 | 432 | **438** | +6 | 58 | 0/0/0 | 13 |
+| `built-ins/Atomics` | 389 | 0 | **0** | +0 | 0 | 0/0/0 | 389 |
+| `built-ins/Set` | 383 | 368 | **368** | +0 | 14 | 0/0/0 | 1 |
+| `built-ins/Number` | 340 | 333 | **335** | +2 | 4 | 0/0/0 | 1 |
+| `built-ins/Math` | 327 | 327 | **327** | +0 | 0 | 0/0/0 | 0 |
+| `built-ins/Proxy` | 311 | 146 | **173** | +27 | 102 | 0/0/0 | 36 |
+| `built-ins/ArrayBuffer` | 221 | 24 | **190** | +166 | 3 | 0/0/0 | 28 |
+| `built-ins/Map` | 204 | 190 | **190** | +0 | 13 | 0/0/0 | 1 |
+| `built-ins/JSON` | 165 | 137 | **137** | +0 | 26 | 0/0/0 | 2 |
+| `built-ins/Reflect` | 153 | 115 | **150** | +35 | 3 | 0/0/0 | 0 |
+| `built-ins/WeakMap` | 141 | 135 | **135** | +0 | 5 | 0/0/0 | 1 |
+| `built-ins/AsyncDisposableStack` | 104 | 0 | **103** | +103 | 0 | 0/0/0 | 1 |
+| `built-ins/SharedArrayBuffer` | 104 | 0 | **0** | +0 | 0 | 0/0/0 | 104 |
+| `built-ins/Symbol` | 98 | 48 | **76** | +28 | 3 | 0/0/0 | 19 |
+| `built-ins/NativeErrors` | 94 | 82 | **82** | +0 | 6 | 0/0/0 | 6 |
+| `built-ins/DisposableStack` | 93 | 0 | **92** | +92 | 0 | 0/0/0 | 1 |
+| `built-ins/Error` | 93 | 83 | **85** | +2 | 3 | 0/0/0 | 5 |
+| **total** | **48,624** | 32,295 | **36,962** | | 10,538 | 4/2/0 | 1118 |
+
+**36,962 of 48,624 (76.0%); of the 47,506 that ran, 77.8%** - from 32,295
+(66.4%) at `b346dc0b`, **+4,717 FAIL -> PASS and 50 PASS -> FAIL**. The
+agents' own numbers held through the merge: `TypedArray` 1 -> 752,
+`TypedArrayConstructors` 74 -> 280, `DataView` 0 -> 438, `ArrayBuffer`
+24 -> 190, `Uint8Array` 4 -> 66; `Promise` 257 -> 721 of 732, `Iterator`
+13 -> 608, `DisposableStack` 0 -> 92, `AsyncDisposableStack` 0 -> 103,
+`SuppressedError` 0 -> 20, `AggregateError` 0 -> 23, `Proxy` 146 -> 173,
+`Reflect` 115 -> 150, `Symbol` 48 -> 76; `test/language` 19,829 -> 21,402.
+
+**The 50 lost, each read:** 19 `annexB/language/function-code` (`block-decl-
+func-*`, `if-decl-*`, `switch-case-*`: agent E made a block's function
+declaration block-local per 14.2.1 and dropped the sloppy-mode var binding
+B.3.3 gives it - fixed in `09798323` on top of this row, unmeasured until the
+next); 11 `using`/`await using` use-before-initialization (the TDZ of a
+`using` binding reads as a TypeError from the disposal register rather than
+a ReferenceError; agent E's own report named these); 5 `Array/fromAsync`
+(rejections that the two-tick thenable resolution of `20f17da4` now surfaces
+in a different order); 5 decorator syntax files (`decorators` is a stage-3
+feature test262 gates behind a flag; the parser refuses `@` on purpose now -
+the runner should skip the feature); `tagged-template/tco-*` (2, tail calls);
+`for-in`/`for-of` `head-var-bound-names-in-stmt` (a `var x;` inside the body
+wrote undefined over the element - fixed in `09798323`); `S10.6_A5_T3`,
+`namespace/internals/super-set-to-tdz-binding-with-accessor`, `AsyncFunction-
+construct` (the `new AsyncFunction` body parse), `Object/prototype/toString/
+proxy-revoked`, `TypedArrayConstructors/internals/Set/key-is-out-of-bounds-
+receiver-is-not-object`, `annexB/language/statements` (1).
+
+**Where the corpus says the holes are now**, in files: `Temporal` 4,603 (not
+planned); `RegExp` 925 - 469 of them `property-escapes/generated` (the
+Unicode property tables behind `\p{...}`, a data-generation job), 57
+`unicodeSets/generated` and 28 `prototype/unicodeSets` (the `v` flag), and
+175 "negative parse/SyntaxError" the regexp early-error pass does not raise;
+`TypedArray` 555 + `TypedArrayConstructors` 328 + 60 in `Array/prototype` -
+`BigInt64Array`, `BigUint64Array` and `Float16Array` are not defined
+(`value.hpp`'s `element_kind` has no `big_i64`/`big_u64`/`f16`), which is
+now the single largest lever in `built-ins`; `annexB` 665 (192 the B.3.3
+family above, 27 `escape`/`unescape`, RegExp legacy statics, `__proto__`
+and the `__defineGetter__` family); `language` 2,302 (decorators 300-odd
+behind the feature flag, `import.source`/`import.defer`, the rest early
+errors and class edge cases); `Array/prototype` 265; `Object` 109;
+`Function` 58; `JSON` 26; `BigInt` 42 (`asIntN`/`asUintN` landed in
+`2b9d7071` on top of this row); `parseInt` 16; `isFinite`/`isNaN` 9 each.
+
+**And a note on the gate at this SHA.** The ctbrowser half of the build and
+every ctbrowser test the run reached were green, but `tools/remote-build.sh`
+stopped in ctcompile's `map_flow` pipeline fixture, which was no longer
+provably native: agent E's compiler gave every object-literal method an own
+`__home` property (a closure -> literal edge the escape analysis refuses).
+`5865c08b` emits the link only for a method that says `super`; the next row
+is the one measured behind a green gate.

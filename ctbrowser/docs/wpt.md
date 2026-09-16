@@ -14,6 +14,78 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-16, the five suites after the round-one merges
+
+**740 of the 1,102 that ran (67.2%); subtests 45,822 PASS, 2,025 FAIL** -
+from 788 (72.3%) and 69,993 / 2,684 at `7f9211d0` (three reflection pages alone are 23,309 of the subtest drop - point 2 below): **63 files lost, 15 gained**, and
+the loss is the instrument getting honest rather than the engine getting
+worse. Engine at `9c70aaa0` on `ctbrowser-wpt` (`ctcompile-v1` `09341902`
+with the audit, plus the four round-one branches: T typed arrays, P promise/
+proxy/iterator, W dom/html, E `test/language`), same run as the test262 row
+of the same SHA in `docs/test262.md`; the five suites, 4 workers,
+`CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap. The before column is the wide
+run at `7f9211d0`, which used the same corpus checkout (`3f6b09ae3e`).
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/css-values` | **153** (-5) | 98 | 15 | 0 | 5 | 237 | 508 | 5,510 / 1,015 |
+| `css/cssom` | **144** (-3) | 38 | 0 | 0 | 10 | 29 | 221 | 1,604 / 95 |
+| `dom/events` | **71** (-10) | 11 | 7 | 0 | 2 | 85 | 176 | 627 / 22 |
+| `dom/nodes` | **241** (-12) | 45 | 21 | 0 | 2 | 53 | 362 | 12,045 / 740 |
+| `html/dom` | **131** (-18) | 74 | 14 | 0 | 20 | 137 | 376 | 26,036 / 153 |
+| **total** | **740** | 266 | 57 | 0 | 39 | 541 | 1643 | 45,822 / 2,025 |
+
+**What the 63 lost files are.** Read one by one against the `7f9211d0`
+JSON, they are two things, neither a regression in the engine:
+
+1. **A false pass the whole instrument had, found and gone.** Every
+   `promise_test` whose body threw or returned a rejected promise was
+   reported PASS by testharness.js on this engine - a probe page confirms
+   it against Codex's build of `09341902`: six `promise_test`s that throw
+   synchronously, after an `await`, after a timer, after a rAF, or return a
+   rejection, all six PASS there and all six FAIL at `9c70aaa0`. Agent P's
+   Promise rework (`20f17da4`: two-tick thenable resolution, rejection
+   tracking per 27.2) is what makes the rejection reach the harness's
+   `.then(_, fail)`. So `dom/events/scrolling/scroll-event-fired-to-*`
+   (`scrollTop` is not implemented - the old PASS asserted on it),
+   `dom/nodes/moveBefore/focus-preserve` (`setSelectionRange` is not
+   implemented), the `moveBefore/continue-css-*` and `webkit-animation-*`
+   TIMEOUTs (they wait on animation events nothing fires), the
+   `html/dom/partial-updates` and `render-blocking` files, `css/cssom/
+   idlharness` and the rest of the list were never passing. The subtest
+   counts of every earlier row in this file are inflated by the same
+   amount: any async test that failed was counted as a pass.
+2. **The runner gave up on a busy page after one second.** `send_command`'s
+   one-second socket timeout escaped as "driver listened but answered no
+   command - the page never yielded", at 1.1-2.0 s, for 18 files whose load
+   script runs longer than that: `html/dom/reflection-{text,forms,embedded,
+   tabular}.html` (10,000-subtest pages), the seven `calc-size/animation`
+   and `animations/calc-interpolation` files, `random-computed`, and the
+   six `NodeList-static-length-getter-tampered` files. Fixed in `41a285dc`
+   (the recv retries until the deadline): re-run alone, `reflection-text`
+   is PASS with 10,202 subtests in 1.1 s. `NodeList-static-length-getter-
+   tampered-*` then hit the VM's 40,000,000-object allocation ceiling - a
+   `NodeList` index read allocates, and the test reads 250 million of them -
+   which is a real finding and the next thing to look at in `dom/nodes`.
+   The `reflection-text.html` TIMEOUT `docs/plans/wpt-next.md` §2 chased
+   "since the audit" was this, not the audit.
+
+**The 15 gained** are agent W's (`Element-children`, the four
+`getElementsByClassName-2x`, `MutationObserver-textContent`, `name-
+validation`, `processing-instruction-attributes`, `Node-appendChild-
+cereactions-vs-script`, `insertion-removing-steps/Node-appendChild-script-
+and-iframe`) and the cascade's (`getComputedStyle-pseudo*`, `cssstyledeclaration-
+csstext`, `css-style-reparse`, `computed-style-005`, `line-break-ch-unit`,
+`viewport-units-*`).
+
+**Next, in this order:** re-measure the five suites and the wide corpus
+with the fixed runner behind a green gate (this SHA's gate stopped in
+ctcompile's `map_flow` pipeline fixture on agent E's `__home` property,
+fixed in `5865c08b`); then `scrollTop`/`scrollLeft` and the scroll event
+(cssom-view, 8 files here and 40-odd in `css/cssom-view`); the
+`NodeList` index allocation; `URLSearchParams` (12 HARNESS_ERRORs in
+`html/dom`); `FontFace` (3).
+
 ## The baseline — 2026-09-13, the widened corpus
 
 **1,799 of the 5,099 tests that ran, which is 35.3%**, and not one crash.
