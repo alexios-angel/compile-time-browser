@@ -308,6 +308,16 @@ int main() {
               "return a[0]; })()",
               "5");
     throws("(() => { const a = new Uint8Array(1); a[0] = Symbol(); })()", "TypeError");
+    // 10.4.5.3: an integer index past the length, a canonical numeric key that
+    // is not one, or a descriptor that would pin the element, is refused.
+    js_expect("Reflect.defineProperty(new Uint8Array(1), 1, {value: 1}) + '|' + "
+              "Reflect.defineProperty(new Uint8Array(1), '-0', {value: 1}) + '|' + "
+              "Reflect.defineProperty(new Uint8Array(1), '1.5', {value: 1}) + '|' + "
+              "Reflect.defineProperty(new Uint8Array(1), 0, {value: 1, configurable: false})",
+              "false|false|false|false");
+    js_expect("(() => { const a = new Uint8Array(1); Reflect.defineProperty(a, 0, {value: 300}); "
+              "return a[0] + '|' + Object.getOwnPropertyDescriptor(a, '-0'); })()",
+              "44|undefined");
 
     // --- BigInt64Array, BigUint64Array (Table 71): the element is a bigint -----
     js_expect("BigInt64Array.BYTES_PER_ELEMENT + '|' + BigUint64Array.BYTES_PER_ELEMENT", "8|8");

@@ -7,12 +7,14 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
+#include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -55,6 +57,20 @@ bool array_set_length(array_object & arr, double n) {
 }
 
 namespace {
+
+// CanonicalNumericIndexString (7.1.21) for a key that array_index_key already
+// refused: "-0", "1.5", "-1", "NaN", "Infinity" and the like. On a typed
+// array such a key names NO property (10.4.5.1, 10.4.5.3) - it is neither an
+// element nor a name the table may hold - where "01" or "foo" is an ordinary
+// property.
+[[nodiscard]] bool numeric_non_index_key(const std::string & name) {
+    if (name == "-0") { return true; }
+    if (name.empty() || !(std::isdigit(static_cast<unsigned char>(name.front())) ||
+                          name.front() == '-' || name.front() == 'I' || name.front() == 'N')) {
+        return false;
+    }
+    return number_to_string(string_to_number(name)) == name;
+}
 
 // 10.4.2.1 step 2 for a NEW element at `at`: a length that is not writable
 // refuses an index at or past it, and the slot is materialised the way
@@ -196,6 +212,10 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         std::uint32_t at = 0;
+        if (arr->elements != element_kind::none && !object_object::array_index_key(name, at) &&
+            numeric_non_index_key(name)) {
+            return false;
+        }
         if (object_object::array_index_key(name, at)) {
             if (arr->is_view()) {
                 if (at < arr->length()) {
@@ -476,8 +496,8 @@ bool context::define_own_property(value target, const std::string & name,
     // (TypedArraySetElement) - which may throw, and answers true past it.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        if (std::uint32_t at = 0;
-            arr->elements != element_kind::none && object_object::array_index_key(name, at)) {
+        std::uint32_t at = 0;
+        if (arr->elements != element_kind::none && object_object::array_index_key(name, at)) {
             if (at >= arr->length()) { return false; }
             if ((wanted.has_configurable && !wanted.configurable) ||
                 (wanted.has_enumerable && !wanted.enumerable) || wanted.is_accessor() ||
@@ -487,6 +507,7 @@ bool context::define_own_property(value target, const std::string & name,
             if (wanted.has_value) { (void)typed_element_set(*this, *arr, at, wanted.held); }
             return true;
         }
+        if (arr->elements != element_kind::none && numeric_non_index_key(name)) { return false; }
     }
 
     property_descriptor current;
