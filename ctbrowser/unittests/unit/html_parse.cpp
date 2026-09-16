@@ -74,13 +74,15 @@ void expect_tree(std::string_view html, std::string_view want, std::string_view 
 
 void test_implied_structure() {
     // <html>, <head> and <body> exist whether or not the document says so. Every
-    // selector and every layout rule downstream assumes it.
-    expect_tree("<p>hi</p>", R"(html(body(p("hi"))))", "bare content grows html and body");
-    expect_tree("<html><body><p>hi</p></body></html>", R"(html(body(p("hi"))))",
+    // selector and every layout rule downstream assumes it - and the <head> is
+    // there even when nothing went in it, as "before head" makes one for the
+    // first token that is not head content (13.2.6.4.3).
+    expect_tree("<p>hi</p>", R"(html(head body(p("hi"))))", "bare content grows html and body");
+    expect_tree("<html><body><p>hi</p></body></html>", R"(html(head body(p("hi"))))",
                 "and is not duplicated when the document does say so");
     expect_tree("<title>t</title><p>hi</p>", R"(html(head(title("t")) body(p("hi"))))",
                 "head-only content lands in an implied head");
-    expect_tree("   \n  <p>hi</p>", R"(html(body(p("hi"))))",
+    expect_tree("   \n  <p>hi</p>", R"(html(head body(p("hi"))))",
                 "leading whitespace does not become a text node");
 }
 
@@ -89,41 +91,48 @@ void test_implied_structure() {
 void test_unclosed_paragraphs() {
     // THE classic. Written by hand on nearly every page before XHTML, and a
     // nesting parser gets it wrong in a way that changes every margin.
-    expect_tree("<p>one<p>two", R"(html(body(p("one") p("two"))))",
+    expect_tree("<p>one<p>two", R"(html(head body(p("one") p("two"))))",
                 "a <p> start tag closes an open <p>");
-    expect_tree("<p>one<div>two</div>", R"(html(body(p("one") div("two"))))",
+    expect_tree("<p>one<div>two</div>", R"(html(head body(p("one") div("two"))))",
                 "and so does any block-level start tag");
-    expect_tree("<p>one<b>two", R"(html(body(p("one" b("two")))))", "but an inline one does not");
+    expect_tree("<p>one<b>two", R"(html(head body(p("one" b("two")))))",
+                "but an inline one does not");
 }
 
 void test_unclosed_list_items() {
-    expect_tree("<ul><li>a<li>b</ul>", R"(html(body(ul(li("a") li("b")))))",
+    expect_tree("<ul><li>a<li>b</ul>", R"(html(head body(ul(li("a") li("b")))))",
                 "an <li> closes the previous <li>");
-    expect_tree("<dl><dt>a<dd>b</dl>", R"(html(body(dl(dt("a") dd("b")))))",
+    expect_tree("<dl><dt>a<dd>b</dl>", R"(html(head body(dl(dt("a") dd("b")))))",
                 "and <dt>/<dd> close each other");
 }
 
 void test_headings_do_not_nest() {
-    expect_tree("<h1>a<h2>b", R"(html(body(h1("a") h2("b"))))", "a heading closes an open heading");
+    expect_tree("<h1>a<h2>b", R"(html(head body(h1("a") h2("b"))))",
+                "a heading closes an open heading");
 }
 
 void test_void_elements() {
-    expect_tree("<p>a<br>b</p>", R"(html(body(p("a" br "b"))))", "<br> takes no children");
-    expect_tree("<img src=x><p>after", R"(html(body(img p("after"))))", "and neither does <img>");
-    expect_tree("<br/>", R"(html(body(br)))", "a self-closing void element is still just void");
+    expect_tree("<p>a<br>b</p>", R"(html(head body(p("a" br "b"))))", "<br> takes no children");
+    expect_tree("<img src=x><p>after", R"(html(head body(img p("after"))))",
+                "and neither does <img>");
+    expect_tree("<br/>", R"(html(head body(br)))",
+                "a self-closing void element is still just void");
 }
 
 void test_stray_end_tags_are_ignored() {
     // The rule that stops one typo from unwinding the whole document.
-    expect_tree("<div>a</span>b</div>", R"(html(body(div("a" "b"))))",
+    // ONE Text node, not two: "insert a character" appends to the Text node
+    // before the insertion point (HTML 13.2.6.1), and an ignored tag is not a
+    // boundary. That is also what makes `document.write("a"); write("b")` one.
+    expect_tree("<div>a</span>b</div>", R"(html(head body(div("ab"))))",
                 "an end tag with nothing to close is ignored");
-    expect_tree("</div><p>a", R"(html(body(p("a"))))", "even at the very start");
-    expect_tree("<div>a</body>b</div>", R"(html(body(div("a" "b"))))",
+    expect_tree("</div><p>a", R"(html(head body(p("a"))))", "even at the very start");
+    expect_tree("<div>a</body>b</div>", R"(html(head body(div("ab"))))",
                 "and </body> does not end the document");
 }
 
 void test_unclosed_at_eof() {
-    expect_tree("<div><p>a", R"(html(body(div(p("a")))))",
+    expect_tree("<div><p>a", R"(html(head body(div(p("a")))))",
                 "everything still open at EOF is closed implicitly");
 }
 
@@ -132,13 +141,13 @@ void test_unclosed_at_eof() {
 void test_table_implies_its_sections() {
     // A page writing <table><tr><td> gets a <tbody> it never asked for, and
     // `table > tbody > tr` selectors in the wild depend on it.
-    expect_tree("<table><tr><td>a</table>", R"(html(body(table(tbody(tr(td("a")))))))",
+    expect_tree("<table><tr><td>a</table>", R"(html(head body(table(tbody(tr(td("a")))))))",
                 "<tr> in a <table> grows a <tbody>");
     expect_tree("<table><tbody><tr><td>a<td>b</table>",
-                R"(html(body(table(tbody(tr(td("a") td("b")))))))",
+                R"(html(head body(table(tbody(tr(td("a") td("b")))))))",
                 "and a <td> closes the previous <td>");
     expect_tree("<table><tr><td>a<tr><td>b</table>",
-                R"(html(body(table(tbody(tr(td("a")) tr(td("b")))))))",
+                R"(html(head body(table(tbody(tr(td("a")) tr(td("b")))))))",
                 "and a <tr> closes the previous row");
 }
 
@@ -146,7 +155,8 @@ void test_foster_parenting() {
     // Text directly inside a <table> goes BEFORE the table, not inside it.
     // Every browser does this; a parser that nests it instead puts stray text
     // into the table layout and the page shifts.
-    expect_tree("<table>stray<tr><td>a</table>", R"(html(body("stray" table(tbody(tr(td("a")))))))",
+    expect_tree("<table>stray<tr><td>a</table>",
+                R"(html(head body("stray" table(tbody(tr(td("a")))))))",
                 "text inside a table is foster-parented out of it");
 }
 
@@ -156,7 +166,7 @@ void test_formatting_reconstruction() {
     // A <p> opened inside a <b> and closed inside it simply nests. This is the
     // case people EXPECT to split and it does not, because the </b> arrives
     // after the </p> and finds nothing block-level still open.
-    expect_tree("<b>one<p>two</p></b>", R"(html(body(b("one" p("two")))))",
+    expect_tree("<b>one<p>two</p></b>", R"(html(head body(b("one" p("two")))))",
                 "a block opened and closed inside a formatting element just nests");
 }
 
@@ -164,7 +174,7 @@ void test_adoption_agency_with_a_furthest_block() {
     // THE case the adoption agency exists for. The </b> arrives while the <p>
     // is still open, so a tree would have to hold the <p> both inside and
     // outside the <b>. Browsers show <b>1</b><p><b>2</b>3</p>.
-    expect_tree("<b>1<p>2</b>3</p>", R"(html(body(b("1") p(b("2") "3"))))",
+    expect_tree("<b>1<p>2</b>3</p>", R"(html(head body(b("1") p(b("2") "3"))))",
                 "a formatting element closed across a block is split around it");
 }
 
@@ -276,7 +286,8 @@ void test_duplicate_attributes_keep_the_first() {
 }
 
 void test_tag_and_attribute_names_fold_case() {
-    expect_tree("<DIV><P>a</P></DIV>", R"(html(body(div(p("a")))))", "tag names fold to lowercase");
+    expect_tree("<DIV><P>a</P></DIV>", R"(html(head body(div(p("a")))))",
+                "tag names fold to lowercase");
 }
 
 // --- text-only elements ---------------------------------------------------
@@ -292,19 +303,19 @@ void test_raw_text_elements() {
     expect_tree("<title>a &amp; b</title>", R"(html(head(title("a & b"))))",
                 "<title> is RCDATA: entities decode, markup does not");
     expect_tree("<textarea><b>not bold</b></textarea>",
-                R"(html(body(textarea("<b>not bold</b>"))))",
+                R"(html(head body(textarea("<b>not bold</b>"))))",
                 "<textarea> keeps its markup as text");
 }
 
 // --- character references -------------------------------------------------
 
 void test_character_references() {
-    expect_tree("<p>a &amp; b</p>", R"(html(body(p("a & b"))))", "named references decode");
-    expect_tree("<p>&#65;&#x42;</p>", R"(html(body(p("AB"))))", "numeric references decode");
-    expect_tree("<p>&copy;</p>", "html(body(p(\"©\")))", "and so do non-ASCII ones");
-    expect_tree("<p>&notareal;</p>", R"(html(body(p("&notareal;"))))",
+    expect_tree("<p>a &amp; b</p>", R"(html(head body(p("a & b"))))", "named references decode");
+    expect_tree("<p>&#65;&#x42;</p>", R"(html(head body(p("AB"))))", "numeric references decode");
+    expect_tree("<p>&copy;</p>", "html(head body(p(\"©\")))", "and so do non-ASCII ones");
+    expect_tree("<p>&notareal;</p>", R"(html(head body(p("&notareal;"))))",
                 "an unknown reference stays literal");
-    expect_tree("<p>a & b</p>", R"(html(body(p("a & b"))))", "a bare ampersand is text");
+    expect_tree("<p>a & b</p>", R"(html(head body(p("a & b"))))", "a bare ampersand is text");
     // The rule that keeps query strings intact. `&copy=` inside an attribute
     // must NOT become a copyright sign, or every URL with a `copy` parameter
     // breaks.
@@ -327,13 +338,13 @@ void test_character_references() {
 // doctype and a comment produce no ELEMENT and no TEXT; the nodes they do
 // produce are unit/dom_special_nodes' to check.
 void test_comments_and_doctype() {
-    expect_tree("<!doctype html><p>a", R"(html(body(p("a"))))",
+    expect_tree("<!doctype html><p>a", R"(html(head body(p("a"))))",
                 "a doctype produces no element and no text");
-    expect_tree("<p>a<!-- hidden -->b</p>", R"(html(body(p("a" "b"))))",
+    expect_tree("<p>a<!-- hidden -->b</p>", R"(html(head body(p("a" "b"))))",
                 "a comment produces no element and no text");
-    expect_tree("<p>a<!-- unterminated", R"(html(body(p("a"))))",
+    expect_tree("<p>a<!-- unterminated", R"(html(head body(p("a"))))",
                 "an unterminated comment swallows the rest rather than the document");
-    expect_tree("<?php echo 1; ?><p>a", R"(html(body(p("a"))))",
+    expect_tree("<?php echo 1; ?><p>a", R"(html(head body(p("a"))))",
                 "a processing instruction is a node, not an element and not text");
     // And where the comment lands: ahead of <html> it is the Document's, and
     // inside the tree it is the current node's.

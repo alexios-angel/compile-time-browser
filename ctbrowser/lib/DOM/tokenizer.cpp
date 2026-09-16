@@ -18,7 +18,16 @@ token tokenizer::next() {
     // decode_reference, never crosses a token boundary - so [begin, at_) is
     // exactly the bytes this token was made from.
     const std::size_t begin = at_;
+    starved_ = false;
     token out = next_token();
+    // THE ONE OTHER REWIND: a token the truncated view cut in half goes back
+    // to its first byte and is read again once the stream has grown. The
+    // states set `starved_` wherever they needed a byte that was not there.
+    if (starved_) {
+        at_ = begin;
+        out = token{};
+        out.kind = token_kind::incomplete;
+    }
     out.source_begin = begin;
     out.source_end = at_;
     return out;
@@ -26,6 +35,7 @@ token tokenizer::next() {
 
 token tokenizer::next_token() {
     if (at_ >= input_.size()) {
+        starve();
         return token{token_kind::end_of_file, {}, {}, {}, {}, {}, false, false};
     }
     switch (model_) {
@@ -64,11 +74,44 @@ void tokenizer::append_text(std::string & data) {
     if (at_ < input_.size() && input_[at_] == '\n') { ++at_; }
 }
 
+// A CHARACTER RUN STOPS SHORT OF ANYTHING THE TRUNCATED VIEW CUTS: a `<` or `&`
+// whose continuation has not arrived, or a CR whose LF may be next. The text
+// before it is emitted - the spec emits characters one at a time and would
+// have too - and the cut byte waits for the next call.
+bool tokenizer::cut_at(std::size_t at) const {
+    if (!truncated_) { return false; }
+    const char c = input_[at];
+    const std::size_t size = input_.size();
+    if (c == '\r') { return at + 1 >= size; }
+    if (c == '<') {
+        if (at + 1 >= size) { return true; }
+        if (input_[at + 1] == '/') { return at + 2 >= size; }
+        if (input_[at + 1] == '!') { return at + 4 >= size; }
+        return false;
+    }
+    if (c != '&') { return false; }
+    std::size_t i = at + 1;
+    if (i < size && input_[i] == '#') {
+        ++i;
+        if (i < size && (input_[i] == 'x' || input_[i] == 'X')) { ++i; }
+    }
+    while (i < size && (is_alpha(input_[i]) || (input_[i] >= '0' && input_[i] <= '9'))) { ++i; }
+    return i >= size;
+}
+
 token tokenizer::in_data() {
     if (peek() == '<') {
         if (is_alpha(peek(1))) { return tag_open(); }
         if (peek(1) == '/' && is_alpha(peek(2))) { return tag_open(); }
         if (looking_at("<!--")) { return comment(); }
+        // `<!doc` at the end of a truncated view: the doctype check below
+        // needs nine bytes, and a bogus comment would be the wrong answer.
+        if (truncated_ && peek(1) == '!' && input_.size() - at_ < 9 &&
+            ctbrowser::ascii_iequals(
+                input_.substr(at_), std::string_view{"<!doctype"}.substr(0, input_.size() - at_))) {
+            starve();
+            return token{};
+        }
         // CDATA is legal in foreign content and nowhere else - in HTML the same
         // bytes are a bogus comment, which is what the branch below makes of
         // them. `<![CDATA[<b>]]>` inside an SVG is the TEXT "<b>", not markup.
@@ -102,6 +145,7 @@ token tokenizer::processing_instruction() {
     if (!(is_alpha(peek(2)) || peek(2) == '_')) { return bogus_comment(); }
     while (at < input_.size() && target_char(input_[at])) { ++at; }
     if (at >= input_.size()) {
+        starve();
         at_ = input_.size();
         return token{token_kind::end_of_file, {}, {}, {}, {}, {}, false, false};
     }
@@ -119,6 +163,7 @@ token tokenizer::processing_instruction() {
     while (at_ < input_.size() && html_whitespace.contains(peek())) { ++at_; }
     while (at_ < input_.size() && peek() != '>') { append_text(out.data); }
     if (at_ >= input_.size()) {
+        starve();
         return token{token_kind::end_of_file, {}, {}, {}, {}, {}, false, false};
     }
     ++at_; // '>'
@@ -131,6 +176,10 @@ token tokenizer::characters() {
     out.kind = token_kind::character;
     while (at_ < input_.size()) {
         const char c = input_[at_];
+        if (cut_at(at_)) {
+            if (out.data.empty()) { starve(); }
+            break;
+        }
         if (c == '<') {
             // Only stop if this `<` actually begins markup; otherwise it is
             // part of the text run.
@@ -158,12 +207,35 @@ token tokenizer::rest_as_text() {
 token tokenizer::in_text_until_close(bool decode_entities) {
     token out;
     out.kind = token_kind::character;
+    bool closed = false;
     while (at_ < input_.size()) {
-        if (input_[at_] == '<' && peek(1) == '/' &&
-            ctbrowser::ascii_iequals(input_.substr(at_ + 2, close_tag_.size()), close_tag_)) {
+        if (input_[at_] == '<') {
             const std::size_t after = at_ + 2 + close_tag_.size();
-            const char follows = after < input_.size() ? input_[after] : '>';
-            if (html_whitespace.contains(follows) || follows == '>' || follows == '/') { break; }
+            // `</scr` at the end of a truncated view may be the close tag:
+            // wait for the rest rather than take it for text. `have` is what
+            // follows the `<`; it is the close tag's prefix when every byte
+            // of it matches `/` + the name, the byte after the name included.
+            if (truncated_ && after >= input_.size()) {
+                const std::string_view have = input_.substr(at_ + 1);
+                const std::string want = "/" + close_tag_;
+                if (have.size() <= want.size() &&
+                    ctbrowser::ascii_iequals(have, std::string_view{want}.substr(0, have.size()))) {
+                    if (out.data.empty()) { starve(); }
+                    break;
+                }
+            }
+            if (peek(1) == '/' &&
+                ctbrowser::ascii_iequals(input_.substr(at_ + 2, close_tag_.size()), close_tag_)) {
+                const char follows = after < input_.size() ? input_[after] : '>';
+                if (html_whitespace.contains(follows) || follows == '>' || follows == '/') {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        if ((decode_entities || input_[at_] == '\r') && cut_at(at_)) {
+            if (out.data.empty()) { starve(); }
+            break;
         }
         if (decode_entities && input_[at_] == '&') {
             out.data += decode_reference(false);
@@ -171,9 +243,14 @@ token tokenizer::in_text_until_close(bool decode_entities) {
         }
         append_text(out.data);
     }
-    // Back to normal markup: the close tag itself is a tag again.
-    model_ = content_model::data;
-    if (out.data.empty()) { return next(); }
+    // Back to normal markup: the close tag itself is a tag again. Only once it
+    // has been SEEN - a truncated view that ends inside the text stays in this
+    // state, so the next chunk is read as text too.
+    if (closed || !truncated_) { model_ = content_model::data; }
+    // The close tag itself, when it came straight away. An empty run for any
+    // other reason - the view ran out, starved or not - goes back as it is:
+    // asking again from the same place would be this function again.
+    if (out.data.empty() && closed) { return next_token(); }
     return out;
 }
 
@@ -185,6 +262,7 @@ token tokenizer::cdata() {
     const std::size_t end = input_.find("]]>", at_);
     // Unterminated: the rest of the document is the section. The spec says the
     // same, and it beats dropping the content of a graphic over a missing `]]>`.
+    if (end == std::string_view::npos) { starve(); }
     at_ = end == std::string_view::npos ? input_.size() : end;
     out.data = input_.substr(begin, at_ - begin);
     if (end != std::string_view::npos) { at_ = end + 3; }
@@ -235,7 +313,7 @@ void tokenizer::read_attributes(token & out, bool preserve_case) {
             }
             continue;
         }
-        if (at_ >= input_.size()) { return; }
+        if (at_ >= input_.size()) { break; }
 
         token_attribute attribute;
         while (at_ < input_.size() && !html_whitespace.contains(peek()) && peek() != '=' &&
@@ -263,6 +341,7 @@ void tokenizer::read_attributes(token & out, bool preserve_case) {
             if (!seen) { out.attributes.push_back(std::move(attribute)); }
         }
     }
+    starve(); // the tag's `>` has not arrived
 }
 
 std::string tokenizer::read_attribute_value() {
@@ -277,7 +356,11 @@ std::string tokenizer::read_attribute_value() {
             }
             out += input_[at_++];
         }
-        if (at_ < input_.size()) { ++at_; }
+        if (at_ < input_.size()) {
+            ++at_;
+        } else {
+            starve();
+        }
         return out;
     }
     // Unquoted. Ends at whitespace or `>`, which is what makes
@@ -289,6 +372,7 @@ std::string tokenizer::read_attribute_value() {
         }
         out += input_[at_++];
     }
+    if (at_ >= input_.size()) { starve(); }
     return out;
 }
 
@@ -303,6 +387,7 @@ token tokenizer::comment() {
         }
         out.data += input_[at_++];
     }
+    starve();
     return out; // unterminated: everything to EOF is the comment
 }
 
@@ -311,7 +396,11 @@ token tokenizer::bogus_comment() {
     out.kind = token_kind::comment;
     at_ += 1;
     while (at_ < input_.size() && peek() != '>') { out.data += input_[at_++]; }
-    if (at_ < input_.size()) { ++at_; }
+    if (at_ < input_.size()) {
+        ++at_;
+    } else {
+        starve();
+    }
     return out;
 }
 
@@ -352,7 +441,11 @@ token tokenizer::doctype() {
         (void)quoted(out.system_id);
     }
     while (at_ < input_.size() && peek() != '>') { ++at_; }
-    if (at_ < input_.size()) { ++at_; }
+    if (at_ < input_.size()) {
+        ++at_;
+    } else {
+        starve();
+    }
     out.force_quirks = out.name != "html";
     return out;
 }

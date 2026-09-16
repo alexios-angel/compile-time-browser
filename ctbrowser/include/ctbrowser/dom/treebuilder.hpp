@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -130,10 +131,62 @@ namespace ctbrowser::html {
 
 class tree_builder {
 public:
-    tree_builder(document & doc, atom_table & atoms) : doc_(&doc), atoms_(&atoms) {}
+    tree_builder(document & doc, atom_table & atoms)
+        : doc_(&doc), atoms_(&atoms), held_builder_(doc) {}
 
     [[nodiscard]] node_id parse(std::string_view input) { return parse(input, false); }
     [[nodiscard]] node_id parse_body_fragment(std::string_view input) { return parse(input, true); }
+
+    // --- THE PARSER-DRIVEN DOCUMENT (HTML 13.2.3.1 the input stream, 13.2.6
+    // "in text" on `</script>`, 8.4 dynamic markup insertion) ----------------
+    //
+    // `parse` above is `begin` + `close` with no script hook: the whole input,
+    // no script run. A page is different: a `</script>` PAUSES the parser, the
+    // script runs against the half-built tree, and `document.write` from
+    // inside it inserts text into the INPUT STREAM at the insertion point -
+    // just after that `</script>` - which the tokenizer then reads before the
+    // rest of the file. So `document.write("<p>")` from a script leaves the
+    // paragraph open across the remaining markup, exactly as the author would
+    // have written it there, and a written `<script>` runs before the
+    // outer script's next statement returns.
+    //
+    // THE INPUT STREAM IS A BUFFER THE TOKENIZER READS WITH A LIMIT. The
+    // insertion points are a STACK of offsets into it (one per nested script,
+    // plus the open stream's end for a document.open()), and a write inserts
+    // at the top and advances it. The tokenizer is then run with its view cut
+    // at that offset, and a token the cut halves comes back `incomplete` and
+    // is re-read once more arrives - see tokenizer::set_input. That is the
+    // spec's "stop when the tokenizer reaches the insertion point" without a
+    // resumable character-by-character state machine.
+    //
+    // The hook is called with the <script> element once its end tag has been
+    // processed and it is on the tree; whoever installed it runs the script
+    // (or defers it, or ignores it) and may call `write` from inside.
+    using script_hook = std::function<void(node_id)>;
+    void set_script_hook(script_hook hook) { on_script_ = std::move(hook); }
+
+    // Start a parse. `open` is `document.open()`: the stream stays open after
+    // the input is consumed and `write` appends to it until `close`. A page
+    // load passes the whole file and false, and returns finished.
+    void begin(std::string_view input, bool open);
+    // `document.write`: into the stream at the insertion point, then parsed
+    // up to it. Requires `has_insertion_point()`.
+    void write(std::string_view text);
+    // `document.close`: EOF into the stream; the rest is parsed and the tree
+    // is finished, now or - when called from inside a nested script - when the
+    // outermost script returns.
+    void close();
+    // The document is being replaced by a navigation: stop reading.
+    void abort() noexcept { aborted_ = true; }
+    // Whether a write has somewhere to go: a script the parser is running, or
+    // an open stream. Without one `document.write` must open() first.
+    [[nodiscard]] bool has_insertion_point() const noexcept { return !insertion_points_.empty(); }
+    [[nodiscard]] bool finished() const noexcept { return finished_; }
+    [[nodiscard]] bool aborted() const noexcept { return aborted_; }
+    // The spec's "script nesting level": how many parser-run scripts are on
+    // the C++ stack right now. `document.open()` from one is a no-op.
+    [[nodiscard]] int script_nesting() const noexcept { return nesting_; }
+    [[nodiscard]] node_id document_element() const noexcept { return root_; }
 
     // The verbatim source of each <svg> in the document, by the element it
     // belongs to. Populated during parse and read straight after; see the
@@ -145,6 +198,23 @@ public:
 
 private:
     [[nodiscard]] node_id parse(std::string_view input, bool body_fragment);
+    // Set up the tree and the stream, without reading any of it.
+    void start(std::string_view input, bool body_fragment);
+    // Read tokens until the view runs out: the insertion point (return), or
+    // EOF (finish). Refreshes the tokenizer's view every token, because a
+    // script the tree builder ran may have grown the stream under it.
+    void pump();
+    // The end: unclosed foreign content captured, the stack emptied.
+    void finish();
+    // Run `script` through the hook with the insertion point set just after
+    // its end tag, HTML 13.2.6.4.8.
+    void run_script(node_id script);
+    [[nodiscard]] std::size_t limit() const noexcept {
+        return insertion_points_.empty() ? stream_.size() : insertion_points_.back();
+    }
+    [[nodiscard]] bool truncated() const noexcept {
+        return !insertion_points_.empty() || open_stream_;
+    }
 
     struct entry {
         node_id id;
@@ -161,7 +231,7 @@ private:
         bool marker = false;
     };
 
-    void handle(const token & t, tokenizer & lexer);
+    void handle(const token & t);
 
     // --- insertion --------------------------------------------------------
 
@@ -183,6 +253,8 @@ private:
     [[nodiscard]] insertion_point where_to_insert() const;
 
     void insert_at(const insertion_point & where, node_id child);
+    // "Insert a character": onto the Text node just before `where`, or new.
+    void insert_text_at(const insertion_point & where, const std::string & text);
     [[nodiscard]] bool foster_parenting() const;
 
     // Table structure belongs INSIDE the table; everything else that turns up
@@ -227,7 +299,7 @@ private:
 
     // --- start tags -------------------------------------------------------
 
-    void start(const token & t, tokenizer & lexer);
+    void start(const token & t);
 
     [[nodiscard]] static bool is_heading(std::string_view tag);
     [[nodiscard]] static bool is_head_only(std::string_view tag);
@@ -240,7 +312,7 @@ private:
 
     // --- end tags ---------------------------------------------------------
 
-    void end(const token & t, tokenizer & lexer);
+    void end(const token & t);
 
     // Pop to and including the nearest matching element. A close tag with no
     // match is IGNORED rather than unwinding the stack - which is what stops
@@ -316,7 +388,19 @@ private:
 
     // Tell the tokenizer whether to keep case. Called wherever the open stack
     // changes, because that is what decides the answer.
-    void sync_foreign(tokenizer & lexer) const;
+    void sync_foreign();
+
+    // The input stream and the tokenizer over it - members, because a parse
+    // now spans calls: begin, the scripts' writes, close.
+    document::builder held_builder_;
+    std::string stream_;
+    tokenizer lexer_{std::string_view{}};
+    std::vector<std::size_t> insertion_points_;
+    script_hook on_script_;
+    bool open_stream_ = false;
+    bool finished_ = false;
+    bool aborted_ = false;
+    int nesting_ = 0;
 };
 
 } // namespace ctbrowser::html

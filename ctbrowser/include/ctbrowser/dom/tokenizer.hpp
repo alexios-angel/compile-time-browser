@@ -57,6 +57,14 @@ enum class token_kind : std::uint8_t {
     processing_instruction,
     character, // a RUN of text, not one code point - the spec emits one at a time
     end_of_file,
+    // THE INPUT RAN OUT INSIDE A TOKEN AND MORE IS EXPECTED. Only ever produced
+    // while the input is `truncated` (set_input): the tokenizer has put `at_`
+    // back to where the token began, so the next call re-reads it once the
+    // stream has grown. This is how the spec's "stop when the tokenizer
+    // reaches the insertion point" comes out of a token-at-a-time lexer - a
+    // `document.write("<i id=")` followed by a `document.write("'x'>")` is
+    // one tag, read whole on the second call.
+    incomplete,
 };
 
 struct token_attribute {
@@ -121,6 +129,19 @@ public:
 
     [[nodiscard]] bool at_end() const noexcept { return at_ >= input_.size(); }
 
+    // THE INPUT STREAM MOVES (HTML 13.2.3.1, 8.4.4): `document.write` inserts
+    // text at the insertion point, and the tree builder re-points the tokenizer
+    // at the grown buffer with `set_input` - `at_` is kept, because everything
+    // before it has been read and an insertion never lands there. `truncated`
+    // says the view ends short of the real end of the stream (the insertion
+    // point, or an open stream that nothing has closed yet): a token that runs
+    // out of input then comes back as `incomplete` instead of being cut short.
+    void set_input(std::string_view input, bool truncated) noexcept {
+        input_ = input;
+        truncated_ = truncated;
+    }
+    [[nodiscard]] std::size_t position() const noexcept { return at_; }
+
     [[nodiscard]] token next();
 
 private:
@@ -132,6 +153,8 @@ private:
     // One input character onto a text run, with the input stream's newline
     // normalisation: CR LF and CR are both LF.
     void append_text(std::string & data);
+    // Whether the byte at `at` starts something the truncated view cuts off.
+    [[nodiscard]] bool cut_at(std::size_t at) const;
     [[nodiscard]] char peek(std::size_t ahead = 0) const;
     [[nodiscard]] bool looking_at(std::string_view what) const;
     [[nodiscard]] static bool is_alpha(char c);
@@ -193,11 +216,19 @@ private:
 
     [[nodiscard]] static std::string encode_utf8(char32_t code);
 
+    // Read past the end of a truncated view: the token being built needs more
+    // input than there is yet. Set by the states, read once by next().
+    void starve() noexcept {
+        if (truncated_) { starved_ = true; }
+    }
+
     std::string_view input_;
     std::size_t at_ = 0;
     content_model model_ = content_model::data;
     std::string close_tag_;
     bool preserve_case_ = false;
+    bool truncated_ = false;
+    bool starved_ = false;
 };
 
 } // namespace ctbrowser::html

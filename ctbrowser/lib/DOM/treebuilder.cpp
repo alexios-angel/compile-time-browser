@@ -6,31 +6,107 @@
 namespace ctbrowser::html {
 
 node_id tree_builder::parse(std::string_view input, bool body_fragment) {
-    document::builder builder = doc_->build();
-    builder_ = &builder;
-    input_ = input;
+    start(input, body_fragment);
+    pump();
+    return body_fragment_ ? body_ : root_;
+}
+
+void tree_builder::start(std::string_view input, bool body_fragment) {
+    builder_ = &held_builder_;
+    stream_.assign(input);
+    input_ = stream_;
     foreign_sources_.clear();
     foreign_node_ = node_id{};
+    foreign_depth_ = 0;
+    open_.clear();
+    active_.clear();
+    insertion_points_.clear();
+    html_attributes_seen_ = head_attributes_seen_ = body_attributes_seen_ = false;
+    head_ = body_ = node_id{};
+    in_body_ = false;
+    finished_ = aborted_ = false;
+    nesting_ = 0;
+    lexer_ = tokenizer{std::string_view{}};
 
     root_ = doc_->create_element(atoms_->intern_lower("html"));
     doc_->set_document_element(root_);
     open_.push_back(entry{root_, "html"});
     body_fragment_ = body_fragment;
     if (body_fragment_) { ensure_body(); }
+}
 
-    tokenizer lexer{input};
-    while (true) {
-        const token t = lexer.next();
-        if (t.kind == token_kind::end_of_file) { break; }
-        handle(t, lexer);
+void tree_builder::begin(std::string_view input, bool open) {
+    start(input, false);
+    open_stream_ = open;
+    // AN OPEN STREAM'S INSERTION POINT IS ITS END: `document.open()` leaves the
+    // parser waiting there, and each `write` appends at it and advances it.
+    // Kept at the BOTTOM of the stack, under whatever the scripts push, so
+    // `close` can take it away from under a nested script.
+    if (open) { insertion_points_.push_back(stream_.size()); }
+    pump();
+}
+
+void tree_builder::write(std::string_view text) {
+    if (finished_ || aborted_ || insertion_points_.empty()) { return; }
+    const std::size_t at = insertion_points_.back();
+    stream_.insert(at, text);
+    input_ = stream_;
+    // Every insertion point at or after the insert moves with the text,
+    // including the one written at - "just before the insertion point"
+    // means the text is BEHIND it afterwards. An outer script's insertion
+    // point, further along, moves the same way.
+    for (std::size_t & point : insertion_points_) {
+        if (point >= at) { point += text.size(); }
     }
+    pump();
+}
+
+void tree_builder::close() {
+    if (finished_ || !open_stream_) { return; }
+    open_stream_ = false;
+    // The open stream's end was the bottom insertion point; without it the
+    // tokenizer reads to EOF - now, or once the scripts above it return.
+    if (!insertion_points_.empty()) { insertion_points_.erase(insertion_points_.begin()); }
+    if (nesting_ == 0) { pump(); }
+}
+
+void tree_builder::pump() {
+    while (!aborted_ && !finished_) {
+        lexer_.set_input(std::string_view{stream_}.substr(0, limit()), truncated());
+        const token t = lexer_.next();
+        if (t.kind == token_kind::incomplete) { return; }
+        if (t.kind == token_kind::end_of_file) {
+            finish();
+            return;
+        }
+        handle(t);
+    }
+}
+
+void tree_builder::finish() {
     // An <svg> the document never closed. Captured to the end of the input
     // rather than dropped: plutosvg draws what it can parse, and a truncated
     // graphic is a better answer than a blank box for a page that is merely
     // missing a close tag.
-    close_foreign(input.size());
-    builder_ = nullptr;
-    return body_fragment_ ? body_ : root_;
+    close_foreign(stream_.size());
+    // An unclosed <script> at EOF is popped and never run (13.2.6.4.8, "an
+    // end-of-file token"): its already-started flag is set and that is all.
+    open_.clear();
+    finished_ = true;
+    insertion_points_.clear();
+}
+
+void tree_builder::run_script(node_id script) {
+    if (!on_script_ || aborted_) { return; }
+    // "Let the old insertion point be the current one; set the insertion point
+    // just before the next input character" - which is where the tokenizer is
+    // now, past the `</script>`. Pushed rather than saved, because a write from
+    // the script inserts BEFORE the old one and moves it.
+    insertion_points_.push_back(lexer_.position());
+    ++nesting_;
+    on_script_(script);
+    --nesting_;
+    if (!insertion_points_.empty()) { insertion_points_.pop_back(); }
 }
 
 void tree_builder::open_foreign(const token & t) {
@@ -68,11 +144,11 @@ bool tree_builder::in_foreign_content() const {
     return !is_html_integration_point(open_.back().tag);
 }
 
-void tree_builder::sync_foreign(tokenizer & lexer) const {
-    lexer.set_preserve_case(in_foreign_content());
+void tree_builder::sync_foreign() {
+    lexer_.set_preserve_case(in_foreign_content());
 }
 
-void tree_builder::handle(const token & t, tokenizer & lexer) {
+void tree_builder::handle(const token & t) {
     switch (t.kind) {
     // THE DOCTYPE. Nothing downstream renders differently for its name or its
     // identifiers, and two things are still observable: `document.compatMode`
@@ -116,9 +192,10 @@ void tree_builder::handle(const token & t, tokenizer & lexer) {
         return;
     }
     case token_kind::character: return insert_text(t.data);
-    case token_kind::start_tag: return start(t, lexer);
-    case token_kind::end_tag: return end(t, lexer);
-    case token_kind::end_of_file: return;
+    case token_kind::start_tag: return start(t);
+    case token_kind::end_tag: return end(t);
+    case token_kind::end_of_file:
+    case token_kind::incomplete: return;
     }
 }
 
@@ -136,7 +213,7 @@ void tree_builder::insert_text(const std::string & text) {
     // Forcing <body> here is what put a <title>'s text into the body and
     // left the title empty.
     if (is_text_content_element(current_tag())) {
-        builder_->append(current(), doc_->create_text(text));
+        insert_text_at(insertion_point{current(), node_id{}}, text);
         return;
     }
     // Text before <body> that is only whitespace is dropped; text with
@@ -145,7 +222,31 @@ void tree_builder::insert_text(const std::string & text) {
     if (!in_body_ && text.find_first_not_of(" \t\n\r\f") == std::string::npos) { return; }
     ensure_body();
     reconstruct_formatting();
-    insert_at(where_to_insert(), doc_->create_text(text));
+    insert_text_at(where_to_insert(), text);
+}
+
+// "INSERT A CHARACTER", HTML 13.2.6.1: onto the Text node immediately before
+// the insertion location when there is one, else a new one. That is what makes
+// `document.write("a"); document.write("b")` one Text node, and a stray end
+// tag in the middle of a run - `a</span>b` - not a boundary between two.
+void tree_builder::insert_text_at(const insertion_point & where, const std::string & text) {
+    node_id previous;
+    {
+        const auto txn = doc_->read();
+        node_id last;
+        for (const node_id child : txn.children(where.parent)) {
+            if (child == where.before) { break; }
+            last = child;
+        }
+        if (last && txn.kind(last) == node_kind::text) { previous = last; }
+    }
+    if (previous) {
+        std::string joined{doc_->read().text(previous)};
+        joined += text;
+        (void)doc_->set_text(previous, joined);
+        return;
+    }
+    insert_at(where, doc_->create_text(text));
 }
 
 bool tree_builder::is_text_content_element(std::string_view tag) {
@@ -181,7 +282,7 @@ bool tree_builder::is_table_structure(std::string_view tag) {
     return std::ranges::find(names, tag) != std::ranges::end(names);
 }
 
-void tree_builder::start(const token & t, tokenizer & lexer) {
+void tree_builder::start(const token & t) {
     const std::string & tag = t.name;
 
     if (in_foreign_content()) {
@@ -194,7 +295,7 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
                 close_foreign(t.source_begin);
                 pop();
             }
-            sync_foreign(lexer);
+            sync_foreign();
         } else {
             // Ordinary foreign element. None of the HTML repair rules below
             // apply: <a> is not a formatting element here, <p> closes nothing,
@@ -204,7 +305,7 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
                 open_.push_back(entry{element, tag, node_ns::svg});
                 if (tag == "svg") { open_foreign(t); }
             }
-            sync_foreign(lexer);
+            sync_foreign();
             return;
         }
     }
@@ -297,7 +398,7 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
     open_.push_back(entry{element, tag, ns});
     if (ns == node_ns::svg) {
         open_foreign(t);
-        sync_foreign(lexer);
+        sync_foreign();
         return; // no formatting list, no content model - SVG has neither
     }
     if (is_formatting_element(tag)) {
@@ -310,7 +411,7 @@ void tree_builder::start(const token & t, tokenizer & lexer) {
     // Text-only elements switch the tokenizer, which is the only way
     // `<script>a < b</script>` tokenizes as text rather than as markup.
     if (const content_model model = content_model_for(tag); model != content_model::data) {
-        lexer.set_content_model(model, tag);
+        lexer_.set_content_model(model, tag);
     }
 }
 
@@ -343,6 +444,14 @@ void tree_builder::ensure_body() {
     // Leaving <head> is what "after head" means; anything that is not
     // head-only content does it.
     while (open_.size() > 1 && open_.back().tag != "html") { open_.pop_back(); }
+    // A <head> EXISTS WHETHER OR NOT ANYTHING WENT IN IT: "before head" makes
+    // one for any token that is not head content (13.2.6.4.3), so
+    // `document.head` is never null on a parsed page and `<p>` alone gives
+    // html(head, body(p)) - which is what every html5lib expectation reads.
+    if (!head_) {
+        head_ = doc_->create_element(atoms_->intern_lower("head"));
+        builder_->append(root_, head_);
+    }
     body_ = doc_->create_element(atoms_->intern_lower("body"));
     builder_->append(root_, body_);
     open_.push_back(entry{body_, "body"});
@@ -354,7 +463,7 @@ void tree_builder::implicit(const std::string & tag) {
     open_.push_back(entry{element, tag});
 }
 
-void tree_builder::end(const token & t, tokenizer & lexer) {
+void tree_builder::end(const token & t) {
     const std::string & tag = t.name;
 
     // A close tag anywhere inside foreign content is handled by the foreign
@@ -367,8 +476,12 @@ void tree_builder::end(const token & t, tokenizer & lexer) {
             // The capture closes BEFORE the pop, and with the end tag's own
             // source_end, so the span covers `</svg>` itself.
             if (tag == "svg") { close_foreign(t.source_end); }
+            const node_id closed = open_[i].id;
             while (open_.size() > i) { pop(); }
-            sync_foreign(lexer);
+            sync_foreign();
+            // AN SVG <script> RUNS TOO (13.2.6.5, "an end tag whose tag name
+            // is script", when the current node is an SVG script element).
+            if (tag == "script") { run_script(closed); }
             return;
         }
         // No match in the SVG: ignored, per the spec. A stray </div> inside a
@@ -379,6 +492,15 @@ void tree_builder::end(const token & t, tokenizer & lexer) {
     if (tag == "body" || tag == "html") {
         // Ignored: content after them is still content, which is what a
         // browser does with a stray </body> halfway down a page.
+        return;
+    }
+    // `</script>` IN TEXT MODE (13.2.6.4.8): pop the script, then RUN IT, with
+    // the insertion point just past this tag so its writes land there. The
+    // whole reason a page's scripts see a half-built document.
+    if (tag == "script" && !open_.empty() && open_.back().tag == "script") {
+        const node_id script = open_.back().id;
+        pop();
+        run_script(script);
         return;
     }
     if (is_formatting_element(tag)) {
