@@ -12,7 +12,7 @@
 // RUN: ctjs-opt %t/forged.mlir --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FORGED --implicit-check-not=ctnative.object_identity
 // RUN: ctjs-opt %t/poison.mlir --split-input-file --ctnative-lower-to-emitc | FileCheck %s --check-prefix=POISON --implicit-check-not=ctnative.object_identity
 
-// NATIVE-DAG: struct object_value
+// NATIVE-DAG: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NATIVE-DAG: call_opaque "ctnative::make_map<std::string, ctnative::object_value>"
 // NATIVE-DAG: call_opaque "ctnative::to_object_value"
 // NATIVE-DAG: call_opaque "ctnative::object_strict_equal"

@@ -1506,12 +1506,13 @@ def emitted(args, module, name, *, optional_read=True, uri_call=False):
             r"nullable_scalar|nullable_string|std::variant|shared_ptr|weak_ptr|invoke_callable|\bmain\s*\(",
             cpp,
         )
+        # The optional String is get_attribute's return type in the runtime
+        # header, so a program shows it either by calling the helper or by
+        # carrying std::optional<std::string> itself (a branch over a null).
         or (
             optional_read
-            and (
-                "ctbrowser::get_element_attribute" not in cpp
-                or "std::optional<std::string>" not in cpp
-            )
+            and "ctnative::get_attribute" not in cpp
+            and "std::optional<std::string>" not in cpp
         )
         or (not optional_read and "ctnative::has_attribute" not in cpp)
         or (uri_call and re.search(r"\bcatch\s*\(", cpp))
@@ -2244,10 +2245,13 @@ function makeElement(value) {
                     optional_read=name != "helper_branch" and name not in uri.CASES,
                     uri_call=name in uri.CASES or name in nullable_uri.CASES,
                 )
-                # Hoist includes before isolating each complete translation unit;
-                # generated local helper names need not be globally unique.
-                headers.update(re.findall(r"^#include[^\n]*", cpp, re.M))
-                body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
+                # Hoist includes AND the runtime's defines in front of its include
+                # (CTNATIVE_DOM, CTNATIVE_ORDERED_MAPS) before isolating each
+                # unit; sorted(), `#define` precedes `#include`. The deduced
+                # layout's CTCOMPILE_PIN block stays in its unit, inside its own
+                # #ifndef. Generated local helper names need not be globally unique.
+                headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
+                body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 entry = namespace + "::" + symbol
                 if name in nullable_uri.CASES:

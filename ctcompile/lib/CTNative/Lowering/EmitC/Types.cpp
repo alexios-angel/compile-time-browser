@@ -30,7 +30,6 @@ void lowering::retype(ctjs::FuncOp fn) {
     });
     const auto retypeValue = [&](mlir::Value v) {
         if (domStringResults.contains(v)) {
-            needsString = true;
             v.setType(carrierType(context, carrier::string));
             return;
         }
@@ -57,10 +56,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
-        needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
-        needsBooleanString |= carrierOf(typeOf(v)) == carrier::booleanString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
             v.setType(found->second);
@@ -78,12 +74,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         // along. Both are asked BEFORE the scalar row below, because the
         // lattice type of either is the carrier of what is INSIDE.
         if (admission::isCarriedCell(v.getDefiningOp())) {
-            needsString |= carrierOf(typeOf(v)) == carrier::string;
             v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
             return;
         }
         if (admission::isCellParameter(v)) {
-            needsString |= carrierOf(typeOf(v)) == carrier::string;
             v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
             return;
         }
@@ -103,10 +97,6 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
-            needsMap = true;
-            needsNullableString |= mapNeedsNullableString(map);
-            needsNullableMapKeys |= mapNeedsNullableStringKey(map);
-            needsString |= mapNeedsString(map);
             needsObjectValue |= mapNeedsObjectValues(map);
             v.setType(mapCarrierType(map));
             return;
@@ -115,13 +105,10 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        needsString |= isStringCarrier(c);
-        needsDOMJSON |= c == carrier::json;
         // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
         // scalars carrierType() can spell: an owning vector in this frame,
         // or an SCF-carried address whose owners outlive every use.
         if (isVectorCarrier(c)) {
-            needsStringVector |= c == carrier::stringVector;
             auto owner =
                 llvm::cast<ec::LValueType>(vectorCarrierType(context, c == carrier::stringVector));
             const bool borrowed =

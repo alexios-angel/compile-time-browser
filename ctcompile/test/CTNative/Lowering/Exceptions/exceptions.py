@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
 
 PROGRAMS = {
     "guarded": (2, {"caught42": 42, "normal20": 20}),
@@ -471,6 +471,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
     )
     flags = [
         "-std=c++23",
+        RUNTIME_INCLUDE,
         "-O2",
         "-Wall",
         "-Wextra",

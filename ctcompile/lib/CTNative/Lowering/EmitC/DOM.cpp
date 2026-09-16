@@ -30,7 +30,6 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     domStringRefinements.assign(entry.stringRefinements().begin(), entry.stringRefinements().end());
     domOptionalStrings.insert(entry.optionalStringJoins().begin(),
                               entry.optionalStringJoins().end());
-    needsDOMAttributeRead |= !domOptionalStrings.empty();
     for (mlir::BlockArgument parameter : entry.parameters()) { domParameters.insert(parameter); }
     entry.entry().walk([&](ctjs::ConstantOp constant) {
         if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
@@ -49,19 +48,6 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     entry.entry().walk([&](ctjs::CallOp call) {
         if (const auto * edge = entry.call(call)) {
             domCalls[call] = *edge;
-            needsDOMToggle |= edge->kind == HostDOMMethod::toggleClass;
-            needsDOMAttributes |= edge->kind == HostDOMMethod::setAttribute;
-            needsDOMAttributeRead |= edge->returnsOptionalString();
-            needsDOMNumber |=
-                edge->kind == HostDOMMethod::number || edge->kind == HostDOMMethod::numberToString;
-            needsDOMURI |= edge->kind == HostDOMMethod::decodeURIComponent;
-            needsDOMJSON |= edge->kind == HostDOMMethod::jsonParse;
-            needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
-            needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
-            needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
-            needsDOMContains |= edge->kind == HostDOMMethod::contains;
-            needsDOMMatches |= edge->kind == HostDOMMethod::matches;
-            needsDOMClosest |= edge->kind == HostDOMMethod::closest;
             if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {
                 auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
                 if (receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&

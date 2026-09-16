@@ -12,24 +12,13 @@ from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
 
 ROOT = Path(__file__).resolve().parents[5]
-HELPERS = ROOT / "ctcompile/lib/CTNative/Lowering/EmitC/NativeMapHelpers.h"
-LOWERING = ROOT / "ctcompile/lib/CTNative/Lowering"
+# The runtime as a DOM program includes it, with the identity struct a program
+# would spell after the include.
 PREAMBLE = r"""
-#include <ctbrowser/dom/element.hpp>
+#define CTNATIVE_DOM 1
+#include "ctcompile/CTNative/Runtime/ctnative.hpp"
 #include <array>
 #include <cassert>
-#include <cmath>
-#include <cstdio>
-#include <exception>
-#include <functional>
-#include <map>
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
-using js_num = double;
 namespace ctnative { struct identity_object {}; }
 """
 CLIENT = r"""
@@ -148,37 +137,12 @@ def main():
     if "clang" not in clang.name:
         clang = ROOT / "tools/clang-std-embed/bin/clang++"
     compilers = (find_compilers()[0], str(clang))
-    helpers = {}
-    for path in (
-        HELPERS,
-        LOWERING / "EmitC/NullableHelpers.h",
-        LOWERING / "StringValues/RuntimeHelpers.h",
-        LOWERING / "ObjectValues/RuntimeHelpers.h",
-    ):
-        helpers.update(
-            re.findall(r'StringLiteral (\w+) = R"cpp\((.*?)\)cpp";', path.read_text(), re.S)
-        )
-    for layout, names in (
-        ("associative", ("kNativeAssociativeMapStorage", "kNativeDOMMapKeys")),
-        ("ordered", ("kNativeOrderedMapStorage",)),
-    ):
+    for layout in ("associative", "ordered"):
         source = work / f"{layout}.cpp"
-        names = (
-            "kNullableHelpers",
-            "kNullableStringHelpers",
-            "kObjectValueHelpers",
-            *names,
-            "kNativeMapHelpers",
-            "kNativeStringMapHelpers",
-            "kObjectMapHelpers",
-        )
         ordered = layout == "ordered"
-        if ordered:
-            names += ("kNativeMapSnapshotHelpers",)
         source.write_text(
-            PREAMBLE
-            + ("#define CTCOMPILE_TEST_ORDERED\n" if ordered else "")
-            + "".join(helpers[name] for name in names)
+            ("#define CTNATIVE_ORDERED_MAPS 1\n#define CTCOMPILE_TEST_ORDERED\n" if ordered else "")
+            + PREAMBLE
             + CLIENT
         )
         for index, compiler in enumerate(compilers):

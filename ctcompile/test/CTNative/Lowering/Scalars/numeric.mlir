@@ -37,7 +37,7 @@ function scale(x) { return x * 2; }
 // level of the body and WITH it inside an scf region, so the patterns below
 // name the operation and not the prefix.
 //
-// CHECK: emitc.include <"cmath">
+// CHECK: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NO INITIALISER, deliberately: static zero-initialisation gives 0, so a
 // global a program never wrote is distinguishable from one it computed a NaN
 // into. Initialising these to NaN made those two cases the same bytes and any

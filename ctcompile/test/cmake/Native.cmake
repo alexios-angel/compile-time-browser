@@ -16,6 +16,16 @@ add_executable(ctcompile-test-native-reference Runtime/Reference/Interpreter.cpp
 target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-native-reference)
 
+# THE RUNTIME HEADER, COMPILED BY THE BUILD. include/ctcompile/CTNative/Runtime/
+# ctnative.hpp is what every native program includes, and nothing else here
+# compiles it under -Werror - a header only generated programs compile is the
+# string literal it replaced. Needs no MLIR, like the reference above; needs
+# ctbrowser for its DOM section.
+add_executable(ctcompile-test-native-runtime Runtime/NativeRuntime.cpp)
+target_link_libraries(ctcompile-test-native-runtime PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-native-runtime)
+add_test(NAME ctcompile_native_runtime COMMAND ctcompile-test-native-runtime)
+
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
   # nm, the one CMake found beside the compiler at configure time (llvm-nm for
   # the pinned clang). A missing one is said out loud rather than skipped: this

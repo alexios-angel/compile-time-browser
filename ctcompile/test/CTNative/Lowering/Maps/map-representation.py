@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import RUNTIME_INCLUDE, find_compilers, run
 from CTNative.Exports import boundary
 
 NODE_GLOBALS = r"""const fs = require('node:fs');
@@ -119,11 +119,12 @@ def main():
             # matching storage contract has been removed or replaced.
             forged = args.work / "missing-order-contract.mlir"
             original = module.read_text()
+            # The ordered contract is the define in front of the runtime include.
             altered = (
                 "\n".join(
                     line
                     for line in original.splitlines()
-                    if "ctcompile: insertion order is observable" not in line
+                    if "#define CTNATIVE_ORDERED_MAPS 1" not in line
                 )
                 + "\n"
             )
@@ -147,22 +148,18 @@ def main():
         )
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
-            assert "using string_to_number_map = number_map<std::string>;" in cpp
-            assert "inline std::shared_ptr<string_to_number_map> make_string_to_number_map()" in cpp
+            # The helpers are the runtime header's now; the program decides only
+            # the storage, by the define in front of its include.
+            assert '#include "ctcompile/CTNative/Runtime/ctnative.hpp"' in cpp
             if fixture in {"associative", "ordered"}:
                 assert "ctnative::make_string_to_number_map()" in cpp
-            assert "map->find(key)" in cpp
             assert "ctbrowser::script::" not in cpp
             if fixture in {"associative", "payloads", "mixed-values"}:
-                assert "using map_storage = std::map<K, V, map_key_less<K>>;" in cpp
-                assert "#include <map>" in cpp
-                assert "map->entries" not in cpp and "struct map_storage" not in cpp
+                assert "#define CTNATIVE_ORDERED_MAPS" not in cpp
                 if fixture == "associative":
                     assert "ctnative::string_to_number_map" in cpp
             else:
-                assert (
-                    "struct map_storage" in cpp and "std::vector<std::pair<K, V>> entries;" in cpp
-                )
+                assert "#define CTNATIVE_ORDERED_MAPS 1" in cpp
                 assert "std::map<" not in cpp
             if fixture == "payloads":
                 assert (
@@ -171,13 +168,15 @@ def main():
                 )
                 assert "ctnative::make_map<std::string, std::string>()" in cpp
                 assert "ctnative::make_map<bool, std::string>()" in cpp
-                assert "nullable_string map_get(" in cpp
+                # The String payload read is the runtime header's; the program
+                # spells its owning carrier, not the helper's definition.
+                assert "ctnative::nullable_string" in cpp
             if fixture == "mixed-values":
                 assert "ctnative::make_map<double, std::variant<bool, std::string>>()" in cpp
                 assert len(re.findall(r"\bctnative::map_set\(", cpp)) == 2
                 assert "ctnative::map_size(" in cpp
             if fixture == "string-values":
-                assert "std::vector<std::string> map_values(" in cpp
+                assert "std::vector<std::string>" in cpp
                 # String values stay owning snapshots even while a separate
                 # numeric key projection is safely deforested.
                 assert re.search(r"= ctnative::map_values\(", cpp)
@@ -191,6 +190,7 @@ def main():
                     [
                         compiler,
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O2",
                         "-Wall",
                         "-Wextra",
@@ -217,6 +217,7 @@ def main():
                     [
                         compilers[1],
                         "-std=c++23",
+                        RUNTIME_INCLUDE,
                         "-O1",
                         "-g",
                         "-Wall",

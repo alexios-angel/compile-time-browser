@@ -98,12 +98,18 @@ llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"], [con
 # of "%cxx_exe" - registered the other way round, `%cxx_exe file.cpp` expands to
 # `<compiler> -fsyntax-only ... _exe file.cpp`, which fails with a message about
 # a file called "_exe" rather than about the order of this list.
+# AND THE RUNTIME HEADER'S DIRECTORY: every native program includes
+# ctcompile/CTNative/Runtime/ctnative.hpp, so every compile of one needs it.
+runtime_include = f"-I {config.ctcompile_src_root}/include"
 config.substitutions.append(
-    ("%cxx_exe", f"{config.host_cxx} -std=c++23 -I {config.ctbrowser_include}")
+    ("%cxx_exe", f"{config.host_cxx} -std=c++23 {runtime_include} -I {config.ctbrowser_include}")
 )
 
 config.substitutions.append(
-    ("%cxx", f"{config.host_cxx} -std=c++23 -fsyntax-only -I {config.ctbrowser_include}")
+    (
+        "%cxx",
+        f"{config.host_cxx} -std=c++23 -fsyntax-only {runtime_include} -I {config.ctbrowser_include}",
+    )
 )
 
 # %gxx AND %clangxx ARE BOTH COMPILERS, NOT THE HOST ONE. The Target/Cpp tests
@@ -115,7 +121,7 @@ config.substitutions.append(
 for name, candidates in (("%gxx", ("g++-13", "g++")), ("%clangxx", ("clang++-18", "clang++"))):
     found = next((shutil.which(c) for c in candidates if shutil.which(c)), candidates[-1])
     config.substitutions.append(
-        (name, f"{found} -std=c++23 -Wall -Wextra -Werror -Wconversion -pedantic")
+        (name, f"{found} -std=c++23 {runtime_include} -Wall -Wextra -Werror -Wconversion -pedantic")
     )
 
 config.substitutions.append(("%node", config.node or shutil.which("node") or "node"))

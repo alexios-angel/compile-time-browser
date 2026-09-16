@@ -4,7 +4,6 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 mlir::Value lowering::absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull) {
-    needsNullable = true;
     return ec::ConstantOp::create(
         b, where, carrierType(context, carrier::nullable),
         ec::OpaqueAttr::get(context, isNull ? "ctnative::nullable_scalar::null()"
@@ -29,11 +28,9 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
                (value.getType() == carrierType(context, carrier::string) ||
                 llvm::isa<mlir::Float64Type>(value.getType()) || value.getType().isInteger(1))) {
         // Primitive arms keep their exact alternatives in the owning tree.
-        needsDOMJSON = true;
         helper = kDOMJSONType;
     } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
                value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
-        needsDOMJSON = true;
         auto expression =
             ec::ExpressionOp::create(b, where, target, mlir::ValueRange{value}, false);
         expression.createBody();
@@ -58,13 +55,10 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         ec::YieldOp::create(inside, where, joined);
         return expression.getResult();
     } else if (isBooleanStringCarrier(target)) {
-        needsBooleanString = true;
         helper = kBooleanStringType;
     } else if (isNullableStringCarrier(target)) {
-        needsNullableString = true;
         helper = "ctnative::to_nullable_string";
     } else if (isNullableStringCarrier(value.getType())) {
-        needsNullableString = true;
         if (target == carrierType(context, carrier::string)) {
             helper = "ctnative::string_text";
         } else if (llvm::isa<mlir::IntegerType>(target)) {
@@ -79,10 +73,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         needsObjectValue = true;
         helper = "ctnative::object_truthy";
     } else if (isNullableCarrier(target)) {
-        needsNullable = true;
         helper = "ctnative::to_nullable";
     } else if (isNullableCarrier(value.getType())) {
-        needsNullable = true;
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
@@ -108,8 +100,6 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
         const auto c = carrierOf(type);
         if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c)) { return {}; }
         needsObjectValue |= c == carrier::objectValue;
-        needsNullable |= c == carrier::nullable;
-        needsNullableString |= c == carrier::nullableString;
         return carrierType(context, c);
     };
     for (ctjs::FuncOp fn : accepted) {
@@ -143,10 +133,8 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
             fn.getBody().walk([&](ctjs::ReturnOp ret) {
                 if (domStringResults.contains(ret.getValue())) {
                     domResult = carrierType(context, carrier::string);
-                    needsString = true;
                 } else if (carrierOf(typeOf(ret.getValue())) == carrier::json) {
                     domResult = carrierType(context, carrier::json);
-                    needsDOMJSON = true;
                 }
             });
         }

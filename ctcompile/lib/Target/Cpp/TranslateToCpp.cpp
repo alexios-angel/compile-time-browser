@@ -39,14 +39,15 @@
 // of them is a change that has stopped being a superset, and it fails the
 // suite the same afternoon rather than at the next bump.
 //
-// Native printing extensions are gated by ctnative attributes. Source-name
-// allocation lives in Names/, const-binding analysis in Const/, and finite
-// float spelling in ReadableFloat.cpp.
+// Native printing extensions are gated by ctnative attributes. Const-binding
+// analysis lives in Const/, and finite float spelling in ReadableFloat.cpp.
+// Locals are upstream's v<N>: source-derived identifiers were retired on
+// 2026-09-15, the host compiler never cared and a function's provenance is
+// its ctnative.provenance attribute, not its variable names.
 // Unmarked modules retain upstream output; vendored tests remain unchanged.
 
 #include "Const/Bindings.h"
 #include "Callables/Body.h"
-#include "Names/SourceNames.h"
 #include "ReadableFloat.h"
 #include "UnusedParameters.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
@@ -167,10 +168,13 @@ struct CppEmitter {
 
   // A nested callable shares only output and module spelling policy. Its
   // declaration caches, names, expression stack and analyses stay independent.
+  // Its v<N> counter continues the parent's so a lambda body never redeclares
+  // an enclosing local's name - legal C++, but a reader's trap.
   CppEmitter(raw_ostream &os, const CppEmitter &parent)
       : CppEmitter(os, parent.declareVariablesAtTop, parent.fileId) {
     readableLiterals = parent.readableLiterals;
     numericAlias = parent.numericAlias;
+    valueBase = valueCount = parent.valueCount;
   }
 
   /// Emits attribute or returns failure.
@@ -244,16 +248,15 @@ struct CppEmitter {
   /// Return the existing or a new name for a Value.
   StringRef getOrCreateName(Value val);
   std::string getTemporaryName(StringRef prefix) {
-    return sourceNames.temporary(prefix);
+    return formatv("{0}{1}", prefix, ++valueCount);
   }
 
   /// Prepare native printing policies independently of the declaration cache.
+  /// A callable body names its entry arguments (captures, then parameters)
+  /// after its ctnative.callable_body description.
   void prepareFunction(Operation *function,
                        ArrayRef<std::string> parameters = {});
-  void finishFunction() {
-    sourceNames.finish();
-    constBindings.finish();
-  }
+  void finishFunction() { constBindings.finish(); }
   bool isConstBinding(Value value) {
     return (!isa<OpResult>(value) || !shouldDeclareVariablesAtTop()) &&
            constBindings.qualifies(value);
@@ -348,6 +351,12 @@ struct CppEmitter {
 
   // Resets the value counter to 0.
   void resetValueCounter();
+  /// After a nested callable body: its locals were numbered past this
+  /// emitter's, so continue after them and the function has one namespace.
+  void continueValueCounter(const CppEmitter &nested) {
+    if (nested.valueCount > valueCount)
+      valueCount = nested.valueCount;
+  }
 
   // Increases the loop nesting level by 1.
   void increaseLoopNestingLevel();
@@ -371,7 +380,6 @@ private:
   bool readableLiterals = false;
   bool numericAlias = false;
 
-  ctcompile::cpp::SourceNames sourceNames;
   ctcompile::cpp::ConstBindings constBindings;
 
   /// Only emit file ops whos id matches this value.
@@ -395,6 +403,9 @@ private:
 
   /// Emitter-level count of created values to enable unique identifiers.
   unsigned int valueCount{0};
+  /// Where a FunctionScope resets the counter to: 0 at top level, the
+  /// parent's count inside a nested callable body.
+  unsigned int valueBase{0};
 
   /// State of the current expression being emitted.
   SmallVector<int> emittedExpressionPrecedence;
@@ -1605,15 +1616,12 @@ void CppEmitter::cacheDeferredOpResult(Value value, StringRef str) {
 void CppEmitter::prepareFunction(Operation *function,
                                 ArrayRef<std::string> parameters) {
   constBindings.prepare(function);
-  sourceNames.prepare(function, [&](Value value) {
-    auto result = dyn_cast<OpResult>(value);
-    if (!result)
-      return true;
-    Operation *op = result.getOwner();
-    return !hasDeferredEmission(op) && !shouldBeInlined(op) &&
-           !isa<emitc::ExpressionOp>(op->getParentOp()) &&
-           (shouldDeclareVariablesAtTop() || !op->hasAttr("ctnative.statement"));
-  }, parameters);
+  if (parameters.empty())
+    return;
+  auto arguments = function->getRegion(0).front().getArguments();
+  assert(parameters.size() == arguments.size());
+  for (auto [argument, name] : llvm::zip(arguments, parameters))
+    valueMapper.insert(argument, name);
 }
 
 /// Return the existing or a new name for a Value.
@@ -1623,10 +1631,7 @@ StringRef CppEmitter::getOrCreateName(Value val) {
            "cacheDeferredOpResult should have been called on this value, "
            "update the emitOperation function.");
 
-    if (sourceNames.enabled())
-      valueMapper.insert(val, sourceNames.get(val).str());
-    else
-      valueMapper.insert(val, formatv("v{0}", ++valueCount));
+    valueMapper.insert(val, formatv("v{0}", ++valueCount));
   }
   return *valueMapper.begin(val);
 }
@@ -1635,12 +1640,6 @@ StringRef CppEmitter::getOrCreateName(Value val) {
 /// Loop induction variables follow natural naming: i, j, k, ..., t, uX.
 StringRef CppEmitter::getOrCreateInductionVarName(Value val) {
   if (!valueMapper.count(val)) {
-
-    if (sourceNames.enabled()) {
-      valueMapper.insert(val, sourceNames.get(val, "i").str());
-      return *valueMapper.begin(val);
-    }
-
     int64_t identifier = 'i' + loopNestingLevel;
 
     if (identifier >= 'i' && identifier <= 't') {
@@ -2272,7 +2271,7 @@ LogicalResult CppEmitter::emitTupleType(Location loc, ArrayRef<Type> types) {
   return success();
 }
 
-void CppEmitter::resetValueCounter() { valueCount = 0; }
+void CppEmitter::resetValueCounter() { valueCount = valueBase; }
 
 void CppEmitter::increaseLoopNestingLevel() { loopNestingLevel++; }
 

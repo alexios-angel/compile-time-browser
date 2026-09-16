@@ -417,8 +417,8 @@ def main():
                     raise RuntimeError(
                         f"{namespace}/{layout}: expected shared Core JSON parsing\n{cpp}"
                     )
-                headers.update(re.findall(r"^#include[^\n]*", cpp, re.M))
-                body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
+                headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
+                body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                 runs.append(client(name, namespace + "::" + symbol, owned))
             path = args.work / f"combined-{optimize}-{layout}.cpp"

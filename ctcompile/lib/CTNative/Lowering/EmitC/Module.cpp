@@ -1,14 +1,7 @@
 // EmitC/Module.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
-#include "../ObjectValues/RuntimeHelpers.h"
-#include "../StringValues/RuntimeHelpers.h"
-#include "DOMHelpers.h"
 #include "Emitter.h"
-#include "MethodTableHelpers.h"
-#include "NativeMapHelpers.h"
-#include "NullableHelpers.h"
-#include "OwnedGlobalHelpers.h"
-#include "RuntimeHelpers.h"
+#include "Runtime.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -148,204 +141,44 @@ void lowering::declareGlobals() {
     // A presentation policy only: retain typed constants through every
     // optimization and let the C++ printer choose their literal spelling.
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
-    module->setAttr("ctnative.readable_names", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
-    needsString |= needsBooleanString;
-    needsNullableString |= needsStringVector || needsNullableMapKeys;
-    needsNullable |= needsNullableString;
-    needsNullable |= needsObjectValue;
     needsObjectIdentity |= needsObjectValue;
+    // Snapshot projections remain ordered even after their producer has
+    // been deforested. The choice only becomes more conservative here.
+    module.walk([&](ec::CallOpaqueOp call) {
+        needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
+                         call.getCallee() == "ctnative::map_values" ||
+                         call.getCallee().starts_with("ctnative::map_snapshot_at<");
+    });
     mlir::OpBuilder b(context);
     b.setInsertionPointToStart(module.getBody());
-    // INCLUDES FIRST: the builder advances past each op it creates, so
-    // creation order is file order, and a global initialised to NAN
-    // needs <cmath> above it.
-    ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
-    ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
-    ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
-    if (needsDOM) {
-        if (!domSessionDefinition.empty() || !domDataSession.empty()) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("stdexcept"),
-                                  b.getUnitAttr());
-        }
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("ctbrowser/dom/element.hpp"),
+    // THE RUNTIME IS ONE INCLUDE (Runtime/ctnative.hpp), and the two things a
+    // program decides that a header cannot are defines in front of it. The
+    // builder advances past each op it creates, so creation order is file
+    // order. Everything after the include is text the program parameterises:
+    // its identity struct and field accessors, its environments, its method
+    // tables, its DOM session.
+    if (needsMapOrder) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kOrderedMapsDefine));
+    }
+    if (needsDOM) { ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMDefine)); }
+    ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
+    // The selector engine is the one ctbrowser header the runtime leaves to
+    // the program (it is as heavy as everything else together); a program
+    // spells `ctbrowser::style::engine &` only when it has a style parameter.
+    if (!domStyleParameters.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("ctbrowser/style/engine.hpp"),
                               b.getUnitAttr());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMEntryHelpers));
-        if (needsDOMToggle) {
-            ec::IncludeOp::create(b, module.getLoc(),
-                                  b.getStringAttr("ctbrowser/dom/token_list.hpp"), b.getUnitAttr());
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMToggleHelpers));
-        }
-        if (needsDOMAttributeRead) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("optional"), b.getUnitAttr());
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeReadHelpers));
-        }
-        if (needsDOMAttributes) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeHelpers));
-        }
-        if (needsDOMURI) {
-            for (llvm::StringRef header : {"ctbrowser/core/uri.hpp", "optional", "utility"}) {
-                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-            }
-        }
-        if (needsDOMJSON) {
-            for (llvm::StringRef header : {"ctbrowser/core/json.hpp", "expected", "utility"}) {
-                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-            }
-        }
-        if (needsDOMNumber) {
-            ec::IncludeOp::create(b, module.getLoc(),
-                                  b.getStringAttr("ctbrowser/core/number_format.hpp"),
-                                  b.getUnitAttr());
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("optional"), b.getUnitAttr());
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMNumberHelpers));
-        }
-        if (needsDOMAttributeToggle) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMAttributeToggleHelpers));
-        }
-        if (needsDOMAttributePresence) {
-            ec::VerbatimOp::create(b, module.getLoc(),
-                                   b.getStringAttr(kDOMAttributePresenceHelpers));
-        }
-        if (needsDOMAttributeRemoval) {
-            ec::VerbatimOp::create(b, module.getLoc(),
-                                   b.getStringAttr(kDOMAttributeRemovalHelpers));
-        }
-        if (needsDOMContains) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMContainsHelpers));
-        }
-        if (needsDOMMatches || needsDOMClosest) {
-            for (llvm::StringRef header :
-                 {"ctbrowser/style/engine.hpp", "ctbrowser/style/css/parser.hpp", "stdexcept"}) {
-                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-            }
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMSelectorHelpers));
-        }
-        if (needsDOMMatches) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMMatchesHelpers));
-        }
-        if (needsDOMClosest) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMClosestHelpers));
-        }
-    }
-    if (!ownedGlobals.empty()) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kOwnedGlobalHelpers));
-    }
-    if (needsExceptions) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdint"), b.getUnitAttr());
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstddef"), b.getUnitAttr());
-        ec::VerbatimOp::create(
-            b, module.getLoc(),
-            b.getStringAttr(
-                "namespace ctnative { template <class T> struct js_exception { T value; }; }"));
-    }
-    if (needsString || needsNullable || needsMap || needsVector || !globals.empty()) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
-    }
-    if (needsString) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("iterator"), b.getUnitAttr());
-    }
-    if (needsNullable || needsMap || needsVector || !globals.empty()) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("exception"), b.getUnitAttr());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableHelpers));
-    }
-    if (needsBooleanString) {
-        for (llvm::StringRef header : {"variant", "type_traits"}) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-        }
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(R"cpp(
-namespace ctnative {
-inline bool boolean_string_truthy(const std::variant<bool, std::string> & value) {
-    return std::visit([](const auto & alternative) {
-        if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, bool>) {
-            return alternative;
-        } else { return !alternative.empty(); }
-    }, value);
-}
-} // namespace ctnative
-)cpp"));
-    }
-    if (needsNullableString) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableStringHelpers));
     }
     if (needsObjectIdentity) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityDefinition()));
-    }
-    if (needsObjectValue) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("utility"), b.getUnitAttr());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectValueHelpers));
     }
     if (!identityFields.empty()) {
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityFieldHelpers()));
     }
-    // ONLY WHEN A VECTOR SITE EXISTS. An include and a preamble emitted
-    // unconditionally would move every byte count the printing gate
-    // reports and every line the other native lits pin, for programs that
-    // have no array in them.
-    if (needsVector) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kVectorHelpers));
-    }
-    if (needsStringVector) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kStringVectorHelpers));
-    }
-    if (needsMap) {
-        // Snapshot projections remain ordered even after their producer has
-        // been deforested. The choice only becomes more conservative here.
-        module.walk([&](ec::CallOpaqueOp call) {
-            needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
-                             call.getCallee() == "ctnative::map_values" ||
-                             call.getCallee().starts_with("ctnative::map_snapshot_at<");
-        });
-        for (llvm::StringRef header :
-             {"exception", "memory", "utility", "variant", "type_traits"}) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-        }
-        if (needsMapOrder) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
-        } else {
-            for (llvm::StringRef header : {"map", "functional"}) {
-                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-            }
-        }
-        if (needsNullableMapKeys) {
-            ec::VerbatimOp::create(b, module.getLoc(),
-                                   b.getStringAttr(kNativeNullableStringMapKeys));
-        }
-        ec::VerbatimOp::create(b, module.getLoc(),
-                               b.getStringAttr(needsMapOrder ? kNativeOrderedMapStorage
-                                                             : kNativeAssociativeMapStorage));
-        if (needsDOM && !needsMapOrder) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeDOMMapKeys));
-        }
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
-        if (needsNullableString) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeStringMapHelpers));
-        }
-        if (needsMapOrder) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapSnapshotHelpers));
-        }
-        if (needsObjectValue) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectMapHelpers));
-        }
-    }
-    if ((domDataSession.empty() && !methodTables.empty()) || !callableBuilders.empty() ||
-        !callableBodies.empty()) {
-        for (llvm::StringRef header : {"functional", "memory", "utility"}) {
-            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
-        }
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kMethodTableHelpers));
-    }
-    if (!environments.empty()) {
-        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("tuple"), b.getUnitAttr());
-        for (const std::string & definition : environments) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
-        }
+    for (const std::string & definition : environments) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
     }
     for (const std::string & definition : methodTables) {
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));

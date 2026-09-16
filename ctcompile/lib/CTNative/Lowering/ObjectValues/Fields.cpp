@@ -42,7 +42,6 @@ void lowering::censusIdentityFields(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         const bool strings = isStringCarrier(carrierOf(field.second));
         identityFieldTypes[fieldName(field.first())] =
             carrierType(context, strings ? carrier::nullableString : carrier::nullable);
-        needsNullableString |= strings;
     }
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](mlir::Operation * op) {
@@ -50,7 +49,6 @@ void lowering::censusIdentityFields(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             const auto name = fieldName(ctjs::constantKey(op->getOperand(1)));
             identityFields.insert(name);
             identityAccess[op] = name;
-            needsNullable = true;
             needsObjectIdentity = true;
         });
     }
@@ -77,19 +75,9 @@ std::string lowering::identityFieldHelpers() const {
     std::string out =
         "namespace ctnative {\n"
         "inline identity_object & object_fields(const std::shared_ptr<identity_object> & value) {\n"
-        "    return *value;\n}\n";
-    if (needsObjectValue) {
-        out += "inline identity_object & object_fields(const object_value & value) {\n"
-               "    return *value.object;\n}\n";
-    }
-    if (needsNullableString) {
-        out += "inline nullable_scalar object_absent_field(const nullable_string & value) {\n"
-               "    if (value.tag == nullable_string::kind::undefined) { return {}; }\n"
-               "    if (value.tag == nullable_string::kind::null_value) {\n"
-               "        return nullable_scalar::null();\n"
-               "    }\n"
-               "    std::terminate();\n}\n";
-    }
+        "    return *value;\n}\n"
+        "inline identity_object & object_fields(const object_value & value) {\n"
+        "    return *value.object;\n}\n";
     for (const std::string & name : identityFields) {
         const std::string type = isNullableStringCarrier(identityFieldTypes.lookup(name))
                                      ? "nullable_string"

@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from CTNative.harness import run
+from CTNative.harness import RUNTIME_INCLUDE, run
 
 
 def main():
@@ -78,6 +78,7 @@ int main() {
             [
                 compiler,
                 "-std=c++23",
+                RUNTIME_INCLUDE,
                 "-O2",
                 "-Wall",
                 "-Wextra",
