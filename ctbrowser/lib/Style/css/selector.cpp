@@ -1070,6 +1070,10 @@ private:
                     b.part.structural |= bit;
                     ++b.classes;
                     if (bit == structural_scope) { saw_scope_ = true; }
+                    // The CSSOM serialiser has no name for `structural_defined`, so
+                    // a selector holding it serialises from the author's bytes -
+                    // exactly `dropped`'s job - rather than losing the `:defined`.
+                    if (bit == structural_defined) { b.part.dropped = true; }
                     continue;
                 }
                 // `:focus-visible` and `:defined` are real and this engine cannot
