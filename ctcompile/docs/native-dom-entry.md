@@ -155,17 +155,17 @@ receiver; standard Number `toString` accepts its exact Number receiver and no
 arguments. Number results may be returned or joined with other Numbers. The
 compiler checks the whole entry and both branch arms before erasing builtin reads.
 Replacement, prototype writes, callable escapes, unknown coercions, script reentry,
-radix arguments and stale source fingerprints refuse. Number and decodeURIComponent
-are the only optional initial intrinsic names supported by these DOM providers;
-each must be declared independently.
+radix arguments and stale source fingerprints refuse. Number, decodeURIComponent
+and JSON are the optional initial intrinsic names supported by these DOM providers;
+each must be declared independently, without duplicates.
 
 Emission calls public Core `string_to_number` and `number_to_string` with ordinary
 `double` and owning `std::string` values. Missing attributes convert to positive
 zero; saved attribute strings remain independent of later DOM changes. The shared
 Core implementation preserves the VM's current numeric behavior, including its
 known numeric-text limitations; this is not a claim of arbitrary-string ECMAScript
-equivalence. Original M's guarded URI/JSON calls, error continuations and mixed
-return values still need separate proofs.
+equivalence. Original M's complete prefix and mixed return values still need
+separate proofs.
 
 DOM manifests may also supply `"initial_intrinsics": ["decodeURIComponent"]`.
 The supplied binding must be the standard own global data binding. Number authority
@@ -181,15 +181,18 @@ function decodeAttributeText(element) {
 }
 ```
 
-The complete original acyclic entry must contain one checked ordinary URI call,
-with an undefined receiver and one proved definite String input. Both success and
+With URI authority alone, the complete original acyclic entry must contain one
+checked ordinary URI call, with an undefined receiver and one proved definite
+String input. Both success and
 failure continuations return owning Strings. The catch payload must be unused;
 reading, returning, storing or rethrowing it refuses. Local String assignments
 before the call are preserved, and a failed assignment retains the previous value.
 Protected preparation and both tails currently admit only inert bookkeeping,
-constants and the proved global loads. Other protected calls, DOM writes and
-sequential failures refuse. Prefix branches and early returns retain their source
-order. This recovery does not yet compose with local helper expansion.
+constants and the proved global loads. Other protected calls and DOM writes
+refuse; the explicitly authorized JSON chain below adds a second fallible call.
+Prefix branches and early returns retain their source order. Supported local
+helpers are normalized before expansion, and the complete DOM proof checks the
+inlined result again.
 
 Normalization inspects the original handler and every pre-call register, proves
 every discarded status edge, and constructs continuations in a private module.
@@ -221,17 +224,44 @@ inside that branch, retaining independent ownership for catch and later return.
 Both arms must pass the complete source proof. Refused or incomplete proofs
 publish no partial refinements; supplied attributes never grant authority.
 
-Original M still needs helper/exception composition, its full prefix, JSON identity
-and evaluation order, two fallible calls and mixed-result ownership. The shared
-Core JSON parser alone grants no native admission.
+DOM manifests may supply `"initial_intrinsics": ["decodeURIComponent", "JSON"]`
+to compile the protected body from original M:
+
+```javascript
+function parsedConfig(element) {
+  const text = element.hasAttribute('good') ? '%7B%22active%22%3Atrue%7D' : '%';
+  try { return JSON.parse(decodeURIComponent(text)); }
+  catch (ignored) { return text; }
+}
+```
+
+JSON authority binds the initial global JSON object and its original own-data
+`parse` property. The proof preserves the member lookup before URI argument
+evaluation, the exact JSON receiver, one definite String argument and two checked
+calls on one success path. Either failure retains its original catch snapshot;
+the payload remains unobserved. Supported local helpers may contain this chain.
+
+Emission calls public Core `ctbrowser::parse_json`, tests its
+`std::expected<ctbrowser::json_value, std::size_t>`, and moves the tree only on
+success. The result owns its strings, arrays and object members and may outlive
+the document. String failure arms become owning `ctbrowser::json_value` strings.
+No Script value, VM context, collector or second JSON parser is involved. Core's
+existing numeric, Unicode and nesting behavior remains the same as the VM parser.
+
+Replacement or shadowing of JSON, another method, a changed receiver, a reviver,
+reversed or additional calls, observed catch payloads and missing or duplicate
+intrinsic declarations refuse. JSON/String joins are supported; joins with a
+separate Boolean, Number, null or optional String still refuse. Original M's full
+prefix and mixed-result ownership remain the next boundary.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness
 observation. Every operation in both arms is checked, including nested arms;
 values must dominate their uses and frame bookkeeping stays in the entry block.
-Joins carry Numbers, Booleans, definite Strings, or owning `std::optional<std::string>` for
-String/null alternatives. Incompatible alternatives and borrowed or callable
-joins refuse. Strings widen to optionals at the existing region boundary, while
+Joins carry Numbers, Booleans, definite Strings, owning `std::optional<std::string>`
+for String/null alternatives, or owning `ctbrowser::json_value` for JSON/String
+alternatives. Incompatible alternatives and borrowed or callable joins refuse.
+Strings widen to optionals at the existing region boundary, while
 source effects remain inside their selected arm. Work uses the existing host
 budget, and nesting reaching 64 branches refuses. **755af20b** applies complete
 arm/operand/yield proof to local helpers before expansion. Simple early returns
