@@ -5,6 +5,7 @@
 #include <ctbrowser/shell/net/url.hpp>
 
 #include "../image_data.hpp"
+#include "internal.hpp"
 
 namespace ctbrowser::shell {
 
@@ -369,79 +370,11 @@ void dom_bindings::install_window(context & cx) {
     }
 
     {
-        // `new URL(url, base)` - the URL Standard's interface, over the same
-        // parser `location` reads through. It was a bare object carrying the
-        // two blob methods, so `new URL("/x", location.href)` was "`new` on an
-        // object" for every page that resolves an address before fetching it
-        // (Node-cloneNode-external-stylesheet-no-bc.sub.html is the corpus's).
-        // The parts are data properties written once: a URL object is a value
-        // to nearly every page, and the setters, `searchParams` and the
-        // percent-encoding of what location_parts leaves as written are the
-        // next things to add when a page reaches for them.
-        auto * url_proto = cx.allocate<script::object_object>();
-        const value url_prototype = value::object(url_proto);
-        auto * url = cx.allocate<script::native_object>("URL", [url_prototype](context & c,
-                                                                               std::span<value> a) {
-            // THE INSTANCE `new` MADE, recognised by its prototype: called
-            // without `new` the receiver is the window or undefined, and the
-            // standard's answer to that is a TypeError rather than eight
-            // properties written onto the window.
-            const value self = c.current_this();
-            auto * made =
-                self.is_object() ? static_cast<script::object_object *>(self.as_heap()) : nullptr;
-            if (made == nullptr || !(made->prototype == url_prototype)) {
-                c.throw_error("TypeError", "URL constructor: 'new' is required");
-                return value::undefined();
-            }
-            const std::string given = arg_string(c, a, 0);
-            const std::string href =
-                a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
-            const location_url parts = location_parts(href);
-            // No scheme is no URL: the standard's failure, a TypeError.
-            if (parts.protocol.empty()) {
-                c.throw_error("TypeError", "Invalid URL: '" + given + "'");
-                return value::undefined();
-            }
-            made->set("href", c.string(href));
-            made->set("protocol", c.string(parts.protocol));
-            made->set("host", c.string(parts.host));
-            made->set("hostname", c.string(parts.hostname));
-            made->set("port", c.string(parts.port));
-            made->set("pathname", c.string(parts.pathname));
-            made->set("search", c.string(parts.search));
-            made->set("hash", c.string(parts.hash));
-            made->set("origin", c.string(parts.origin));
-            return value::object(made);
-        });
-        {
-            const auto href_of = [](context & c, std::span<value>) {
-                return c.lookup_property(c.current_this(), "href");
-            };
-            for (const char * name : {"toString", "toJSON"}) {
-                url_proto->define(name,
-                                  value::object(cx.allocate<script::native_object>(name, href_of)),
-                                  script::attr_builtin);
-            }
-            url_proto->define("constructor", value::object(url), script::attr_builtin);
-            url->set("prototype", url_prototype);
-        }
-        // `URL.canParse` and `URL.parse`: the constructor's answer without
-        // the throw.
-        set_method(cx, *url, "canParse", [](context & c, std::span<value> a) {
-            const std::string given = arg_string(c, a, 0);
-            const std::string href =
-                a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
-            return value::boolean(!location_parts(href).protocol.empty());
-        });
-        set_method(cx, *url, "parse", [](context & c, std::span<value> a) {
-            const value ctor = c.global("URL");
-            const std::string given = arg_string(c, a, 0);
-            const std::string href =
-                a.size() > 1 && !a[1].is_undefined() ? resolve(c.to_string(a[1]), given) : given;
-            if (location_parts(href).protocol.empty()) { return value::null(); }
-            const value args[1] = {c.string(href)};
-            return c.construct(ctor, args);
-        });
+        // `URL` and `URLSearchParams`, the URL Standard's interfaces, over the
+        // parser `location` and every `src` resolve through - bindings/window/
+        // url.cpp. The File API's two blob methods hang off the constructor
+        // here because they are the bindings' business (the asset registry).
+        script::native_object * url = install_url(cx);
         set_method(cx, *url, "createObjectURL", [this](context & c, std::span<value> a) {
             if (assets_ == nullptr || a.empty() || !a[0].is_object()) { return c.string(""); }
             const value held = c.lookup_property(a[0], "__bytes");
@@ -473,7 +406,6 @@ void dom_bindings::install_window(context & cx) {
             if (assets_ != nullptr) { assets_->add(arg_string(c, a, 0), {}); }
             return value::undefined();
         });
-        cx.define_global("URL", value::object(url));
     }
 
     // `new Image()`, which is a detached <img>.
@@ -925,6 +857,29 @@ void dom_bindings::install_window(context & cx) {
                    return value::boolean(c.has_property(args[0], args[1]) || c.has_global(name) ||
                                          !frame_at(c, name).is_undefined() ||
                                          !named_element(name).empty());
+               });
+    // AND A DESCRIPTOR FOR EACH, so `Object.getOwnPropertyDescriptor(window,
+    // 'x')` and a hasOwnProperty that asks [[GetOwnProperty]] (ES 20.1.3.2)
+    // agree with `has`: a global is an own data property of the Window - the
+    // globals table IS its property storage here - and a named element or
+    // frame is HTML 7.3.3's, enumerable and configurable and not writable.
+    set_method(cx, *window_handler, "getOwnPropertyDescriptor",
+               [named_value, frame_at](context & c, std::span<value> args) {
+                   if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+                   const std::string name = c.to_string(args[1]);
+                   context::property_descriptor own;
+                   if (c.own_property(args[0], name, own)) {
+                       return c.from_property_descriptor(own);
+                   }
+                   if (c.has_global(name)) {
+                       return c.from_property_descriptor(context::property_descriptor::data(
+                           c.global(name), script::attr_default));
+                   }
+                   value held = frame_at(c, name);
+                   if (held.is_undefined()) { held = named_value(c, name); }
+                   if (held.is_undefined()) { return value::undefined(); }
+                   return c.from_property_descriptor(context::property_descriptor::data(
+                       held, script::attr_enumerable | script::attr_configurable));
                });
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));

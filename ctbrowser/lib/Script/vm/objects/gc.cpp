@@ -149,6 +149,12 @@ std::size_t context::collect() {
     // exactly like one that works: every answer is the same either way. A test
     // that forces GC asserts this number, not the answer.
     ++collections_;
+    // THE ALLOCATION CEILING IS PER COLLECTION, not per lifetime: it exists to
+    // refuse a loop that allocates without ever reaching a safepoint, and a
+    // page that collects on schedule - a game making a few thousand objects
+    // a frame, a WPT file reading a NodeList 250 million times - must not be
+    // refused at its 40,000,000th allocation an hour in.
+    allocations_ = 0;
 
     // AND THE FRAME CHAIN CHECKED, under stress only, which is where the master
     // plan puts it: "have the GC validate the whole frame chain on every

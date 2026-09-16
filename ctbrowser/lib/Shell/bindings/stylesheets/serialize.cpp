@@ -182,6 +182,9 @@ void append_compound(std::string & out, const style::compound & part, const atom
     } else if (out.size() != was) {
         out += '*';
     }
+    // THE NESTING SELECTOR, written back as `&`: what it compiled to - an
+    // `:is()` of the parent list, or the `:scope` bit - is left out below.
+    if (part.nesting) { out += '&'; }
     if (part.id) {
         out += '#';
         out += ident(atoms.text(part.id));
@@ -221,6 +224,7 @@ void append_compound(std::string & out, const style::compound & part, const atom
         if (attribute.op != style::attr_op::present) {
             out += quoted_string(attribute.value);
             if (attribute.case_insensitive) { out += " i"; }
+            if (attribute.case_sensitive_flag) { out += " s"; }
         }
         out += ']';
     }
@@ -236,7 +240,10 @@ void append_compound(std::string & out, const style::compound & part, const atom
                                                {style::state_active, "active"},
                                                {style::state_focus, "focus"},
                                                {style::state_checked, "checked"},
-                                               {style::state_disabled, "disabled"}};
+                                               {style::state_disabled, "disabled"},
+                                               {style::state_target, "target"},
+                                               {style::state_focus_within, "focus-within"},
+                                               {style::state_focus_visible, "focus-visible"}};
     static constexpr named_bit structural_bits[] = {
         {style::structural_root, "root"},
         {style::structural_empty, "empty"},
@@ -250,7 +257,8 @@ void append_compound(std::string & out, const style::compound & part, const atom
         {style::structural_enabled, "enabled"},
         {style::structural_checked, "checked"},
         {style::structural_link, "link"},
-        {style::structural_visited, "visited"}};
+        {style::structural_visited, "visited"},
+        {style::structural_scope, "scope"}};
     std::vector<std::string_view> emitted;
     const auto emit = [&](std::string_view name) {
         if (std::find(emitted.begin(), emitted.end(), name) != emitted.end()) { return; }
@@ -262,9 +270,12 @@ void append_compound(std::string & out, const style::compound & part, const atom
         if ((part.states & each.bit) != 0) { emit(each.name); }
     }
     for (const named_bit & each : structural_bits) {
-        if ((part.structural & each.bit) != 0) { emit(each.name); }
+        if ((part.structural & each.bit) == 0) { continue; }
+        if (each.bit == style::structural_scope && part.nesting) { continue; } // the `&`
+        emit(each.name);
     }
     for (const style::pseudo_ref & pseudo : part.pseudos) {
+        if (pseudo.nesting) { continue; } // the `&`, written above
         switch (pseudo.kind) {
         case style::pseudo_kind::nth_child:
             out += ":nth-child(" + an_plus_b(pseudo.a, pseudo.b) + ")";
@@ -387,16 +398,32 @@ namespace {
 
 // `(name)` or `(name: value)`, with the parentheses already on it.
 [[nodiscard]] std::string serialize_media_feature_text(std::string_view part) {
-    const std::string_view inside = part.substr(1, part.size() - 2);
+    const std::string_view inside = trim(part.substr(1, part.size() - 2), html_whitespace);
+    // A NESTED CONDITION - `((a) and (b))`, `(not (a))` - is a query without a
+    // type, serialised as one (Media Queries 4 §2.2).
+    if (inside.starts_with('(') || ascii_istarts_with(inside, "not ") ||
+        ascii_istarts_with(inside, "not(")) {
+        return "(" + serialize_media_query_text(inside) + ")";
+    }
     const std::size_t colon = inside.find(':');
     if (colon == std::string_view::npos) {
         return "(" + ascii_lower_copy(collapse_whitespace(inside, html_whitespace)) + ")";
     }
     // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
     // and `(Color)` and `(color)` are one feature; a value may be a string, a
-    // `url()` or a number with a unit, none of which fold.
+    // `url()` or a number with a unit, none of which fold. A `<ratio>` is
+    // written with its slash spaced: `1/3` is `1 / 3` (Media Queries 4 §2.4).
+    std::string value = collapse_whitespace(inside.substr(colon + 1), html_whitespace);
+    if (const std::size_t slash = value.find('/');
+        slash != std::string::npos &&
+        value.find_first_not_of("0123456789. /") == std::string::npos) {
+        std::string spaced = std::string{trim(std::string_view{value}.substr(0, slash), " ")};
+        spaced += " / ";
+        spaced += trim(std::string_view{value}.substr(slash + 1), " ");
+        value = std::move(spaced);
+    }
     return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon), html_whitespace)) +
-           ": " + collapse_whitespace(inside.substr(colon + 1), html_whitespace) + ")";
+           ": " + value + ")";
 }
 
 } // namespace
@@ -433,8 +460,9 @@ namespace detail {
                     }
                 }
             }
-            if (!closed) { return std::string{not_all}; }
-            parts.push_back(std::string{text.substr(start, at - start)});
+            // EOF closes an open block (CSS Syntax 3 §5.4.9): `(color` is
+            // `(color)`, as match-media-parsing asserts.
+            parts.push_back(std::string{text.substr(start, at - start)} + (closed ? "" : ")"));
             continue;
         }
         while (at < text.size() && text[at] != '(' &&
@@ -476,12 +504,19 @@ namespace detail {
     }
     std::vector<std::string> features;
     bool first = true;
+    std::string joiner;
     while (i < parts.size()) {
         // Everything after the media type - and everything after the first
-        // feature - is joined to what precedes it by `and`. `not (color)` has
-        // neither, and is a query with one feature and no type.
+        // feature - is joined to what precedes it by `and`, or by `or` in a
+        // typeless condition, never a mix. `not (color)` has neither, and is
+        // a query with one feature and no type.
         if (!first || !type.empty()) {
-            if (!ascii_iequals(parts[i], "and")) { return std::string{not_all}; }
+            const bool is_and = ascii_iequals(parts[i], "and");
+            const bool is_or = ascii_iequals(parts[i], "or") && type.empty();
+            if (!is_and && !is_or) { return std::string{not_all}; }
+            const std::string want = is_and ? " and " : " or ";
+            if (!joiner.empty() && joiner != want) { return std::string{not_all}; }
+            joiner = want;
             ++i;
             if (i >= parts.size()) { return std::string{not_all}; }
         }
@@ -490,6 +525,7 @@ namespace detail {
         ++i;
         first = false;
     }
+    if (joiner.empty()) { joiner = " and "; }
 
     std::string out = prefix;
     // "If the query is `all and <features>`, omit the `all and`" - but only for
@@ -498,7 +534,7 @@ namespace detail {
     const bool omit_all = type == "all" && prefix.empty() && !features.empty();
     if (!type.empty() && !omit_all) { out += type; }
     for (const std::string & feature : features) {
-        if (!out.empty() && out.back() != ' ') { out += " and "; }
+        if (!out.empty() && out.back() != ' ') { out += joiner; }
         out += feature;
     }
     return out;

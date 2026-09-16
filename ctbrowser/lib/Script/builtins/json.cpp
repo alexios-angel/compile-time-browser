@@ -166,7 +166,14 @@ struct json_writer {
             cx.throw_error("TypeError", "Do not know how to serialize a BigInt");
             return false;
         }
-        if (v.is_array()) { return write_array(v, out); }
+        // Step 10, ? IsArray(value): a proxy of an array is an array here
+        // (and a revoked one a TypeError).
+        bool array = false;
+        if (!is_array_value(cx, v, array)) {
+            failed = true;
+            return false;
+        }
+        if (array) { return write_array(v, out); }
         if (v.is_object_like() && !v.is_callable()) { return write_object(v, out); }
         // undefined, a function and a symbol are all OMITTED - which is why
         // round-tripping a value through JSON can lose fields.
@@ -222,13 +229,23 @@ struct json_writer {
         const std::string stepback = indent;
         indent += gap;
         std::vector<std::string> parts;
-        auto * arr = static_cast<array_object *>(v.as_heap());
         // ITEMS, NOT `length`. An array records an index it refused to
         // materialise and raises `length` over it (see array_object::sparse),
         // so walking to `length` would turn `a[4294967295] = 1` into four
         // billion "null"s. The deviation is array_object's own and every array
-        // built-in shares it.
-        const std::size_t count = arr->items.size();
+        // built-in shares it. A PROXY of an array has no items of its own:
+        // its `length` is read through the trap (step 2, LengthOfArrayLike).
+        std::size_t count = 0;
+        if (v.is_array()) {
+            count = static_cast<array_object *>(v.as_heap())->items.size();
+        } else {
+            const double length = array_like_length(cx, v);
+            if (cx.throw_pending()) {
+                failed = true;
+                return false;
+            }
+            count = static_cast<std::size_t>(length);
+        }
         for (std::size_t i = 0; i < count && !failed; ++i) {
             std::string each;
             const value item = cx.lookup_index(v, value::number(static_cast<double>(i)));
@@ -251,6 +268,19 @@ struct json_writer {
         std::vector<std::string> keys;
         if (has_property_list) {
             keys = property_list;
+        } else if (v.is_kind(heap_kind::proxy)) {
+            // EnumerableOwnProperties through the ownKeys and
+            // getOwnPropertyDescriptor traps, in that order.
+            for (const std::string & key : own_property_names(cx, v)) {
+                if (cx.throw_pending()) { break; }
+                context::property_descriptor found;
+                if (cx.own_property(v, key, found) && found.enumerable) { keys.push_back(key); }
+            }
+            if (cx.throw_pending()) {
+                failed = true;
+                stack.pop_back();
+                return false;
+            }
         } else if (v.is_object()) {
             // ENUMERABLE OWN STRING KEYS ONLY - EnumerableOwnProperties, step
             // 5. A symbol key is filtered out by each_own_enumerable_key for
@@ -283,22 +313,36 @@ struct json_writer {
 };
 
 // 25.5.2 steps 4 through 8: the second and third arguments, which decide what
-// the serialiser IS before it has seen a value.
-void read_stringify_options(json_writer & state, value replacer, value space) {
+// the serialiser IS before it has seen a value. False with a throw in flight.
+[[nodiscard]] bool read_stringify_options(context & cx, json_writer & state, value replacer,
+                                          value space) {
+    bool replacer_is_array = false;
+    if (!is_array_value(cx, replacer, replacer_is_array)) { return false; }
     if (replacer.is_callable()) {
         state.replacer = replacer;
-    } else if (replacer.is_array()) {
+    } else if (replacer_is_array) {
         // A PROPERTY LIST IS A SET, in insertion order: step 4.b.iii.3 appends
         // only a name that is not already there, so
-        // `JSON.stringify(o, ["a", "a"])` writes `a` once.
-        for (const value & each : static_cast<array_object *>(replacer.as_heap())->items) {
+        // `JSON.stringify(o, ["a", "a"])` writes `a` once. Read through Get,
+        // so a proxy of an array answers through its traps; a String or
+        // Number OBJECT (step 4.b.iii.2.c) is ToString'd, and anything else
+        // contributes nothing.
+        const double length = array_like_length(cx, replacer);
+        if (cx.throw_pending()) { return false; }
+        for (double i = 0; i < length; ++i) {
+            const value each = cx.lookup_index(replacer, value::number(i));
+            if (cx.throw_pending()) { return false; }
             std::string name;
             if (each.is_string()) {
                 name = static_cast<const string_object *>(each.as_heap())->text;
             } else if (each.is_number()) {
                 name = number_to_string(each.as_number());
+            } else if (const value * slot = primitive_slot(each);
+                       slot != nullptr && (slot->is_string() || slot->is_number())) {
+                name = cx.to_string(each);
+                if (cx.throw_pending()) { return false; }
             } else {
-                continue; // anything else contributes nothing to the list
+                continue;
             }
             if (std::find(state.property_list.begin(), state.property_list.end(), name) ==
                 state.property_list.end()) {
@@ -307,7 +351,17 @@ void read_stringify_options(json_writer & state, value replacer, value space) {
         }
         state.has_property_list = true;
     }
-    // TEN IS THE CEILING for both forms (steps 6 and 7), and a number is
+    // Step 6: a Number or String OBJECT is unwrapped first (ToNumber /
+    // ToString of it, which may run script).
+    if (const value * slot = primitive_slot(space); slot != nullptr) {
+        if (slot->is_number()) {
+            space = value::number(cx.to_number_value(space));
+        } else if (slot->is_string()) {
+            space = cx.string(cx.to_string(space));
+        }
+        if (cx.throw_pending()) { return false; }
+    }
+    // TEN IS THE CEILING for both forms (steps 7 and 8), and a number is
     // ToIntegerOrInfinity'd rather than rounded: `JSON.stringify(o, null, 1.9)`
     // indents by one space.
     if (space.is_number()) {
@@ -318,6 +372,7 @@ void read_stringify_options(json_writer & state, value replacer, value space) {
         const std::string & text = static_cast<const string_object *>(space.as_heap())->text;
         state.gap = text.substr(0, std::min<std::size_t>(10, text.size()));
     }
+    return true;
 }
 
 // The public Core parser owns the grammar and its data. Only this adapter
@@ -438,7 +493,9 @@ void install_json(context & cx) {
     object_object * json = new_table(cx);
     method(cx, json, "stringify", 3, [](context & c, std::span<value> a) {
         detail::json_writer state{c};
-        detail::read_stringify_options(state, arg_at(a, 1), arg_at(a, 2));
+        if (!detail::read_stringify_options(c, state, arg_at(a, 1), arg_at(a, 2))) {
+            return value::undefined();
+        }
         // THE VALUE IS SERIALISED AS A MEMBER OF A WRAPPER, 25.5.2 step 10, and
         // that is not ceremony: SerializeJSONProperty reads its value out of a
         // holder with a key, so the replacer gets `("", value)` and an object

@@ -1,11 +1,65 @@
 # WPT — the next round, as briefs
 
-Written 2026-09-13 at the end of a session that was cut short with four
-agents still running. **Everything below is measured** (`docs/wpt.md`, the
-`7f9211d0` row; `docs/css-conformance.md` §2-wide; `docs/test262.md`, the
-`b346dc0b` row) except where it says what an agent's transcript reports.
+**Updated 2026-09-16, session 13.** Round one and round two are MERGED (§1
+and §3 below are history: round two landed as four merge commits ending
+`c5c660cb` on session 12's `99122ca1` - L layout `ffabd5db`, G properties
+`888fe52d`, C cascade `eb0b0add`, A animations `2b7a298c` - followed by the
+fixes their own gates had shown: a nested rule's declarations leaking into
+the parent rule (`57e8c9e7`), a calc() media value read as a resolution
+(`6978e58f`), CSSOM interface objects not inheriting and the anonymous
+`@layer` block refused (`e29e197f`), then the six session-12 pins that had
+never run (`3cbe733c`..`f9967aad`: the 19.1 refusal for a plain assignment,
+the block-level static TDZ, the bound-function retained layout, the alpha a
+colour serialises to). Round three is RUNNING as four agents in their own
+worktrees cut from `e29e197f` - B typed-array kinds, U the URL parser, D
+document.write + html/syntax, F forms/ranges/traversal - with the briefs in
+`~/Downloads/claude/wt/wpt11-session/round3/` (`COMMON.md` says the tip and
+where the before-numbers are). Brief S (shadow DOM, custom elements,
+Selection, DOMParser) waits for a free slot.
 
-## 1. Four agent branches to merge FIRST — all finished, all clean, all gated
+**Measured** (devbox, the recorded instrument): the tip `e29e197f` and
+`a8b2d9af` (= `e29e197f` + the six fixes + ctcompile-v1 `53fef8aa`) are in
+`docs/wpt.md` and `docs/test262.md` once their runs land (`/tmp/m-<sha>`,
+`/tmp/w-<sha>` on the WSL box).
+
+**What round two left open, by agent** (each a brief's worth, not yet
+briefed):
+
+- **G2 - the grammars that accept too much.** Modelling 211 properties
+  gained 292 css files and lost 57, every one a `*-invalid.html`: a property
+  that was an expando refused everything, and its real grammar now accepts
+  some invalid forms. The list is the `LOST` block of the `t3` vs `tb` tally
+  in the session-13 notes (`wtally.py /tmp/agentG/t3 /tmp/agentG/tb`):
+  grid (`grid-auto-columns/rows`, `grid`, `grid-template`), counters,
+  `clip-path`/`mask`/`clip`, `columns`/`column-count`, `line-clamp`,
+  `offset-*`, `shape-outside`, `will-change`, `image-orientation`,
+  `text-autospace`, `hyphenate-character`, `caret-color-valid`, and five
+  css-values computed tests (`sin-cos-tan-computed`, `minmax-angle-computed`,
+  `calc-background-position-003`, `calc-linear-radial-conic-gradient-001`,
+  `random-serialize`). `lib/Style/css/properties/**` only.
+- **A2 - the interpolation rows.** CSS Animations/Transitions run from the
+  cascade now, and the harness's pages are 3x faster since `16f50178`; the
+  failing subtests are per-property interpolation shapes (`box-shadow`
+  lists, `background-*` layers, `border-image-*`, `calc-size()`, the
+  `transition: all` row). `bindings/animations/**` + `style::interpolate_text`.
+- **The cascade** still has `@container` size queries through a layout hook
+  only, `:has()` matching, and css-conditional's 172 `assert_implements`
+  HARNESS_ERRORs.
+
+**Open in the VM, not briefed:** a self-referencing closure in a NESTED
+block (`function f() { { let y = () => y; return typeof y(); } }` answers
+`undefined`; at the function's top level it is `function`) - the cell is
+made after the initialiser and the closure captured the register;
+`Object.prototype.toString` of an arguments object; RegExp `\p{...}` (469
+files) and the `v` flag (85); `var x;` at a script's top level still writes
+undefined (`statements/dispatch.cpp` says why).
+
+**Open in the DOM/CSS half, not briefed:** `scrollTop`/`scrollLeft` and the
+scroll event on elements (css/cssom-view 44/239 + 8 dom/events files),
+`FontFace` (3 HARNESS_ERRORs), `showModal`, the `NodeList` index read that
+allocates.
+
+## 1. (DONE 2026-09-16) The four round-one branches — merged as c5682f32, 20f17da4, 247a7c53, 9c70aaa0
 
 Round one ran four agents in their own worktrees, cut from `b346dc0b`. They
 FINISHED minutes after the session's handoff was written: every worktree is
@@ -70,7 +124,7 @@ called from a native with `this` undefined must bind `globalThis`.
   bogus COMMENT (data `?processing data?`), the tree builder makes a
   ProcessingInstruction.
 
-## 3. The round-two briefs
+## 3. (DONE 2026-09-16, session 13) The round-two briefs
 
 Each is one agent, disjoint paths, own worktree and devbox dir, briefed as
 `/tmp/wpt11/brief-{A,G,L,C}.md` were (the standing rules are

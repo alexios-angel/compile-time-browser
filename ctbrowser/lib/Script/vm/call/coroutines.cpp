@@ -140,6 +140,17 @@ value context::make_generator(closure_object * closure, value receiver,
         (void)generator_resume(out, value::undefined(), resume_mode::next);
         saved->started = false;
     }
+    // 27.5.3.x / 27.6.3.x EvaluateBody: FunctionDeclarationInstantiation
+    // (the prologue above) FIRST, then OrdinaryCreateFromConstructor
+    // (functionObject, "%GeneratorPrototype%") - the function's own
+    // `prototype` as of NOW when it is an object (a default parameter may
+    // have reassigned it; ensure_prototype makes one inheriting the intrinsic
+    // otherwise), else the intrinsic already set above.
+    if (!failed_) {
+        const rooted keep{*this, out};
+        const value own = ensure_prototype(value::object(closure));
+        if (own.is_object_like()) { obj->prototype = own; }
+    }
     return out;
 }
 

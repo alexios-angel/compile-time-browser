@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -7,6 +8,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/style/css/boolean.hpp>
 #include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/value.hpp>
 
@@ -37,5 +39,14 @@ namespace ctbrowser::style::css {
 // condition this engine cannot decide is false, as at the top of any `@media`.
 [[nodiscard]] std::optional<bool> evaluate_media_condition(std::string_view text,
                                                            const media_environment & env);
+
+// A `<container-condition>` (CSS Containment 3 §5): the size features
+// against `env`'s viewport, which the caller has set to the query container's
+// box, and each `style(...)`'s query text answered by `query` against the
+// container's computed style. nullopt for text that is not a condition.
+using style_query = std::function<truth(std::string_view query)>;
+[[nodiscard]] std::optional<truth> evaluate_container_condition(std::string_view text,
+                                                                const media_environment & env,
+                                                                const style_query & query);
 
 } // namespace ctbrowser::style::css

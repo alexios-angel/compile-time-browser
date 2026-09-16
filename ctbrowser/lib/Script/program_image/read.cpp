@@ -286,6 +286,7 @@ load_result load_image(std::span<const std::byte> bytes,
         fn.name = in.text();
         fn.inferred_name = in.text();
         fn.param_count = in.u16();
+        fn.length = in.u16();
         fn.frame_size = in.u16();
         const std::uint8_t arrow = in.u8();
         const std::uint8_t flags = in.u8();

@@ -34,17 +34,27 @@ void context::store_index(value target, value key, value v) {
         // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are what makes
         // it typed: `pixels[i] = 300` is 255 in a clamped byte array, and a
         // write past the end is DROPPED rather than extending it.
-        if (arr->is_view()) {
-            if (i >= 0 && static_cast<std::size_t>(i) < arr->length()) {
-                view_set(*arr, static_cast<std::size_t>(i), to_number(v));
-            }
-            return;
-        }
+        //
+        // TypedArraySetElement (10.4.5.16): the coercion FIRST - ToNumber, or
+        // ToBigInt for a BigInt kind, where a Number is a TypeError - then the
+        // index against the length as it is after that. Anything but a
+        // number goes through typed_element_set for that order, because an
+        // object's valueOf can run script; a number, which is what every
+        // pixel and matrix write is, stays on this path.
         if (arr->elements != element_kind::none) {
-            if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
-                arr->items[static_cast<std::size_t>(i)] =
-                    value::number(coerce_element(arr->elements, to_number(v)));
+            // A BIGINT KIND TAKES NO NUMBER AT ALL - ToBigInt(1) is the
+            // TypeError - so it goes the long way whatever the value is.
+            if (!v.is_number() || is_bigint_kind(arr->elements)) {
+                (void)typed_element_set(*this, *arr, static_cast<std::size_t>(i), v);
+                return;
             }
+            if (i < 0 || static_cast<std::size_t>(i) >= arr->length()) { return; }
+            if (arr->is_view()) {
+                view_set(*arr, static_cast<std::size_t>(i), v.as_number());
+                return;
+            }
+            arr->items[static_cast<std::size_t>(i)] =
+                value::number(coerce_element(arr->elements, v.as_number()));
             return;
         }
         if (i >= 0) {
@@ -142,7 +152,7 @@ void context::store_property(value target, const std::string & name, value v) {
         const std::string shown =
             name.substr(1, colon == std::string::npos ? std::string::npos : colon - 1);
         if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !has_property(target, name)) {
+            !private_element_present(target, name)) {
             throw_error("TypeError", "Cannot write private member " + shown +
                                          " to an object whose class did not declare it");
             return;
@@ -166,7 +176,7 @@ void context::store_property(value target, const std::string & name, value v) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "set");
         if (trap.is_callable()) {
-            const value args[4] = {p->target, string(name), v, target};
+            const value args[4] = {p->target, key_value(name), v, target};
             // 10.5.9 step 9: a trap answering false is a REJECTED write -
             // silent here, the TypeError in strict code (strict_store_check).
             // An HTMLCollection's index is the everyday case.
@@ -342,7 +352,9 @@ void context::store_property(value target, const std::string & name, value v) {
             } else if (!closure->extensible) {
                 store_rejected_ = true;
                 return;
-            } else if ((name == "length" || name == "name") && closure->proto != nullptr) {
+            } else if (((name == "length" && !closure->length_erased) ||
+                        (name == "name" && !closure->name_erased)) &&
+                       closure->proto != nullptr) {
                 // The SYNTHESISED `length` and `name` (own_property answers
                 // them off the compiled function, { false, false, true }) are
                 // not writable: the write is refused, not shadowed by a new

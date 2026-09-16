@@ -229,8 +229,14 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const vp::node & target = at(n.a);
     const bool declares = (n.d & 2) == 0;
     const bool is_shape = target.b >= 0;
-    const std::uint16_t item =
-        (declares && !is_shape) ? declare_local(std::string{target.text}) : alloc_reg();
+    // `for (var x in o)` AT A SCRIPT'S TOP LEVEL binds the GLOBAL x, as a
+    // top-level `var x` does - a local scoped to the loop left `x` unbound
+    // after it, so the next `for (x in o)` in strict code was an assignment
+    // to an unresolvable name. Written as a declaration (declaring_).
+    const bool var_global = declares && (n.d & 57) == 0 && frames_.size() == 1 && !module_scope_;
+    const std::uint16_t item = (declares && !is_shape && !var_global)
+                                   ? declare_local(std::string{target.text})
+                                   : alloc_reg();
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -242,20 +248,39 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     proto().emit(instruction{op::get_prop, done, step, name_operand("done")});
     const std::size_t exit = proto().emit(instruction{op::jump_if_true, done});
     proto().emit(instruction{op::get_prop, item, step, name_operand("value")});
-    if (is_shape) {
-        compile_pattern_binding(target.b, item, declares);
-    } else if (!declares) {
-        emit_write(target.text, item);
-    } else if (const local * l = find_local_entry(fn(), target.text); l != nullptr && l->boxed) {
-        proto().emit(instruction{op::new_cell, item});
-    }
     // The body is protected so a throw closes the iterator; `continue` and the
     // fall-through pop the handler, `break` pops it on its way out (it counts
     // in handler_depth_).
     const std::uint16_t caught = alloc_reg();
     const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
     ++handler_depth_;
-    compile_stmt(n.c);
+    const bool using_head = (n.d & 48) != 0; // see compile_for_of
+    const auto bind_and_body = [&] {
+        if (using_head) { emit_using_add(item, (n.d & 32) != 0); }
+        if (var_global) {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            if (is_shape) {
+                compile_pattern_binding(target.b, item, false);
+            } else {
+                emit_write(target.text, item);
+            }
+            declaring_ = outer_declaring;
+        } else if (is_shape) {
+            compile_pattern_binding(target.b, item, declares);
+        } else if (!declares) {
+            emit_write(target.text, item);
+        } else if (const local * l = find_local_entry(fn(), target.text);
+                   l != nullptr && l->boxed) {
+            proto().emit(instruction{op::new_cell, item});
+        }
+        compile_stmt(n.c);
+    };
+    if (using_head) {
+        compile_using_region((n.d & 32) != 0, bind_and_body);
+    } else {
+        bind_and_body();
+    }
     --handler_depth_;
     patch_continues(loops_.back(), proto().code.size());
     proto().emit(instruction{op::pop_handler});
@@ -337,8 +362,14 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const vp::node & target = at(n.a);
     const bool declares = (n.d & 2) == 0;
     const bool is_shape = target.b >= 0;
-    const std::uint16_t item =
-        (declares && !is_shape) ? declare_local(std::string{target.text}) : alloc_reg();
+    // `for (var x in o)` AT A SCRIPT'S TOP LEVEL binds the GLOBAL x, as a
+    // top-level `var x` does - a local scoped to the loop left `x` unbound
+    // after it, so the next `for (x in o)` in strict code was an assignment
+    // to an unresolvable name. Written as a declaration (declaring_).
+    const bool var_global = declares && (n.d & 57) == 0 && frames_.size() == 1 && !module_scope_;
+    const std::uint16_t item = (declares && !is_shape && !var_global)
+                                   ? declare_local(std::string{target.text})
+                                   : alloc_reg();
 
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
@@ -356,17 +387,38 @@ void compiler_impl::compile_for_of(const vp::node & n) {
         finished = proto().emit(instruction{op::jump_if_true, test});
         patch_here(body);
     }
-    if (is_shape) {
-        compile_pattern_binding(target.b, item, declares);
-    } else if (!declares) {
-        emit_write(target.text, item);
-    } else if (const local * l = find_local_entry(fn(), target.text); l != nullptr && l->boxed) {
-        // A captured loop variable lives in a cell, and a fresh cell per
-        // iteration is what makes the capture see this element rather than
-        // the last.
-        proto().emit(instruction{op::new_cell, item});
+    // `for (using x of xs)` (d bit4, bit5 for `await using`): each iteration
+    // is a region of its own, disposed before the next element is read.
+    const bool using_head = (n.d & 48) != 0;
+    const auto bind_and_body = [&] {
+        if (using_head) { emit_using_add(item, (n.d & 32) != 0); }
+        if (var_global) {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            if (is_shape) {
+                compile_pattern_binding(target.b, item, false);
+            } else {
+                emit_write(target.text, item);
+            }
+            declaring_ = outer_declaring;
+        } else if (is_shape) {
+            compile_pattern_binding(target.b, item, declares);
+        } else if (!declares) {
+            emit_write(target.text, item);
+        } else if (const local * l = find_local_entry(fn(), target.text);
+                   l != nullptr && l->boxed) {
+            // A captured loop variable lives in a cell, and a fresh cell per
+            // iteration is what makes the capture see this element rather than
+            // the last.
+            proto().emit(instruction{op::new_cell, item});
+        }
+        compile_stmt(n.c);
+    };
+    if (using_head) {
+        compile_using_region((n.d & 32) != 0, bind_and_body);
+    } else {
+        bind_and_body();
     }
-    compile_stmt(n.c);
 
     patch_continues(loops_.back(), proto().code.size());
     proto().emit(instruction{op::add, index, index, one});

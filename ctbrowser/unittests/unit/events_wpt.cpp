@@ -145,6 +145,24 @@ void test_window_event_is_hidden_inside_a_shadow_tree() {
        " seen.push(window.event === undefined);"
        " return seen.join(','); })()",
        "true,true,true");
+    // ...AND THAT IS DECIDED AS THE PATH IS BUILT, not as each listener runs:
+    // a listener that moves the target's ancestor out of the shadow tree
+    // (event-global-extra.window.js, "nodes moving post-dispatch") leaves the
+    // later steps as hidden as they were.
+    is("(function () {"
+       " var host = document.createElement('div');"
+       " var root = host.attachShadow({mode: 'open'});"
+       " var child = root.appendChild(document.createElement('p'));"
+       " var deep = child.appendChild(document.createElement('b'));"
+       " var seen = [];"
+       " deep.addEventListener('t', function () { host.appendChild(child);"
+       "   seen.push(window.event === undefined); });"
+       " deep.addEventListener('t', function () { seen.push(window.event === undefined); });"
+       " child.addEventListener('t', function () { seen.push(window.event === undefined); });"
+       " host.addEventListener('t', function (e) { seen.push(window.event === e); });"
+       " deep.dispatchEvent(new Event('t', {composed: true, bubbles: true}));"
+       " return seen.join(','); })()",
+       "true,true,true,true");
 }
 
 void test_related_target_is_retargeted_and_cleared() {

@@ -431,91 +431,15 @@ void dom_bindings::install_document(context & cx) {
         return value::boolean(true);
     });
 
-    // `document.write` AND `document.writeln`, AS FAR AS AN ENGINE THAT RUNS
-    // SCRIPT AFTER THE PARSE CAN HONESTLY GO.
-    //
-    // The specification's version writes into the PARSER'S INSERTION POINT: the
-    // bytes go back into the tokenizer at the position the running <script> was
-    // reached, so they are parsed as though the author had typed them there,
-    // and a `document.write` of an unbalanced `<div>` changes how the REST of
-    // the file parses. None of that is reachable here. `browser::run_scripts`
-    // collects every <script> from a document that is already fully built and
-    // runs them afterwards, so at the moment a page calls this there is no
-    // tokenizer, no insertion point and no remainder to reparse.
-    //
-    // What is implemented instead is the one thing that is well-defined without
-    // a parser: the argument is parsed as a fragment and APPENDED - to <head>
-    // for what the fragment parser routes there, to <body> for the rest. So
-    //
-    //     document.write("<p>late</p>")           appends a paragraph
-    //     document.write("<div>")                 appends an empty div
-    //     document.write("<b>") ... "</b>"        does NOT span two calls
-    //
-    // and the third is the deviation. Two things follow from that and neither
-    // is hidden: a write of one half of an element is not joined to the other
-    // half, and a written <script> is INERT - the script collection ran before
-    // this could be called, so nothing executes it and nothing fetches its src.
-    // The last is not a limitation for the tests that reach here: WPT's
-    // `generateParserDelay` writes exactly such a <script> to stall a real
-    // browser's parser, and a parser that has already finished has nothing to
-    // stall.
-    //
-    // NOT IMPLEMENTED, AND ABSENT RATHER THAN FAKED: `document.open()`. Its job
-    // is to THROW THE DOCUMENT AWAY and start a new parse, and an open() that
-    // did not would let a page that means to replace its content quietly append
-    // to it instead. A page can detect the missing method; it cannot detect a
-    // lying one.
-    {
-        const auto write_markup = [this](context & c, std::span<value> args, bool newline) {
-            std::string markup;
-            for (const value & piece : args) { markup += c.to_string(piece); }
-            if (newline) { markup += '\n'; }
-            if (markup.empty() || atoms_ == nullptr) { return value::undefined(); }
-            // Through the same WHATWG tokenizer and tree builder the page went
-            // through, into a scratch document that shares this one's atom
-            // table - so copying across needs no name remapping. Exactly what
-            // set_inner_html does, and for the same reason: a second, worse
-            // parser for markup a page produced is not a trade worth making.
-            document scratch{*atoms_};
-            (void)parse_html(scratch, markup);
-            const auto from = scratch.read();
-            const auto section = [&](std::string_view which, node_id into) {
-                if (!into) { return; }
-                const atom want = atoms_->intern_lower(which);
-                node_id found{};
-                const auto walk = [&](auto && self, node_id at) -> void {
-                    if (!found && from.tag(at).value_or(atom{}) == want) { found = at; }
-                    for (const node_id child : from.children(at)) { self(self, child); }
-                };
-                walk(walk, from.root());
-                if (!found) { return; }
-                for (const node_id child : from.children(found)) {
-                    copy_subtree(from, child, into);
-                }
-            };
-            section("head", find_by_tag("head"));
-            section("body", find_by_tag("body"));
-            mutated();
-            return value::undefined();
-        };
-        set_method(cx, *doc, "write", [write_markup](context & c, std::span<value> args) {
-            return write_markup(c, args, false);
-        });
-        set_method(cx, *doc, "writeln", [write_markup](context & c, std::span<value> args) {
-            return write_markup(c, args, true);
-        });
-        // `close` ends the parse a `document.open` started, and there is never
-        // one open here - so it is a no-op that succeeds rather than a missing
-        // method, which is what a page that writes and then closes needs.
-        set_method(cx, *doc, "close",
-                   [](context &, std::span<value>) { return value::undefined(); });
-    }
+    // `document.open`, `write`, `writeln` and `close` - HTML 8.4, the
+    // parser-driven document. See document/write.cpp: these reach the SAME
+    // parser the page is being built by, and a write from a parser-inserted
+    // script lands at the insertion point, not at the end of the body.
+    install_dynamic_markup(cx, *doc);
 
-    // 'complete' BY THE TIME SCRIPT RUNS, which is this engine's model: a page
-    // is parsed, its resources are resolved, and only then does anything
-    // execute. A library that branches on this - p5.js starts immediately when
-    // it reads 'complete' and waits for a `load` event otherwise - takes the
-    // branch that matches what actually happened.
+    // "loading" UNTIL THE PARSER SAYS OTHERWISE - the browser sets it before
+    // the parse and `parser_finished` moves it on (HTML 3.1.3). A document
+    // built some other way - a frame's, a made one - is already complete.
     doc->set("readyState", cx.string("complete"));
     // THE DOCUMENT'S OWN METADATA, none of which existed and every one of which
     // a page reads without a guard.
@@ -523,11 +447,14 @@ void dom_bindings::install_document(context & cx) {
     // Each answer below is a FACT about this engine rather than a plausible
     // string:
     //
-    //   characterSet   the tokenizer decodes bytes as UTF-8 and there is no
-    //                  <meta charset> override path, so UTF-8 is not a default
-    //                  it is the only answer. `charset` and `inputEncoding` are
-    //                  the two legacy aliases of the same value, and a page
-    //                  that feature-detects picks whichever it learned first.
+    //   characterSet   the NAME the document declared - dom/encoding.hpp's
+    //                  label table over the BOM or `<meta charset>` prescan the
+    //                  loader ran - and "UTF-8" for a document that declared
+    //                  nothing or was not loaded from bytes. The tokenizer
+    //                  decodes as UTF-8 whatever the name says. `charset` and
+    //                  `inputEncoding` are the two legacy aliases of the same
+    //                  value, and a page that feature-detects picks whichever
+    //                  it learned first.
     //   contentType    a document only ever gets here through the HTML parser.
     //   compatMode     the doctype's quirks decision, which the tree builder now
     //                  carries: `<!DOCTYPE html>` is "CSS1Compat" and a document
@@ -546,7 +473,7 @@ void dom_bindings::install_document(context & cx) {
     //                  `undefined` says "this engine has never heard of
     //                  doctypes", which is a different and less useful claim.
     for (const char * name : {"characterSet", "charset", "inputEncoding"}) {
-        doc->set(name, cx.string("UTF-8"));
+        doc->set(name, cx.string(doc_->encoding()));
     }
     // AND THE ONE THAT IS NO LONGER A CONSTANT. A document parsed as XML - see
     // dom/xml.hpp - is `application/xhtml+xml`, and `createDocument` makes one
@@ -555,7 +482,15 @@ void dom_bindings::install_document(context & cx) {
     doc->set("contentType", cx.string(!content_type_.empty() ? content_type_
                                       : doc_->xml()          ? std::string{"application/xhtml+xml"}
                                                              : std::string{"text/html"}));
-    doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
+    // LIVE: the parser decides the mode at the doctype, which a script the
+    // parser stopped for has already passed - and `document.open()` resets it.
+    doc->define_accessor("compatMode",
+                         value::object(cx.allocate<script::native_object>(
+                             "compatMode",
+                             [this](context & c, std::span<value>) {
+                                 return c.string(doc_->quirks() ? "BackCompat" : "CSS1Compat");
+                             })),
+                         value::undefined());
     doc->set("nodeType", value::number(9));
     doc->set("nodeName", cx.string("#document"));
     // NULL, AND IT STAYS NULL: `document.nodeValue = "x"` is defined to do

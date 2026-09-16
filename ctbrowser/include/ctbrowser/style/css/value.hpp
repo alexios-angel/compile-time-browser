@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/style/css/keyframes.hpp>
 #include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/selector.hpp>
@@ -88,6 +89,28 @@ struct raw_rule {
     // stylesheet::conditions. 0 is the UNCONDITIONAL entry, always present and
     // always true, so a rule outside any at-rule needs no special case.
     std::uint32_t condition = 0;
+    // Which `@layer` this rule sits inside: 0 is UNLAYERED, k is
+    // stylesheet::layers[k - 1] (CSS Cascade 5 §6.4).
+    std::uint32_t layer = 0;
+    // Which `@scope` this rule sits inside: 0 is none, k is
+    // stylesheet::scopes[k - 1] (CSS Cascade 6 §3).
+    std::uint32_t scope = 0;
+    // Which `@container`: 0 is none, k is stylesheet::containers[k - 1].
+    std::uint32_t container = 0;
+};
+
+// One `@scope (<start>) to (<end>)` block, CSS Cascade 6 §3. The roots and
+// the limits are selector lists compiled into stylesheet::selectors, as a
+// rule's are; a scope with no prelude has no roots and is the IMPLICIT
+// scope, whose root is the parent of the sheet's owner node. Nesting is a
+// parent index, as a condition's is: a rule in an inner scope must also sit
+// inside the outer one.
+struct scope_block {
+    std::uint32_t parent = 0;
+    std::uint32_t first_root = 0;
+    std::uint32_t root_count = 0;
+    std::uint32_t first_limit = 0;
+    std::uint32_t limit_count = 0;
 };
 
 // @font-face, the one at-rule whose product the cascade does not touch: it is a
@@ -128,6 +151,14 @@ struct namespace_declaration {
 struct import_statement {
     std::string href;
     std::string media;
+    // `layer` / `layer(<name>)`: the layer the imported rules belong to, as
+    // `@layer <name> { ... }` would spell it. `layered` with an empty name is
+    // the anonymous form; whoever splices the import in wraps the text in
+    // exactly that block, which is how the imported rules land in the layer.
+    std::string layer;
+    bool layered = false;
+    // `supports(<condition>)`'s argument, verbatim, or empty.
+    std::string supports;
     std::size_t begin = 0; // the byte span of the whole statement in the input,
     std::size_t end = 0;   // `@import` through its `;` inclusive
 };
@@ -159,10 +190,20 @@ struct stylesheet {
     std::vector<font_face> font_faces;
     std::vector<at_rule_block> properties;
     std::vector<at_rule_block> functions;
+    // Every `@keyframes` rule, in source order (style/css/keyframes.hpp).
+    std::vector<keyframes_block> keyframes;
     // The `@media` conditions this sheet's rules are gated on. Entry 0 is the
     // unconditional one; nesting is a parent index, so truth ANDs up the chain
     // without the tree being flattened.
     std::vector<media_condition> conditions{media_condition{}};
+    // Every `@layer` this sheet names, in the order of FIRST appearance -
+    // which is the layer order, CSS Cascade 5 §6.4.2 - as full dotted names:
+    // `@layer a { @layer b {} }` and `@layer a.b {}` both file `a.b`, after
+    // `a`. An anonymous layer gets a name no author can write - it begins
+    // with `\x01` - unique within this sheet.
+    std::vector<std::string> layers;
+    std::vector<scope_block> scopes;
+    std::vector<container_condition> containers;
 
     [[nodiscard]] std::string_view text_of(const css_token & t) const noexcept {
         return std::string_view{pool}.substr(t.text, t.length);
@@ -218,6 +259,14 @@ struct stylesheet {
         if (r.selector_count == 0) { return {}; }
         return std::span<const compiled_selector>{selectors}.subspan(r.first_selector,
                                                                      r.selector_count);
+    }
+    [[nodiscard]] std::span<const compiled_selector> roots_of(const scope_block & s) const {
+        if (s.root_count == 0) { return {}; }
+        return std::span<const compiled_selector>{selectors}.subspan(s.first_root, s.root_count);
+    }
+    [[nodiscard]] std::span<const compiled_selector> limits_of(const scope_block & s) const {
+        if (s.limit_count == 0) { return {}; }
+        return std::span<const compiled_selector>{selectors}.subspan(s.first_limit, s.limit_count);
     }
 };
 

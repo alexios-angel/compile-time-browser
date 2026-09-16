@@ -172,6 +172,46 @@ void test_generator_return_runs_finally() {
 }
 
 void test_generators() {
+    // 27.3 / 27.4 / 27.7: the three function-kind intrinsics. A `function*`'s
+    // [[Prototype]] is %GeneratorFunction.prototype%, whose `prototype` is
+    // %GeneratorPrototype%; the function's own `prototype` inherits that and
+    // has no constructor; its instances inherit the function's prototype;
+    // an async function has no `prototype` at all; each constructor makes a
+    // function of its kind from source.
+    expect_result("function* g() {} const GF = Object.getPrototypeOf(g);"
+                  " return [GF === g.constructor.prototype, GF.prototype === "
+                  "Object.getPrototypeOf(g.prototype), g.prototype.hasOwnProperty('constructor'),"
+                  " Object.getPrototypeOf(g()) === g.prototype, GF[Symbol.toStringTag],"
+                  " Object.getPrototypeOf(GF) === Function.prototype,"
+                  " Object.getPrototypeOf(g.constructor) === Function].join();",
+                  "true,true,false,true,GeneratorFunction,true,true");
+    expect_result("const GF = (function* () {}).constructor; const g = GF('a', 'yield a * 2;');"
+                  " return g(21).next().value + ',' + g.length + ',' + GF.name + ',' + GF.length;",
+                  "42,1,GeneratorFunction,1");
+    expect_result(
+        "const AF = (async function () {}).constructor; const f = async () => 1;"
+        " return [AF.name, Object.getPrototypeOf(f) === AF.prototype,"
+        " 'prototype' in (async function () {}), f.hasOwnProperty('prototype'),"
+        " AF.prototype[Symbol.toStringTag], typeof AF('a', 'await 1; return a;')].join();",
+        "AsyncFunction,true,false,false,AsyncFunction,function");
+    expect_result("const AGF = (async function* () {}).constructor; async function* ag() {}"
+                  " return [AGF.name, Object.getPrototypeOf(ag) === AGF.prototype,"
+                  " Object.getPrototypeOf(ag()) === ag.prototype,"
+                  " Object.getPrototypeOf(ag.prototype) === AGF.prototype.prototype,"
+                  " AGF.prototype.prototype[Symbol.toStringTag]].join();",
+                  "AsyncGeneratorFunction,true,true,true,AsyncGenerator");
+    expect_result("function f() {} return [Object.getPrototypeOf(f) === Function.prototype,"
+                  " f.prototype.constructor === f].join();",
+                  "true,true");
+    // GeneratorValidate: a receiver that is not a generator is a TypeError;
+    // the instance's prototype is read AFTER the parameters ran (27.5.3.x
+    // EvaluateBody: FunctionDeclarationInstantiation first).
+    expect_result("const next = Object.getPrototypeOf(function* () {}).prototype.next;"
+                  " try { next.call({}); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("function* g(a = (g.prototype = null)) {} const old = g.prototype;"
+                  " return Object.getPrototypeOf(g()) !== old;",
+                  "true");
     expect_result("function* g() { yield 1; yield 2; }"
                   "const it = g(); const a = it.next();"
                   "return a.value + ',' + a.done;",
@@ -502,6 +542,19 @@ void test_for_await() {
     expect_after_turn("var result = ''; Array.fromAsync(null).then(() => { result = 'no'; }, e => "
                       "{ result = e.name; });",
                       "TypeError");
+    // GetMethod: a present, non-callable @@iterator is a TypeError; a BigInt
+    // length is ToLength's TypeError; a thenable element that rejects rejects
+    // the whole thing (the await adopts it).
+    expect_after_turn("var result = ''; Array.fromAsync({[Symbol.iterator]: true}).then(() => {"
+                      " result = 'no'; }, e => { result = e.name; });",
+                      "TypeError");
+    expect_after_turn("var result = ''; Array.fromAsync({length: 1n, 0: 0}).then(() => {"
+                      " result = 'no'; }, e => { result = e.name; });",
+                      "TypeError");
+    expect_after_turn("var result = ''; Array.fromAsync({length: 1, 0: { then(_, rej) {"
+                      " rej(new RangeError('r')); } }}).then(() => { result = 'no'; }, e => {"
+                      " result = e.name; });",
+                      "RangeError");
     // A constructor as `this` takes the elements through defineProperty: a
     // non-configurable slot is a TypeError, not an endless loop (test262
     // this-constructor-with-unsettable-element ran the box out of memory).

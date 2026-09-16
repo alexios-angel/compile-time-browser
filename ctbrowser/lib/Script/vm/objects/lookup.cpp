@@ -44,14 +44,92 @@ object_object * typed_array_prototype(context & cx, element_kind kind) {
                                                   : nullptr;
 }
 
+bool context::private_element_present(value target, const std::string & key) {
+    property_descriptor found;
+    if (own_property(target, key, found)) { return true; }
+    // A method or accessor: on the prototype chain, or up the constructor's
+    // static chain for a static one - and then only with the brand.
+    // Capped like every other walk here (lookup_property's 64): the internal
+    // set_prototype and proto_link never refuse a cycle.
+    bool declared = false;
+    int depth = 0;
+    for (value up = get_prototype(target); up.is_object_like() && !declared && depth < 64;
+         up = get_prototype(up), ++depth) {
+        declared = own_property(up, key, found);
+    }
+    if (!declared && target.is_callable()) {
+        depth = 0;
+        for (value up = target; up.is_kind(heap_kind::function) && !declared && depth < 64;
+             ++depth) {
+            up = static_cast<closure_object *>(up.as_heap())->proto_link;
+            declared = up.is_callable() && own_property(up, key, found);
+        }
+    }
+    if (!declared) { return false; }
+    const std::size_t colon = key.rfind(':');
+    if (colon == std::string::npos) { return true; }
+    const std::string brand = std::string{private_key_prefix} + key.substr(colon);
+    return own_property(target, brand, found);
+}
+
+value context::key_value(const std::string & key) {
+    if (key.starts_with(symbol_key_prefix)) {
+        const std::size_t at = key.find(':', symbol_key_prefix.size());
+        return value::object(allocate<symbol_object>(
+            at == std::string::npos ? std::string{} : key.substr(at + 1), key));
+    }
+    if (key.starts_with("@@for:")) {
+        return value::object(allocate<symbol_object>(key.substr(6), key));
+    }
+    if (key.starts_with("@@")) {
+        // A well-known symbol's [[Description]] is "Symbol.iterator" (6.1.5.1).
+        return value::object(allocate<symbol_object>("Symbol." + key.substr(2), key));
+    }
+    return string(key);
+}
+
+value context::get_with_receiver(value base, const std::string & name, value receiver) {
+    int depth = 0;
+    for (value at = base; at.is_object_like() && depth < 64; ++depth) {
+        if (at.is_kind(heap_kind::proxy)) {
+            auto * p = static_cast<proxy_object *>(at.as_heap());
+            const value trap = proxy_trap(at, "get");
+            if (trap.is_callable()) {
+                const value args[3] = {p->target, key_value(name), receiver};
+                return call(trap, args, p->handler);
+            }
+            at = p->target;
+            continue;
+        }
+        property_descriptor found;
+        if (own_property(at, name, found)) {
+            if (!found.is_accessor()) { return found.held; }
+            return found.getter.is_callable() ? call(found.getter, {}, receiver)
+                                              : value::undefined();
+        }
+        // The implicit tables (Object.prototype and the like) sit past the
+        // explicit chain: lookup_property walks them, with `at` as the
+        // receiver, which no getter of theirs observes.
+        const value up = get_prototype(at);
+        if (!up.is_object_like()) { return lookup_property(at, name); }
+        at = up;
+    }
+    return value::undefined();
+}
+
 value context::lookup_index(value target, value key) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
         if (arr->is_view()) {
-            return i >= 0 && static_cast<std::size_t>(i) < arr->length()
-                       ? value::number(view_get(*arr, static_cast<std::size_t>(i)))
-                       : value::undefined();
+            if (i < 0 || static_cast<std::size_t>(i) >= arr->length()) {
+                return value::undefined();
+            }
+            // A BigInt kind's element is a fresh bigint off the bytes; every
+            // other kind's is view_get's double.
+            return is_bigint_kind(arr->elements)
+                       ? typed_element_get(*this, *arr, static_cast<std::size_t>(i))
+                       : value::number(view_get(*arr, static_cast<std::size_t>(i)));
         }
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
             // A HOLE READS THROUGH TO THE PROTOTYPES and an ACCESSOR element
@@ -98,7 +176,7 @@ value context::lookup_property(value target, const std::string & name) {
     // on the hot path; the walk only for the `@#` keys the compiler spells.
     if (is_private_key(name)) [[unlikely]] {
         if (!target.is_object_like() || target.is_kind(heap_kind::proxy) ||
-            !has_property(target, name)) {
+            !private_element_present(target, name)) {
             const std::size_t colon = name.find(':');
             throw_error(
                 "TypeError",
@@ -126,7 +204,7 @@ value context::lookup_property(value target, const std::string & name) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "get");
         if (trap.is_callable()) {
-            const value args[3] = {p->target, string(name), target};
+            const value args[3] = {p->target, key_value(name), target};
             return call(trap, args, p->handler);
         }
         return lookup_property(p->target, name);
@@ -353,12 +431,16 @@ value context::lookup_property(value target, const std::string & name) {
         return from_object_prototype(target, name);
     }
     if (target.is_kind(heap_kind::symbol)) {
-        auto * sym = static_cast<symbol_object *>(target.as_heap());
-        if (name == "description") { return string(sym->description); }
+        // Symbol.prototype's own table, accessors included - `description`
+        // is its getter (20.4.3.2), which knows that Symbol() has none - then
+        // Object.prototype behind it.
         if (object_object * table = prototype(proto_kind::symbol)) {
             if (value * found = table->find(name)) { return *found; }
+            if (accessor_entry * entry = table->find_accessor(name)) {
+                return call_getter(*this, *entry, target);
+            }
         }
-        return value::undefined();
+        return from_object_prototype(target, name);
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
@@ -374,8 +456,12 @@ value context::lookup_property(value target, const std::string & name) {
         // to the other undefined it is being tested against - so a nameless
         // class reported a MATCH against anything else with no name.
         if (closure->proto != nullptr) {
-            if (name == "name") { return string(closure->proto->display_name()); }
-            if (name == "length") { return value::number(closure->proto->param_count); }
+            if (name == "name" && !closure->name_erased) {
+                return string(closure->proto->display_name());
+            }
+            if (name == "length" && !closure->length_erased) {
+                return value::number(closure->proto->length);
+            }
             // A SLOPPY function's `caller` and `arguments` are null (Annex B's
             // implementation-defined answer, and every browser's); a strict
             // one reaches Function.prototype's %ThrowTypeError% accessor.
@@ -396,6 +482,10 @@ value context::lookup_property(value target, const std::string & name) {
             if (up.is_kind(heap_kind::function)) {
                 auto * parent = static_cast<closure_object *>(up.as_heap());
                 if (value * found = parent->find(name)) { return *found; }
+                // `static get x()` on the parent: called on the SUBCLASS.
+                if (accessor_entry * entry = parent->find_accessor(name)) {
+                    return call_getter(*this, *entry, target);
+                }
                 up = parent->proto_link;
                 continue;
             }
@@ -410,6 +500,17 @@ value context::lookup_property(value target, const std::string & name) {
         // and `bind` live there, and p5.js cannot install a single event
         // listener without bind. Then Object.prototype, which is
         // Function.prototype's own [[Prototype]] - see the native arm above.
+        // A generator or async function has ITS intrinsic in between
+        // (function_proto_kind): `(function* () {}).constructor` is
+        // %GeneratorFunction%, and `.prototype` of that its prototype.
+        if (const proto_kind own = function_proto_kind(target); own != proto_kind::function) {
+            if (object_object * table = prototype(own)) {
+                if (value * found = table->find(name)) { return *found; }
+                if (accessor_entry * entry = table->find_accessor(name)) {
+                    return call_getter(*this, *entry, target);
+                }
+            }
+        }
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
             if (accessor_entry * entry = table->find_accessor(name)) {

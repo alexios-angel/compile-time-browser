@@ -455,16 +455,32 @@ private:
         return out;
     }
     case node::kind::product: {
+        // The numeric factors first, as every engine writes a product:
+        // `10deg * sign(1em - 10px)`, never `sign(1em - 10px) * 10deg`
+        // (css-color's rgb-valid and hsl-valid read it back that way).
+        std::vector<const node *> sorted;
+        for (const node & child : root.children) { sorted.push_back(&child); }
+        const auto rank = [](const node * n) {
+            switch (n->what) {
+            case node::kind::number:
+            case node::kind::percent:
+            case node::kind::dimension: return 0;
+            case node::kind::invert: return 2;
+            default: return 1;
+            }
+        };
+        std::ranges::stable_sort(sorted,
+                                 [&](const node * a, const node * b) { return rank(a) < rank(b); });
         std::string out;
         bool first = true;
-        for (const node & child : root.children) {
+        for (const node * child : sorted) {
             if (first) {
-                out += serialize_child(child);
+                out += serialize_child(*child);
                 first = false;
-            } else if (child.what == node::kind::invert) {
-                out += " / " + serialize_child(child.children.front());
+            } else if (child->what == node::kind::invert) {
+                out += " / " + serialize_child(child->children.front());
             } else {
-                out += " * " + serialize_child(child);
+                out += " * " + serialize_child(*child);
             }
         }
         return out;

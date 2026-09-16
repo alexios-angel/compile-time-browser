@@ -40,8 +40,14 @@ namespace detail {
 // reason to condemn a declaration. A plain number sitting beside the symbols is
 // the other such shape, and this file does not build it.
 [[nodiscard]] std::string serialize_symbolic(const term & value) {
-    if (value.value != 0.0) { return {}; }
-    const std::size_t parts = value.symbols.size() + (value.has_percent ? 1 : 0);
+    // ...EXCEPT A NUMBER BESIDE A CHANNEL KEYWORD, which is the one shape with
+    // a plain magnitude this file does write: `calc(alpha + 0.1)` is
+    // `calc(0.1 + alpha)`, the number first as §10.13 sorts a sum.
+    const bool channels = std::ranges::any_of(
+        value.symbols, [](const auto & one) { return is_number_symbol(one.first); });
+    if (value.value != 0.0 && !(channels && value.is_number() && !value.has_percent)) { return {}; }
+    const std::size_t parts =
+        value.symbols.size() + (value.has_percent ? 1 : 0) + (value.value != 0.0 ? 1 : 0);
     const bool finite =
         std::isfinite(value.percent) && std::ranges::all_of(value.symbols, [](const auto & one) {
             return std::isfinite(one.second);
@@ -73,19 +79,25 @@ namespace detail {
         }
         out += unit;
     };
+    if (value.value != 0.0) { append(value.value, ""); }
     if (value.has_percent) { append(value.percent, "%"); }
     for (const auto & [unit, coefficient] : sorted) {
         // A FUNCTION TERM: `360deg * sibling-count()`, `2 * sibling-index()`,
         // or the bare function when nothing multiplies it - and calc-size()'s
-        // `size`, which is one for this purpose: `30px + (0.5 * size)`.
-        if (unit.ends_with("()") || unit == "size" || unit.ends_with("*size")) {
+        // `size`, which is one for this purpose: `30px + (0.5 * size)`. A
+        // relative colour's channel keyword is written the same way, without
+        // the `$` the evaluator keys it by: `0.5 * r`, `1deg * h`.
+        const std::size_t marker = unit.find('$');
+        if (unit.ends_with("()") || unit == "size" || unit.ends_with("*size") ||
+            marker != std::string::npos) {
             const std::size_t star = unit.find('*');
             const std::string_view dimension = star == std::string::npos
                                                    ? std::string_view{}
                                                    : std::string_view{unit}.substr(0, star);
-            const std::string_view function = star == std::string::npos
-                                                  ? std::string_view{unit}
-                                                  : std::string_view{unit}.substr(star + 1);
+            std::string_view function = star == std::string::npos
+                                            ? std::string_view{unit}
+                                            : std::string_view{unit}.substr(star + 1);
+            if (function.starts_with('$')) { function.remove_prefix(1); }
             if (dimension.empty() && coefficient == 1.0) {
                 if (!out.empty()) { out += " + "; }
                 out += function;

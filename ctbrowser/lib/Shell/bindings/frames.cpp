@@ -276,6 +276,9 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         // tree the parser had, exactly as a top-level XML document does.
         (void)parse_xml(fresh, bytes);
     } else if (type == "text/html") {
+        if (const std::string declared = prescan_encoding(bytes); !declared.empty()) {
+            fresh.set_encoding(declared);
+        }
         (void)parse_html(fresh, bytes);
     } else if (type.starts_with("text/") || type == "application/json" ||
                type == "text/javascript") {

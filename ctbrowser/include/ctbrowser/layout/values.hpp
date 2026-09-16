@@ -121,34 +121,87 @@ struct length {
     // because every consumer of `length` would otherwise have to learn about a
     // second one, and `resolve()` is the only place it is read.
     float offset_px = 0;
+    // `fit-content(<length-percentage>)`, CSS Sizing 3 §5.2.2: `u` is
+    // fit_content and the argument sits in `value`/`offset_px` with ITS unit
+    // here - `auto` for the bare keyword, which has no argument. It is
+    // clamp(min-content, argument, max-content), where the bare keyword clamps
+    // the available space instead (fit_content_bound, algorithm.hpp).
+    unit fit_bound = unit::auto_;
+    // calc-size(<basis>, <calc-sum>), CSS Values 5 §10.2. The three fields above
+    // are the BASIS and these four are the calculation, a linear function of the
+    // keyword `size` (the basis's used size): `size_factor * size + calc_percent%
+    // + calc_px + calc_em`. A plain length is the identity - factor 1, no offsets
+    // - so nothing that never wrote calc-size() sees a difference, and
+    // `calc-size(auto, size)` IS `auto`, which is what the specification says.
+    // `any` is a basis with no size to name: unit::none, factor 0.
+    float size_factor = 1;
+    float calc_percent = 0;
+    float calc_px = 0;
+    float calc_em = 0;
 
+    // Does a calc-size() calculation sit over the basis? `calc-size(auto, size *
+    // 2)` is not `auto`: the auto size is its INPUT, and a caller that took the
+    // keyword at face value would drop the arithmetic.
+    [[nodiscard]] constexpr bool has_calculation() const noexcept {
+        return size_factor != 1 || calc_percent != 0 || calc_px != 0 || calc_em != 0;
+    }
     // `auto` is the ONLY value a caller has to special-case. Every other unit
     // answers resolve() given a basis, so there is deliberately no
     // "is_definite" predicate here - one existed, and every call site used it
     // to mean "not auto", which silently dropped percentages and em.
-    [[nodiscard]] constexpr bool is_auto() const noexcept { return u == unit::auto_; }
-    // One of the three keywords above: a size the box's content decides.
+    [[nodiscard]] constexpr bool is_auto() const noexcept {
+        return u == unit::auto_ && !has_calculation();
+    }
+    // A size only the box's own formatting context can answer: one of the three
+    // keywords above, or a calc-size() over a keyword or over `auto` - the
+    // basis is the box's content size or its automatic size, and the
+    // calculation runs over that (intrinsic_border_width, algorithm.cpp).
     [[nodiscard]] constexpr bool is_intrinsic() const noexcept {
-        return u == unit::min_content || u == unit::max_content || u == unit::fit_content;
+        return u == unit::min_content || u == unit::max_content || u == unit::fit_content ||
+               (u == unit::auto_ && has_calculation());
+    }
+    // THE CALCULATION over the basis's used size. `size` and the answer are both
+    // measured in the box-sizing box, the same box the author's number names,
+    // and the percentage is of the containing block like any other.
+    [[nodiscard]] constexpr float apply(float size, float basis, float font_size) const noexcept {
+        return size_factor * size + calc_percent / 100.0f * basis + calc_px + calc_em * font_size;
     }
     // Resolve against a containing-block basis. `auto` has no answer here -
     // the caller decides what auto means for the property it is resolving,
     // which differs between width (fill) and height (fit content).
     [[nodiscard]] constexpr float resolve(float basis, float font_size) const noexcept {
+        float size = 0;
         switch (u) {
         case unit::px:
-        case unit::none: return value;
-        case unit::percent: return value / 100.0f * basis + offset_px;
-        case unit::em: return value * font_size;
-        case unit::rem: return value * 16.0f;
+        case unit::none: size = value; break;
+        case unit::percent: size = value / 100.0f * basis + offset_px; break;
+        case unit::em: size = value * font_size; break;
+        case unit::rem: size = value * 16.0f; break;
         case unit::auto_:
         case unit::min_content:
         case unit::max_content:
         case unit::fit_content: return 0; // a caller asks is_intrinsic() first
         }
-        return 0;
+        return apply(size, basis, font_size);
     }
 };
+
+// THE CALCULATION OF A calc-size(), read as a linear function of `size`: a
+// <calc-sum> whose terms are `size`, a number times `size`, a length or a
+// percentage, with `*` and `/` by a number and parentheses - which is the whole
+// grammar once the cascade has simplified it (style/css/calc/simplify.cpp's
+// calc_size_text writes `30px + (0.5 * size)`). Anything else answers nullopt
+// and the declaration degrades to its basis.
+struct size_calculation {
+    float size = 0, percent = 0, px = 0, em = 0;
+    bool number = false; // a bare <number>, legal only as a factor
+};
+[[nodiscard]] std::optional<size_calculation> parse_size_calculation(std::string_view text);
+
+// calc-size(<basis>, <calc-sum>): the basis parsed as a length (a keyword, `any`,
+// a <length-percentage> or a nested calc-size()) and the calculation composed
+// over it. `text` is the whole function, `calc-size(` to `)`.
+[[nodiscard]] length parse_calc_size(std::string_view text);
 
 [[nodiscard]] inline length parse_length(std::string_view text) {
     text = trim(text, " \t");
@@ -157,9 +210,19 @@ struct length {
     if (text == "min-content") { return length{0, unit::min_content}; }
     if (text == "max-content") { return length{0, unit::max_content}; }
     if (text == "fit-content") { return length{0, unit::fit_content}; }
+    if (text.starts_with("fit-content(") && text.ends_with(')')) {
+        const length bound = parse_length(text.substr(12, text.size() - 13));
+        length out{bound.value, unit::fit_content};
+        if (!bound.is_auto() && !bound.is_intrinsic()) {
+            out.fit_bound = bound.u;
+            out.offset_px = bound.offset_px;
+        }
+        return out;
+    }
     if (text == "stretch" || text == "-webkit-fill-available" || text == "-moz-available") {
         return length{0, unit::auto_};
     }
+    if (text.starts_with("calc-size(") && text.ends_with(')')) { return parse_calc_size(text); }
     // `calc(50% + 12px)` - THE ONE CALC FORM THAT REACHES LAYOUT. The cascade folds
     // every calc it can into a single px value, so anything still spelled calc()
     // here carries a percentage: it had no answer at computed-value time because it
@@ -187,6 +250,160 @@ struct length {
     if (suffix.starts_with("rem")) { return length{value, unit::rem}; }
     if (suffix.starts_with("em")) { return length{value, unit::em}; }
     return length{value, unit::none}; // unitless: treated as px, like the previous engine did
+}
+
+namespace detail {
+// One pass of a recursive-descent reader over a calc-size() calculation. The
+// grammar is CSS Values 4 §10.1's <calc-sum> with `size` as a term, and the
+// result is kept linear: a product may have at most one non-number side.
+struct size_calc_reader {
+    std::string_view text;
+    std::size_t at = 0;
+
+    void skip_space() {
+        while (at < text.size() && (text[at] == ' ' || text[at] == '\t')) { ++at; }
+    }
+    [[nodiscard]] std::optional<size_calculation> sum() {
+        std::optional<size_calculation> left = product();
+        while (left) {
+            skip_space();
+            if (at >= text.size() || (text[at] != '+' && text[at] != '-')) { break; }
+            const float sign = text[at] == '-' ? -1.0f : 1.0f;
+            ++at;
+            const std::optional<size_calculation> right = product();
+            if (!right || left->number != right->number) { return std::nullopt; }
+            left->size += sign * right->size;
+            left->percent += sign * right->percent;
+            left->px += sign * right->px;
+            left->em += sign * right->em;
+        }
+        return left;
+    }
+    [[nodiscard]] std::optional<size_calculation> product() {
+        std::optional<size_calculation> left = factor();
+        while (left) {
+            skip_space();
+            if (at >= text.size() || (text[at] != '*' && text[at] != '/')) { break; }
+            const bool divide = text[at] == '/';
+            ++at;
+            const std::optional<size_calculation> right = factor();
+            if (!right) { return std::nullopt; }
+            // Linear: a number scales the other side; two lengths cannot multiply
+            // and a length cannot divide anything.
+            if (divide) {
+                if (!right->number || right->px == 0) { return std::nullopt; }
+                scale(*left, 1.0f / right->px);
+            } else if (right->number) {
+                scale(*left, right->px);
+            } else if (left->number) {
+                const float by = left->px;
+                *left = *right;
+                scale(*left, by);
+            } else {
+                return std::nullopt;
+            }
+        }
+        return left;
+    }
+    static void scale(size_calculation & c, float by) {
+        c.size *= by;
+        c.percent *= by;
+        c.px *= by;
+        c.em *= by;
+    }
+    [[nodiscard]] std::optional<size_calculation> factor() {
+        skip_space();
+        if (at >= text.size()) { return std::nullopt; }
+        if (text[at] == '(' || text.substr(at, 5) == "calc(") {
+            at += text[at] == '(' ? 1 : 5;
+            std::optional<size_calculation> inner = sum();
+            skip_space();
+            if (!inner || at >= text.size() || text[at] != ')') { return std::nullopt; }
+            ++at;
+            return inner;
+        }
+        if (text.substr(at, 4) == "size" && (at + 4 == text.size() || !is_name(text[at + 4]))) {
+            at += 4;
+            return size_calculation{1, 0, 0, 0, false};
+        }
+        float number = 0;
+        const auto [rest, ec] =
+            std::from_chars(text.data() + at, text.data() + text.size(), number);
+        if (ec != std::errc{}) { return std::nullopt; }
+        at = static_cast<std::size_t>(rest - text.data());
+        const std::string_view unit_text = text.substr(at);
+        if (unit_text.starts_with('%')) {
+            ++at;
+            return size_calculation{0, number, 0, 0, false};
+        }
+        if (unit_text.starts_with("px")) {
+            at += 2;
+            return size_calculation{0, 0, number, 0, false};
+        }
+        if (unit_text.starts_with("rem")) {
+            at += 3;
+            return size_calculation{0, 0, number * 16.0f, 0, false};
+        }
+        if (unit_text.starts_with("em")) {
+            at += 2;
+            return size_calculation{0, 0, 0, number, false};
+        }
+        // A bare number: a factor, carried in `px` until it multiplies something.
+        return size_calculation{0, 0, number, 0, true};
+    }
+
+    [[nodiscard]] static bool is_name(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '-' || c == '_';
+    }
+};
+} // namespace detail
+
+inline std::optional<size_calculation> parse_size_calculation(std::string_view text) {
+    detail::size_calc_reader reader{text};
+    std::optional<size_calculation> out = reader.sum();
+    reader.skip_space();
+    if (!out || reader.at != text.size() || out->number) { return std::nullopt; }
+    return out;
+}
+
+inline length parse_calc_size(std::string_view text) {
+    // The two arguments, split at the top-level comma - the basis may itself be a
+    // calc-size() with a comma of its own.
+    const std::string_view inner = text.substr(10, text.size() - 11);
+    std::size_t depth = 0;
+    std::size_t comma = std::string_view::npos;
+    for (std::size_t i = 0; i < inner.size() && comma == std::string_view::npos; ++i) {
+        if (inner[i] == '(') { ++depth; }
+        if (inner[i] == ')' && depth > 0) { --depth; }
+        if (inner[i] == ',' && depth == 0) { comma = i; }
+    }
+    if (comma == std::string_view::npos) { return length{}; }
+    const std::string_view basis_text = trim(inner.substr(0, comma), " \t");
+    // THE BASIS: `any` has no size to name and the calculation is the whole
+    // value; `stretch` is what `auto` means for a block's width, as parse_length
+    // already says; `content` is flex-basis's name for the max-content size.
+    length out;
+    if (basis_text == "any") {
+        out = length{0, unit::none};
+        out.size_factor = 0;
+    } else if (basis_text == "content") {
+        out = length{0, unit::max_content};
+    } else {
+        out = parse_length(basis_text);
+    }
+    const std::optional<size_calculation> calc = parse_size_calculation(inner.substr(comma + 1));
+    if (!calc) { return out; }
+    // COMPOSED over a basis that is itself a calc-size(): f(g(size)) is linear
+    // in `size` too, so the nesting flattens into one function of the innermost
+    // basis.
+    const float factor = basis_text == "any" ? 0.0f : calc->size;
+    length composed = out;
+    composed.size_factor = factor * out.size_factor;
+    composed.calc_percent = factor * out.calc_percent + calc->percent;
+    composed.calc_px = factor * out.calc_px + calc->px;
+    composed.calc_em = factor * out.calc_em + calc->em;
+    return composed;
 }
 
 // The `display` values the box tree distinguishes. Everything else collapses

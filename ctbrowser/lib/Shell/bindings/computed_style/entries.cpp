@@ -40,11 +40,11 @@ constexpr std::array<std::string_view, 12> length_properties{
     return property == "top" || property == "right" || property == "bottom" || property == "left";
 }
 
+// Every property the table types as a `<color>`, and the shorthand of four.
 [[nodiscard]] bool is_color_property(std::string_view property) {
-    return property == "color" || property == "background-color" || property == "border-color" ||
-           property == "border-top-color" || property == "border-right-color" ||
-           property == "border-bottom-color" || property == "border-left-color" ||
-           property == "outline-color" || property == "caret-color";
+    if (property == "border-color") { return true; }
+    const style::css::property_syntax * known = style::css::find_property(property);
+    return known != nullptr && known->kind == style::css::value_kind::color;
 }
 
 // A BORDER WIDTH IS NOT REPORTED AS THE KEYWORD IT WAS WRITTEN AS, and it is not
@@ -471,6 +471,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                     };
                 }
                 conditions.canonical_color = [](std::string_view text) {
+                    const std::string computed = style::css::computed_color(text, {});
+                    if (!computed.empty()) { return computed; }
                     const std::optional<color> c = paint::parse_color(text);
                     return c ? color_text(*c) : std::string{text};
                 };
@@ -503,6 +505,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                         : nullptr;
                 registration != nullptr &&
                 registration->syntax.find("<color>") != std::string::npos) {
+                if (std::string computed = style::css::computed_color(text, {});
+                    !computed.empty()) {
+                    return computed;
+                }
                 if (const std::optional<color> c = paint::parse_color(text)) {
                     return color_text(*c);
                 }
@@ -529,26 +535,33 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    min/max is NOT clamped, because clamping is something the used value
         //    goes through and there is no used value here.
         if (property == "width" || property == "height") {
+            // A calc-size() with no used size to report - no box - serialises
+            // as written: its computed value is the function (CSS Values 5
+            // §10.2), not a number this cannot make without laying out.
+            const auto as_computed = [&]() -> std::string {
+                const std::string_view given = trim(declared(property), html_whitespace);
+                if (ascii_istarts_with(given, "calc-size(")) { return std::string{given}; }
+                return computed_length(given);
+            };
             if (at.pseudo && at.has_box) {
                 const layout::length len = layout::parse_length(declared(property));
-                if (len.is_auto() || len.is_intrinsic()) {
-                    return computed_length(declared(property));
-                }
+                if (len.is_auto() || len.is_intrinsic()) { return as_computed(); }
                 return used_px_text(
                     len.resolve(property == "width" ? at.basis : at.basis_height, at.font_size));
             }
             if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) {
-                return computed_length(declared(property));
+                return as_computed();
             }
             const bool horizontal = property == "width";
             float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
+            // The fragment is the border box; under content-box the padding AND
+            // the border come off it, which is the same arithmetic layout's
+            // border_box_size did in the other direction.
             const bool border_box = ascii_iequals(declared("box-sizing"), "border-box");
             if (at.box != nullptr && !border_box) {
-                const layout::side_lengths & pad = at.box->padding;
-                used -= horizontal ? pad.left.resolve(at.basis, at.font_size) +
-                                         pad.right.resolve(at.basis, at.font_size)
-                                   : pad.top.resolve(at.basis, at.font_size) +
-                                         pad.bottom.resolve(at.basis, at.font_size);
+                const layout::constraints c{at.basis, at.basis_height, at.font_size};
+                const layout::resolved_edges e = layout::resolve_edges(*at.box, c);
+                used -= horizontal ? e.horizontal_inner() : e.vertical_inner();
             }
             return used_px_text(std::max(0.0f, used));
         }
@@ -905,8 +918,91 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "box-shadow" || property == "text-shadow") {
             return shadow_text(text, at.font_size, property == "box-shadow");
         }
-        // 4. COLOURS, resolved so the two engines' spellings converge.
-        if (is_color_property(property)) {
+        // 4. COLOURS, CSS Color 4 §15's computed value: a legacy colour as
+        //    `rgb()`, `lab()` and the rest as themselves, `color-mix()` and a
+        //    relative colour resolved against this element's `color` - which
+        //    is what `currentcolor` means inside one, and the parent's when
+        //    the property IS `color` (the caller substituted a bare one).
+        //    An `<image>` list is the same walk over each gradient's colours,
+        //    with its lengths in pixels (CSS Images 4).
+        const bool image_property = property == "background-image" || property == "mask-image" ||
+                                    property == "border-image-source" ||
+                                    property == "list-style-image";
+        const bool filter_property = property == "filter" || property == "backdrop-filter";
+        const bool grid_property =
+            property == "grid-template-columns" || property == "grid-template-rows" ||
+            property == "grid-auto-columns" || property == "grid-auto-rows" ||
+            property == "grid-row-start" || property == "grid-row-end" ||
+            property == "grid-column-start" || property == "grid-column-end";
+        const bool transform_property = property == "rotate" || property == "scale" ||
+                                        property == "translate" || property == "transform-origin" ||
+                                        property == "perspective-origin";
+        const bool layer_property = property == "background-repeat" || property == "mask-repeat" ||
+                                    property == "background-size" || property == "mask-size" ||
+                                    property == "background-position-x" ||
+                                    property == "background-position-y" ||
+                                    property == "mask-position";
+        if (is_color_property(property) || image_property || filter_property || grid_property ||
+            transform_property || layer_property) {
+            style::css::length_context bases;
+            bases.font_size = at.font_size;
+            bases.root_font_size = at.root_font_size;
+            bases.line_height = at.box != nullptr ? at.box->line_height : at.font_size * 1.25f;
+            bases.viewport_width = static_cast<float>(viewport_width_);
+            bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+            style::css::color_context ctx;
+            ctx.lengths = &bases;
+            std::string own_color;
+            if (property != "color") {
+                const std::string_view declared_color = trim(declared("color"), html_whitespace);
+                own_color = declared_color.empty() || ascii_iequals(declared_color, "currentcolor")
+                                ? std::string{"rgb(0, 0, 0)"}
+                                : style::css::computed_color(declared_color, {});
+                if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
+                ctx.current_color = own_color;
+            }
+            if (image_property) {
+                if (std::string computed = style::css::computed_image(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (layer_property) {
+                if (std::string computed =
+                        style::css::computed_background_list(property, text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (transform_property) {
+                const float box_width = at.frag != nullptr ? at.frag->bounds.width : 0.0f;
+                const float box_height = at.frag != nullptr ? at.frag->bounds.height : 0.0f;
+                if (std::string computed = style::css::computed_transform_property(
+                        property, text, ctx, box_width, box_height);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (grid_property) {
+                if (std::string computed = style::css::computed_grid(property, text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (filter_property) {
+                if (std::string computed = style::css::computed_filter(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (std::string computed = style::css::computed_color(text, ctx); !computed.empty()) {
+                return computed;
+            }
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
             if (const std::optional<color> c = system_color(text)) { return color_text(*c); }
             return std::string{text};

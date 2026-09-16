@@ -107,6 +107,9 @@ void install_array(context & cx) {
         if (!helper.is_callable()) {
             program compiled = compiler::compile(
                 "return (async function (items, mapfn, thisArg) {"
+                // Strict, so `out.length = i` on a read-only length is the TypeError
+                // Set(O, 'length', len, true) throws (step 3.j.ix / 5.g.iv).
+                "  'use strict';"
                 "  if (items == null) { throw new TypeError('Array.fromAsync: items is not "
                 "iterable'); }"
                 "  const mapping = mapfn !== undefined;"
@@ -129,15 +132,26 @@ void install_array(context & cx) {
                 "    } else { out.push(v); }"
                 "    i++;"
                 "  };"
-                "  const iterable = typeof items[Symbol.asyncIterator] === 'function' ||"
-                "                   typeof items[Symbol.iterator] === 'function';"
+                // GetMethod (7.3.11): a present @@asyncIterator / @@iterator that is
+                // not callable is a TypeError, not an array-like.
+                "  const usingAsync = items[Symbol.asyncIterator];"
+                "  if (usingAsync != null && typeof usingAsync !== 'function') {"
+                "    throw new TypeError('Array.fromAsync: @@asyncIterator is not callable');"
+                "  }"
+                "  const usingSync = usingAsync != null ? undefined : items[Symbol.iterator];"
+                "  if (usingSync != null && typeof usingSync !== 'function') {"
+                "    throw new TypeError('Array.fromAsync: @@iterator is not callable');"
+                "  }"
+                "  const iterable = usingAsync != null || usingSync != null;"
                 "  if (iterable) {"
                 "    for await (const v of items) { put(mapping ? await mapfn.call(thisArg, v, i) "
                 ": v); }"
                 "    if (custom) { out.length = i; }"
                 "    return out;"
                 "  }"
-                "  const len = Math.min(Math.max(Math.trunc(Number(items.length)) || 0, 0), 2 ** "
+                // LengthOfArrayLike: ToNumber, not Number() - `+1n` is the TypeError
+                // ToLength gives a BigInt, where Number(1n) would be 1.
+                "  const len = Math.min(Math.max(Math.trunc(+items.length) || 0, 0), 2 ** "
                 "53 - 1);"
                 "  if (!custom && len > 4294967295) { throw new RangeError('Invalid array "
                 "length'); }"

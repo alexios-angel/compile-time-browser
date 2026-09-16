@@ -101,8 +101,8 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
 // CSS Color 5's relative colour syntax, where `r`, `g`, `b`, `alpha` and the
 // rest are channel values a calc() may use?
 [[nodiscard]] bool inside_relative_color(std::string_view value, std::size_t at) {
-    constexpr std::string_view colours[] = {"rgb(", "rgba(", "hsl(",   "hsla(",  "hwb(",
-                                            "lab(", "lch(",  "oklab(", "oklch(", "color("};
+    constexpr std::string_view colours[] = {"rgb(", "rgba(",  "hsl(",   "hsla(",  "hwb(",  "lab(",
+                                            "lch(", "oklab(", "oklch(", "color(", "alpha("};
     std::vector<bool> relative; // one entry per open bracket: is it a relative colour?
     std::size_t i = 0;
     while (i < at) {

@@ -57,7 +57,8 @@ void test_a_block_with_only_text_still_honours_its_own_box() {
     fixture f;
     f.load("<html><body><div id=a>short</div></body></html>",
            "body { margin: 0; padding: 0 } "
-           "#a { height: 500px; width: 120px; padding: 10px; font-size: 10px }");
+           "#a { height: 500px; width: 120px; padding: 10px; font-size: 10px; "
+           "     box-sizing: border-box }");
     engine eng{monospace_measure()};
     const fragment out = eng.run(f.root, 400);
     const fragment * a = out.find(f.find_id("a"));
@@ -148,13 +149,15 @@ void test_an_inline_levels_margins_belong_to_the_line() {
 }
 
 void test_a_stated_size_on_a_replaced_element_is_the_border_box() {
-    // Every other box here treats a stated width as the border box, which is what
-    // `box-sizing: border-box` asks for and what Bootstrap sets on `*`. The
-    // replaced branch used to add the padding and border AROUND it, making every
-    // `.form-control` 26px wider than Chrome's.
+    // Under `box-sizing: border-box` - which Bootstrap sets on `*` - a stated
+    // width is the border box, for a replaced element as for every other. The
+    // replaced branch used to add the padding and border AROUND it regardless,
+    // making every `.form-control` 26px wider than Chrome's. (layout_sizing has
+    // the content-box rule, where they ARE added around it.)
     fixture f;
     f.load("<html><body><input id=a><input id=b></body></html>",
-           "body { margin: 0; padding: 0 } input { padding: 0 12px; border: 1px solid #000 } "
+           "body { margin: 0; padding: 0 } input { padding: 0 12px; border: 1px solid #000; "
+           "        box-sizing: border-box } "
            "#a { width: 320px }");
     engine eng{monospace_measure()};
     const fragment out = eng.run(f.root, 400);

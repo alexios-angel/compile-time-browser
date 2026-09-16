@@ -47,7 +47,12 @@ void compiler_impl::declare_pattern_names(std::int32_t pat) {
 
 void compiler_impl::compile_pattern_binding(std::int32_t pat, std::uint16_t src, bool declaring) {
     if (declaring) { declare_pattern_names(pat); }
+    // A declaration's names at a script's top level are globals written
+    // through emit_write - a declaration's own write, see declaring_.
+    const bool outer_declaring = declaring_;
+    declaring_ = declaring_ || declaring;
     compile_pattern(pat, src);
+    declaring_ = outer_declaring;
 }
 
 void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
@@ -59,6 +64,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
     case vp::nk::member:
     case vp::nk::index: {
         // `[o.a, o.b] = pair` - a target that is not a name at all.
+        const not_declaring expression{*this};
         const reference ref = prepare_reference(n);
         emit_store(ref, src);
         return;
@@ -79,7 +85,12 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         // into the source register before the target ever sees it.
         const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
         const std::uint32_t mark = reg_mark();
-        compile_named_expr(n.b, src, at(n.a).kind == vp::nk::ident ? at(n.a).text : "");
+        {
+            // THE DEFAULT IS AN EXPRESSION, not the declaration's write:
+            // `const {a = (b = 1)} = o` in strict code still refuses `b`.
+            const not_declaring expression{*this};
+            compile_named_expr(n.b, src, at(n.a).kind == vp::nk::ident ? at(n.a).text : "");
+        }
         release_to(mark);
         patch_here(skip);
         compile_pattern(n.a, src);
@@ -120,14 +131,17 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
                 compile_pattern(e.a, item);
             } else if ((e.d & computed_bit) != 0 && e.a >= 0) { // a computed key
                 const std::uint16_t key = alloc_reg();
-                compile_expr(e.a, key);
+                {
+                    const not_declaring expression{*this};
+                    compile_expr(e.a, key);
+                }
                 proto().emit(instruction{op::get_index, item, src, key});
                 compile_pattern(e.b, item);
             } else {
                 proto().emit(
                     instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
                 taken.emplace_back(e.text);
-                if (literal && e.c == 2) {
+                if (literal && e.c == 2 && e.b < 0) {
                     emit_write(e.text, item); // shorthand `{a}` binds its own name
                 } else {
                     compile_pattern(e.b, item);

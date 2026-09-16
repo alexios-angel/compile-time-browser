@@ -6,6 +6,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/number_format.hpp>
+#include <ctbrowser/script/vm.hpp>
 
 // The header says what each of these is for. This says how, and records the two
 // places where cpp_int and JavaScript disagree about what an operation means.
@@ -175,6 +176,41 @@ std::string bigint_to_string(const bigint & a, int radix) {
     if (negative) { out += '-'; }
     std::ranges::reverse(out);
     return out;
+}
+
+std::uint64_t bigint_to_uint64_wrap(const bigint & a) {
+    static const bigint modulus = bigint{1} << 64;
+    bigint r = a % modulus;
+    if (r < 0) { r += modulus; }
+    return r.convert_to<std::uint64_t>();
+}
+
+bool to_bigint(context & cx, value v, bigint & out) {
+    value prim = v;
+    if (v.is_object_like()) {
+        if (!cx.to_primitive_hint(v, "number", prim)) { return false; }
+    }
+    if (prim.is_kind(heap_kind::bigint)) {
+        out = static_cast<bigint_object *>(prim.as_heap())->digits;
+        return true;
+    }
+    if (prim.is_boolean()) {
+        out = prim.as_boolean() ? 1 : 0;
+        return true;
+    }
+    if (prim.is_string()) {
+        const std::optional<bigint> parsed =
+            bigint_from_string(static_cast<string_object *>(prim.as_heap())->text);
+        if (!parsed) {
+            cx.throw_error("SyntaxError", "Cannot convert this string to a BigInt");
+            return false;
+        }
+        out = *parsed;
+        return true;
+    }
+    cx.throw_error("TypeError",
+                   "Cannot convert " + std::string{context::type_of(prim)} + " to a BigInt");
+    return false;
 }
 
 } // namespace ctbrowser::script

@@ -104,7 +104,7 @@ void test_the_rows_the_element_tables_name_are_all_there() {
        " var m = document.createElement('meter'); m.low = -0; m.high = 1e-10;"
        " seen.push(m.getAttribute('low'), m.getAttribute('high'), m.optimum);"
        " return seen.join(); })()",
-       "number,1,7,100,1,1,0.5,1e-10,kept,1e+25,0,1e-10,0");
+       "number,1,7,100,1,1,0.5,1e-10,kept,1e+25,0,1e-10,0.5");
     // `option.label` and `option.value` fall back to the option's text.
     is("(function () { var o = document.createElement('option'); o.textContent = ' a  b ';"
        " var seen = [o.label, o.value]; o.value = 'v'; o.label = 'l';"
@@ -208,6 +208,24 @@ void test_an_inserted_script_runs_when_it_connects() {
        " var t = document.createElement('script'); t.textContent = 'window.after = 1';"
        " document.body.appendChild(s); document.body.appendChild(t); return window.after; })()",
        "1");
+    // ...and STILL `currentScript` while its uncaught throw - and its parse
+    // error - is reported: "execute the script element" restores the previous
+    // one after "run a classic script" has reported (Document.currentScript
+    // .html, "script-window-error").
+    is("(function () { window.seen = []; window.onerror = function () {"
+       " seen.push(document.currentScript ? document.currentScript.id : 'null'); };"
+       " var s = document.createElement('script'); s.id = 'runtime'; s.textContent = 'nope();';"
+       " var t = document.createElement('script'); t.id = 'parse'; t.textContent = '{';"
+       " document.body.appendChild(s); document.body.appendChild(t); return seen.join(); })()",
+       "runtime,parse");
+    // An inline SVG's <script> is the page's script too, and names its own
+    // element (Document.currentScript.html, "script-svg").
+    browser svg_page{browser_options{400, 300}};
+    svg_page.load_html("<!DOCTYPE html><html><body><svg><script id=s>"
+                       "console.log(document.currentScript.id + ':' +"
+                       " document.currentScript.namespaceURI)</script></svg></body></html>");
+    CHECK_EQ(svg_page.bindings().console_output().back(),
+             std::string{"s:http://www.w3.org/2000/svg"});
     browser page{browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><html><body><script id=empty></script><script>"
                    "var e = document.getElementById('empty');"
@@ -266,6 +284,17 @@ void test_aria_element_references_reflect_both_ways() {
        " f.ariaLabelledByElements = null; seen.push(String(f.ariaLabelledByElements));"
        " return seen.join(); })()",
        "2,true,true,true,true,,null");
+    // ANOTHER DOCUMENT'S ELEMENT reads and writes its own tree, and keeps the
+    // reference through adoption (aria-element-reflection.html, "Adopting
+    // element keeps references").
+    is("(function () { var other = document.implementation.createHTMLDocument('o');"
+       " var d = other.createElement('div'); var s = other.createElement('span');"
+       " d.appendChild(s); other.body.appendChild(d);"
+       " d.ariaActiveDescendantElement = s; var seen = [d.ariaActiveDescendantElement === s];"
+       " document.body.appendChild(document.adoptNode(d));"
+       " seen.push(d.ariaActiveDescendantElement === s, d.ownerDocument === document);"
+       " return seen.join(); })()",
+       "true,true,true");
 }
 
 // --- the translate attribute --------------------------------------------------

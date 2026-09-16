@@ -8,6 +8,8 @@
 
 #include "../compiler_impl.hpp"
 
+#include <algorithm>
+
 namespace ctbrowser::script::detail {
 
 const std::string * compiler_impl::derived_flag() {
@@ -44,7 +46,14 @@ void compiler_impl::emit_derived_return(std::uint16_t value) {
     const std::uint32_t mark = reg_mark();
     const std::size_t defined = proto().emit(instruction{op::jump_if_defined, value});
     emit_super_check(fn().derived_flag, false);
-    proto().emit(instruction{op::ret_undef}); // [[Construct]] hands back `this`
+    {
+        // `this` EXPLICITLY, not ret_undef: super() may have rebound it to
+        // the object the parent returned (bind_this_name), which [[Construct]]
+        // would not see in the instance it made.
+        const std::uint16_t self = alloc_reg();
+        proto().emit(instruction{op::load_this, self});
+        proto().emit(instruction{op::ret, self});
+    }
     patch_here(defined);
     const std::uint16_t kind = alloc_reg();
     proto().emit(instruction{op::type_of, kind, value});
@@ -64,7 +73,14 @@ void compiler_impl::emit_derived_return(std::uint16_t value) {
 }
 
 void compiler_impl::emit_implicit_return() {
-    if (!fn().derived_flag.empty()) { emit_super_check(fn().derived_flag, false); }
+    if (!fn().derived_flag.empty()) {
+        emit_super_check(fn().derived_flag, false);
+        // See emit_derived_return: `this` may be the parent's returned object.
+        const std::uint16_t self = alloc_reg();
+        proto().emit(instruction{op::load_this, self});
+        proto().emit(instruction{op::ret, self});
+        return;
+    }
     if (!fn().is_async || fn().is_generator) {
         proto().emit(instruction{op::ret_undef});
         return;
@@ -77,6 +93,21 @@ void compiler_impl::emit_implicit_return() {
 
 void compiler_impl::compile_function_decl(std::int32_t idx) {
     const vp::node & n = at(idx);
+    // A function declared in a BLOCK is a binding of that block (14.2.1 -
+    // and the `let`-like half of B.3.2): predeclare_locals hoists only a
+    // body's own statements, so one in a nested block had no local and its
+    // write went to a global - which strict code refuses as an assignment
+    // to an unresolvable name. Declared before its body compiles, so a
+    // recursive call inside resolves to it. Its register survives the
+    // statement because compile_stmt does not release a declaration's.
+    bool block_local = false;
+    if (!(frames_.size() == 1 && !module_scope_) &&
+        find_local_in_current_scope(n.text) == nullptr) {
+        const std::uint16_t r = declare_local(std::string{n.text});
+        proto().emit(instruction{op::load_undef, r});
+        if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+        block_local = true;
+    }
     const std::uint32_t index = compile_function_body(idx, std::string{n.text});
     const std::uint32_t mark = reg_mark();
     const std::uint16_t r = alloc_reg();
@@ -107,6 +138,19 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
         proto().emit(instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
     } else {
         emit_write(n.text, r);
+        // B.3.3.1 step 1.a.ii.3.a: when the declaration is evaluated, the
+        // block binding's value is copied to the function's var binding of
+        // the same name - the one predeclare_locals made, the first entry the
+        // frame has for the name (the block's own is the last).
+        if (block_local && !fn().is_strict &&
+            std::find(fn().annex_b_functions.begin(), fn().annex_b_functions.end(), n.text) !=
+                fn().annex_b_functions.end()) {
+            const auto it = fn().local_index.find(n.text);
+            if (it != fn().local_index.end() && it->second.size() >= 2) {
+                const local & outer = fn().locals[it->second.front()];
+                proto().emit(instruction{outer.boxed ? op::cell_set : op::move, outer.reg, r});
+            }
+        }
     }
     release_to(mark);
 }
@@ -131,6 +175,9 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     frames_.back().proto = index;
     frames_.back().is_strict = strict;
     out_.functions[index].is_strict = strict;
+    // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
+    // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
+    const not_declaring body_is_not_a_write{*this};
     push_scope();
     // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
     //
@@ -237,7 +284,32 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
         ++handler_depth_;
     }
-    compile_parameter_prologue(params);
+    {
+        // A direct eval in a default may not `var` a parameter's name, nor
+        // `arguments` when the function would make one (10.2.11 steps 15-22:
+        // an arrow never does, a function naming a parameter `arguments`
+        // does not) - see param_eval_name.
+        std::vector<std::string> saved_scope;
+        saved_scope.swap(param_scope_names_);
+        bool names_arguments = false;
+        for (const std::int32_t p : params) {
+            std::vector<std::string> names;
+            if (at(p).b >= 0) {
+                pattern_names(at(p).b, names);
+            } else {
+                names.emplace_back(at(p).text);
+            }
+            for (std::string & name : names) {
+                names_arguments = names_arguments || name == "arguments";
+                param_scope_names_.push_back(std::move(name));
+            }
+        }
+        if (!out_.functions[index].is_arrow && !names_arguments) {
+            param_scope_names_.emplace_back("arguments");
+        }
+        compile_parameter_prologue(params);
+        param_scope_names_.swap(saved_scope);
+    }
     if (wants_arguments && arguments_boxed) {
         proto().emit(instruction{op::new_cell, arguments_slot});
     }
@@ -330,9 +402,7 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         for (const std::int32_t s : kids(at(body))) {
             if (at(s).kind == vp::nk::func_decl) { compile_stmt(s); }
         }
-        for (const std::int32_t s : kids(at(body))) {
-            if (at(s).kind != vp::nk::func_decl) { compile_stmt(s); }
-        }
+        compile_statement_list(kids(at(body)), true);
         emit_implicit_return();
     } else if (body >= 0) {
         // concise arrow body: `x => expr` returns expr
@@ -359,6 +429,14 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::ret, callee});
     }
     finish_frame(index, params.size());
+    // `f.length` counts the parameters before the first default or rest
+    // (15.1.5 ExpectedArgumentCount).
+    std::uint16_t expected = 0;
+    for (const std::int32_t p : params) {
+        if (at(p).a >= 0 || at(p).d == 1) { break; }
+        ++expected;
+    }
+    out_.functions[index].length = expected;
     pop_scope();
     frames_.pop_back();
     in_chain_ = saved_in_chain;

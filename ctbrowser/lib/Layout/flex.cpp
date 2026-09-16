@@ -98,7 +98,7 @@ struct flex_item {
     if (child.width.is_intrinsic()) {
         size = intrinsic_border_width(child, it.c, it.edges, measure_text, child.width);
     } else if (!child.width.is_auto()) {
-        size = child.width.resolve(content_width, child.font_size);
+        size = border_box_size(child, child.width, content_width, it.edges.horizontal_inner());
     } else if (container.flex.wrap == flex_wrap::nowrap &&
                resolved_align(container, child) == flex_align::stretch && !it.cross_start_auto &&
                !it.cross_end_auto) {
@@ -337,7 +337,23 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
         // A percentage has no answer while the container's own width is the
         // question being asked, so there the content size stands.
         if (horizontal && !child.flex.basis.is_auto() && child.flex.basis.u != unit::percent) {
-            const float stated = std::max(0.0f, child.flex.basis.resolve(basis, child.font_size));
+            const float inner = child_edges.horizontal_inner();
+            float stated = 0;
+            if (child.flex.basis.is_intrinsic()) {
+                // A KEYWORD BASIS names one of the item's content sizes -
+                // `content` and `max-content` the larger, `min-content` the
+                // smaller, `fit-content` and `auto` the larger here too - and a
+                // calc-size() over it runs over that.
+                const intrinsic_sizes content = measure_box(child, child_c, measure_text);
+                stated =
+                    calc_over_content(child, child.flex.basis,
+                                      child.flex.basis.u == unit::min_content ? content.min_content
+                                                                              : content.max_content,
+                                      basis, inner);
+            } else {
+                stated = border_box_size(child, child.flex.basis, basis, inner);
+            }
+            stated = std::max(0.0f, stated);
             item_max = stated + outside;
             // A SHRINKABLE item can still give back everything down to its
             // automatic minimum, so its minimum contribution is the smaller of the
@@ -398,10 +414,10 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // A STATED HEIGHT IS THE BORDER BOX, the same as a stated width - which is
     // what block_flow::arrange already means when it assigns the resolved height
     // straight to the fragment and starts its cursor at pad_top.
-    const float outer_height =
-        has_definite_height(b, c)
-            ? std::max(0.0f, b.height.resolve(c.available_height, b.font_size))
-            : indefinite;
+    const float outer_height = has_definite_height(b, c)
+                                   ? std::max(0.0f, border_box_size(b, b.height, c.available_height,
+                                                                    edges.vertical_inner()))
+                                   : indefinite;
     const float content_height = is_definite(outer_height)
                                      ? std::max(0.0f, outer_height - edges.vertical_inner())
                                      : indefinite;
@@ -506,7 +522,11 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             it.placed = layout_box(
                 child, constraints{content_width, child_height, child.font_size, it.cross, true},
                 measure_text);
-            content_main = it.placed.bounds.height;
+            // THE CONTENT'S height, not the fragment's: the fragment already
+            // honours the item's own `height`, and a keyword basis names what
+            // the content came to on its own.
+            content_main =
+                it.placed.auto_height >= 0 ? it.placed.auto_height : it.placed.bounds.height;
             min_content_main = content_main;
         }
 
@@ -514,27 +534,50 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         // §9.2.3): across a row it is the content size it names; down a
         // column a keyword height behaves as `auto`, which is the content
         // size too. fit-content is the clamp within the definite main size.
-        const auto keyword_main = [&](const length & want) {
-            if (!horizontal || want.u == unit::fit_content) {
+        // A calc-size() over a keyword runs over that size, and over `auto` it
+        // runs over what auto means for the property: the content size for the
+        // item's `width`/`height`, and for `flex-basis` the main size property
+        // it defers to (§7.2.3) - so `flex-basis: calc-size(auto, size * 2)` on
+        // a `width: 125px` item is 250. A plain keyword is the identity. The
+        // sizes here are border boxes, so the calculation is handed the content
+        // box and answers a border box like every other.
+        const auto keyword_main = [&](const length & want, float auto_size) {
+            float named = 0;
+            if (want.u == unit::auto_) {
+                named = auto_size;
+            } else if (!horizontal || want.u == unit::fit_content) {
                 const float room =
                     is_definite(inner_main) ? inner_main - it.main_margin : content_main;
-                return horizontal ? std::max(min_content_main, std::min(room, content_main))
-                                  : content_main;
+                // fit-content(<length-percentage>) clamps its argument instead,
+                // which names the box-sizing box: as a border box here.
+                const float middle =
+                    want.fit_bound == unit::auto_
+                        ? room
+                        : fit_content_bound(child, want, room, main_basis, it.main_padding) +
+                              it.main_padding;
+                named = horizontal ? std::max(min_content_main, std::min(middle, content_main))
+                                   : content_main;
+            } else {
+                named = want.u == unit::min_content ? min_content_main : content_main;
             }
-            return want.u == unit::min_content ? min_content_main : content_main;
+            return calc_over_content(child, want, std::max(0.0f, named - it.main_padding),
+                                     main_basis, it.main_padding);
         };
+        const auto stated_main = [&](const length & want) {
+            return border_box_size(child, want, main_basis, it.main_padding);
+        };
+        const float preferred_main =
+            preferred.is_intrinsic() ? keyword_main(preferred, content_main)
+            : !preferred.is_auto() && (preferred.u != unit::percent || main_percent_resolves)
+                ? stated_main(preferred)
+                : content_main;
         const length & basis = child.flex.basis;
         if (basis.is_intrinsic()) {
-            it.base = keyword_main(basis);
+            it.base = keyword_main(basis, preferred_main);
         } else if (!basis.is_auto() && (basis.u != unit::percent || main_percent_resolves)) {
-            it.base = basis.resolve(main_basis, child.font_size);
-        } else if (preferred.is_intrinsic()) {
-            it.base = keyword_main(preferred);
-        } else if (!preferred.is_auto() &&
-                   (preferred.u != unit::percent || main_percent_resolves)) {
-            it.base = preferred.resolve(main_basis, child.font_size);
+            it.base = stated_main(basis);
         } else {
-            it.base = content_main;
+            it.base = preferred_main;
         }
         it.base = std::max(0.0f, it.base);
 
@@ -545,27 +588,23 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         // `max-height: 100%` in a column with no stated height gave height 0.
         it.max_main = max_len.is_auto() || (max_len.u == unit::percent && !main_percent_resolves)
                           ? indefinite
-                      : max_len.is_intrinsic() ? keyword_main(max_len)
-                                               : max_len.resolve(main_basis, child.font_size);
+                      : max_len.is_intrinsic() ? keyword_main(max_len, content_main)
+                                               : stated_main(max_len);
         if (min_len.is_intrinsic()) {
-            it.min_main = std::max(0.0f, keyword_main(min_len));
+            it.min_main = std::max(0.0f, keyword_main(min_len, min_content_main));
         } else if (min_len.is_auto() || (min_len.u == unit::percent && !main_percent_resolves)) {
             // THE AUTOMATIC MINIMUM SIZE (§4.5). `min-width: auto` on a flex item
             // is NOT zero: it is min(the specified size suggestion, the content
             // size suggestion), which is what stops a long unbreakable token being
             // squeezed to nothing. Bootstrap's `.card { min-width: 0 }` exists
             // precisely to defeat it, which is the evidence that it matters.
-            float suggestion = min_content_main;
-            if (preferred.is_intrinsic()) {
-                suggestion = std::min(suggestion, keyword_main(preferred));
-            } else if (!preferred.is_auto() &&
-                       (preferred.u != unit::percent || main_percent_resolves)) {
-                suggestion = std::min(suggestion, preferred.resolve(main_basis, child.font_size));
-            }
+            // With no specified size, preferred_main is the content size and the
+            // minimum of the two is the content size suggestion alone.
+            float suggestion = std::min(min_content_main, preferred_main);
             if (is_definite(it.max_main)) { suggestion = std::min(suggestion, it.max_main); }
             it.min_main = std::max(0.0f, suggestion);
         } else {
-            it.min_main = std::max(0.0f, min_len.resolve(main_basis, child.font_size));
+            it.min_main = std::max(0.0f, stated_main(min_len));
         }
         it.hypothetical = clamp_extent(it.base, it.min_main, it.max_main);
     }
@@ -728,14 +767,21 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
                 // row is 50 tall and not 200. The column axis already clamped in
                 // column_cross_size and the row axis did not, which made the two
                 // disagree about the same rule.
+                // A keyword bound on the cross axis is left to the item's own
+                // layout, which already applied it.
                 const length & cross_min = horizontal ? it.box->min_height : it.box->min_width;
                 const length & cross_max = horizontal ? it.box->max_height : it.box->max_width;
                 const float cross_basis = horizontal ? used_cross_size : content_width;
+                const float cross_inner =
+                    horizontal ? it.edges.vertical_inner() : it.edges.horizontal_inner();
                 it.cross = clamp_extent(
                     std::max(0.0f, line_cross[l] - it.cross_margin),
-                    cross_min.is_auto() ? 0.0f : cross_min.resolve(cross_basis, it.box->font_size),
-                    cross_max.is_auto() ? indefinite
-                                        : cross_max.resolve(cross_basis, it.box->font_size));
+                    cross_min.is_auto() || cross_min.is_intrinsic()
+                        ? 0.0f
+                        : border_box_size(*it.box, cross_min, cross_basis, cross_inner),
+                    cross_max.is_auto() || cross_max.is_intrinsic()
+                        ? indefinite
+                        : border_box_size(*it.box, cross_max, cross_basis, cross_inner));
                 (horizontal ? it.placed.bounds.height : it.placed.bounds.width) = it.cross;
             }
             const float cross_free_here = line_cross[l] - it.cross - it.cross_margin;
@@ -815,7 +861,12 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // down a column it is the longest line along the main axis.
     const float block_extent = horizontal ? used_cross_size : main_extent;
     out.bounds.height =
-        is_definite(outer_height) ? outer_height : block_extent + edges.vertical_inner();
+        is_definite(outer_height) ? outer_height
+        : b.height.is_intrinsic()
+            ? std::max(0.0f, calc_over_content(b, b.height, block_extent, c.available_height,
+                                               edges.vertical_inner()))
+            : block_extent + edges.vertical_inner();
+    out.auto_height = block_extent + edges.vertical_inner();
     return out;
 }
 

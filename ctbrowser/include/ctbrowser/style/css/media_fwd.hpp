@@ -53,6 +53,35 @@ struct media_feature {
         any_pointer,
         monochrome,
         color,
+        aspect_ratio,
+        // Discrete features the window answers with one fixed keyword: a
+        // browser tab with scripting, a fast-updating screen, no forced or
+        // inverted colours, no contrast/data/transparency preference.
+        prefers_contrast,
+        prefers_reduced_data,
+        prefers_reduced_transparency,
+        forced_colors,
+        inverted_colors,
+        dynamic_range,
+        video_dynamic_range,
+        display_mode,
+        scripting,
+        update,
+        overflow_block,
+        overflow_inline,
+        color_gamut,
+        grid,
+        scan,
+    };
+    // What kind of value the feature takes, which decides whether a value is
+    // VALID for it - `(width: foo)` and `(orientation: 0)` parse but are
+    // unknown (Media Queries 4 §2.4), not false.
+    enum class kind : std::uint8_t {
+        discrete, // keywords only, no range syntax
+        length,
+        resolution,
+        integer,
+        ratio,
     };
     // `min-` and `max-` are prefixes on a range feature rather than features of their
     // own, which is why they are an operator here and not thirty more enumerators -
@@ -94,6 +123,18 @@ struct media_query {
 struct media_condition {
     std::uint32_t parent = 0;
     std::vector<media_query> queries;
+};
+
+// One `@container [<name>]? <condition>` (CSS Containment 3 §5): the name
+// the query container must carry, or empty for any, and the condition as
+// text - size features against the container's laid-out box, `style()`
+// against its computed style - read by the engine per element, which is the
+// only place both are known. Nesting is a parent index, as a media
+// condition's is.
+struct container_condition {
+    std::uint32_t parent = 0;
+    std::string name;
+    std::string condition;
 };
 
 } // namespace ctbrowser::style::css

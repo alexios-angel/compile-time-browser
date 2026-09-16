@@ -374,6 +374,11 @@ void dom_bindings::install_custom_elements(context & cx) {
             custom_element_state state;
             state.definition = index;
             custom_elements_.emplace(made.key(), std::move(state));
+            // A customized built-in <script> is a script nothing has started,
+            // exactly as createElement("script") notes one: its text runs when
+            // it connects, and before its connectedCallback (the reactions
+            // follow the post-connection steps).
+            if (def.local_name == "script") { note_unstarted_script(made); }
             return self;
         });
     html_element_ctor->set("prototype", value::object(html_element_proto));

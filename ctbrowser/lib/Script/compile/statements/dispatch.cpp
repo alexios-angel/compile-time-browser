@@ -116,8 +116,23 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // function-scoped, so at any depth it is still the script's.
         if (frames_.size() == 1 && !module_scope_ &&
             (n.text == "var" || fn().scope_marks.size() <= 1)) {
+            // NOT `declaring_` around the loop: an initialiser is an
+            // expression, and `'use strict'; var a = b = 1;` must still refuse
+            // `b`. The pattern path below sets it for its own writes only.
             for (const std::int32_t d : kids(n)) {
                 const vp::node & decl = at(d);
+                // `var x;` INITIALISES NOTHING (14.3.2.1: a VariableDeclaration
+                // without an Initializer evaluates to empty): the binding
+                // exists from instantiation - program::hoisted_vars, bound by
+                // context::run and run_nested before the first instruction -
+                // so `x = 5; var x;` should keep 5. It still writes undefined
+                // here, KNOWINGLY: tools/check/bootstrap-host-prefix.py's exact
+                // wrapper proof reads the `var originalGet;` write as the
+                // declaration that closes the global (2026-09-16, gate at
+                // a0459d71: "call lacks one closed source invocation context");
+                // when the prover takes program::hoisted_vars as the
+                // declaration, `continue` here is the whole fix (two test262
+                // files: for-in/for-of head-var-bound-names-in-stmt).
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {
@@ -125,8 +140,13 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 } else {
                     proto().emit(instruction{op::load_undef, r});
                 }
+                if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
                 if (decl.b >= 0) { // a shape, not a name
                     compile_pattern_binding(decl.b, r, true);
+                } else if (decl.text == "undefined" || decl.text == "NaN" ||
+                           decl.text == "Infinity") {
+                    // `var undefined = 5;` PutValue on a non-writable global:
+                    // dropped (see emit_plain_write).
                 } else {
                     const std::uint16_t name = name_operand(std::string{decl.text});
                     proto().emit(instruction::with_bx(op::set_global, r, name));
@@ -151,7 +171,16 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                 } else {
                     proto().emit(instruction{op::load_undef, r});
                 }
-                compile_pattern_binding(decl.b, r, false);
+                // A DECLARATION'S write, even where declare_pattern_names made
+                // no local - a `for (const [x] = ...` at a script's top level
+                // binds globals, which the strict assignment check must not
+                // take for assignments (see declaring_).
+                {
+                    const bool outer_declaring = declaring_;
+                    declaring_ = true;
+                    compile_pattern_binding(decl.b, r, false);
+                    declaring_ = outer_declaring;
+                }
                 release_to(mark);
                 continue;
             }
@@ -176,17 +205,24 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
                     compile_named_expr(decl.a, tmp, decl.text);
+                    if (is_using_decl(n)) { emit_using_add(tmp, n.text == "await using"); }
                     emit_write(decl.text, tmp);
                     release_to(mark);
                 }
                 continue;
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
+            // A lexical binding is in its dead zone until its declarator has
+            // run: `let y = y + 1` reads it before that, and compile_ident
+            // decides the ReferenceError from this offset (as
+            // predeclare_locals records it for a function body's own).
+            if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
             if (decl.a >= 0) {
                 compile_named_expr(decl.a, r, decl.text);
             } else {
                 proto().emit(instruction{op::load_undef, r});
             }
+            if (is_using_decl(n)) { emit_using_add(r, n.text == "await using"); }
             // A captured local is boxed AFTER its initializer runs, so the
             // cell starts out holding the right value.
             if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
@@ -196,7 +232,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         return; // locals must NOT be released by the mark below
     case vp::nk::block:
         push_scope();
-        for (const std::int32_t s : kids(n)) { compile_stmt(s); }
+        compile_statement_list(kids(n), false);
         pop_scope();
         break;
     case vp::nk::if_stmt: compile_if(n); break;
@@ -208,7 +244,12 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // A DECLARATION, so its name is a binding of this scope - which is
         // the whole difference from the expression form.
         compile_class(n, r, true);
-        emit_write(std::string{n.text}, r);
+        {
+            const bool outer_declaring = declaring_;
+            declaring_ = true;
+            emit_write(std::string{n.text}, r);
+            declaring_ = outer_declaring;
+        }
         break;
     }
     case vp::nk::switch_stmt: compile_switch(n); break;

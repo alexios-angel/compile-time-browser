@@ -10,6 +10,8 @@
 
 #include "compiler_impl.hpp"
 
+#include <algorithm>
+
 namespace ctbrowser::script::detail {
 
 bool compiler_impl::is_function_node(const vp::node & n) {
@@ -51,7 +53,10 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     // mentions is captured exactly as if it had been written inside one.
     // Without this the initialiser reads an unboxed enclosing local and
     // finds undefined. Slot 1 is `b`, which for a field is the initialiser.
-    const bool field_init = n.kind == vp::nk::class_member && n.c == 0 && (n.d & 1) == 0;
+    // A STATIC field or a `static { }` block compiles into the class's
+    // `<static>` function for the same reason (its `this` is the class), so
+    // slot 1 opens a boundary for those too.
+    const bool field_init = n.kind == vp::nk::class_member && (n.c == 0 || n.c == 3);
     const std::array<std::int32_t, 4> slots = child_slots(n);
     for (std::size_t i = 0; i < slots.size(); ++i) {
         tour(slots[i], inner, tick, field_init && i == 1);
@@ -81,6 +86,20 @@ bool compiler_impl::mentions_arguments(std::int32_t idx) const {
     }
     for (const std::int32_t k : kids(n)) {
         if (mentions_arguments(k)) { return true; }
+    }
+    return false;
+}
+
+bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    if (n.kind == vp::nk::super_lit) { return true; }
+    if (!root && (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr)) { return false; }
+    for (const std::int32_t slot : child_slots(n)) {
+        if (mentions_super(slot, false)) { return true; }
+    }
+    for (const std::int32_t k : kids(n)) {
+        if (mentions_super(k, false)) { return true; }
     }
     return false;
 }
@@ -134,9 +153,10 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     if (body < 0 || (at(body).kind != vp::nk::block && at(body).kind != vp::nk::program)) {
         return;
     }
-    const auto hoist = [this](std::string name) {
+    const auto hoist = [this](std::string name, std::uint32_t initialized_at = 0) {
         if (name.empty() || find_local_entry(fn(), name) != nullptr) { return; }
         const std::uint16_t r = declare_local(name);
+        fn().locals.back().initialized_at = initialized_at;
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
         fn().predeclared.push_back(std::move(name));
@@ -157,13 +177,21 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
         const std::int32_t stmt =
             at(outer).kind == vp::nk::export_decl && at(outer).a >= 0 ? at(outer).a : outer;
         if (at(stmt).kind == vp::nk::var_decl) {
+            // A `let`/`const`/`using` binding is in its TDZ until its
+            // declarator has run: the offset past the declarator (or, with
+            // no initialiser, past the statement) is when it is initialised.
+            const bool lexical = at(stmt).text != "var";
             for (const std::int32_t d : kids(at(stmt))) {
+                const std::uint32_t ready = lexical ? at(d).end : 0;
                 if (at(d).b >= 0) { // a shape: hoist every name inside it
+                    // ...with no static dead zone: `const {a, b = a} = o`
+                    // initialises `a` before `b`'s default reads it, which a
+                    // single offset cannot say.
                     std::vector<std::string> names;
                     pattern_names(at(d).b, names);
                     for (std::string & name : names) { hoist(std::move(name)); }
                 } else {
-                    hoist(std::string{at(d).text});
+                    hoist(std::string{at(d).text}, ready);
                 }
             }
         } else if (at(stmt).kind == vp::nk::import_decl) {
@@ -188,13 +216,40 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
             // the next statement's temporaries reuse the slot. `class S {}`
             // followed by two `new S()` therefore worked once and then
             // found an object in the register the second time.
-            hoist(std::string{at(stmt).text});
+            hoist(std::string{at(stmt).text}, at(stmt).end);
         }
     }
     // And every `var` in a NESTED block, which the loop above cannot see -
     // it walks this body's own statements only. `hoist` returns early on a
     // name already declared, so the statements just handled cost a lookup.
-    for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist); }
+    std::vector<std::string> vars; // every `var` name below this body, any depth
+    const auto hoist_var = [&](std::string name) {
+        vars.push_back(name);
+        hoist(std::move(name));
+    };
+    for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist_var); }
+    // ANNEX B.3.3 (sloppy code only): a function declared in a nested block
+    // takes a var binding of this function as well, unless a parameter or a
+    // lexical declaration already has the name - which is what "already a
+    // local, and not one of the vars" means here, the parameters and the
+    // body's own let/const/class having been declared above.
+    if (!fn().is_strict) {
+        std::vector<std::string> lexical;
+        for (const std::int32_t stmt : kids(at(body))) {
+            each_block_function(
+                stmt,
+                [&](std::string name) {
+                    const bool fresh = find_local_entry(fn(), name) == nullptr;
+                    if (fresh) {
+                        hoist(name);
+                    } else if (std::find(vars.begin(), vars.end(), name) == vars.end()) {
+                        return;
+                    }
+                    fn().annex_b_functions.push_back(std::move(name));
+                },
+                lexical);
+        }
+    }
 }
 
 bool compiler_impl::was_predeclared(std::string_view name) const {

@@ -79,6 +79,13 @@ struct fragment {
     // Inline-flow result metadata. A real line box may have zero geometric
     // height, but it still prevents its block container collapsing through.
     bool has_line_box = false;
+    // THE HEIGHT THE CONTENT CAME TO, as a border box, before a stated height
+    // or a min/max clamp replaced it - what a keyword or a calc-size() basis on
+    // the block axis names (CSS Sizing 3 §5.1: a keyword height IS the
+    // automatic height). A column flex item asks this for its content-based
+    // main size, because its fragment's height already honours the item's own
+    // `height`. Negative where the flow did not say: a replaced box, a table.
+    float auto_height = -1;
     // THE USED MARGINS, which differ from the computed ones exactly where a
     // margin was `auto`: a centred block's, an absolutely positioned box's
     // between two offsets. CSSOM reports margins as used values for an element

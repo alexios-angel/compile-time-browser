@@ -106,6 +106,8 @@ void dom_bindings::sync_animation_roots() {
     roots.clear();
     roots.push_back(animation_prototype_);
     roots.push_back(keyframe_effect_prototype_);
+    roots.push_back(css_animation_prototype_);
+    roots.push_back(css_transition_prototype_);
     roots.push_back(timeline_);
     for (const keyframe_effect_record & e : effects_) { roots.push_back(e.self); }
     for (const animation_record & a : animations_) {
@@ -190,12 +192,34 @@ void dom_bindings::update_finished_state(context & cx, std::size_t index) {
     }
 }
 
+// Composite order, Web Animations §5.4.2 with CSS Animations 2 §5.2 and CSS
+// Transitions 2 §4.2 folded in: every transition before every animation
+// before every script-made one; within a class by the owner's tree order,
+// then by position in the list that made it; then by creation.
+bool dom_bindings::composites_before(std::size_t a, std::size_t b) const noexcept {
+    const animation_record & x = animations_[a];
+    const animation_record & y = animations_[b];
+    if (x.kind != y.kind) { return x.kind < y.kind; }
+    if (x.kind != animation_kind::script) {
+        if (x.tree_order != y.tree_order) { return x.tree_order < y.tree_order; }
+        if (x.position != y.position) { return x.position < y.position; }
+    }
+    return a < b;
+}
+
 std::vector<std::size_t> dom_bindings::animations_on(node_id id, bool subtree) const {
     std::vector<std::size_t> out;
     const auto txn = doc_->read();
     for (std::size_t i = 0; i < animations_.size(); ++i) {
         const animation_record & a = animations_[i];
         if (a.effect == no_record || play_state(a) == "idle") { continue; }
+        // RELEVANT ONLY (§5.4): a finished animation that fills forwards is
+        // in effect and stays; one that does not is over, and a completed
+        // transition is exactly that.
+        if (play_state(a) == "finished") {
+            const std::string & fill = effects_[a.effect].timing.fill;
+            if (fill != "forwards" && fill != "both") { continue; }
+        }
         const node_id target = effects_[a.effect].target;
         if (!target) { continue; }
         bool hit = target == id;
@@ -210,6 +234,81 @@ std::vector<std::size_t> dom_bindings::animations_on(node_id id, bool subtree) c
         }
         if (hit) { out.push_back(i); }
     }
+    std::ranges::sort(out,
+                      [this](std::size_t a, std::size_t b) { return composites_before(a, b); });
+    return out;
+}
+
+dom_bindings::timing_sample dom_bindings::sample_timing(const animation_record & a) const noexcept {
+    timing_sample out;
+    if (a.effect == no_record) { return out; }
+    const keyframe_effect_record & e = effects_[a.effect];
+    const effect_timing & t = e.timing;
+    const double local = animation_current_time(a);
+    if (unresolved(local)) { return out; }
+
+    // §4.8.3: the phase, then the active time, filled or not.
+    const double active_duration =
+        t.duration == 0 || t.iterations == 0 ? 0 : t.duration * t.iterations;
+    const double end = effect_end_time(e);
+    const double before_boundary = std::max(std::min(t.delay, end), 0.0);
+    const double after_boundary = std::max(std::min(t.delay + active_duration, end), 0.0);
+    out.phase = effect_phase::active;
+    if (local < before_boundary || (a.playback_rate < 0 && local == before_boundary)) {
+        out.phase = effect_phase::before;
+    } else if (local > after_boundary || (a.playback_rate >= 0 && local == after_boundary)) {
+        out.phase = effect_phase::after;
+    }
+    const bool fill_backwards = t.fill == "backwards" || t.fill == "both";
+    const bool fill_forwards = t.fill == "forwards" || t.fill == "both";
+    double active_time = nan;
+    switch (out.phase) {
+    case effect_phase::before: active_time = fill_backwards ? 0 : nan; break;
+    case effect_phase::active: active_time = local - t.delay; break;
+    case effect_phase::after: active_time = fill_forwards ? active_duration : nan; break;
+    case effect_phase::idle: break;
+    }
+    // The iteration the events count is the one the ACTIVE time is in,
+    // filled or not - so it is computed before the fill decides anything.
+    const double counted_time = out.phase == effect_phase::active  ? local - t.delay
+                                : out.phase == effect_phase::after ? active_duration
+                                                                   : 0;
+    out.active_time = active_time;
+    if (unresolved(active_time)) {
+        out.iteration = t.duration == 0 ? 0 : std::floor(counted_time / t.duration);
+        return out;
+    }
+
+    // §4.8.4-4.8.7: overall, simple iteration and directed progress.
+    double overall = t.duration == 0 ? (out.phase == effect_phase::before ? 0 : t.iterations)
+                                     : active_time / t.duration;
+    overall += t.iteration_start;
+    double simple = std::isinf(overall) ? 0 : std::fmod(overall, 1.0);
+    if (simple < 0) { simple += 1; }
+    const bool at_end = active_time == active_duration && t.iterations != 0;
+    if (simple == 0 && at_end &&
+        (out.phase == effect_phase::active || out.phase == effect_phase::after)) {
+        simple = 1;
+    }
+    double iteration = std::floor(overall);
+    if (out.phase == effect_phase::after && std::isinf(t.iterations)) {
+        iteration = infinity;
+    } else if (simple == 1) {
+        iteration = std::floor(overall) - 1;
+    }
+    out.iteration = iteration;
+    bool forwards = true;
+    if (t.direction == "reverse") {
+        forwards = false;
+    } else if (t.direction == "alternate" || t.direction == "alternate-reverse") {
+        const bool even = std::isinf(iteration) || std::fmod(iteration, 2.0) == 0;
+        forwards = t.direction == "alternate" ? even : !even;
+    }
+    const double directed = forwards ? simple : 1 - simple;
+    const bool before_flag = (forwards && out.phase == effect_phase::before) ||
+                             (!forwards && out.phase == effect_phase::after);
+    const style::easing timing_easing = style::parse_easing(t.easing).value_or(style::easing{});
+    out.progress = timing_easing(directed, before_flag);
     return out;
 }
 
@@ -228,65 +327,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
     for (const std::size_t index : animations_on(id, false)) {
         const animation_record & a = animations_[index];
         const keyframe_effect_record & e = effects_[a.effect];
-        const effect_timing & t = e.timing;
-        const double local = animation_current_time(a);
-        if (unresolved(local)) { continue; }
-
-        // §4.8.3: the phase, then the active time, filled or not.
-        const double active_duration =
-            t.duration == 0 || t.iterations == 0 ? 0 : t.duration * t.iterations;
-        const double end = effect_end_time(e);
-        const double before_boundary = std::max(std::min(t.delay, end), 0.0);
-        const double after_boundary = std::max(std::min(t.delay + active_duration, end), 0.0);
-        enum class phase_kind {
-            before,
-            active,
-            after
-        };
-        phase_kind phase = phase_kind::active;
-        if (local < before_boundary || (a.playback_rate < 0 && local == before_boundary)) {
-            phase = phase_kind::before;
-        } else if (local > after_boundary || (a.playback_rate >= 0 && local == after_boundary)) {
-            phase = phase_kind::after;
-        }
-        const bool fill_backwards = t.fill == "backwards" || t.fill == "both";
-        const bool fill_forwards = t.fill == "forwards" || t.fill == "both";
-        double active_time = nan;
-        switch (phase) {
-        case phase_kind::before: active_time = fill_backwards ? 0 : nan; break;
-        case phase_kind::active: active_time = local - t.delay; break;
-        case phase_kind::after: active_time = fill_forwards ? active_duration : nan; break;
-        }
-        if (unresolved(active_time)) { continue; }
-
-        // §4.8.4-4.8.7: overall, simple iteration and directed progress.
-        double overall = t.duration == 0 ? (phase == phase_kind::before ? 0 : t.iterations)
-                                         : active_time / t.duration;
-        overall += t.iteration_start;
-        double simple = std::isinf(overall) ? 0 : std::fmod(overall, 1.0);
-        if (simple < 0) { simple += 1; }
-        const bool at_end = active_time == active_duration && t.iterations != 0;
-        if (simple == 0 && at_end && (phase == phase_kind::active || phase == phase_kind::after)) {
-            simple = 1;
-        }
-        double iteration = std::floor(overall);
-        if (phase == phase_kind::after && std::isinf(t.iterations)) {
-            iteration = infinity;
-        } else if (simple == 1) {
-            iteration = std::floor(overall) - 1;
-        }
-        bool forwards = true;
-        if (t.direction == "reverse") {
-            forwards = false;
-        } else if (t.direction == "alternate" || t.direction == "alternate-reverse") {
-            const bool even = std::isinf(iteration) || std::fmod(iteration, 2.0) == 0;
-            forwards = t.direction == "alternate" ? even : !even;
-        }
-        const double directed = forwards ? simple : 1 - simple;
-        const bool before_flag =
-            (forwards && phase == phase_kind::before) || (!forwards && phase == phase_kind::after);
-        const style::easing timing_easing = style::parse_easing(t.easing).value_or(style::easing{});
-        const double progress = timing_easing(directed, before_flag);
+        const double progress = sample_timing(a).progress;
+        if (unresolved(progress)) { continue; }
 
         // §5.4.3, "the effect value of a keyframe effect", one property at a time.
         std::vector<std::string> properties;
@@ -365,8 +407,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 const double distance = (progress - points[start].offset) / span;
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
-                text = style::interpolate_text(property, points[start].text, points[stop].text,
-                                               keyframe_easing(distance, false), ctx);
+                text = interpolate_value(property, points[start].text, points[stop].text,
+                                         keyframe_easing(distance, false), ctx);
             }
             const auto seen = std::ranges::find_if(
                 out, [&property](const auto & entry) { return entry.first == property; });
@@ -639,6 +681,10 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
         made.composite = c;
     }
     if (!read_keyframes(cx, keyframes, made.keyframes)) { return value::undefined(); }
+    return effects_[push_effect(cx, std::move(made))].self;
+}
+
+std::size_t dom_bindings::push_effect(context & cx, keyframe_effect_record made) {
     auto * object = cx.allocate<script::object_object>();
     object->prototype = keyframe_effect_prototype_;
     object->define(effect_index_key, value::number(static_cast<double>(effects_.size())),
@@ -646,7 +692,7 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
     made.self = value::object(object);
     effects_.push_back(std::move(made));
     sync_animation_roots();
-    return effects_.back().self;
+    return effects_.size() - 1;
 }
 
 value dom_bindings::make_animation(context & cx, std::size_t effect) {
@@ -1031,21 +1077,7 @@ void dom_bindings::install_animations(context & cx) {
         cx, *proto, "cancel",
         [this, self_index](context & c, std::span<value>) {
             const std::size_t i = self_index(c);
-            if (i == no_record) { return value::undefined(); }
-            animation_record & a = animations_[i];
-            if (play_state(a) != "idle") {
-                if (!a.finished_settled) {
-                    c.settle_promise(
-                        a.finished,
-                        make_dom_exception(c, "AbortError", "The user aborted a request."), true);
-                }
-                a.finished = c.make_pending_promise();
-                a.finished_settled = false;
-            }
-            a.hold_time = nan;
-            a.start_time = nan;
-            ++animation_generation_;
-            sync_animation_roots();
+            if (i != no_record) { cancel_record(i); }
             return value::undefined();
         },
         script::attr_builtin);
@@ -1093,6 +1125,36 @@ void dom_bindings::install_animations(context & cx) {
     cx.define_global("Animation", value::object(ctor));
     animation_interface_ = ctor;
 
+    // --- CSSAnimation and CSSTransition ------------------------------------
+    // The two the cascade makes (bindings/animations/css.cpp): an Animation
+    // with one attribute naming what made it. Neither is constructible.
+    const auto css_interface = [this, &cx, proto](const char * name, const char * attribute,
+                                                  animation_kind kind) {
+        auto * sub = cx.allocate<script::object_object>();
+        sub->prototype = value::object(proto);
+        define_getter(cx, *sub, attribute, [this, kind](context & c, std::span<value>) {
+            const std::size_t i = animation_index(c.current_this());
+            if (i == no_record || animations_[i].kind != kind) {
+                c.throw_error("TypeError", "Illegal invocation");
+                return value::undefined();
+            }
+            return c.string(animations_[i].name);
+        });
+        auto * sub_ctor =
+            cx.allocate<script::native_object>(name, [](context & c, std::span<value>) {
+                c.throw_error("TypeError", "Illegal constructor");
+                return value::undefined();
+            });
+        sub_ctor->define("prototype", value::object(sub), script::attr_none);
+        sub->define("constructor", value::object(sub_ctor), script::attr_builtin);
+        cx.define_global(name, value::object(sub_ctor));
+        return value::object(sub);
+    };
+    css_animation_prototype_ =
+        css_interface("CSSAnimation", "animationName", animation_kind::css_animation);
+    css_transition_prototype_ =
+        css_interface("CSSTransition", "transitionProperty", animation_kind::css_transition);
+
     // --- Element.prototype.animate / getAnimations, and the document's --------
     const auto animations_array = [this](context & c, const std::vector<std::size_t> & which) {
         const value list = c.make_array();
@@ -1134,6 +1196,9 @@ void dom_bindings::install_animations(context & cx) {
                     c.throw_error("TypeError", "Illegal invocation");
                     return value::undefined();
                 }
+                // "Update the style" first (§5.5): the cascade's animations
+                // exist once the pending restyle has run.
+                flush_layout();
                 const value options = arg(args, 0);
                 const bool subtree = dict_flag(c, options, "subtree");
                 return animations_array(c, animations_on(id, subtree));
@@ -1150,6 +1215,7 @@ void dom_bindings::install_animations(context & cx) {
         set_method(
             cx, *doc, "getAnimations",
             [this, animations_array](context & c, std::span<value>) {
+                flush_layout();
                 std::vector<std::size_t> which;
                 const auto txn = doc_->read();
                 for (std::size_t i = 0; i < animations_.size(); ++i) {
@@ -1159,6 +1225,9 @@ void dom_bindings::install_animations(context & cx) {
                     while (up && txn.parent(up) && txn.parent(up) != up) { up = txn.parent(up); }
                     if (up && up == txn.root()) { which.push_back(i); }
                 }
+                std::ranges::sort(which, [this](std::size_t a, std::size_t b) {
+                    return composites_before(a, b);
+                });
                 return animations_array(c, which);
             },
             script::attr_builtin);

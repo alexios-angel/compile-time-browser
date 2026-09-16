@@ -1026,6 +1026,13 @@ node_id dom_bindings::element_reference_by_id(const read_txn & txn, node_id elem
 value dom_bindings::element_reference_get(context & cx, std::string_view idl,
                                           std::string_view content, bool list) {
     const value self = cx.current_this();
+    // THE DOCUMENT THAT OWNS THE RECEIVER answers, as every prototype method
+    // shared across the realm's documents does: a createHTMLDocument's element
+    // reads its own tree (aria-element-reflection.html, "Adopting element
+    // keeps references").
+    if (dom_bindings * owner = owner_of(self); owner != nullptr && owner != this) {
+        return owner->element_reference_get(cx, idl, content, list);
+    }
     const node_id id = receiver(cx);
     if (!id || !self.is_object()) { return value::null(); }
     auto * object = static_cast<script::object_object *>(self.as_heap());
@@ -1100,6 +1107,10 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
 void dom_bindings::element_reference_set(context & cx, std::string_view idl,
                                          std::string_view content, bool list, value given) {
     const value self = cx.current_this();
+    if (dom_bindings * owner = owner_of(self); owner != nullptr && owner != this) {
+        owner->element_reference_set(cx, idl, content, list, given);
+        return;
+    }
     const node_id id = receiver(cx);
     if (!id || !self.is_object()) { return; }
     auto * object = static_cast<script::object_object *>(self.as_heap());
@@ -1264,6 +1275,122 @@ void dom_bindings::install_double_reflection(context & cx) {
                     mutated();
                     return value::undefined();
                 })));
+    }
+
+    // THE CUSTOM GETTERS, HTML 4.10.13 and 4.10.14: a progress's `value` is
+    // its current value - the attribute clamped to [0, max], 0 without one -
+    // and `position` that over max, or -1 while indeterminate; a meter's six
+    // are clamped against each other in the order the specification lists:
+    // min (0), max (1, at least min), value, low and high (each in [min,
+    // max], high at least low), optimum (in [min, max]). The setters above
+    // stay: they write the attribute and are what reflection-forms.html reads.
+    const auto number_attribute = [this](const read_txn & txn, node_id id, std::string_view name,
+                                         double & out) {
+        const atom attribute = atoms_->intern(name);
+        return txn.has_attribute(id, attribute) &&
+               parse_html_float(txn.attribute_value(id, attribute), out);
+    };
+    const auto meter_values = [this, number_attribute](node_id id) {
+        struct meter {
+            double min = 0, max = 1, value = 0, low = 0, high = 1, optimum = 0.5;
+        } m;
+        const auto txn = doc_->read();
+        double parsed = 0;
+        if (number_attribute(txn, id, "min", parsed)) { m.min = parsed; }
+        m.max = number_attribute(txn, id, "max", parsed) ? parsed : 1;
+        m.max = std::max(m.max, m.min);
+        m.value = number_attribute(txn, id, "value", parsed) ? parsed : 0;
+        m.value = std::clamp(m.value, m.min, m.max);
+        m.low = number_attribute(txn, id, "low", parsed) ? std::clamp(parsed, m.min, m.max) : m.min;
+        m.high =
+            number_attribute(txn, id, "high", parsed) ? std::clamp(parsed, m.low, m.max) : m.max;
+        m.optimum = number_attribute(txn, id, "optimum", parsed) ? std::clamp(parsed, m.min, m.max)
+                                                                 : (m.min + m.max) / 2;
+        return m;
+    };
+    const auto replace_getter = [&](const char * which, const char * name, script::native_fn get) {
+        const value iface = interface_prototype(which);
+        if (!iface.is_object()) { return; }
+        auto * proto = static_cast<script::object_object *>(iface.as_heap());
+        value setter = value::undefined();
+        if (const auto * held = proto->find_accessor(name); held != nullptr) {
+            setter = held->setter;
+        }
+        proto->define_accessor(
+            name, value::object(cx.allocate<script::native_object>(name, std::move(get))), setter);
+    };
+    replace_getter("HTMLMeterElement", "value",
+                   [this, meter_values](context & c, std::span<value>) {
+                       const node_id id = receiver(c);
+                       return value::number(id ? meter_values(id).value : 0);
+                   });
+    replace_getter("HTMLMeterElement", "min", [this, meter_values](context & c, std::span<value>) {
+        const node_id id = receiver(c);
+        return value::number(id ? meter_values(id).min : 0);
+    });
+    replace_getter("HTMLMeterElement", "max", [this, meter_values](context & c, std::span<value>) {
+        const node_id id = receiver(c);
+        return value::number(id ? meter_values(id).max : 1);
+    });
+    replace_getter("HTMLMeterElement", "low", [this, meter_values](context & c, std::span<value>) {
+        const node_id id = receiver(c);
+        return value::number(id ? meter_values(id).low : 0);
+    });
+    replace_getter("HTMLMeterElement", "high", [this, meter_values](context & c, std::span<value>) {
+        const node_id id = receiver(c);
+        return value::number(id ? meter_values(id).high : 1);
+    });
+    replace_getter("HTMLMeterElement", "optimum",
+                   [this, meter_values](context & c, std::span<value>) {
+                       const node_id id = receiver(c);
+                       return value::number(id ? meter_values(id).optimum : 0.5);
+                   });
+    const auto progress_values = [this, number_attribute](node_id id, bool & determinate) {
+        const auto txn = doc_->read();
+        double parsed = 0;
+        const double max = number_attribute(txn, id, "max", parsed) && parsed > 0 ? parsed : 1;
+        determinate = number_attribute(txn, id, "value", parsed);
+        const double current = determinate ? std::clamp(parsed, 0.0, max) : 0;
+        return std::pair{current, max};
+    };
+    if (const value iface = interface_prototype("HTMLProgressElement"); iface.is_object()) {
+        auto * proto = static_cast<script::object_object *>(iface.as_heap());
+        proto->define_accessor(
+            "value",
+            value::object(cx.allocate<script::native_object>(
+                "value",
+                [this, progress_values](context & c, std::span<value>) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::number(0); }
+                    bool determinate = false;
+                    return value::number(progress_values(id, determinate).first);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                "value", [this](context & c, std::span<value> a) {
+                    const node_id id = receiver(c);
+                    if (!id) { return value::undefined(); }
+                    const double given = arg_number(a, 0);
+                    if (!std::isfinite(given)) {
+                        c.throw_error("TypeError",
+                                      "Failed to set 'value': the value is not a finite number.");
+                        return value::undefined();
+                    }
+                    (void)doc_->set_attribute(id, atoms_->intern("value"),
+                                              c.to_string(value::number(given)));
+                    mutated();
+                    return value::undefined();
+                })));
+        proto->define_accessor("position",
+                               value::object(cx.allocate<script::native_object>(
+                                   "position",
+                                   [this, progress_values](context & c, std::span<value>) {
+                                       const node_id id = receiver(c);
+                                       if (!id) { return value::number(-1); }
+                                       bool determinate = false;
+                                       const auto [current, max] = progress_values(id, determinate);
+                                       return value::number(determinate ? current / max : -1);
+                                   })),
+                               value::undefined());
     }
 }
 

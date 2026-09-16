@@ -171,11 +171,11 @@ void install_print(context & cx) {
 // that THROW for the rest.
 //
 // A stub that returns undefined instead of throwing is the one thing that must
-// not happen here: `$262.detachArrayBuffer(b)` returning undefined leaves the
-// buffer attached, the test's assertions then measure an attached buffer, and
-// some of them pass. A throw makes the test fail, which is the truth - and the
-// runner SKIPS those tests by name rather than counting the failures, so the
-// throw is a backstop rather than the plan.
+// not happen here: a `$262.createRealm()` returning undefined would let a test
+// measure one realm as two and pass some of its assertions. A throw makes the
+// test fail, which is the truth - and the runner SKIPS those tests by feature
+// rather than counting the failures, so the throw is a backstop rather than
+// the plan.
 void install_262(context & cx) {
     auto * host = static_cast<ctbrowser::script::object_object *>(cx.make_object().as_heap());
     const auto method = [&cx, host](const char * name, ctbrowser::script::native_fn fn) {
@@ -224,8 +224,14 @@ void install_262(context & cx) {
                       "heap, so a value cannot cross between two");
         return value::undefined();
     });
-    method("detachArrayBuffer", [](context & c, std::span<value>) {
-        c.throw_error("TypeError", "$262.detachArrayBuffer: this engine has no detach operation");
+    // `detachArrayBuffer`: DetachArrayBuffer(buffer) with an undefined key,
+    // which is exactly what ArrayBuffer.prototype.transfer does to its
+    // receiver (25.1.6.13 step 20) - the copy it makes is dropped. A
+    // non-buffer or an immutable one throws there, as the host hook would.
+    method("detachArrayBuffer", [](context & c, std::span<value> a) {
+        const value transfer =
+            c.lookup_property(c.lookup_property(c.global("ArrayBuffer"), "prototype"), "transfer");
+        (void)c.call(transfer, {}, a.empty() ? value::undefined() : a[0]);
         return value::undefined();
     });
 

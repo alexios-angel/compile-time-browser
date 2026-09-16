@@ -102,9 +102,43 @@ void test_extras() {
                   "[object Map][object Set]");
 }
 
+// 24.1.1.2 AddEntriesFromIterable, one step at a time: an endless iterator
+// ends when the adder throws, the iterator is CLOSED (return() called once)
+// and the adder's throw is the one that surfaces; a non-object entry closes
+// it too; a non-iterable is a TypeError before anything is read.
+void test_constructor_steps_its_iterable() {
+    expect_result("var count = 0; var it = { [Symbol.iterator]() { return { next() { return {"
+                  " value: [], done: false }; }, return() { count++; return {}; } }; } };"
+                  " var saved = Map.prototype.set; Map.prototype.set = function () { throw new"
+                  " RangeError('adder'); }; var r; try { new Map(it); } catch (e) { r = e.name; }"
+                  " Map.prototype.set = saved; return r + ',' + count;",
+                  "RangeError,1");
+    expect_result("var count = 0; var it = { [Symbol.iterator]() { return { next() { return {"
+                  " value: 1, done: false }; }, return() { count++; return {}; } }; } };"
+                  " var r; try { new Map(it); } catch (e) { r = e.name; } return r + ',' + count;",
+                  "TypeError,1");
+    expect_result("try { new Set({}); } catch (e) { return e.name; }", "TypeError");
+    expect_result("return new Map([[1, 2], [3, 4]]).size + new Set([1, 1, 2]).size;", "4");
+    // %ArrayIteratorPrototype% and its siblings: one prototype per kind,
+    // carrying next and the tag, under %Iterator.prototype%.
+    expect_result("const a = [1].values(), b = [2].keys(); const P = Object.getPrototypeOf(a);"
+                  " return [P === Object.getPrototypeOf(b), Object.getPrototypeOf(P) ==="
+                  " Iterator.prototype, a.hasOwnProperty('next'), P[Symbol.toStringTag],"
+                  " Object.prototype.toString.call(new Map().entries()), a[Symbol.iterator]() ==="
+                  " a, [...a].join()].join('|');",
+                  "true|true|false|Array Iterator|[object Map Iterator]|true|1");
+    // ...and the prototype is nobody's global: it lives under a private key on
+    // Array.prototype, so neither `window` nor Array.prototype enumerates it.
+    expect_result("[1].values(); new Map().keys(); return Object.keys(globalThis).concat("
+                  "Object.getOwnPropertyNames(Array.prototype)).filter(k => k.includes("
+                  "'Iterator')).length;",
+                  "0");
+}
+
 } // namespace
 
 int main() {
+    test_constructor_steps_its_iterable();
     test_receivers();
     test_keys();
     test_weak();

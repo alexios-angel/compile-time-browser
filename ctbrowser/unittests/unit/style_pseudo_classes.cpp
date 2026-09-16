@@ -320,6 +320,23 @@ void test_element_state_pseudos() {
     }
 }
 
+// `:focus-within` is `:focus` on the element or on anything under it, and
+// `:focus-visible` is `:focus` here - both derived from the one bit the shell
+// sets, so a focus change restyles them together.
+void test_focus_within_and_visible() {
+    fixture f;
+    (void)parse_html(f.doc, "<div id=outer><div id=inner><input id=i></div></div><p id=p></p>");
+    // z-index rather than an inherited property: `html` and `body` are
+    // :focus-within too, and `p` would inherit their colour.
+    f.styles.add_sheet(":focus-within { z-index: 1 } :focus-visible { z-index: 2 }", 1);
+    (void)f.styles.set_state(f.find_id("i"), engine::state_focus, true);
+    f.resolved = f.styles.resolve_all(f.doc.read());
+    expect_value(f, f.find_id("i"), "z-index", "2", ":focus-visible on the focused element");
+    expect_value(f, f.find_id("inner"), "z-index", "1", "its parent");
+    expect_value(f, f.find_id("outer"), "z-index", "1", "its grandparent");
+    CHECK(f.value_of(f.find_id("p"), "z-index").empty());
+}
+
 } // namespace
 
 int main() {
@@ -327,5 +344,6 @@ int main() {
     test_nth_child();
     test_functional_pseudos();
     test_element_state_pseudos();
+    test_focus_within_and_visible();
     REPORT("style_pseudo_classes");
 }

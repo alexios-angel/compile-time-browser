@@ -366,6 +366,11 @@ struct function_proto {
         return name.empty() ? inferred_name : name;
     }
     std::uint16_t param_count = 0;
+    // `f.length` - ExpectedArgumentCount (15.1.5): the parameters before the
+    // first one with a default or the rest - which is NOT param_count, the
+    // calling convention's register count: `function f(a, b = 1) {}` has a
+    // length of 1 and takes two registers.
+    std::uint16_t length = 0;
     std::uint16_t frame_size = 1; // registers this body needs
     // An arrow does not get its own `this`; it sees the one where it was
     // WRITTEN, and the VM cannot tell an arrow from a function at run time.

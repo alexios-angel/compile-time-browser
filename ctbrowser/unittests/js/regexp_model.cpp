@@ -62,7 +62,9 @@ void test_constructor() {
     // characters backslashed, other punctuators and spaces \xHH
     expect_result("return RegExp.escape('1a.b') + ' ' + RegExp.escape('x-y z');",
                   "\\x31a\\.b \\x78\\x2dy\\x20z");
-    expect_result("return RegExp.escape('\t\n');", "\\t\\n");
+    // (Spelled as JS escapes: a raw line break inside a string literal is a
+    // SyntaxError, 12.9.4.)
+    expect_result("return RegExp.escape('\\t\\n');", "\\t\\n");
     expect_result("try { RegExp.escape(1); return 'no'; } catch (e) { return e.name; }",
                   "TypeError");
 }

@@ -101,6 +101,27 @@ struct visited_element {
 
 using style_map = flat_map<std::uint64_t, computed_style_ptr>;
 
+// A `@keyframes` RULE AS THE CASCADE FILED IT - CSS Animations 1 §4 - the form
+// the shell builds a CSSAnimation's KeyframeEffect from (lib/Shell/bindings/
+// animations.cpp). Every keyframe carries LONGHANDS whose values went through
+// the same `check_declaration` the cascade applies to a rule, so a keyframe
+// cannot say something a declaration could not; two keyframes at one offset
+// are merged, later declarations winning (§4.1); the list is sorted by offset.
+struct keyframes_rule {
+    struct keyframe {
+        double offset = 0; // in [0, 1]
+        // `animation-timing-function` / `animation-composition` declared IN the
+        // keyframe (§4.3); empty means the element's own property applies.
+        std::string easing;
+        std::string composite;
+        std::vector<std::pair<std::string, std::string>> values; // css name -> text
+    };
+    std::string name;
+    std::uint8_t origin = 0;
+    std::uint32_t condition = 0; // the engine's condition table; 0 unconditional
+    std::vector<keyframe> keyframes;
+};
+
 class engine {
 public:
     explicit engine(atom_table & atoms)
@@ -183,6 +204,11 @@ public:
         const auto it = registrations_.find(name.id);
         return it == registrations_.end() ? nullptr : &it->second;
     }
+    // THE `@keyframes` RULE A NAME MEANS, or null: the LAST one in document
+    // order whose `@media` holds wins (CSS Animations 1 §4: "the last one in
+    // document order"). Names are case-sensitive, as a <custom-ident> is.
+    [[nodiscard]] const keyframes_rule * keyframes_of(std::string_view name) const;
+
     // A CUSTOM FUNCTION from a sheet's `@function` rule, CSS Functions and
     // Mixins 1 §2, or null. The first rule for a name stands, like @property.
     [[nodiscard]] const css::custom_function * function_of(atom name) const {
@@ -213,6 +239,22 @@ public:
     [[nodiscard]] const css::media_environment & environment() const noexcept {
         return environment_;
     }
+
+    // THE SIZE OF A QUERY CONTAINER, CSS Containment 3 §5.1 - what an
+    // `@container (width > 400px)` is asked against. Only layout knows it, and
+    // this engine runs before layout, so the browser hands the question in:
+    // the content box of the element as last laid out, or nullopt before any
+    // layout, when every size query is unknown and its rules do not apply.
+    // The browser re-resolves the cascade after a layout that changed a
+    // container's size, which is the style -> layout -> style loop §5 asks
+    // for. Without one installed a size query never matches; `style()`
+    // queries need no layout and are answered here regardless.
+    struct container_size {
+        float width = 0;
+        float height = 0;
+    };
+    using container_size_query = std::function<std::optional<container_size>(node_id)>;
+    void set_container_size(container_size_query query) { container_size_ = std::move(query); }
 
     // SHORTHAND EXPANSION. `margin: 1px 2px` becomes four longhand
     // declarations, emitted in place of the shorthand.
@@ -460,6 +502,9 @@ public:
     // non-element branch would clear the level a text node happens to sit in and
     // lose every sibling before it.
     void enter_level(const read_txn & txn, node_id parent, std::size_t depth);
+    // A parentless element at depth 0 - the document element - is one of one.
+    void root_facts(const read_txn & txn, node_id node, std::size_t depth,
+                    element_facts & facts) const;
 
     [[nodiscard]] static constexpr std::uint64_t key_of(node_id id) noexcept { return id.key(); }
 
@@ -510,6 +555,12 @@ private:
         css::custom_function function;
     };
     flat_map<std::uint32_t, sheet_function> functions_;
+    // The `@keyframes` rules of every sheet, in filing order, and the filing
+    // (lib/Style/css/keyframes.cpp). `condition_base` is where the sheet's
+    // `@media` table landed in `conditions_`, for the rule's condition index.
+    void file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
+                        std::size_t condition_base);
+    std::vector<keyframes_rule> keyframes_;
 
     // Does this text carry a unit that resolves against the element's own font -
     // `em`, `ex`, `ch`, `cap`, `ic`, `lh` - or, on the root, the root's?
@@ -592,7 +643,7 @@ public:
 private:
     // The first character of `node`'s text with a strong direction, depth first.
     // Returns whether one was found, so the walk can stop at it.
-    [[nodiscard]] static bool first_strong(const read_txn & txn, node_id node, bool & rtl);
+    [[nodiscard]] bool first_strong(const read_txn & txn, node_id node, bool & rtl) const;
 
     // The same question of one run of UTF-8: only the code point's VALUE
     // matters, and the right-to-left scripts sit in blocks that a range test
@@ -619,13 +670,51 @@ private:
         if (!key) { return; }
         const auto it = bucket.find(key.id);
         if (it == bucket.end()) { return; }
-        for (const rule & r : it->second) {
-            // ONE BOOL, before any selector work. A false condition is the cheapest
-            // possible rejection and it is checked first for that reason.
-            if (!condition_truth_[r.condition]) { continue; }
-            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
-        }
+        for (const rule & r : it->second) { consider(r, txn, ancestors, depth); }
     }
+    // One candidate rule against the element at `depth`: the condition first,
+    // then - for a scoped rule only - the scoping root, then the selector.
+    void consider(const rule & r, const read_txn & txn, const ancestor_filter & ancestors,
+                  std::size_t depth) {
+        // ONE BOOL, before any selector work. A false condition is the cheapest
+        // possible rejection and it is checked first for that reason.
+        if (!condition_truth_[r.condition]) { return; }
+        if (r.container != 0 && !container_holds(txn, r.container, depth)) { return; }
+        if (r.scope == 0) {
+            if (matches(txn, ancestors, selectors_[r.selector], depth)) { matches_.push_back(r); }
+            return;
+        }
+        std::size_t root_depth = 0;
+        if (!scope_root_for(txn, ancestors, r.scope, depth, selectors_[r.selector].explicit_scope,
+                            root_depth)) {
+            return;
+        }
+        // `:scope` in the rule is the root found.
+        scope_ = levels_[root_depth][path_[root_depth]].node;
+        const bool hit = matches(txn, ancestors, selectors_[r.selector], depth);
+        scope_ = node_id{};
+        if (!hit) { return; }
+        rule found = r;
+        found.proximity =
+            static_cast<std::uint16_t>(std::min<std::size_t>(depth - root_depth, 0xFFFE));
+        matches_.push_back(found);
+    }
+    // THE NEAREST SCOPING ROOT of scope `s` that puts the element at `depth` in
+    // scope (CSS Cascade 6 §3.2): an ancestor-or-self on the current chain
+    // matching one of the scope's root selectors - with `:scope` meaning the
+    // enclosing scope's root, which is found the same way first - and with no
+    // element between it and the subject matching a limit. Answers its depth;
+    // `explicit_scope` says whether the subject may be its own root.
+    [[nodiscard]] bool scope_root_for(const read_txn & txn, const ancestor_filter & ancestors,
+                                      std::uint16_t s, std::size_t depth, bool explicit_scope,
+                                      std::size_t & root_depth);
+    // DOES `@container` `c` HOLD for the element at `depth`: the nearest
+    // ancestor that is a query container for the condition's features - any
+    // element for a `style()` query, one with `container-type: size |
+    // inline-size` for a size query - carrying the name if one was asked,
+    // with the condition true of its box and computed style; and the
+    // enclosing `@container`s likewise.
+    [[nodiscard]] bool container_holds(const read_txn & txn, std::uint16_t c, std::size_t depth);
 
     // Everything a compound can require, of the element at (depth, index).
     //
@@ -719,6 +808,34 @@ private:
     // a whole-document query, or the cascade - and `:scope` is then `:root`. A
     // root that is not an element (a fragment) is a scope no element can equal.
     node_id scope_{};
+    // THE CASCADE LAYERS, CSS Cascade 5 §6.4, across every sheet: full dotted
+    // names in first-appearance order, entry 0 the unlayered pseudo-layer,
+    // and beside them each layer's RANK in the layer order, which is what the
+    // cascade compares. Sub-layers come before their parent's own rules, and
+    // the unlayered entry after everything - so rank 0 is the lowest normal
+    // priority and entry 0 carries the highest rank. Re-ranked whenever a
+    // sheet adds a layer; a rule keeps its index.
+    std::vector<std::string> layer_names_{std::string{}};
+    std::vector<std::uint32_t> layer_rank_{0xFFFFFFFFu};
+    std::uint32_t sheet_serial_ = 0;
+    void rerank_layers();
+    // THE SCOPES, CSS Cascade 6 §3: each with its root and limit selector
+    // lists and its enclosing scope. Entry 0 is none.
+    struct scope_entry {
+        std::uint16_t parent = 0;
+        std::vector<compiled_selector> roots;
+        std::vector<compiled_selector> limits;
+    };
+    std::vector<scope_entry> scopes_{scope_entry{}};
+    // THE CONTAINER CONDITIONS, entry 0 none, and the size hook - see
+    // set_container_size.
+    std::vector<css::container_condition> containers_{css::container_condition{}};
+    container_size_query container_size_;
+    // THE STYLES OF THE CHAIN: `chain_styles_[d]` is the resolved style of the
+    // element at depth d of the current traversal, set as resolve_subtree
+    // descends, which is what a container query reads `container-type` and a
+    // `style()` query's property from.
+    std::vector<computed_style_ptr> chain_styles_;
     // THE PSEUDO-ELEMENT BEING RESOLVED, or none: a selector's subject compound
     // must name exactly this one - `#t::before` matches nothing in the ordinary
     // cascade and only `#t::before` matches while resolve_pseudo runs.

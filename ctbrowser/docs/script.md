@@ -44,6 +44,50 @@ is written over it. `async function` returns a promise through `op::wrap_promise
 via a factory hook the standard library installs — the VM cannot build a
 promise by itself.
 
+Later on 2026-09-12 `builtins/async.cpp` was rewritten to the whole of 27.2:
+`resolve` is a real promise resolve function (CreateResolvingFunctions, with
+`[[AlreadyResolved]]` shared by the pair), a thenable is adopted by a SEPARATE
+NewPromiseResolveThenableJob - so `Promise.resolve(thenable)` takes two ticks
+and a handler returning a promise takes three, as in every other engine -
+`then` goes through SpeciesConstructor and NewPromiseCapability (so
+`class P extends Promise` works, and `p.then()` on one is a `P`), `finally`
+is ThenFinally/CatchFinally over the species constructor, `Promise.try` and
+`Promise.withResolvers` exist, and `all`/`allSettled`/`any`/`race` walk the
+ITERATOR PROTOCOL (any iterable, `resolve` read once per call, IteratorClose
+on an abrupt step, each element function called once). The VM's settler hook
+now RESOLVES rather than fulfils, so an async body returning a thenable
+adopts it. What the VM still does by itself: `resume()` reads a returned
+promise's `__value` directly, so an async body that returns a PENDING promise
+after an await settles with `undefined` (the fix is one line in
+`vm/call/coroutines.cpp`: hand `returned` to the settler unwrapped).
+`%AsyncFromSyncIteratorPrototype%` and `%AsyncIteratorPrototype%` are real
+prototype objects now, and `%AsyncGeneratorPrototype%` inherits the latter.
+
+**`Iterator` and the iterator helpers** (`builtins/collections/iterator.cpp`,
+2026-09-12): the abstract `Iterator` constructor (subclassable, `new
+Iterator()` is a TypeError), `Iterator.from`, `Iterator.concat`,
+`Iterator.zip`/`zipKeyed`, `%Iterator.prototype%` with `map`, `filter`,
+`take`, `drop`, `flatMap`, `reduce`, `toArray`, `forEach`, `some`, `every`,
+`find`, `includes`, `join`, `chunks`, `windows`, `@@dispose`, and the two
+accessor properties (`constructor`, `@@toStringTag`) whose setters define an
+own property on the receiver. A helper is an object on
+`%IteratorHelperPrototype%` with a private state slot and the generator state
+machine of 27.1.2.1 (`next` while running is a TypeError; `return` closes the
+underlying iterator, inner one first for `flatMap`). `%GeneratorPrototype%`
+is re-parented onto `%Iterator.prototype%`, so a generator object has the
+helpers; the library's own array/map/set iterators (`list_iterator`) do NOT
+yet, because their prototype is per-instance. `DisposableStack`,
+`AsyncDisposableStack` and `SuppressedError` (`collections/disposable.cpp`)
+are installed beside them, and `Promise.allKeyed`/`allSettledKeyed` and
+`Iterator.zip`/`zipKeyed` (2026 proposals the corpus carries) with them. All
+of these installers are called from `install_promise` because `builtins.cpp`
+was not this change's to edit. `WeakRef` and `FinalizationRegistry`
+(`collections/weak.cpp` - strong references, no finalisation, the WeakMap
+deviation) are written and compiled but NOT installed: ctcompile's
+escape-cycle test pins `typeof WeakRef === "undefined"` as the documented
+divergence ND-2 (`ctcompile/docs/native-divergences.md`), and that call is
+one commented-out line in `install_promise` once the pin is lifted.
+
 **`===` compares STRINGS BY CONTENT** — it compared the NaN-boxed words, which
 is right for objects (identity) and singletons and wrong for strings, since two
 strings with the same characters are almost never the same allocation. So
@@ -327,10 +371,19 @@ declares it (`compiler_impl::private_scopes_`), so an inner class's `#x` is
 never an outer instance's and two classes' `#x` never alias. `lookup_property`
 treats any `@#` key as 7.3.31 PrivateGet: an object the class did not
 initialise - or any proxy - is the TypeError "Cannot read private member #x
-from an object whose class did not declare it". A WRITE is not checked yet:
-`this.#x = v` on a foreign object creates the element instead of throwing,
-because the field initialiser still defines through `set_prop` and a checked
-store would need a define native there. `#x in obj` is not parsed.
+from an object whose class did not declare it". A write is the same check
+(7.3.32), a private method is not writable, and `#x in obj` is the check as a
+boolean. Since 2026-09-12 (later that day) the check is
+`context::private_element_present`, PrivateElementFind for this spelling: an
+own `@#x:N` key - a FIELD, added once by `__ctbrowser_private_add`, which is
+the TypeError when the object already carries it or is not extensible - or a
+METHOD/ACCESSOR key up the prototype chain (up the static chain for a static
+one) PLUS the class's brand, the own `@#:N` key the class's `<fields>`
+initialiser adds to every instance it constructs and the definition adds to
+the constructor for the statics. So `Object.create(C.prototype)` and a
+subclass constructor fail a method's brand check. Not yet: two evaluations of
+one class expression share N, so their private names alias where the
+specification gives each evaluation its own.
 
 ### Strict mode, the part that changes what runs (since 2026-09-12)
 
@@ -341,11 +394,97 @@ non-extensible receiver, getter without setter, primitive receiver - is a
 TypeError (`store_rejected_`, read by `set_prop`/`set_index` and by the AOT
 bridge off the frame's proto) instead of the silent drop sloppy code gets, and
 an assignment to an unresolvable name is a ReferenceError (the compiler emits
-a `get_global` probe before the `set_global`). NOT in a module's top level,
-deliberately: ctcompile's module fixtures publish to their host through
+a call of `__ctbrowser_strict_assign(name)` before the `set_global`, since
+op::set_global's contract says it cannot throw; a declaration's own first
+write - `let x = 1`, `class C {}`, a declared pattern at a script's top level -
+sets `compiler_impl::declaring_` and is not probed). NOT in a module's top
+level, deliberately: ctcompile's module fixtures publish to their host through
 `OUT = ...` and rely on the write. Still sloppy everywhere: `this` in a plain
 call (undefined, not globalThis - the AOT contract pins it), `arguments`
 aliasing, `delete` of a non-configurable property, the early errors.
+
+### The language forms that landed with test/language (2026-09-12)
+
+Measured before/after in `docs/test262.md`. The front end (ctjs `vparse.hpp`,
+gitlink 945b60e): the whitespace and line-terminator sets of 12.2/12.3 on
+their UTF-8 bytes; ASI at statement ends (12.10 - `a b` on one line is the
+SyntaxError it always was, a do-while takes its virtual `;`); `await` as a
+name outside an async body and `yield`/`await`/`let`/`async` as labels and
+arrow parameters where they are names; escaped words never keywords; class
+static blocks; class fields ending at `;`, `}` or a line break; any
+LeftHandSideExpression as a for-in/of head (`for (o.p of xs)`, `for ([a.b]
+of pairs)`); `{ a = 1 }` as a pattern (CoverInitializedName); tagged
+templates; `import.source(x)` / `import.defer(x)`; `using` and `await using`;
+the `**` / `??` grammar; division after an object literal's `}`; an unknown
+byte as a token rather than a silent skip. The checker (`compile/early_errors/`):
+string and template escapes, the whole numeric grammar, static-block rules,
+class names, labels, lexical for-in/of heads, labelled function bodies, strict
+Annex B, `using` rules. The compiler and VM: static fields and blocks run in
+one `<static>` function with the class as `this`; `using` lowers to a
+disposal region (`compile/statements/using.cpp` - needs `Symbol.dispose`, not
+installed yet); `import.source` is a rejected promise; tagged templates cache
+one frozen strings array per site; a class heritage is checked and chains the
+constructor (`Object.getPrototypeOf(D) === B`); `super.x` reads with `this`
+as receiver; accessors and object-literal methods have a home object; a
+deleted synthesised `name`/`length` stays deleted; `f.length` is
+ExpectedArgumentCount.
+
+### Session 12 (2026-09-16): what moved after the round-one merges
+
+All in `docs/test262.md`'s `9c70aaa0` and later rows; each is a JS-semantics
+change the native backend sees as a divergence until it follows.
+
+* **The temporal dead zone, statically.** `local::initialized_at` records
+  where a function body's own `let`/`const`/`class` is initialised (the
+  declarator's end - ctjs identifiers and declarators carry spans since
+  `3cb2ef9`), and `compile_ident` throws the ReferenceError of 9.1.1.1.6 for
+  a read of the same frame textually before it: `let x = x + 1`, `use(y);
+  const y = 1`, `new K(); class K {}`, `typeof` included. NOT decided: a
+  read from a nested function, or of a block-level `let` (declared at its
+  statement, not at block entry) - a runtime hole and a check on captured
+  reads would be an ABI change.
+* **A declaration's write is only its own.** `declaring_` covered every
+  initialiser expression and pattern default, so strict code assigning to an
+  undeclared name inside one made a global; a `not_declaring` guard clears
+  it for defaults, computed keys, member targets and every nested frame.
+* **Annex B.3.3.** A function declared in a nested block of a sloppy
+  function also has a var binding of the function, written when the
+  declaration is evaluated - unless a parameter or a lexical declaration of
+  an enclosing block has the name (`predeclare_locals` keeps
+  `annex_b_functions`; a classic script lists block-nested names in
+  `hoisted_vars`). `var x;` at a script's top level STILL writes undefined
+  (`statements/dispatch.cpp` says which native prover needs the write).
+* **%GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction%** exist
+  (`proto_kind::generator_function` etc.; `context::function_proto_kind`):
+  a `function*`'s [[Prototype]] and `.constructor` are its intrinsic, its
+  own `prototype` inherits %GeneratorPrototype% with no `constructor`, its
+  instances inherit THAT (read after the parameters ran), an async function
+  has no `prototype`. GeneratorValidate throws for a non-generator receiver.
+  %ArrayIteratorPrototype% and its siblings are one shared prototype per
+  kind under %Iterator.prototype% (`list_iterator`), kept under a private
+  key on Array.prototype - not a global, which `window` enumerated.
+* **`await` adopts a thenable** through PromiseResolve (a non-promise object
+  is resolved into a promise, so `then` runs and its rejection throws at the
+  await). Array.fromAsync's helper follows GetMethod/ToLength.
+* **Garbage collection.** The 40,000,000-object allocation ceiling counts
+  since the last collection, not for life; a heap past its threshold collects
+  at a native call site too (interpreter and `invoke`), not only at an
+  interpreted entry - neither is a stress point.
+* **Builtins:** `parseInt` per 19.2.5 (ToInt32 radix, [2, 36], the Unicode
+  spaces, base 10 exact); `isNaN`/`isFinite` through ToPrimitive; a Symbol
+  out of ToPrimitive is 7.1.4's TypeError; `BigInt.asIntN`/`asUintN`;
+  `match`/`matchAll`/`replace`/`replaceAll`/`search`/`split` ask their
+  argument before ToString(this); `bind` takes the target's [[Prototype]]
+  and keeps an infinite length; `Object.prototype.toString` asks IsArray
+  through a proxy; `JSON.stringify` reads its replacer list through Get,
+  unwraps String/Number objects, serialises a proxy; a proxy trap receives a
+  Symbol key as a Symbol (`context::key_value`); a sloppy function called
+  with a nullish receiver sees `globalThis` (10.2.1.2 step 5.a); `NaN`/
+  `Infinity`/`undefined` refuse a write; `Symbol().description` is undefined
+  (the symbol's reads go through Symbol.prototype's accessors); Map/Set
+  constructors step their iterable and close it on an abrupt completion;
+  `Function.prototype.toString` spans include `async` and exclude `static`;
+  `$262.detachArrayBuffer` is `ArrayBuffer.prototype.transfer`.
 
 ### Reading an unresolvable name throws (since 2026-09-12)
 
@@ -962,8 +1101,15 @@ Six defects across four areas. Each planted back individually and caught.
   specified to throw TypeError, and that is the feature - it is what stops a
   symbol reaching page output by accident. Fixing it needs ToPropertyKey split
   from ToString, because `o[sym]` goes through the latter today.
-* **`Symbol().description` is `""`, not `undefined`** - an absent description
-  and an empty one are the same `std::string` here.
+* **`Symbol().description` is `""` through property access, `undefined`
+  through the getter** - the key tells the two apart since 2026-09-12
+  (`@@sym:<n>` carries no description, `@@sym:<n>:` an empty one) and
+  `Symbol.prototype.description`'s getter answers right, but
+  `vm/objects/lookup.cpp` synthesises `description` for a symbol receiver
+  before consulting the prototype's accessors. `new Symbol()` is a TypeError,
+  `Symbol.keyFor` refuses a non-symbol, well-known symbols describe themselves
+  as `Symbol.iterator`, and `Symbol.unscopables`/`dispose`/`asyncDispose`
+  exist.
 * **Array holes are materialised**: `0 in [,1]` is true and `Object.keys([,1])`
   is empty. Arrays are dense vectors, so a hole needs a representation.
 * **No boxing**: `new Boolean(false)` is the primitive, so it stays falsy where
@@ -1097,3 +1243,73 @@ refuse the conversion outright, and cannot until ToPropertyKey is separated
 from ToString, because `o[sym]` resolves through the same call. Adding it there
 made `"" + Symbol("x")` yield the internal key instead of "Symbol(x)" - a worse
 wrong answer - and `ctbrowser/unittests/js/symbol_basics.cpp` caught it.
+
+## Typed arrays, ArrayBuffer and DataView (2026-09-12)
+
+The typed arrays were one 273-line file that knew nine constructors, `set`,
+`subarray`, `from`/`of`, and an `ArrayBuffer` that was a `byteLength` and a
+`__bytes` array. It is now `builtins/collections/typed_arrays/` - clauses 23.2,
+25.1 and 25.3 as written: `%TypedArray%` as the [[Prototype]] of the nine
+constructors with `from`, `of` and `@@species`, every `%TypedArray%.prototype`
+method and accessor, `ArrayBuffer` with `maxByteLength`, `resize`, `slice`,
+`transfer`, `transferToFixedLength`, `detached` and a real detach - plus the
+immutable-arraybuffer proposal's `transferToImmutable`, `sliceToImmutable`
+and `immutable`, which every writing method refuses - `DataView` for every
+element type in both byte orders (Float16 and the BigInt64 pair included),
+and the ES2025 `Uint8Array` base64/hex codecs. The header in that
+directory is the storage model; two decisions in it are worth knowing:
+
+* **A typed array made from a length or a list OWNS its elements** (in
+  `array_object::items`, as before) and becomes a view over a fresh buffer
+  only when something asks for its `buffer` or a `subarray` - in place, so the
+  aliasing a page then relies on is real. Not always-a-view, because lib/Shell
+  reads `items` off the typed arrays a page hands it (`readPixels`,
+  `putImageData`), and a view's `items` is empty by design.
+* **A buffer keeps a list of the views whose length has to follow it.** The
+  VM reads `view_length` off a view without asking anybody, so `resize` and
+  detach re-bound every registered view; a `subarray` over a fixed-length
+  buffer is not registered, since nothing can shrink under it.
+
+**The twelve kinds (2026-09-16).** `element_kind` gained `f16`, `big_i64`
+and `big_u64`, so `Float16Array`, `BigInt64Array` and `BigUint64Array` are
+installed. A BigInt kind's element VALUE is a bigint (Table 71): owning
+`items` hold `bigint_object`s (one shared `0n` at allocation), a view holds
+eight little-endian bytes through `view_get_raw`/`view_set_raw`, and every
+read and write in the directory and in the VM's index paths goes through
+`typed_element_get`/`typed_element_set` (declared in value.hpp, defined in
+constructors.cpp) - a `value` in, a `value` out, the kind deciding the
+coercion: ToNumber, or ToBigInt (`bigint.hpp`'s `to_bigint`, shared with
+`BigInt.asIntN` and `DataView`), where a Number is a TypeError. The Number
+kinds keep their double path and Shell still reads their `items` as
+numbers. binary16 is the compiler's `_Float16` (`double_to_half`/
+`half_to_double`, one correctly rounded step, shared with `DataView`).
+[[ContentType]] is enforced where 23.2.4 says: the constructor from a typed
+array, `set` from one, and a species result of the other content type are
+TypeErrors. `[[DefineOwnProperty]]` over a typed array's integer index is
+10.4.5.3 now, for every kind: false past the length or for a descriptor that
+would make the element non-configurable, non-enumerable, read-only or an
+accessor, the value coerced to the kind - before, a view answered true for
+anything and an owning array could be grown or handed an uncoerced element.
+
+What the VM cannot answer yet, and where: a typed array's [[Prototype]] is
+found through its kind's global, so a subclass instance cannot be one; and
+`vm/objects/lookup.cpp` answers `buffer`, `length`, `byteLength` and
+`byteOffset` for a view before any prototype getter is asked, building a
+fresh wrapper for `buffer` each read, so `ta.buffer === ta.buffer` is false.
+`$262.detachArrayBuffer` in tools/ct262 still throws; the engine's detach is
+`ArrayBuffer.prototype.transfer`'s, one call away. Smaller, found by the same
+measurement and also the VM's: `ta[i] = v` on a Number kind runs the STATIC
+ToNumber (an object's `valueOf` is not called; a BigInt kind's ToBigInt does
+run it), `ta[i] = -0` on an integer kind keeps the -0 (`coerce_element`'s
+wrap), `Object.defineProperty(ta, "length", ...)` resizes an owning typed
+array, a typed array reports `length` as an own key, `Object.freeze` of a
+non-empty typed array does not throw, and `class X extends Uint8Array`
+neither inherits the statics nor produces a typed array from `super()`.
+
+Measured on the devbox at the commit that landed this (test262 files, PASS
+before -> after, 4 workers, 10 s, 2 GB, the detachArrayBuffer.js tests still
+skipped): TypedArray 1 -> 745 of 1,446, TypedArrayConstructors 74 -> 275 of
+738, ArrayBuffer 24 -> 190 of 221, DataView 0 -> 438 of 561, Uint8Array 4 ->
+64 of 70, and built-ins/Array 2,774 -> 2,787 of 3,082 from its
+testTypedArray.js rows. Nothing went PASS -> FAIL. Of what is left, ~750
+files want `BigInt64Array` and ~30 the subclass `super()`.

@@ -544,6 +544,63 @@ void test_insert_adjacent_element_and_text() {
     check(log[4] == "detached=true", "an element with no parent answers null: " + log[4]);
 }
 
+void test_the_table_model() {
+    // HTML 4.9: rows in section order (thead, body rows, tfoot), live, and the
+    // insert/delete rules with their index errors; cells, the three indices,
+    // and the caption/tHead/tFoot pair of create and delete.
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><table id=t>
+        <tfoot><tr id=f1><td>f</td></tr></tfoot>
+        <tbody><tr id=b1><td id=c0>0</td><th id=c1>1</th></tr><tr id=b2><td>x</td></tr></tbody>
+        <thead><tr id=h1><td>h</td></tr></thead>
+        </table><script>
+        const t = document.getElementById('t');
+        const ids = list => Array.from(list, e => e.id || e.tagName).join();
+        const rows = t.rows;
+        console.log('rows=' + ids(rows) + ' bodies=' + t.tBodies.length +
+                    ' head=' + t.tHead.tagName + ' foot=' + t.tFoot.tagName + ' cap=' + t.caption);
+        console.log('idx=' + [document.getElementById('b2').rowIndex,
+                    document.getElementById('b2').sectionRowIndex,
+                    document.getElementById('c1').cellIndex,
+                    document.createElement('tr').rowIndex].join());
+        const made = t.insertRow(2);
+        made.id = 'new';
+        console.log('after=' + ids(rows) + ' parent=' + made.parentNode.tagName);
+        t.deleteRow(-1); t.deleteRow(0);
+        let threw = '';
+        try { t.insertRow(99); } catch (e) { threw = e.name; }
+        try { t.deleteRow(rows.length); } catch (e) { threw += ',' + e.name; }
+        console.log('deleted=' + ids(rows) + ' threw=' + threw);
+        const cell = document.getElementById('b1').insertCell();
+        console.log('cells=' + ids(document.getElementById('b1').cells) + ' ' + cell.tagName);
+        const empty = document.createElement('table');
+        const r = empty.insertRow();
+        console.log('empty=' + r.parentNode.tagName + ' cap=' + empty.createCaption().tagName +
+                    ' first=' + empty.firstChild.tagName + ' head=' +
+                    (empty.createTHead() === empty.tHead));
+        empty.deleteTHead(); empty.deleteCaption();
+        let bad = '';
+        try { empty.tHead = document.createElement('div'); } catch (e) { bad = e.name; }
+        console.log('gone=' + empty.tHead + ',' + empty.caption + ' bad=' + bad);
+    </script></body></html>)");
+    check(page.script_error().empty(), "the table script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 7, "every table case logged");
+    if (log.size() != 7) { return; }
+    check(log[0] == "rows=h1,b1,b2,f1 bodies=1 head=THEAD foot=TFOOT cap=null",
+          "rows are thead, bodies, tfoot: " + log[0]);
+    check(log[1] == "idx=2,1,1,-1", "rowIndex, sectionRowIndex, cellIndex: " + log[1]);
+    check(log[2] == "after=h1,b1,new,b2,f1 parent=TBODY",
+          "insertRow(2) goes before the third row, in its section: " + log[2]);
+    check(log[3] == "deleted=b1,new,b2 threw=IndexSizeError,IndexSizeError",
+          "deleteRow(-1) and (0), and the two range errors: " + log[3]);
+    check(log[4] == "cells=c0,c1,TD TD", "insertCell appends a td: " + log[4]);
+    check(log[5] == "empty=TBODY cap=CAPTION first=CAPTION head=true",
+          "a bare table grows a tbody, a caption first, and one thead: " + log[5]);
+    check(log[6] == "gone=null,null bad=HierarchyRequestError",
+          "delete removes them and a wrong tHead is refused: " + log[6]);
+}
+
 } // namespace
 
 int main() {
@@ -551,6 +608,7 @@ int main() {
     test_inner_text_and_outer_text_assign();
     test_insert_adjacent_html();
     test_insert_adjacent_element_and_text();
+    test_the_table_model();
     test_inner_html();
     test_element_query_selector();
     test_tree_navigation();

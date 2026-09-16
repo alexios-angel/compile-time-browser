@@ -217,6 +217,13 @@ double context::to_number_value(value v) {
         throw_error("TypeError", "Cannot convert a BigInt value to a number");
         return std::nan("");
     }
+    // A SYMBOL OUT OF ToPrimitive - `Object(Symbol())`, a valueOf answering
+    // one - is 7.1.4's TypeError; a bare symbol argument is the caller's
+    // numeric_arg check, for the reason internal.hpp gives.
+    if (out.is_kind(heap_kind::symbol)) {
+        throw_error("TypeError", "Cannot convert a Symbol value to a number");
+        return std::nan("");
+    }
     return to_number(out);
 }
 
@@ -354,6 +361,16 @@ value context::negate_value(value v) {
 }
 
 // BITWISE NOT, likewise VM_CASE(bit_not) unchanged.
+value context::numeric_operand(value v) {
+    if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint) ||
+        v.is_kind(heap_kind::symbol)) {
+        return v;
+    }
+    value out = value::undefined();
+    if (!to_primitive_hint(v, "number", out)) { return value::null(); }
+    return out;
+}
+
 value context::bit_not_value(value v) {
     // ~1n is -2n, on the unbounded two's-complement value - there is no ToInt32
     // step, because a BigInt has no width to truncate to.

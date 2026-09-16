@@ -6,6 +6,7 @@
 // these functions' declarations - is in ../internal.hpp.
 
 #include "../internal.hpp"
+#include "iterator_internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
@@ -279,32 +280,65 @@ void install_collections(context & cx) {
                                   std::string{name_of(k)} + "'s adder is not a function");
                     return value::undefined();
                 }
-                const value items = c.iterable_values(seed);
+                // AddEntriesFromIterable (24.1.1.2) / the Set loop, ONE STEP
+                // AT A TIME: the iterator is stepped, the adder called, and
+                // an abrupt completion - a non-object entry, a throwing
+                // `set` - CLOSES the iterator (IteratorClose, `return()`
+                // called and the original throw kept). Draining the iterable
+                // first ran an endless iterator to the allocation ceiling
+                // and never closed anything.
+                const value iterator = c.get_iterator(seed);
                 if (watch.threw()) { return value::undefined(); }
-                if (!items.is_array()) {
+                if (!iterator.is_object_like()) {
                     c.throw_error("TypeError", "the argument is not iterable");
                     return value::undefined();
                 }
-                const context::rooted keep{c, items};
-                const std::vector<value> snapshot =
-                    static_cast<array_object *>(items.as_heap())->items;
-                const context::rooted_values keep_all{c, snapshot};
-                for (const value & item : snapshot) {
+                const context::rooted keep_iterator{c, iterator};
+                detail::iterator_record rec;
+                if (!detail::iterator_direct(c, iterator, rec)) { return value::undefined(); }
+                const context::rooted keep_next{c, rec.next};
+                // A throw with the iterator open: close it quietly, rethrow.
+                const auto fail_closing = [&](value thrown) {
+                    const context::rooted keep_thrown{c, thrown};
+                    detail::iterator_close_quietly(c, iterator);
+                    c.throw_value(thrown);
+                    return value::undefined();
+                };
+                for (;;) {
+                    bool done = false;
+                    value item = value::undefined();
+                    if (!detail::iterator_step_value(c, rec, done, item)) {
+                        return value::undefined();
+                    }
+                    if (done) { break; }
+                    const context::rooted keep_item{c, item};
                     if (keyed(k)) {
                         if (!item.is_object_like()) {
-                            c.throw_error("TypeError", "an iterator value is not an entry object");
-                            return value::undefined();
+                            return fail_closing(c.make_error(
+                                "TypeError", "an iterator value is not an entry object"));
                         }
-                        const value key = c.lookup_index(item, value::number(0));
-                        if (watch.threw()) { return value::undefined(); }
-                        const value held = c.lookup_index(item, value::number(1));
-                        if (watch.threw()) { return value::undefined(); }
-                        const value args[2] = {key, held};
-                        (void)c.call(adder, args, self);
+                        const detail::completion key = detail::fenced(c, [item](context & cc) {
+                            return cc.lookup_index(item, value::number(0));
+                        });
+                        if (key.threw) { return fail_closing(key.result); }
+                        const context::rooted keep_key{c, key.result};
+                        const detail::completion held = detail::fenced(c, [item](context & cc) {
+                            return cc.lookup_index(item, value::number(1));
+                        });
+                        if (held.threw) { return fail_closing(held.result); }
+                        const context::rooted keep_held{c, held.result};
+                        const value args[2] = {key.result, held.result};
+                        bool threw = false;
+                        value thrown = value::undefined();
+                        (void)c.call_fenced(adder, args, self, threw, thrown);
+                        if (threw) { return fail_closing(thrown); }
                     } else {
-                        (void)c.call(adder, std::span<const value>{&item, 1}, self);
+                        bool threw = false;
+                        value thrown = value::undefined();
+                        (void)c.call_fenced(adder, std::span<const value>{&item, 1}, self, threw,
+                                            thrown);
+                        if (threw) { return fail_closing(thrown); }
                     }
-                    if (watch.threw()) { return value::undefined(); }
                 }
                 return self;
             });

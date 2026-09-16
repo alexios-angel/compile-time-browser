@@ -33,6 +33,17 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
         chain.push_back(href);
         text = expand_imports(assets, std::move(text), href, chain);
         chain.pop_back();
+        // THE IMPORT'S CONDITIONS AND LAYER, as the blocks they stand for (CSS
+        // Cascade 5 §5.1): `layer(a)` files the sheet's rules in layer `a` and
+        // declares it here, where the statement stood; `supports()` and the
+        // media list gate them. Innermost first, so the layer is what the
+        // conditions wrap.
+        if (each.layered) { text = "@layer " + each.layer + " {\n" + text + "\n}"; }
+        if (!each.supports.empty()) {
+            // Parenthesised whichever form was written: `supports(display:
+            // flex)` takes a bare declaration where `@supports` wants a group.
+            text = "@supports (" + each.supports + ") {\n" + text + "\n}";
+        }
         if (each.media.empty()) {
             out += text + "\n";
         } else {
@@ -141,6 +152,17 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
         }
         return enabled || title == preferred;
     };
+    // THE `media` ATTRIBUTE GATES THE SHEET (HTML §4.2.6, CSSOM §5.1): the
+    // sheet's rules apply only while its media list matches, which is what
+    // wrapping them in `@media` says to the cascade, evaluated and re-evaluated
+    // against the window exactly as a rule of the sheet's own would be.
+    const atom media_attribute = atoms_.intern_lower("media");
+    const auto gated = [&](node_id at, std::string text) {
+        const std::string_view media =
+            trim(txn.attribute_value(at, media_attribute), ctbrowser::html_whitespace);
+        if (media.empty()) { return text; }
+        return "@media " + std::string{media} + " {\n" + text + "\n}";
+    };
     // ONE sheet, concatenated in document order, rather than one add_sheet per
     // <style> and <link>. Both preserve source order; this one also cannot get
     // it wrong, because ctcss numbers a declaration's `order` from zero on every
@@ -169,7 +191,7 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
                     std::string text;
                     for (const node_id child : txn.children(at)) { text += txn.text(child); }
                     std::vector<std::string> chain;
-                    css += expand_imports(assets_, std::move(text), {}, chain);
+                    css += gated(at, expand_imports(assets_, std::move(text), {}, chain));
                     css += '\n';
                 }
                 // HTML "update a style block" ends by firing `load` at the
@@ -192,7 +214,7 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
                 } else if (state == dom_bindings::link_sheet::active && applies(at, enabled)) {
                     std::string text{reinterpret_cast<const char *>(bytes.data()), bytes.size()};
                     std::vector<std::string> chain{href};
-                    css += expand_imports(assets_, std::move(text), href, chain);
+                    css += gated(at, expand_imports(assets_, std::move(text), href, chain));
                     css += '\n';
                 }
                 // `load` once the sheet applies, `error` when there is nothing

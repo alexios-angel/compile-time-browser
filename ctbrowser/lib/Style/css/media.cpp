@@ -26,23 +26,106 @@
 namespace ctbrowser::style::css {
 namespace {
 
-// `min-width` is `width` with an operator, not a feature of its own - which is what
-// keeps this table twelve entries rather than thirty.
-[[nodiscard]] media_feature::name name_of(std::string_view text) {
-    using n = media_feature::name;
-    if (ascii_iequals(text, "width")) { return n::width; }
-    if (ascii_iequals(text, "height")) { return n::height; }
-    if (ascii_iequals(text, "orientation")) { return n::orientation; }
-    if (ascii_iequals(text, "prefers-color-scheme")) { return n::prefers_color_scheme; }
-    if (ascii_iequals(text, "prefers-reduced-motion")) { return n::prefers_reduced_motion; }
-    if (ascii_iequals(text, "resolution")) { return n::resolution; }
-    if (ascii_iequals(text, "hover")) { return n::hover; }
-    if (ascii_iequals(text, "any-hover")) { return n::any_hover; }
-    if (ascii_iequals(text, "pointer")) { return n::pointer; }
-    if (ascii_iequals(text, "any-pointer")) { return n::any_pointer; }
-    if (ascii_iequals(text, "monochrome")) { return n::monochrome; }
-    if (ascii_iequals(text, "color")) { return n::color; }
-    return n::unknown;
+// THE FEATURES, Media Queries 4 and 5: the name, what it takes, and - for a
+// discrete one - the keywords it accepts and the one this window answers.
+// A window here is a browser tab on a colour screen with a mouse: the
+// preferences are unset and the features that are about hardware answer as
+// a desktop does. `min-width` is `width` with an operator, not a feature of
+// its own.
+struct feature_entry {
+    std::string_view name;
+    media_feature::name which;
+    media_feature::kind kind;
+    std::string_view keywords; // space-separated, discrete features only
+    std::string_view answer;   // the environment's, for the fixed ones
+};
+constexpr feature_entry feature_table[] = {
+    {"width", media_feature::name::width, media_feature::kind::length, {}, {}},
+    {"height", media_feature::name::height, media_feature::kind::length, {}, {}},
+    {"device-width", media_feature::name::width, media_feature::kind::length, {}, {}},
+    {"device-height", media_feature::name::height, media_feature::kind::length, {}, {}},
+    {"aspect-ratio", media_feature::name::aspect_ratio, media_feature::kind::ratio, {}, {}},
+    {"device-aspect-ratio", media_feature::name::aspect_ratio, media_feature::kind::ratio, {}, {}},
+    {"orientation",
+     media_feature::name::orientation,
+     media_feature::kind::discrete,
+     "portrait landscape",
+     {}},
+    {"prefers-color-scheme",
+     media_feature::name::prefers_color_scheme,
+     media_feature::kind::discrete,
+     "light dark",
+     {}},
+    {"prefers-reduced-motion",
+     media_feature::name::prefers_reduced_motion,
+     media_feature::kind::discrete,
+     "no-preference reduce",
+     {}},
+    {"resolution", media_feature::name::resolution, media_feature::kind::resolution, {}, {}},
+    {"hover", media_feature::name::hover, media_feature::kind::discrete, "none hover", {}},
+    {"any-hover", media_feature::name::any_hover, media_feature::kind::discrete, "none hover", {}},
+    {"pointer",
+     media_feature::name::pointer,
+     media_feature::kind::discrete,
+     "none coarse fine",
+     {}},
+    {"any-pointer",
+     media_feature::name::any_pointer,
+     media_feature::kind::discrete,
+     "none coarse fine",
+     {}},
+    {"monochrome", media_feature::name::monochrome, media_feature::kind::integer, {}, {}},
+    {"color", media_feature::name::color, media_feature::kind::integer, {}, {}},
+    {"color-index", media_feature::name::unknown, media_feature::kind::integer, {}, {}},
+    {"prefers-contrast", media_feature::name::prefers_contrast, media_feature::kind::discrete,
+     "no-preference more less custom", "no-preference"},
+    {"prefers-reduced-data", media_feature::name::prefers_reduced_data,
+     media_feature::kind::discrete, "no-preference reduce", "no-preference"},
+    {"prefers-reduced-transparency", media_feature::name::prefers_reduced_transparency,
+     media_feature::kind::discrete, "no-preference reduce", "no-preference"},
+    {"forced-colors", media_feature::name::forced_colors, media_feature::kind::discrete,
+     "none active", "none"},
+    {"inverted-colors", media_feature::name::inverted_colors, media_feature::kind::discrete,
+     "none inverted", "none"},
+    {"dynamic-range", media_feature::name::dynamic_range, media_feature::kind::discrete,
+     "standard high", "standard"},
+    {"video-dynamic-range", media_feature::name::video_dynamic_range, media_feature::kind::discrete,
+     "standard high", "standard"},
+    {"display-mode", media_feature::name::display_mode, media_feature::kind::discrete,
+     "fullscreen standalone minimal-ui browser picture-in-picture", "browser"},
+    {"scripting", media_feature::name::scripting, media_feature::kind::discrete,
+     "none initial-only enabled", "enabled"},
+    {"update", media_feature::name::update, media_feature::kind::discrete, "none slow fast",
+     "fast"},
+    {"overflow-block", media_feature::name::overflow_block, media_feature::kind::discrete,
+     "none scroll paged", "scroll"},
+    {"overflow-inline", media_feature::name::overflow_inline, media_feature::kind::discrete,
+     "none scroll", "scroll"},
+    {"color-gamut", media_feature::name::color_gamut, media_feature::kind::discrete,
+     "srgb p3 rec2020", "srgb"},
+    {"grid", media_feature::name::grid, media_feature::kind::integer, {}, {}},
+    {"scan", media_feature::name::scan, media_feature::kind::discrete, "interlace progressive",
+     "progressive"},
+};
+
+// The two a CONTAINER has and a window does not (CSS Containment 3 §5.2):
+// the logical sizes, which read as width and height here since nothing this
+// engine lays out is vertical.
+constexpr feature_entry container_features[] = {
+    {"inline-size", media_feature::name::width, media_feature::kind::length, {}, {}},
+    {"block-size", media_feature::name::height, media_feature::kind::length, {}, {}},
+};
+
+[[nodiscard]] const feature_entry * entry_of(std::string_view text, bool container) {
+    for (const feature_entry & e : feature_table) {
+        if (ascii_iequals(text, e.name)) { return &e; }
+    }
+    if (container) {
+        for (const feature_entry & e : container_features) {
+            if (ascii_iequals(text, e.name)) { return &e; }
+        }
+    }
+    return nullptr;
 }
 
 // A length in a media query is resolved against the ROOT font size, not an element's -
@@ -106,12 +189,15 @@ namespace {
     return ascii_iequals(f.keyword, have);
 }
 
-[[nodiscard]] bool feature_holds(const media_feature & f, const media_environment & env) {
+[[nodiscard]] bool feature_holds(const media_feature & f, const feature_entry & e,
+                                 const media_environment & env) {
     using n = media_feature::name;
     const auto number = [&](float have) { return compare_number(f.op, have, f.value); };
     switch (f.which) {
     case n::width: return number(env.viewport_width);
     case n::height: return number(env.viewport_height);
+    case n::aspect_ratio:
+        return env.viewport_height > 0 && number(env.viewport_width / env.viewport_height);
     case n::orientation: return matches_keyword(f, env.portrait() ? "portrait" : "landscape");
     case n::prefers_color_scheme: return matches_keyword(f, env.dark ? "dark" : "light");
     case n::prefers_reduced_motion:
@@ -125,9 +211,10 @@ namespace {
     // `monochrome: 0` and `color: 8`, which is why they go through the number path.
     case n::monochrome: return number(env.monochrome ? 8.0f : 0.0f);
     case n::color: return number(env.monochrome ? 0.0f : 8.0f);
+    case n::grid: return number(0.0f);
     case n::unknown: return false;
+    default: return matches_keyword(f, e.answer); // the fixed discrete ones
     }
-    return false;
 }
 
 // The tokens [from, to) as ONE feature - the inside of its parentheses - or
@@ -139,7 +226,7 @@ namespace {
 //   <mf-range>   = <mf-name> <op> <mf-value> | <mf-value> <op> <mf-name>
 //                | <mf-value> <lt> <mf-name> <lt> <mf-value>  (and the `>` twin)
 [[nodiscard]] std::optional<truth> feature(const token_stream & s, std::size_t from, std::size_t to,
-                                           const media_environment & env) {
+                                           const media_environment & env, bool container = false) {
     std::vector<std::size_t> at; // the significant tokens
     // A FUNCTION IS ONE VALUE: its tokens up to the matching `)` are one
     // entry here, keyed on the function token, so `calc(200vh + 5em)` has
@@ -165,25 +252,74 @@ namespace {
     }
     if (at.empty()) { return std::nullopt; }
     const auto is_name = [&](std::size_t i) { return s.tokens[i].type == token_type::ident; };
-    const auto value_of = [&](std::size_t i, media_feature & f) -> bool {
-        const css_token & t = s.tokens[i];
+    // WHAT A VALUE WAS WRITTEN AS, which decides whether it is a value for the
+    // feature at all: `(width: foo)` and `(orientation: 0)` parse, and are
+    // UNKNOWN rather than false (Media Queries 4 §2.4) - so `not all and
+    // (orientation: 0)` does not match either.
+    enum class written : std::uint8_t {
+        keyword,
+        zero,   // a unitless 0, a <length> by CSS Values 4 §6.1
+        number, // any other unitless number
+        length,
+        resolution,
+        ratio,
+        other
+    };
+    // One value starting at significant index `i`: how many significant
+    // tokens it took (0 = not a value), what it was, and its number or keyword.
+    const auto value_at = [&](std::size_t i, media_feature & f, written & w) -> std::size_t {
+        if (i >= at.size()) { return 0; }
+        const css_token & t = s.tokens[at[i]];
+        w = written::other;
         if (t.type == token_type::ident) {
             f.keyword = std::string{s.text_of(t)};
-            return true;
+            w = written::keyword;
+            return 1;
         }
         if (t.type == token_type::number || t.type == token_type::dimension) {
+            // `<ratio>` = <number> [ / <number> ]?
+            if (t.type == token_type::number && i + 2 < at.size() &&
+                s.tokens[at[i + 1]].type == token_type::delim &&
+                s.text_of(s.tokens[at[i + 1]]) == "/" &&
+                s.tokens[at[i + 2]].type == token_type::number) {
+                const double d = s.tokens[at[i + 2]].number;
+                f.value = d == 0 ? 0.0f : static_cast<float>(t.number / d);
+                w = written::ratio;
+                return 3;
+            }
             f.value = length_in_px(s, t, env);
-            return true;
+            if (t.type == token_type::number) {
+                w = t.number == 0 ? written::zero : written::number;
+            } else {
+                const std::string_view unit = s.unit_of(t);
+                w = ascii_iequals_any(unit, {"dpi", "dpcm", "dppx", "x"}) ? written::resolution
+                                                                          : written::length;
+            }
+            return 1;
         }
         if (t.type == token_type::function) {
             const std::string_view text = std::string_view{s.pool}.substr(
-                t.text, s.tokens[ends[i] - 1].text + s.tokens[ends[i] - 1].length - t.text);
+                t.text, s.tokens[ends[at[i]] - 1].text + s.tokens[ends[at[i]] - 1].length - t.text);
             const std::optional<float> px = math_in_px(text, env);
-            if (!px) { return false; }
+            if (!px) { return 0; }
             f.value = *px;
-            return true;
+            // calc/ answers a resolution as dppx and a length as px alike;
+            // the unit inside says which it was: `dpi`/`dpcm`/`dppx`, or an
+            // `x` that follows a number - the one in `px` does not.
+            const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+            const auto word = [&](char c) {
+                return digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
+            };
+            bool resolution = text.find("dp") != std::string_view::npos;
+            for (std::size_t k = 1; !resolution && k < text.size(); ++k) {
+                resolution = (text[k] == 'x' || text[k] == 'X') &&
+                             (digit(text[k - 1]) || text[k - 1] == '.') &&
+                             (k + 1 == text.size() || !word(text[k + 1]));
+            }
+            w = resolution ? written::resolution : written::length;
+            return 1;
         }
-        return false;
+        return 0;
     };
     // One comparison operator at `i`, `<=` being two delim tokens; the number of
     // tokens it took, or 0.
@@ -214,35 +350,74 @@ namespace {
         default: return op;
         }
     };
-    const auto decide = [&](const media_feature & f) -> truth {
-        if (f.which == media_feature::name::unknown) { return truth::unknown; }
-        return feature_holds(f, env) ? truth::yes : truth::no;
+    // A feature and its value together: unknown for a feature this engine
+    // does not model, for a value the feature does not take, and for range
+    // syntax on a discrete feature.
+    const auto decide = [&](const feature_entry * e, const media_feature & f, written w) -> truth {
+        if (e == nullptr || e->which == media_feature::name::unknown) { return truth::unknown; }
+        const bool boolean = f.op == media_feature::compare::boolean;
+        bool fits = boolean;
+        if (!boolean) {
+            switch (e->kind) {
+            case media_feature::kind::discrete: {
+                fits = false;
+                if (w == written::keyword && f.op == media_feature::compare::equal) {
+                    for (const std::string_view k : split_top_level(e->keywords, " ")) {
+                        if (ascii_iequals(k, f.keyword)) { fits = true; }
+                    }
+                }
+                break;
+            }
+            case media_feature::kind::length:
+                fits = w == written::length || w == written::zero;
+                break;
+            case media_feature::kind::resolution: fits = w == written::resolution; break;
+            case media_feature::kind::integer:
+                fits = (w == written::number || w == written::zero) && f.value >= 0 &&
+                       f.value == static_cast<float>(static_cast<long>(f.value));
+                break;
+            case media_feature::kind::ratio:
+                fits = w == written::ratio || w == written::number || w == written::zero;
+                break;
+            }
+        }
+        if (!fits) { return truth::unknown; }
+        return feature_holds(f, *e, env) ? truth::yes : truth::no;
     };
 
     // <mf-boolean>: one name.
     if (at.size() == 1) {
         if (!is_name(at[0])) { return std::nullopt; }
+        const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]), container);
         media_feature f;
-        f.which = name_of(s.text_of(s.tokens[at[0]]));
+        f.which = e == nullptr ? media_feature::name::unknown : e->which;
         f.op = media_feature::compare::boolean;
-        return decide(f);
+        return decide(e, f, written::other);
     }
     // <mf-plain>: name, colon, one value.
     if (is_name(at[0]) && s.tokens[at[1]].type == token_type::colon) {
-        if (at.size() != 3) { return std::nullopt; }
         media_feature f;
         std::string_view name = s.text_of(s.tokens[at[0]]);
         f.op = media_feature::compare::equal;
-        if (ascii_istarts_with(name, "min-")) {
+        const feature_entry * plain = entry_of(name, container);
+        if (plain == nullptr && ascii_istarts_with(name, "min-")) {
             f.op = media_feature::compare::at_least;
             name.remove_prefix(4);
-        } else if (ascii_istarts_with(name, "max-")) {
+        } else if (plain == nullptr && ascii_istarts_with(name, "max-")) {
             f.op = media_feature::compare::at_most;
             name.remove_prefix(4);
         }
-        f.which = name_of(name);
-        if (!value_of(at[2], f)) { return std::nullopt; }
-        return decide(f);
+        const feature_entry * e = entry_of(name, container);
+        f.which = e == nullptr ? media_feature::name::unknown : e->which;
+        written w = written::other;
+        const std::size_t took = value_at(2, f, w);
+        if (took == 0 || at.size() != 2 + took) { return std::nullopt; }
+        // `min-`/`max-` on a discrete feature is no feature at all.
+        if (e != nullptr && e->kind == media_feature::kind::discrete &&
+            f.op != media_feature::compare::equal) {
+            return truth::unknown;
+        }
+        return decide(e, f, w);
     }
     // <mf-range>. The name may be on either side, or in the middle of two values.
     media_feature::compare op1 = media_feature::compare::equal;
@@ -250,23 +425,35 @@ namespace {
     if (is_name(at[0])) {
         // name op value
         const std::size_t took = operator_at(1, op1);
-        if (took == 0 || at.size() != 2 + took) { return std::nullopt; }
+        if (took == 0) { return std::nullopt; }
+        const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]), container);
         media_feature f;
-        f.which = name_of(s.text_of(s.tokens[at[0]]));
+        f.which = e == nullptr ? media_feature::name::unknown : e->which;
         f.op = op1;
-        if (!value_of(at[1 + took], f)) { return std::nullopt; }
-        return decide(f);
+        written w = written::other;
+        const std::size_t vtook = value_at(1 + took, f, w);
+        if (vtook == 0 || at.size() != 1 + took + vtook) { return std::nullopt; }
+        if (e != nullptr && e->kind == media_feature::kind::discrete) { return truth::unknown; }
+        return decide(e, f, w);
     }
     // value op name [op value]
-    const std::size_t took = operator_at(1, op1);
-    if (took == 0 || at.size() < 2 + took || !is_name(at[1 + took])) { return std::nullopt; }
     media_feature f;
-    f.which = name_of(s.text_of(s.tokens[at[1 + took]]));
+    written w = written::other;
+    const std::size_t vtook = value_at(0, f, w);
+    if (vtook == 0) { return std::nullopt; }
+    const std::size_t took = operator_at(vtook, op1);
+    if (took == 0 || at.size() < vtook + took + 1 || !is_name(at[vtook + took])) {
+        return std::nullopt;
+    }
+    const feature_entry * e = entry_of(s.text_of(s.tokens[at[vtook + took]]), container);
+    f.which = e == nullptr ? media_feature::name::unknown : e->which;
     f.op = flipped(op1); // `400px < width` is `width > 400px`
-    if (!value_of(at[0], f)) { return std::nullopt; }
-    if (at.size() == 2 + took) { return decide(f); }
-    const std::size_t took2 = operator_at(2 + took, op2);
-    if (took2 == 0 || at.size() != 3 + took + took2) { return std::nullopt; }
+    if (at.size() == vtook + took + 1) {
+        if (e != nullptr && e->kind == media_feature::kind::discrete) { return truth::unknown; }
+        return decide(e, f, w);
+    }
+    const std::size_t took2 = operator_at(vtook + took + 1, op2);
+    if (took2 == 0) { return std::nullopt; }
     // Both operators must point the same way: `400px < width < 700px`.
     const bool less1 =
         op1 == media_feature::compare::less || op1 == media_feature::compare::at_most;
@@ -279,8 +466,11 @@ namespace {
     media_feature g;
     g.which = f.which;
     g.op = op2;
-    if (!value_of(at[2 + took + took2], g)) { return std::nullopt; }
-    return both(decide(f), decide(g));
+    written w2 = written::other;
+    const std::size_t vtook2 = value_at(vtook + took + 1 + took2, g, w2);
+    if (vtook2 == 0 || at.size() != vtook + took + 1 + took2 + vtook2) { return std::nullopt; }
+    if (e != nullptr && e->kind == media_feature::kind::discrete) { return truth::unknown; }
+    return both(decide(e, f, w), decide(e, g, w2));
 }
 
 // A `<media-condition>` over [from, to): nullopt when it is not one.
@@ -389,19 +579,19 @@ namespace {
 
 [[nodiscard]] bool query_holds(const media_query & q, const media_environment & env) {
     if (q.malformed) { return false; } // `not all`, per spec
-    bool holds = true;
+    truth holds = truth::yes;
     if (q.type == media_type::other || (q.type != media_type::all && q.type != env.type)) {
-        holds = false;
+        holds = truth::no;
     }
-    if (holds && !q.condition.empty()) {
+    if (holds != truth::no && !q.condition.empty()) {
         const token_stream s = tokenize(q.condition);
-        const std::optional<truth> answer = condition(s, 0, s.tokens.size() - 1, env);
-        // Unknown is false at the top of a query, Media Queries 4 §3.
-        holds = answer.value_or(truth::no) == truth::yes;
+        holds = condition(s, 0, s.tokens.size() - 1, env).value_or(truth::unknown);
     }
     // `not` applies to the WHOLE query, type and features together - which is why it
-    // is applied here and not per feature.
-    return q.negated ? !holds : holds;
+    // is applied here and not per feature - and it leaves UNKNOWN unknown:
+    // `not all and (orientation: 0)` matches no more than the plain form does.
+    // Unknown is false only here, at the top of a query (Media Queries 4 §3).
+    return (q.negated ? negate(holds) : holds) == truth::yes;
 }
 
 } // namespace
@@ -455,6 +645,24 @@ bool evaluate(std::span<const media_query> queries, const media_environment & en
         if (query_holds(q, env)) { return true; } // a comma list is an OR
     }
     return false;
+}
+
+std::optional<truth> evaluate_container_condition(std::string_view text,
+                                                  const media_environment & env,
+                                                  const style_query & query) {
+    const token_stream s = tokenize(text);
+    const std::size_t end = s.tokens.size() - 1;
+    // `style(<query>)` is the one function a container condition has (CSS
+    // Containment 3 §5.3); the query is handed over as text, since only the
+    // engine holds the container's computed style.
+    const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
+        if (!ascii_iequals(name, "style")) { return truth::unknown; }
+        return query(trim(slice(s, a, b), html_whitespace));
+    };
+    const auto enclosed = [&](std::size_t a, std::size_t b) {
+        return feature(s, a, b, env, true).value_or(truth::unknown);
+    };
+    return boolean_expression(s, 0, end, test, enclosed);
 }
 
 std::optional<bool> evaluate_media_condition(std::string_view text, const media_environment & env) {

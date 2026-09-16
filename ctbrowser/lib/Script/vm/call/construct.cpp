@@ -61,9 +61,25 @@ value context::ensure_prototype(value fn) {
     if (!fn.is_kind(heap_kind::function)) { return value::undefined(); }
     auto * closure = static_cast<closure_object *>(fn.as_heap());
     if (value * existing = closure->find("prototype")) { return *existing; }
-    // An arrow is not a constructor and never needs one.
-    if (closure->proto != nullptr && closure->proto->is_arrow) { return value::undefined(); }
+    // An arrow is not a constructor and never needs one; nor is an async
+    // function (27.7.4: no `prototype` property at all).
+    if (closure->proto != nullptr &&
+        (closure->proto->is_arrow || (closure->proto->is_async && !closure->proto->is_generator))) {
+        return value::undefined();
+    }
     value made = make_object();
+    if (closure->proto != nullptr && closure->proto->is_generator) {
+        // 27.3.1.1 / 27.4.1.1 step 7: a generator function's `prototype` is
+        // an ordinary object inheriting %GeneratorPrototype% (or the async
+        // one), with NO `constructor` of its own - the instances made by
+        // calling the function inherit from it (make_generator).
+        if (object_object * table = prototype(closure->proto->is_async ? proto_kind::async_generator
+                                                                       : proto_kind::generator)) {
+            static_cast<object_object *>(made.as_heap())->prototype = value::object(table);
+        }
+        closure->define("prototype", made, attr_writable);
+        return made;
+    }
     // 10.2.5 / 15.7.14: `F.prototype` is { true, false, false } on an ordinary
     // function and `F.prototype.constructor` is { true, false, true }. Both
     // were enumerable, so `constructor` turned up in `Object.keys(C.prototype)`
@@ -138,8 +154,8 @@ value context::construct(value callee, std::span<const value> args) {
         // is laid out): [[Construct]] is the target's, with the bound
         // arguments in front and the bound `this` ignored (10.4.1.2).
         if (const value * target = nat->find("@#BoundTargetFunction");
-            target != nullptr && target->is_callable() && nat->retained.size() >= 2) {
-            std::vector<value> all{nat->retained.begin() + 2, nat->retained.end()};
+            target != nullptr && target->is_callable() && nat->retained.size() >= 3) {
+            std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
             all.insert(all.end(), args.begin(), args.end());
             const rooted_values keep_all{*this, all};
             return construct(*target, all);
@@ -250,34 +266,18 @@ value context::construct_new(value callee, std::span<const value> args,
 }
 
 void context::run_field_initialisers(value constructor, value self) {
-    // Most-derived first, walking `C.prototype`'s own prototype back to the
-    // parent's `constructor`. Depth-capped for the same reason every other
-    // chain walk here is: a page can make the chain cyclic.
-    std::vector<value> chain;
-    value current = constructor;
-    for (int depth = 0; depth < 64 && current.is_kind(heap_kind::function); ++depth) {
-        chain.push_back(current);
-        value * prototype = static_cast<closure_object *>(current.as_heap())->find("prototype");
-        if (prototype == nullptr || !prototype->is_object()) { break; }
-        const value parent_prototype =
-            static_cast<object_object *>(prototype->as_heap())->prototype;
-        if (!parent_prototype.is_object()) { break; }
-        value * parent =
-            static_cast<object_object *>(parent_prototype.as_heap())->find("constructor");
-        if (parent == nullptr) { break; }
-        current = *parent;
-    }
-    // ...then run them BASE FIRST, so a derived field that reads one the base
-    // set finds it there. The spec runs a derived class's fields after its
-    // super() call returns; this runs the whole chain before the constructor
-    // body instead, which agrees wherever a constructor does not overwrite a
-    // field it also declares.
-    for (std::size_t i = chain.size(); i-- > 0;) {
-        auto * klass = static_cast<closure_object *>(chain[i].as_heap());
-        if (value * fields = klass->find("__fields"); fields != nullptr && fields->is_callable()) {
-            call(*fields, {}, self);
-        }
-    }
+    // NOTHING, SINCE 2026-09-12 - kept for its callers. Instance fields are the
+    // COMPILER's: a base class constructor runs its own `__fields` first thing
+    // in its body (10.2.2 [[Construct]] step 6.b), which a subclass's
+    // `super()` reaches as well as `new` does, and a derived class runs them
+    // after its `super()` returns on the object that call bound as `this`
+    // (`__ctbrowser_init_fields`, emitted after every super call). Until
+    // then the whole chain ran here before the body, so a base constructor's
+    // `Object.preventExtensions(this)` or returned object never met the
+    // derived fields, and a parent reached through super() ran its fields
+    // on the wrong object or twice.
+    (void)constructor;
+    (void)self;
 }
 
 } // namespace ctbrowser::script

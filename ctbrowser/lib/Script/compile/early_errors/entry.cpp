@@ -19,6 +19,18 @@ void checker::run() {
     const vp::node & root = at(ast_.root);
     if (root.kind != nk::program) { return; }
     frames_.back().strict = strict_root_ || has_use_strict_directive(ast_.root);
+    // A module's top level is [+Await] (16.2.1): `await` is not a name there.
+    frames_.back().is_async = strict_root_;
+    // A `using` declaration at the top level of a classic SCRIPT is not in
+    // the grammar (14.3.2: a module's top level, a block, a body).
+    if (!strict_root_) {
+        for (const std::int32_t s : kids(root)) {
+            if (at(s).kind == nk::var_decl &&
+                (at(s).text == "using" || at(s).text == "await using")) {
+                report("a `using` declaration is not allowed at the top level of a script", s);
+            }
+        }
+    }
     (void)check_list(kids(root), list_kind::script, nullptr, "");
     frames_.pop_back();
 }

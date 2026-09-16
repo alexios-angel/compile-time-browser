@@ -116,7 +116,7 @@ void test_reflection_rules() {
     page.load_html(R"(<html><body>
         <a id=a href="page.html" download=x></a>
         <details id=d></details>
-        <td id=c colspan=9999></td>
+        <table><tr><td id=c colspan=9999></td></tr></table>
         <input id=i maxlength=" 42 " size=0 type=CHECKBOX>
         <ol id=o></ol>
         <label id=l for=i></label>

@@ -223,6 +223,87 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
+    // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
+    // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
+    // method and `radial-gradient(at bottom right, ...)` writes `at right
+    // bottom`; a list with no gradient in it keeps the author's bytes.
+    if (p->kind == k::freeform &&
+        ascii_iequals_any(property, {"background-image", "mask-image", "border-image-source",
+                                     "list-style-image"})) {
+        std::string serialized;
+        if (match_image_list(ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
+    // THE BOX ALIGNMENT LONGHANDS (alignment.cpp): `first baseline` is
+    // `baseline`, `center legacy` is `legacy center`, `safe` needs a position.
+    if (p->kind == k::freeform &&
+        (ascii_istarts_with(property, "align-") || ascii_istarts_with(property, "justify-"))) {
+        std::string serialized;
+        if (match_alignment(property, ts, found, serialized)) { return yes(std::move(serialized)); }
+        if (ascii_iequals_any(property, {"align-content", "justify-content", "align-items",
+                                         "justify-items", "align-self", "justify-self"})) {
+            return {};
+        }
+    }
+
+    // THE BACKGROUND AND MASK LAYER LISTS (backgrounds.cpp).
+    if (ascii_istarts_with(property, "background-") || ascii_istarts_with(property, "mask-")) {
+        std::string serialized;
+        if (match_background_list(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
+    // A SHADOW LIST (shadows.cpp): colour first, lengths, then `inset`.
+    if (p->kind == k::freeform && ascii_iequals_any(property, {"box-shadow", "text-shadow"})) {
+        std::string serialized;
+        if (match_shadow_list(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
+    // THE INDIVIDUAL TRANSFORMS AND THE ORIGINS (transforms.cpp).
+    if (p->kind == k::freeform &&
+        ascii_iequals_any(property, {"rotate", "scale", "translate", "transform-origin"})) {
+        std::string serialized;
+        if (match_transform_property(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
+    // THE KEYWORD COMBINATIONS (keywords.cpp): `overline underline` is
+    // `underline overline`, `size style layout paint` is `strict`.
+    if (p->kind == k::freeform) {
+        std::string serialized;
+        if (match_keywords(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
+    // THE GRID GRAMMARS (grid.cpp): track lists, lines, areas and auto-flow.
+    if (p->kind == k::freeform && ascii_istarts_with(property, "grid-")) {
+        std::string serialized;
+        if (match_grid(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
+    // A `<filter-value-list>` (filter.cpp): `blur()` fills in its argument,
+    // `grayscale(300%)` is `grayscale(100%)`, `blur(-1px)` is refused.
+    if (p->kind == k::freeform && ascii_iequals_any(property, {"filter", "backdrop-filter"})) {
+        std::string serialized;
+        if (!match_filter_list(ts, found, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
     // `font-family` IS FREEFORM WITH ONE EXTRA RULE: its strings are the one
     // place CSSOM unquotes a string on the way back out. `'Lucida Grande'`
     // reads back as `Lucida Grande`, and serialize-values asks for it.
@@ -242,12 +323,24 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // and refusing it would be exactly the 80%-right grammar this table exists
     // not to be.
     if (p->kind == k::color) {
-        // `invert` is CSS 2.1's outline colour and nothing else's.
-        if (ascii_iequals(property, "outline-color") && ascii_iequals(text, "invert")) {
-            return yes("invert");
+        // The property's own keywords beside the colour: `invert` is CSS
+        // 2.1's outline colour, `auto` is caret-color's and accent-color's.
+        if (found.significant.size() == 1) {
+            const css_token & only = ts.tokens[found.significant.front()];
+            if (only.type == token_type::ident && has_keyword(p->keywords, ts.text_of(only))) {
+                return yes(ascii_lower_copy(ts.text_of(only)));
+            }
         }
         std::string serialized;
         if (match_color(ts, found, simplified, serialized)) { return yes(std::move(serialized)); }
+        return {};
+    }
+
+    // `display` IS TWO KEYWORDS WITH A SHORT FORM (display.cpp): `inline
+    // flow-root` is `inline-block` and `flow list-item` is `list-item`.
+    if (ascii_iequals(property, "display")) {
+        std::string serialized;
+        if (match_display(ts, found, serialized)) { return yes(std::move(serialized)); }
         return {};
     }
 

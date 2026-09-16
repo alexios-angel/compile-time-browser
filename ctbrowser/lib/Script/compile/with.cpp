@@ -141,7 +141,46 @@ void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
         proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), src});
         return;
     }
+    emit_global_write(name, src);
+}
+
+// THE ONE PLACE A GLOBAL IS WRITTEN, for a name that resolved to nothing
+// nearer: a plain assignment, a compound one, an update, a for-in/of head.
+void compiler_impl::emit_global_write(std::string_view name, std::uint16_t src) {
+    // 19.1: `NaN`, `Infinity` and `undefined` are { false, false, false } on
+    // the global object. The globals table has no attributes, so the refusal
+    // is decided here: a sloppy write is dropped, a strict one is the
+    // TypeError of PutValue - and neither reaches op::set_global.
+    if (name == "undefined" || name == "NaN" || name == "Infinity") {
+        if (fn().is_strict) {
+            emit_throw("TypeError",
+                       "Cannot assign to read only property '" + std::string{name} + "'");
+        }
+        return;
+    }
+    emit_strict_assign_check(name);
     proto().emit(instruction::with_bx(op::set_global, src, intern_name(std::string{name})));
+}
+
+// 6.2.5.6 PutValue step 3.a: in strict code, assigning to a name that resolves
+// nowhere is a ReferenceError rather than a new global. Emitted only for an
+// assignment - a declaration's first write sets declaring_ - and only in
+// strict code, as a call of strict_assign_check_name (op::set_global itself
+// may not throw). The write that follows still runs when the check passes.
+void compiler_impl::emit_strict_assign_check(std::string_view name) {
+    if (!fn().is_strict || declaring_) { return; }
+    // NOT AT A MODULE'S TOP LEVEL, deliberately (docs/script.md, strict
+    // mode): ctcompile's module fixtures publish to their host through
+    // `OUT = ...` and rely on the write.
+    if (module_scope_ && frames_.size() == 1) { return; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(instruction::with_bx(op::get_global, callee,
+                                      intern_name(std::string{strict_assign_check_name})));
+    const std::uint16_t arg = alloc_reg();
+    emit_string(arg, std::string{name});
+    proto().emit(instruction{op::call, callee, 1});
+    release_to(mark);
 }
 
 } // namespace ctbrowser::script::detail

@@ -36,6 +36,7 @@ struct computed_cache {
     // running one. Zero for a page that has none, so the stamp above is the
     // whole test there.
     std::uint64_t animations = 0;
+    std::uint64_t restyles = 0; // dom_bindings::restyle_stamp()
 };
 
 // DOES `getComputedStyle`'s SECOND ARGUMENT NAME A PSEUDO-ELEMENT?
@@ -129,7 +130,35 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
 }
 
 value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo) {
+    // ONE OBJECT PER ELEMENT AND PSEUDO, held on the wrapper under a private
+    // key so it lives and dies with it. `getComputedStyle(el) ===
+    // getComputedStyle(el)` in every browser - and building one costs an
+    // accessor per property, both spellings, which the interpolation harness
+    // pays per subtest per sample. The one thing fixed at creation is `length`
+    // (see below): an object made for an unrendered element is remade once
+    // the element has a style.
+    script::object_object * wrapper = nullptr;
+    std::string slot;
+    if (id) {
+        if (const auto it = wrappers_.find(id.key()); it != wrappers_.end()) {
+            wrapper = it->second;
+        }
+    }
+    if (wrapper != nullptr) {
+        slot = std::string{script::private_key_prefix} +
+               "computed:" + std::string{pseudo ? atoms_->text(pseudo) : std::string_view{}};
+        if (const value * cached = wrapper->find(slot); cached != nullptr && cached->is_object()) {
+            auto * made = static_cast<script::object_object *>(cached->as_heap());
+            const value * length = made->find("length");
+            const bool rendered =
+                styles_ != nullptr && styles_->find(style::engine::key_of(id)) != styles_->end();
+            if (length != nullptr && (context::to_number(*length) != 0 || !rendered)) {
+                return *cached;
+            }
+        }
+    }
     auto * held = cx.allocate<script::object_object>();
+    if (wrapper != nullptr) { wrapper->set(slot, value::object(held)); }
 
     // THE ENTRIES, NOW: the element's, or its pseudo-element's - resolved on
     // demand through the engine against the element's own resolved style, so a
@@ -154,6 +183,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     cached->stamp = doc_->version();
     cached->styles = style_stamp();
     cached->animations = animation_stamp();
+    cached->restyles = restyle_stamp();
 
     // THE LIVE READ, and the flush it needs.
     //
@@ -183,7 +213,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     const auto refresh = [this, cached, entries_now](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == cached->stamp && style_stamp() == cached->styles &&
-            animation_stamp() == cached->animations) {
+            animation_stamp() == cached->animations && restyle_stamp() == cached->restyles) {
             return;
         }
         const value flush = c.global("getComputedStyle");
@@ -194,6 +224,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         cached->stamp = doc_->version();
         cached->styles = style_stamp();
         cached->animations = animation_stamp();
+        cached->restyles = restyle_stamp();
     };
     const auto answer = [cached](std::string_view name) -> std::string {
         for (const auto & [key, text] : cached->entries) {

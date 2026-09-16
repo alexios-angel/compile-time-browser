@@ -7,7 +7,14 @@ namespace ctbrowser::shell {
 
 double browser::next_wakeup_ms() {
     double soonest = std::numeric_limits<double>::infinity();
-    if (bindings_) { soonest = std::min(soonest, bindings_->next_callback_ms()); }
+    if (bindings_) {
+        soonest = std::min(soonest, bindings_->next_callback_ms());
+        // A CSS animation or transition with an event still to fire - its
+        // start, an iteration, its end. Nothing else about one needs a frame:
+        // the overlay is sampled when read, not painted. A finished page with
+        // no running animation asks for nothing, so the loop goes idle again.
+        soonest = std::min(soonest, bindings_->next_animation_event_ms());
+    }
     if (focused_ && options_.caret_blink_ms > 0 && has_editable_focus()) {
         const double period = options_.caret_blink_ms * 2;
         const double since = std::fmod(caret_clock_ms_ - caret_base_ms_, period);
@@ -79,6 +86,10 @@ std::size_t browser::tick(double elapsed_ms) {
     }
     bindings_->advance_clock(elapsed_ms);
     const std::size_t ran = bindings_->run_due_callbacks();
+    // Then "update animations and send events" (Web Animations §5.3.2): the
+    // animationstart/animationend/transitionend crossings the clock's move
+    // produced, after the timers and the frame callbacks of this tick.
+    bindings_->tick_animations();
     // A fault in a timer or an animation frame is a script error too. It was
     // not reported anywhere before, so a page whose draw loop threw looked
     // exactly like a page that had finished loading and had nothing to do.
@@ -189,6 +200,10 @@ void browser::frame(scheduler * pool) {
 void browser::resolve_styles() {
     refresh_author_styles();
     const auto txn = doc_->read();
+    // THE BEFORE-CHANGE STYLE (CSS Transitions 1 §3) is the previous
+    // resolution's map, kept for the length of this one so the bindings can
+    // compare each element's two computed styles once the new map is whole.
+    const ctbrowser::style::style_map before = std::move(resolved_);
     resolved_ = styles_->resolve_all(txn);
     // A ROOT WITH `overflow: scroll` always has its scrollbars, and the
     // viewport units exclude them (viewport_less_scroll_root); the cascade is
@@ -204,6 +219,11 @@ void browser::resolve_styles() {
         (void)styles_->set_environment(env);
         resolved_ = styles_->resolve_all(txn);
     }
+    // THE STYLE CHANGE EVENT: every `animation-name` and every changed
+    // property with a matching `transition-property` becomes an animation
+    // record now, sampled at this clock - so a read that asked for this flush
+    // sees the cascade's animations on the same call (bindings/animations/css.cpp).
+    if (bindings_) { bindings_->update_css_animations(txn, before, resolved_); }
 }
 
 void browser::run_layout() {

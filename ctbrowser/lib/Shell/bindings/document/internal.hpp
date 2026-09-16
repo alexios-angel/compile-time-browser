@@ -73,12 +73,30 @@ inline constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
 // U+0000 is refused by all three rules - it is the one character the tokenizer
 // cannot carry (it becomes U+FFFD) - and a string_view literal cannot hold it,
 // hence the separate find.
+//
+// TWO RESTS, DOM 4.9 (whatwg/dom#1079): after an ASCII ALPHA start anything
+// goes but a tag-name break; after `:`, `_` or a non-ASCII start only ASCII
+// alphanumerics, `-`, `.`, `:`, `_` and non-ASCII may follow - `:!` and `_ `
+// are refused where `a!` is not (name-validation.html's second table).
 [[nodiscard]] inline bool is_valid_element_local_name(std::string_view name) {
     if (name.empty() || !is_element_name_start(static_cast<unsigned char>(name.front()))) {
         return false;
     }
-    return name.find_first_of(element_name_breaks) == std::string_view::npos &&
-           name.find('\0') == std::string_view::npos;
+    const auto alpha = [](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    };
+    if (alpha(static_cast<unsigned char>(name.front()))) {
+        return name.find_first_of(element_name_breaks) == std::string_view::npos &&
+               name.find('\0') == std::string_view::npos;
+    }
+    for (const char signed_c : name.substr(1)) {
+        const auto c = static_cast<unsigned char>(signed_c);
+        if (!(c >= 0x80 || alpha(c) || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == ':' ||
+              c == '_')) {
+            return false;
+        }
+    }
+    return true;
 }
 
 [[nodiscard]] inline bool is_valid_doctype_name(std::string_view name) {

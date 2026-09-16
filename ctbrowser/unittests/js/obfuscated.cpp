@@ -172,9 +172,10 @@ int main() {
     js_expect("0xFF_FF", "65535"); // separators inside a radix literal too
     js_expect("1e1_0", "10000000000");
 
-    // --- KNOWN WRONG: legacy octal, Annex B sloppy mode ----------------------
-    js_expect("\"\\101\"", "101"); // V8: "A"
-    js_expect("017", "17");        // V8: 15
+    // --- Annex B sloppy mode: a legacy octal escape decodes (B.1.2) ----------
+    js_expect("\"\\101\"", "A");
+    // KNOWN WRONG: a legacy octal integer literal
+    js_expect("017", "17"); // V8: 15
 
     // UNICODE ESCAPES IN IDENTIFIERS (12.7.1): `\u{6F}bj` IS `obj`, in
     // declarations, references, property names and private names. The lexer

@@ -57,6 +57,15 @@ constexpr dom_interface interface_table[] = {
     // interface_prototype(), which is how another file reaches them.
     {"NodeList", "", ""},
     {"HTMLCollection", "", ""},
+    // The forms' three, HTML 4.10.20.1 and 2.6.2: `form.elements`,
+    // `select.options` and the list `elements.namedItem` answers for a
+    // radio group. Made by make_live_collection; the extra members are
+    // installed by install_control_methods.
+    {"HTMLFormControlsCollection", "HTMLCollection", ""},
+    {"HTMLOptionsCollection", "HTMLCollection", ""},
+    {"RadioNodeList", "NodeList", ""},
+    // `control.validity`, HTML 4.10.20.3 - an object of booleans, not a node.
+    {"ValidityState", "", ""},
     {"DOMTokenList", "", ""},
     {"NamedNodeMap", "", ""},
     {"DOMImplementation", "", ""},
@@ -65,6 +74,12 @@ constexpr dom_interface interface_table[] = {
     // bindings/document/traversal.cpp.
     {"TreeWalker", "", ""},
     {"NodeIterator", "", ""},
+    // DOM 5's ranges. `Range` and `StaticRange` are globals install_range
+    // made - constructible, adopted here - and this is what chains both to
+    // AbstractRange, which is made here and constructs nothing.
+    {"AbstractRange", "", ""},
+    {"Range", "AbstractRange", ""},
+    {"StaticRange", "AbstractRange", ""},
 
     // EVERY TAG THAT IS A PLAIN HTMLElement, listed rather than left to the
     // fallback, so that anything NOT here can be told apart from them: HTML
@@ -765,13 +780,35 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             // no browsing context. See make_xml_document.
             const bool constructible = name == "Text" || name == "Comment" ||
                                        name == "DocumentFragment" || name == "Document";
-            auto * ctor = cx.allocate<script::native_object>(
-                name, [this, name, constructible](context & c, std::span<value> args) {
-                    if (constructible) { return construct_node_interface(c, name, args); }
-                    c.throw_error("TypeError", "Illegal constructor: " + name +
-                                                   " cannot be constructed by a page");
-                    return value::undefined();
-                });
+            auto * ctor = cx.allocate<script::native_object>(name, [this, name, constructible,
+                                                                    i](context & c,
+                                                                       std::span<value> args) {
+                if (constructible) { return construct_node_interface(c, name, args); }
+                // ...AND EVERY HTML ELEMENT INTERFACE, FROM A CUSTOMIZED
+                // BUILT-IN: `class S extends HTMLScriptElement` with
+                // `customElements.define("s-1", S, {extends: "script"})`
+                // reaches `super()` here. HTML's "HTML element constructor"
+                // is one algorithm for all of them - HTMLElement's, with
+                // the check that the definition's local name has THIS
+                // interface (Node-appendChild-cereactions-vs-script).
+                const value self = c.current_this();
+                if (name.starts_with("HTML") && self.is_object()) {
+                    const std::size_t definition = custom_definition_of(c, self);
+                    if (definition != std::numeric_limits<std::size_t>::max()) {
+                        if (interface_for_tag(custom_definitions_[definition].local_name) != i) {
+                            c.throw_error("TypeError", "Illegal constructor: the custom element "
+                                                       "definition does not extend " +
+                                                           name);
+                            return value::undefined();
+                        }
+                        const value html_element = c.global("HTMLElement");
+                        if (html_element.is_callable()) { return c.call(html_element, args, self); }
+                    }
+                }
+                c.throw_error("TypeError",
+                              "Illegal constructor: " + name + " cannot be constructed by a page");
+                return value::undefined();
+            });
             ctor->set("prototype", interface_prototypes_[i]);
             ctor->retained.push_back(keeper);
             ctor_value = value::object(ctor);

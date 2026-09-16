@@ -45,6 +45,14 @@ inline constexpr std::uint32_t state_disabled = 1u << 4;
 // `:target` - the document's indicated element, set by the shell from the URL's
 // fragment the way `:focus` is set from the focus (dom_bindings::observe_location).
 inline constexpr std::uint32_t state_target = 1u << 5;
+// `:focus-within` - the element or a descendant has the focus - and
+// `:focus-visible`. Neither is SET by the shell: both are derived from
+// `state_focus` when an element's facts are gathered (engine::facts_of), the
+// first by asking whether the focused element is in the subtree, the second
+// as `:focus` itself - focus here comes from script and the keyboard, which
+// is exactly when Selectors 4 §9.3 says the ring shows.
+inline constexpr std::uint32_t state_focus_within = 1u << 6;
+inline constexpr std::uint32_t state_focus_visible = 1u << 7;
 
 enum class combinator : std::uint8_t {
     none,               // the rightmost compound
@@ -97,6 +105,9 @@ struct attribute_match {
     // Level 4 and Bootstrap uses neither, but they are two lines here and a
     // silent wrong answer without them.
     bool case_insensitive = false;
+    // ...and an explicit `s`, which changes nothing in matching and is kept
+    // for selectorText (attribute-case/cssom.html).
+    bool case_sensitive_flag = false;
     // `[*|title]`, `[|title]`, `[xlink|href]`. Unset is the plain `[title]`, which
     // the matcher answers by qualified name; the other three are answered by
     // LOCAL name and the attribute's own namespace, and a named prefix carries
@@ -169,6 +180,9 @@ struct pseudo_ref {
     // over the kinds and lives outside this subsystem; a compound holding one is
     // marked `dropped`, which sends the serialiser to the author's bytes anyway.
     bool relative = false;
+    // The `:is(<parent list>)` that a nested rule's `&` compiled to - see
+    // compound::nesting; serialised as `&`.
+    bool nesting = false;
     // The argument of `:lang()` - a comma-separated list of language RANGES, kept
     // as written because a range is not an identifier: `*-Latn` is a legal one and
     // interning it would put a wildcard in the atom table. `:dir()` stores its one
@@ -206,6 +220,12 @@ struct compound {
     // element; the name is kept so `selectorText` can be canonical, which is how
     // `:before` comes back as `::before`.
     atom pseudo_element;
+    // WRITTEN WITH `&`, CSS Nesting 1 §2. What the nesting selector MEANS is
+    // compiled into the compound - `:is(<parent list>)` in a nested style
+    // rule, `:where(:scope)` inside `@scope`, `:scope` at the top level - so
+    // the matcher never sees it; this is for `selectorText`, which gives
+    // back `&` rather than what it stood for.
+    bool nesting = false;
     bool never_matches = false; // a construct this engine cannot match
     // A construct the compiled form does not HOLD - `:has()`, `::part(x)`, a
     // namespaced attribute - so no serialiser can rebuild the author's selector
@@ -248,6 +268,13 @@ struct compiled_selector {
     boost::container::small_vector<compound, 2> parts;
     boost::container::small_vector<combinator, 2> links; // links[i] joins parts[i] to parts[i+1]
     specificity spec;
+    // NAMES THE SCOPING ROOT EXPLICITLY - `:scope` or `&` somewhere in it,
+    // nested arguments included. A scoped style rule (CSS Cascade 6 §3.3)
+    // matches only elements IN SCOPE, and the scoping root is in scope; but a
+    // selector that does not say `:scope` is implicitly `:where(:scope)`
+    // plus a descendant combinator, so `.a { }` inside `@scope (.a)` never
+    // styles the root and `:scope { }` does. This flag is that difference.
+    bool explicit_scope = false;
 };
 
 struct rule {
@@ -258,6 +285,20 @@ struct rule {
     // 0 is the unconditional entry. Matching tests one bool rather than evaluating
     // anything, which is what makes a media query cost nothing per candidate.
     std::uint32_t condition = 0;
+    // Which `@layer`, as an index into the engine's layer table: 0 is
+    // UNLAYERED. The cascade compares the layers' RANKS (engine::layer_rank_),
+    // not these indices - a layer's place in the order is decided by first
+    // appearance across every sheet, and the index is merely which one.
+    std::uint16_t layer = 0;
+    // Which `@scope`, as an index into the engine's scope table; 0 is none.
+    std::uint16_t scope = 0;
+    // Which `@container`, likewise; 0 is none.
+    std::uint16_t container = 0;
+    // HOW FAR THE SCOPING ROOT IS from the element this rule matched, in
+    // generations (CSS Cascade 6 §6.3): 0 is the root itself. Filled in when
+    // the rule is collected for one element, so it is meaningful only on a
+    // copy in engine::matches_. An unscoped rule is infinitely far.
+    std::uint16_t proximity = 0xFFFF;
     std::uint8_t origin = 0; // 0 = user agent, 1 = author. Author wins.
     bool important = false;
 };

@@ -13,6 +13,11 @@ namespace ctbrowser::script::builtins_detail {
 
 // IsRegExp, 7.2.8: `@@match` wins over the slot when present at all. FALSE
 // with a throw in flight when the getter threw.
+// TrimString (22.1.3.32.1): the byte range of `s` to KEEP once StrWhiteSpace
+// - the Unicode spaces and line terminators, in UTF-8 - is dropped from the
+// chosen ends. string.cpp owns it; parseInt reads the same set.
+void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t & from,
+                 std::size_t & to);
 [[nodiscard]] bool is_regexp(context & cx, value v, bool & out);
 
 // RegExpCreate, 22.2.3.1: a fresh RegExp over ToString(pattern) - undefined

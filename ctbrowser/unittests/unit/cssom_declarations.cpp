@@ -171,7 +171,7 @@ void test_reads_and_all() {
     CHECK(set_declaration(block, "color", "RebeccaPurple", false));
     CHECK_EQ(declaration_value(block, "color"), std::string{"rebeccapurple"});
     CHECK(set_declaration(block, "color", "#ABC", false));
-    CHECK_EQ(declaration_value(block, "color"), std::string{"#ABC"});
+    CHECK_EQ(declaration_value(block, "color"), std::string{"rgb(170, 187, 204)"});
     CHECK(!set_declaration(block, "color", "#ABCDE", false));
     CHECK(set_declaration(block, "background-color", "rgba(0, 0, 0, .5)", false));
     CHECK_EQ(declaration_value(block, "background-color"), std::string{"rgba(0, 0, 0, 0.5)"});

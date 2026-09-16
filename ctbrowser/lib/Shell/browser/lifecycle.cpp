@@ -68,29 +68,42 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
         xml_parse_result read = parse_xml(*doc_, html);
         parsed = std::move(read.tree);
         xml_error_ = std::move(read.error);
-    } else {
-        parsed = parse_html(*doc_, html);
+    } else if (const std::string declared = prescan_encoding(html); !declared.empty()) {
+        // What the page DECLARES it is encoded as - the BOM or the <meta>
+        // prescan - is what `document.characterSet` answers; UTF-8 otherwise.
+        // THE HTML ITSELF IS PARSED BY run_scripts, because the parse and the
+        // scripts are one thing: HTML 13.2.6.4.8 stops the parser at every
+        // `</script>` and runs it against the tree built so far, and
+        // `document.write` from it goes into the parser's input stream. See
+        // bindings/document/write.cpp.
+        doc_->set_encoding(declared);
     }
-    title_ = extract_title();
     scroll_y_ = 0;
     author_sheet_loaded_ = false;
     style_error_.clear();
     resource_loads_.clear();
     announced_loads_.clear();
-    load_author_styles();
-    // Images are resolved BEFORE layout, because an <img> with no width
-    // attribute takes its size from the decoded bitmap and layout has no
-    // way to ask. The page's @font-face files, for the same reason: layout
-    // measures with them.
+    // BEFORE THE PARSE, because it clears the SVG store the parse fills - and
+    // the <img> walk it does is redone before every layout anyway
+    // (refresh_images), which is where the elements the parse made are seen.
     load_images();
-    // AFTER load_images, which clears the store before walking for <img>. An
-    // inline <svg>'s source came from the parse rather than from a file, but
-    // from here on the two are the same thing: a graphic to rasterise at
-    // whatever size its box turns out to be.
     for (const auto & [id, source] : parsed.svg_sources) { svg_.set_source(id, source); }
-    load_page_fonts();
     mark(dirty::everything);
+    // THE PARSE AND THE SCRIPTS. An XML document's tree is already built; an
+    // HTML page's is built here, script by script.
     run_scripts();
+    title_ = extract_title();
+    // Images and fonts are resolved BEFORE layout, because an <img> with no
+    // width attribute takes its size from the decoded bitmap and layout has
+    // no way to ask; the page's @font-face files for the same reason.
+    // The sheets the last script did not see - or all of them, on a page
+    // with no script.
+    if (!author_sheet_loaded_) {
+        load_author_styles();
+    } else {
+        refresh_author_styles();
+    }
+    load_page_fonts();
     // The sheets and scripts above are owed their `load`. Handed over here
     // because run_scripts has only just built the bindings that queue them.
     announce_resource_loads();

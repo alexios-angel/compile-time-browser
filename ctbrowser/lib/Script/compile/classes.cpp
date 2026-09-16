@@ -27,6 +27,9 @@ void compiler_impl::emit_computed_accessor(std::uint16_t target, std::int32_t ke
     const std::uint16_t setter_reg = alloc_reg();
     proto().emit(instruction{op::load_undef, setter ? getter : setter_reg});
     compile_expr(fn_node, setter ? setter_reg : getter);
+    // Its home object, as a named accessor gets one below.
+    proto().emit(
+        instruction{op::set_prop, setter ? setter_reg : getter, name_operand("__home"), target});
     proto().emit(instruction{op::call, callee, 4});
     release_to(mark);
 }
@@ -49,13 +52,42 @@ void compiler_impl::emit_define_own(std::uint16_t target, std::string_view key, 
     release_to(mark);
 }
 
-std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields) {
+void compiler_impl::emit_private_add(std::uint16_t target, std::string_view key, std::uint16_t v) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t callee = alloc_reg();
+    proto().emit(
+        instruction::with_bx(op::get_global, callee, intern_name(std::string{private_add_name})));
+    const std::uint16_t object = alloc_reg();
+    proto().emit(instruction{op::move, object, target});
+    const std::uint16_t key_reg = alloc_reg();
+    proto().emit(instruction::with_bx(op::load_string, key_reg, intern_string(std::string{key})));
+    const std::uint16_t held = alloc_reg();
+    proto().emit(instruction{op::move, held, v});
+    proto().emit(instruction{op::call, callee, 3});
+    release_to(mark);
+}
+
+std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::int32_t> & fields,
+                                                       bool is_static, std::string brand) {
     const std::uint32_t index = new_proto(offset_of(fields.empty() ? -1 : fields.front()));
-    out_.functions[index].name = "<fields>";
+    out_.functions[index].name = is_static ? "<static>" : "<fields>";
+    out_.functions[index].is_strict = true; // 15.7.1: all of a class body is strict
 
     frames_.emplace_back();
     frames_.back().proto = index;
+    frames_.back().is_strict = true;
+    // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
+    // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
+    const not_declaring body_is_not_a_write{*this};
     push_scope();
+    // A static block's `break`, `continue`, `return` and `try` stop at this
+    // boundary exactly as a function body's do - see compile_function_body.
+    std::vector<finally_context> saved_finallies;
+    saved_finallies.swap(finallies_);
+    std::vector<loop_context> saved_loops;
+    saved_loops.swap(loops_);
+    const std::size_t saved_handler_depth = handler_depth_;
+    handler_depth_ = 0;
     // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
     //
     // `a?.b(() => c?.d)` compiles the arrow while the outer chain is open,
@@ -66,8 +98,37 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     std::vector<std::size_t> saved_exits;
     saved_exits.swap(optional_exits_);
     in_chain_ = false;
+    if (!brand.empty()) {
+        // PrivateMethodOrAccessorAdd (7.3.29) for every private method and
+        // accessor at once: the brand, before any field initialiser runs,
+        // which is where 10.2.1.2 InitializeInstanceElements puts it - and the
+        // TypeError when this object was already branded or is sealed.
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t self = alloc_reg();
+        proto().emit(instruction{op::load_this, self});
+        const std::uint16_t nothing = alloc_reg();
+        proto().emit(instruction{op::load_undef, nothing});
+        emit_private_add(self, brand, nothing);
+        release_to(mark);
+    }
     for (const std::int32_t member : fields) {
         const vp::node & m = at(member);
+        if (m.c == 3) {
+            // `static { ... }`: a body of its own, with its own lexical scope
+            // and its function declarations hoisted to its top (15.7.11
+            // ClassStaticBlockDefinitionEvaluation - the block is a function
+            // body, not a Block).
+            fn().captures = range_of(m.b);
+            push_scope();
+            predeclare_locals(m.b);
+            for (const std::int32_t st : kids(at(m.b))) {
+                if (at(st).kind == vp::nk::func_decl) { compile_stmt(st); }
+            }
+            compile_statement_list(kids(at(m.b)), true);
+            pop_scope();
+            continue;
+        }
+        fn().captures = range_of(m.b);
         const std::uint32_t mark = reg_mark();
         const std::uint16_t self = alloc_reg();
         proto().emit(instruction{op::load_this, self});
@@ -84,12 +145,17 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
             compile_expr(m.a, key);
             proto().emit(instruction{op::set_index, self, key, v});
         } else if (m.text.starts_with('#')) {
-            // A PRIVATE FIELD IS DEFINED, NOT SET (7.3.33 PrivateFieldAdd): a
+            // A PRIVATE FIELD IS ADDED, NOT SET (7.3.28 PrivateFieldAdd): a
             // set_prop would be the brand check store_property makes, on an
-            // instance that does not carry the element yet.
-            emit_define_own(self, member_key(m.text), v, false);
+            // instance that does not carry the element yet - and adding it
+            // twice, or to a sealed object, is the TypeError.
+            emit_private_add(self, member_key(m.text), v);
         } else {
-            proto().emit(instruction{op::set_prop, self, member_operand(m.text), v});
+            // A public field is DEFINED (7.3.5 CreateDataPropertyOrThrow via
+            // DefineField): a setter of the same name on the prototype is not
+            // called, a frozen `this` is the TypeError, and a static
+            // `name`/`length` shadows the constructor's read-only one.
+            emit_define_own(self, m.text, v, true);
         }
         release_to(mark);
     }
@@ -99,6 +165,9 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     frames_.pop_back();
     in_chain_ = saved_in_chain;
     optional_exits_.swap(saved_exits);
+    finallies_.swap(saved_finallies);
+    loops_.swap(saved_loops);
+    handler_depth_ = saved_handler_depth;
     return index;
 }
 
@@ -139,21 +208,27 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     const std::uint16_t prototype_reg = alloc_reg();
     proto().emit(instruction{op::new_object, prototype_reg});
 
-    if (n.a >= 0) {
-        // `extends`: the parent's prototype becomes this one's, so a lookup
-        // that misses here walks up to it.
-        const std::uint16_t parent = alloc_reg();
-        compile_expr(n.a, parent);
-        const std::uint16_t parent_proto = alloc_reg();
-        proto().emit(instruction{op::get_prop, parent_proto, parent, name_operand("prototype")});
-        proto().emit(instruction{op::set_proto, prototype_reg, parent_proto});
-    }
+    // `extends`: the heritage is evaluated first (15.7.14 step 6), and wired
+    // once the constructor exists - see class_heritage_name below.
+    const std::uint16_t parent = n.a >= 0 ? alloc_reg() : 0;
+    if (n.a >= 0) { compile_expr(n.a, parent); }
 
     std::int32_t constructor_body = -1;
+    bool has_instance_elements = false;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.c == 1 && m.text == "constructor") { constructor_body = m.b; }
+        // An instance field, or a private method/accessor (whose brand the
+        // initialiser adds) - what `__fields` will hold, see below.
+        if ((m.d & 1) == 0 &&
+            (m.c == 0 || ((m.c == 1 || m.c == 2) && (m.d & 2) == 0 && m.text.starts_with('#')))) {
+            has_instance_elements = true;
+        }
     }
+    // A BASE class runs its fields at the top of its constructor - whichever
+    // way it is entered; a DERIVED class after its `super()` returns (see
+    // emit_init_fields_after_super). The VM runs none at [[Construct]].
+    base_fields_pending_ = n.a < 0 && has_instance_elements;
 
     if (constructor_body >= 0) {
         // Named after the CLASS. A constructor is a function expression, so
@@ -169,12 +244,16 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         // parent constructor never ran, so `class MySet extends Set {}`
         // produced an object with none of Set's state and every method on
         // it failed - with nothing to say the constructor had been skipped.
-        compile_foreign_expr("(function (...args) { super(...args); })", dst);
+        // `return this`, because super() may have rebound it to the object
+        // the parent returned (bind_this_name) and [[Construct]] answers
+        // what the body returns when that is an object.
+        compile_foreign_expr("(function (...args) { super(...args); return this; })", dst);
     } else {
         // A base class with no constructor still needs a callable, or `new`
         // has nothing to invoke.
         compile_foreign_expr("(function () {})", dst);
     }
+    base_fields_pending_ = false;
     // A SYNTHESISED CONSTRUCTOR IS STILL NAMED AFTER ITS CLASS. Both
     // branches above build one from source text, so it arrives anonymous -
     // and `Object.getPrototypeOf(x).constructor.name` is a standard way to
@@ -192,6 +271,24 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             ctor.source_begin = n.begin;
             ctor.source_end = n.end;
         }
+    }
+    if (n.a >= 0) {
+        // The parent must be null or a constructor with an object (or null)
+        // `prototype` - each a TypeError otherwise - and then C.prototype
+        // chains to P.prototype and C to P (15.7.14 steps 6-9). One native
+        // rather than four opcodes, and the checks with it.
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t callee = alloc_reg();
+        proto().emit(instruction::with_bx(op::get_global, callee,
+                                          intern_name(std::string{class_heritage_name})));
+        const std::uint16_t ctor = alloc_reg();
+        proto().emit(instruction{op::move, ctor, dst});
+        const std::uint16_t heritage = alloc_reg();
+        proto().emit(instruction{op::move, heritage, parent});
+        const std::uint16_t table = alloc_reg();
+        proto().emit(instruction{op::move, table, prototype_reg});
+        proto().emit(instruction{op::call, callee, 3});
+        release_to(inner);
     }
     proto().emit(instruction{op::set_prop, dst, name_operand("prototype"), prototype_reg});
     // `C.prototype.constructor === C`, which is both what pages expect and
@@ -212,15 +309,32 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     // are NOT this - evaluating those once and putting them on the
     // constructor is exactly right, and that is what still happens below.
     std::vector<std::int32_t> instance_fields;
+    bool instance_brand = false;
+    bool static_brand = false;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.c == 0 && (m.d & 1) == 0) { instance_fields.push_back(member); }
+        // A private method or accessor brands its holder - see
+        // context::private_element_present.
+        if ((m.c == 1 || m.c == 2) && (m.d & 2) == 0 && m.text.starts_with('#')) {
+            ((m.d & 1) != 0 ? static_brand : instance_brand) = true;
+        }
     }
-    if (!instance_fields.empty()) {
-        const std::uint32_t fields = compile_field_initialiser(instance_fields);
+    const std::string brand =
+        std::string{private_key_prefix} + ":" + std::to_string(private_scopes_.back().klass);
+    if (!instance_fields.empty() || instance_brand) {
+        const std::uint32_t fields =
+            compile_field_initialiser(instance_fields, false, instance_brand ? brand : "");
         const std::uint16_t init = alloc_reg();
         proto().emit(instruction::with_bx(op::closure, init, fields));
         proto().emit(instruction{op::set_prop, dst, name_operand("__fields"), init});
+    }
+    if (static_brand) {
+        const std::uint32_t inner = reg_mark();
+        const std::uint16_t nothing = alloc_reg();
+        proto().emit(instruction{op::load_undef, nothing});
+        emit_private_add(dst, brand, nothing);
+        release_to(inner);
     }
 
     // A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
@@ -233,7 +347,13 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     //
     // The binding is made before the methods are COMPILED so they capture
     // it, and written as soon as the class value exists.
-    if (!n.text.empty()) { emit_write(n.text, dst); }
+    if (!n.text.empty()) {
+        // The class's own binding, a declaration's first write (see declaring_).
+        const bool outer_declaring = declaring_;
+        declaring_ = true;
+        emit_write(n.text, dst);
+        declaring_ = outer_declaring;
+    }
 
     // TWO PASSES, WHICH IS THE SPECIFICATION'S ORDER: every method and accessor
     // is defined first (ClassDefinitionEvaluation step 26), then the class's
@@ -245,7 +365,7 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
         if (m.text == "constructor" && m.c == 1) { continue; }
-        if (m.c == 0) { continue; } // fields: instance ones above, static ones below
+        if (m.c == 0 || m.c == 3) { continue; } // fields and static blocks: below
         const bool computed = (m.d & 2) != 0 && m.a >= 0;
         if (m.c == 2) {
             // An accessor. It goes on the prototype like a method - or on
@@ -265,6 +385,9 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
             const std::uint16_t name = member_operand(m.text);
             proto().emit(instruction{(m.d & 4) != 0 ? op::define_setter : op::define_getter, target,
                                      name, slot});
+            // An accessor has a home object like a method (15.4.5 step 3 /
+            // 15.4.6 step 3): `super.x` inside a getter resolves through it.
+            proto().emit(instruction{op::set_prop, slot, name_operand("__home"), target});
             continue;
         }
         if (m.b < 0) { continue; }
@@ -328,27 +451,21 @@ void compiler_impl::compile_class(const vp::node & n, std::uint16_t dst, bool as
         proto().emit(instruction{op::move, klass, dst});
         proto().emit(instruction{op::call, callee, 1});
     }
+    // THE STATIC FIELDS AND STATIC BLOCKS, in source order, as one `<static>`
+    // function called once with the class as `this` - which is what makes
+    // `static x = this.y` read the class and `static { }` a body of its own.
+    // Its home object is the class, so `super.m()` in a static block finds
+    // the parent constructor's methods, as it does from a static method.
+    std::vector<std::int32_t> static_members;
     for (const std::int32_t member : members) {
         const vp::node & m = at(member);
-        if (m.c != 0 || (m.d & 1) == 0) { continue; } // a static field
-        if (m.b >= 0) {
-            compile_named_expr(m.b, slot, (m.d & 2) != 0 ? "" : m.text);
-        } else {
-            proto().emit(instruction{op::load_undef, slot}); // `static x;` is x = undefined
-        }
-        if ((m.d & 2) != 0 && m.a >= 0) { // `static [key] = init`
-            const std::uint32_t inner = reg_mark();
-            const std::uint16_t key = alloc_reg();
-            compile_expr(m.a, key);
-            proto().emit(instruction{op::set_index, dst, key, slot});
-            release_to(inner);
-        } else if ((m.d & 2) == 0 && (m.text == "name" || m.text == "length")) {
-            emit_define_own(dst, m.text, slot, true); // as above, enumerable: a field
-        } else if (m.text.starts_with('#')) {
-            emit_define_own(dst, member_key(m.text), slot, false); // see the instance path
-        } else {
-            proto().emit(instruction{op::set_prop, dst, member_operand(m.text), slot});
-        }
+        if (m.c == 3 || (m.c == 0 && (m.d & 1) != 0)) { static_members.push_back(member); }
+    }
+    if (!static_members.empty()) {
+        const std::uint32_t init = compile_field_initialiser(static_members, true);
+        proto().emit(instruction::with_bx(op::closure, slot, init));
+        proto().emit(instruction{op::set_prop, slot, name_operand("__home"), dst});
+        proto().emit(instruction{op::call_receiver, slot, 0, dst});
     }
     release_to(mark);
     --class_body_depth_;

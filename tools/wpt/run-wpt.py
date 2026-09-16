@@ -300,7 +300,14 @@ def send_command(sock, payload, deadline):
         if left <= 0:
             raise TimeoutError("no reply")
         sock.settimeout(min(left, 1.0))
-        chunk = sock.recv(65536)
+        try:
+            chunk = sock.recv(65536)
+        except TimeoutError:
+            # THE PAGE IS BUSY, not gone: a 10,000-subtest reflection file
+            # runs its load script for longer than a second, and the driver
+            # answers only between frames. Keep waiting until the deadline -
+            # one silent second used to end the test as "never yielded".
+            continue
         if not chunk:
             raise ConnectionError("driver closed the socket")
         buffer += chunk

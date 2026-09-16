@@ -21,7 +21,8 @@ namespace {
 // declarations. Anything not named here keeps its bytes and says nothing.
 [[nodiscard]] bool at_rule_holds_rules(std::string_view name) {
     return name == "media" || name == "supports" || name == "container" || name == "keyframes" ||
-           name == "-webkit-keyframes" || name == "scope" || name == "starting-style";
+           name == "-webkit-keyframes" || name == "scope" || name == "starting-style" ||
+           name == "layer";
 }
 
 [[nodiscard]] bool at_rule_holds_declarations(std::string_view name) {
@@ -31,15 +32,65 @@ namespace {
 
 } // namespace
 
+namespace detail {
+
+// A NESTED DECLARATIONS RULE, CSS Nesting 1 §4: a run of declarations after
+// a nested rule, in a style rule or in a group nested in one. Type 0 and no
+// at-keyword, so it is told apart by this marker in `at_name`, which is
+// private to these files.
+const std::string_view nested_declarations_name = "nested-declarations";
+
+// Is `rule` inside a style rule - so that its selectors are nested ones and a
+// run of bare declarations in it belongs to that style rule?
+[[nodiscard]] bool nested_in_style(
+    const std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store, std::size_t rule) {
+    for (std::size_t up = rule < store.size() ? store[rule]->parent : no_index; up < store.size();
+         up = store[up]->parent) {
+        if (store[up]->type == style_rule) { return true; }
+    }
+    return false;
+}
+
+// Bare declarations in a group that is NOT nested in a style rule are dropped
+// (CSS Syntax 3 §5.4.4), which is only known once the group has a parent.
+void prune_bare_declarations(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                             std::size_t rule) {
+    if (rule >= store.size() || store[rule]->type == style_rule) { return; }
+    std::vector<std::size_t> & children = store[rule]->children;
+    std::erase_if(children, [&](std::size_t child) {
+        return child < store.size() && store[child]->at_name == nested_declarations_name;
+    });
+    for (const std::size_t child : children) { prune_bare_declarations(store, child); }
+}
+
+} // namespace detail
+
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
+    // A nested declarations rule is its block, and nothing around it.
+    if (rule.at_name == nested_declarations_name) {
+        return style::css::serialize_declaration_block(rule.declarations);
+    }
     // A PRELUDE AND A DECLARATION BLOCK. A keyframe's prelude is its keyText and
     // a style rule's is its selector; neither carries an at-keyword.
     if (rule.type == style_rule || rule.type == keyframe_rule) {
         const std::string block = style::css::serialize_declaration_block(rule.declarations);
-        if (block.empty()) { return rule.selector + " { }"; }
-        return rule.selector + " { " + block + " }";
+        if (rule.children.empty()) {
+            if (block.empty()) { return rule.selector + " { }"; }
+            return rule.selector + " { " + block + " }";
+        }
+        // WITH CHILD RULES, CSSOM's multi-line form: the declarations on one
+        // indented line, then each child on its own, each indented by two
+        // spaces ON ITS FIRST LINE ONLY - css-nesting/cssom.html asserts the
+        // "broken" indentation of a nested `@supports` exactly.
+        std::string out = rule.selector + " {\n";
+        if (!block.empty()) { out += "  " + block + "\n"; }
+        for (const std::size_t child : rule.children) {
+            if (child >= css_rule_store_.size()) { continue; }
+            out += "  " + rule_css_text(*css_rule_store_[child]) + "\n";
+        }
+        return out + "}";
     }
     // AN AT-RULE THIS ENGINE DOES NOT MODEL answers with the author's bytes: an
     // `@layer a, b;` reconstructed from a prelude nobody parsed would be a claim
@@ -169,9 +220,44 @@ void dom_bindings::parse_sheet_rules(std::size_t sheet, std::string_view css) {
             css_rule_store_[at]->sheet = no_index;
             continue;
         }
+        prune_bare_declarations(css_rule_store_, at);
         css_sheets_[sheet]->rules.push_back(at);
     }
 }
+
+// A NESTED STYLE RULE'S SELECTOR, once it has a parent: `& .b` for what was
+// written `.b`, relative selectors anchored on `&`, and `&` itself kept -
+// which is how CSS Nesting 1 §2.1 has it and how `cssRules[0].cssText` reads
+// it back. The parent list is not needed to spell it, so a placeholder stands
+// in for it.
+namespace detail {
+
+void nest_rule_selector(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                        atom_table & atoms,
+                        std::span<const style::css::namespace_declaration> namespaces,
+                        std::size_t rule) {
+    if (rule >= store.size()) { return; }
+    dom_bindings::css_rule_record & made = *store[rule];
+    if (made.type == style_rule && nested_in_style(store, rule)) {
+        bool bad = false;
+        const std::vector<style::css::namespace_declaration> known(namespaces.begin(),
+                                                                   namespaces.end());
+        const std::vector<style::compiled_selector> placeholder(1);
+        const style::css::nesting_context nesting{placeholder, false};
+        const style::css::stylesheet parsed =
+            style::css::parse_selector_text(made.prelude, atoms, bad, &known, &nesting);
+        if (!bad && !parsed.selectors.empty()) {
+            made.selector = representable(parsed.selectors)
+                                ? serialize_selector_list(parsed.selectors, atoms, known)
+                                : collapse_whitespace(made.prelude, html_whitespace);
+        }
+    }
+    for (const std::size_t child : made.children) {
+        nest_rule_selector(store, atoms, namespaces, child);
+    }
+}
+
+} // namespace detail
 
 // The `@namespace` rules a sheet holds, in the form the selector parser takes
 // - so `ns|div` with an undeclared `ns` is the SyntaxError CSSOM 6.3.3 asks
@@ -255,6 +341,95 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         }
         collect_into(frame, one.substr(brace + 1, shut - brace - 1));
         return css_rule_store_.size() - 1;
+    };
+
+    // A BLOCK'S CONTENTS: DECLARATIONS AND RULES, MIXED (CSS Syntax 3 §5.4.4).
+    // A run of declarations up to the first nested rule is the rule's own when
+    // `own_first`; every later run - and every run in a group - is a nested
+    // declarations rule (CSS Nesting 1 §4), a child in its source position.
+    // A `{` before the next `;` opens a nested rule, unless the run is a custom
+    // property, whose value may hold a block; an at-keyword opens a nested
+    // at-rule. The store is addressed by index throughout because every
+    // child parse may move it.
+    const auto parse_block_contents = [this, sheet](std::size_t owner, std::string_view body,
+                                                    bool own_first) {
+        std::string run;
+        bool first = own_first;
+        const auto flush = [&] {
+            if (trim(run, html_whitespace).empty()) {
+                run.clear();
+                return;
+            }
+            if (first) {
+                parse_declarations_into(*css_rule_store_[owner], run);
+            } else {
+                css_rule_store_.push_back(std::make_unique<css_rule_record>());
+                const std::size_t child = css_rule_store_.size() - 1;
+                css_rule_store_[child]->type = 0;
+                css_rule_store_[child]->at_name = std::string{nested_declarations_name};
+                css_rule_store_[child]->sheet = sheet;
+                css_rule_store_[child]->parent = owner;
+                parse_declarations_into(*css_rule_store_[child], run);
+                css_rule_store_[owner]->children.push_back(child);
+            }
+            first = false;
+            run.clear();
+        };
+        const auto adopt = [&](std::string_view span) {
+            flush();
+            first = false;
+            std::string ignored;
+            const std::size_t child = parse_one_rule(sheet, span, ignored);
+            if (child == no_index) { return; }
+            css_rule_store_[child]->parent = owner;
+            css_rule_store_[owner]->children.push_back(child);
+            const std::vector<style::css::namespace_declaration> namespaces =
+                sheet_namespaces(sheet);
+            nest_rule_selector(css_rule_store_, *atoms_, namespaces, child);
+        };
+        std::size_t at = 0;
+        while (at < body.size()) {
+            if (html_whitespace.find(body[at]) != std::string_view::npos || body[at] == ';') {
+                ++at;
+                continue;
+            }
+            if (body.compare(at, 2, "/*") == 0) {
+                const std::size_t close = body.find("*/", at + 2);
+                at = close == std::string_view::npos ? body.size() : close + 2;
+                continue;
+            }
+            if (body[at] == '@') {
+                std::size_t end = scan_to(body, at, "{;");
+                if (end < body.size() && body[end] == '{') { end = scan_to(body, end + 1, "}"); }
+                end = std::min(end + 1, body.size());
+                adopt(trim(body.substr(at, end - at), html_whitespace));
+                at = end;
+                continue;
+            }
+            const std::size_t stop = scan_to(body, at, ";{");
+            if (stop >= body.size() || body[stop] == ';') {
+                run += body.substr(at, stop - at);
+                run += ';';
+                at = stop + 1;
+                continue;
+            }
+            const std::string_view head = trim(body.substr(at, stop - at), html_whitespace);
+            const std::size_t colon = scan_to(head, 0, ":");
+            if (head.starts_with("--") && colon < head.size()) {
+                // A custom property whose value holds a block: to the `;`.
+                std::size_t end = scan_to(body, stop + 1, "}");
+                end = scan_to(body, std::min(end + 1, body.size()), ";");
+                run += body.substr(at, end - at);
+                run += ';';
+                at = std::min(end + 1, body.size());
+                continue;
+            }
+            std::size_t end = scan_to(body, stop + 1, "}");
+            end = std::min(end + 1, body.size());
+            adopt(trim(body.substr(at, end - at), html_whitespace));
+            at = end;
+        }
+        flush();
     };
 
     if (trimmed.front() == '@') {
@@ -441,21 +616,119 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             }
             made.verbatim.clear();
         }
-        if (at_rule_holds_rules(made.at_name)) {
+        if (made.type == keyframes_rule) {
             // RECURSIVELY, THROUGH THIS SAME FUNCTION, rather than through the
             // sheet parser: the sheet parser drops a qualified rule with an
             // empty block, and `@media all { * {} }` is nothing but one. The
             // record store holds `unique_ptr`s, so the reference above stays
             // valid however far the recursion pushes the vector about.
             for (const std::string_view span : split_top_level_rules(body)) {
-                std::string ignored;
-                const std::size_t child = made.type == keyframes_rule
-                                              ? make_keyframe(span)
-                                              : parse_one_rule(sheet, span, ignored);
+                const std::size_t child = make_keyframe(span);
                 if (child == no_index) { continue; }
                 css_rule_store_[child]->parent = at;
                 made.children.push_back(child);
             }
+            made.verbatim.clear();
+        } else if (made.at_name == "layer") {
+            // `@layer a, b.c;` names its layers; `@layer a { }` names one or
+            // none. A `<layer-name>` is identifiers joined by `.` with nothing
+            // between (CSS Cascade 5 §6.4.1); anything else is no rule at all.
+            std::vector<std::string> names;
+            const bool anonymous = trim(made.prelude, html_whitespace).empty();
+            for (const std::string_view part :
+                 anonymous ? std::vector<std::string_view>{} : split_on_commas(made.prelude)) {
+                const std::string_view name = trim(part, html_whitespace);
+                bool ok = !name.empty();
+                for (const std::string_view piece : split_top_level(name, ".")) {
+                    ok = ok && !piece.empty() &&
+                         piece.find_first_of(std::string{html_whitespace} + ".()[]{},;:\"'") ==
+                             std::string_view::npos;
+                }
+                if (!ok) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+                names.emplace_back(name);
+            }
+            const bool statement = open == std::string_view::npos;
+            if (statement ? names.empty() : names.size() > 1) {
+                css_rule_store_.pop_back();
+                error = "SyntaxError";
+                return no_index;
+            }
+            made.prelude.clear();
+            for (const std::string & name : names) {
+                if (!made.prelude.empty()) { made.prelude += ", "; }
+                made.prelude += name;
+            }
+            if (statement) {
+                made.at_name = "layer-statement";
+                made.verbatim = "@layer " + made.prelude + ";";
+            } else {
+                parse_block_contents(at, body, false);
+                made.verbatim.clear();
+            }
+        } else if (at_rule_holds_rules(made.at_name)) {
+            if (made.at_name == "scope") {
+                // `[(<scope-start>)]? [to (<scope-end>)]?`, CSS Cascade 6 §3:
+                // each a selector list that parses and names no
+                // pseudo-element, the end one relative to the root; anything
+                // else in the prelude is no rule. Serialised as written, with
+                // the whitespace collapsed and ` to ` spaced.
+                const std::string_view text = trim(made.prelude, html_whitespace);
+                std::size_t k = 0;
+                std::string start;
+                std::string end;
+                bool ok = true;
+                const auto group = [&](bool relative, std::string & into) {
+                    if (k >= text.size() || text[k] != '(') { return false; }
+                    const std::size_t close = scan_to(text, k + 1, ")");
+                    if (close >= text.size()) { return false; }
+                    into = collapse_whitespace(text.substr(k + 1, close - k - 1), html_whitespace);
+                    k = close + 1;
+                    bool bad = false;
+                    const std::vector<style::compiled_selector> placeholder;
+                    const style::css::nesting_context nesting{placeholder, true};
+                    const style::css::stylesheet parsed = style::css::parse_selector_text(
+                        into, *atoms_, bad, nullptr, relative ? &nesting : nullptr);
+                    if (bad || into.empty()) { return false; }
+                    for (const style::compiled_selector & s : parsed.selectors) {
+                        for (const style::compound & c : s.parts) {
+                            if (c.pseudo_element) { return false; }
+                        }
+                    }
+                    return true;
+                };
+                if (k < text.size() && text[k] == '(') { ok = group(false, start); }
+                while (ok && k < text.size() &&
+                       html_whitespace.find(text[k]) != std::string_view::npos) {
+                    ++k;
+                }
+                if (ok && k < text.size()) {
+                    ok = text.compare(k, 2, "to") == 0;
+                    k += 2;
+                    while (ok && k < text.size() &&
+                           html_whitespace.find(text[k]) != std::string_view::npos) {
+                        ++k;
+                    }
+                    ok = ok && group(true, end) && trim(text.substr(k), html_whitespace).empty();
+                }
+                if (!ok) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+                made.prelude.clear();
+                if (!start.empty()) { made.prelude = "(" + start + ")"; }
+                if (!end.empty()) {
+                    made.prelude += made.prelude.empty() ? "to (" : " to (";
+                    made.prelude += end + ")";
+                }
+            } else if (made.at_name == "container") {
+                made.prelude = collapse_whitespace(made.prelude, html_whitespace);
+            }
+            parse_block_contents(at, body, false);
             // Reconstructible from here on, so the author's bytes are dropped
             // and `cssText` serialises the group and its children.
             made.verbatim.clear();
@@ -481,18 +754,29 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     // `parse_declaration_list`, which a `style` attribute uses - so nothing is
     // parsed here by a rule of its own.
     const std::size_t open = brace_at(trimmed);
-    const std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
-    if (open == std::string_view::npos || close == std::string_view::npos ||
-        !trim(trimmed.substr(close + 1), html_whitespace).empty()) {
-        // No block at all, an unterminated one, or a second rule after the
-        // first - CSSOM asks for exactly one rule and all three are the same
-        // answer.
+    std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
+    // EOF CLOSES AN OPEN BLOCK (CSS Syntax 3 §5.4.9): a sheet cut off inside
+    // `var(--x` still holds its last rule (variable-reference).
+    if (open != std::string_view::npos && close == std::string_view::npos) {
+        close = trimmed.size();
+    }
+    if (open == std::string_view::npos ||
+        (close + 1 < trimmed.size() && !trim(trimmed.substr(close + 1), html_whitespace).empty())) {
+        // No block at all, or a second rule after the first - CSSOM asks for
+        // exactly one rule and both are the same answer.
         css_rule_store_.pop_back();
         error = "SyntaxError";
         return no_index;
     }
     bool bad = false;
     const std::string_view prelude = trim(trimmed.substr(0, open), html_whitespace);
+    // A prelude that reads as a custom property declaration - `--x:hover { }`
+    // - is no rule (CSS Syntax 3 §5.4.2).
+    if (prelude.starts_with("--") && scan_to(prelude, 0, ":") < prelude.size()) {
+        css_rule_store_.pop_back();
+        error = "SyntaxError";
+        return no_index;
+    }
     const std::vector<style::css::namespace_declaration> namespaces = sheet_namespaces(sheet);
     const style::css::stylesheet selectors =
         style::css::parse_selector_text(prelude, *atoms_, bad, &namespaces);
@@ -508,7 +792,10 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     made.selector = representable(selectors.selectors)
                         ? serialize_selector_list(selectors.selectors, *atoms_, namespaces)
                         : collapse_whitespace(prelude, html_whitespace);
-    collect_into(made, trimmed.substr(open + 1, close - open - 1));
+    // The author's selector is kept: a rule that becomes NESTED - once it has
+    // a parent - is re-spelled from it with `&` (nest_rule_selector).
+    made.prelude = collapse_whitespace(prelude, html_whitespace);
+    parse_block_contents(at, trimmed.substr(open + 1, close - open - 1), true);
     return at;
 }
 

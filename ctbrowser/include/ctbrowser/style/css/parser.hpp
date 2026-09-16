@@ -46,8 +46,14 @@ namespace ctbrowser::style::css {
 // list for `querySelector`, which has no namespace resolver and so throws on
 // `ns|div`. Null means the caller has none to offer and a prefix is taken on
 // trust rather than refused.
+//
+// `nesting` is the context of a NESTED style rule (css/selector.hpp): with
+// one, `&` and a leading combinator are anchored on it and a selector naming
+// no `&` is prefixed with one, as the sheet parser does for a nested rule.
+struct nesting_context;
 [[nodiscard]] stylesheet parse_selector_text(
     std::string_view text, atom_table & atoms, bool & invalid,
-    const std::vector<namespace_declaration> * namespaces = nullptr);
+    const std::vector<namespace_declaration> * namespaces = nullptr,
+    const nesting_context * nesting = nullptr);
 
 } // namespace ctbrowser::style::css

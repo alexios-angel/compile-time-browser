@@ -5,6 +5,7 @@
 // functions' declarations - is in internal.hpp.
 
 #include "internal.hpp"
+#include "text/internal.hpp"
 
 #include <chrono>
 #include <format>
@@ -707,15 +708,25 @@ void civil_from_days(long long z, long long & y, int & m, int & d) {
     for (const double v : {year, month, day, h, m, s, ms}) {
         if (!std::isfinite(v)) { return std::nan(""); }
     }
+    // MakeTime FIRST and in ITS order - ((h + m) + s) + milli, each product
+    // rounded as IEEE double - because test262's fp-evaluation-order.js
+    // asserts the exact rounding of `Date.UTC(1970, 0, 1, 80063993375, 29, 1,
+    // -288230376151711740)`, and MakeDate is then day * msPerDay + time.
+    const double time =
+        ((std::trunc(h) * 3600000.0 + std::trunc(m) * 60000.0) + std::trunc(s) * 1000.0) +
+        std::trunc(ms);
     const double y = std::trunc(year), mo = std::trunc(month);
     const double ym = y + std::floor(mo / 12.0);
     const int mn = static_cast<int>(mo - std::floor(mo / 12.0) * 12.0);
-    if (std::fabs(ym) > 400000.0) { return std::nan(""); }
+    // A year past 2^40 has no time value TimeClip could keep, however the
+    // day count is offset; days_from_civil's arithmetic stays in range there.
+    if (std::fabs(ym) > 1099511627776.0) { return std::nan(""); }
     const double days =
         static_cast<double>(days_from_civil(static_cast<long long>(ym), mn + 1, 1)) +
         std::trunc(day) - 1.0;
-    return days * ms_per_day + std::trunc(h) * 3600000.0 + std::trunc(m) * 60000.0 +
-           std::trunc(s) * 1000.0 + std::trunc(ms);
+    if (!std::isfinite(days)) { return std::nan(""); }
+    const double tv = days * ms_per_day + time;
+    return std::isfinite(tv) ? tv : std::nan("");
 }
 
 struct fields {
@@ -743,8 +754,10 @@ constexpr const char * day_names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", 
 constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
+// 21.4.4.41.2 DateString / 21.4.4.43 step 8: a sign for a negative year and
+// AT LEAST four digits either way - "-0001", not the ISO form's "-000001".
 [[nodiscard]] std::string year_text(double year) {
-    return year < 0 ? std::format("-{:06}", -static_cast<int>(year))
+    return year < 0 ? std::format("-{:04}", -static_cast<int>(year))
                     : std::format("{:04}", static_cast<int>(year));
 }
 // 21.4.4.41.2 DateString: "Fri Feb 13 2009".
@@ -1025,6 +1038,21 @@ void install_date(context & cx) {
         setter(p + "Seconds", 5, 2, 2);
         setter(p + "Milliseconds", 6, 1, 1);
     }
+    // B.2.3.2 setYear: MakeFullYear of the argument (0-99 is 1900-1999, NaN
+    // stays NaN) over an invalid date's +0.
+    method(cx, date_proto, "setYear", 1, [this_time, set_time](context & c, std::span<value> a) {
+        double t = 0;
+        if (!this_time(c, "Date.prototype.setYear", t)) { return value::undefined(); }
+        if (!numeric_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const double y = c.to_number_value(arg_at(a, 0));
+        if (c.throw_pending()) { return value::undefined(); }
+        if (std::isnan(y)) { return set_time(c, std::nan("")); }
+        const double whole = std::trunc(y);
+        const double yyyy = whole >= 0 && whole <= 99 ? 1900 + whole : y;
+        const fields f = split(std::isnan(t) ? 0.0 : t);
+        return set_time(
+            c, time_clip(make_date(yyyy, f.month, f.day, f.hour, f.minute, f.second, f.ms)));
+    });
     method(cx, date_proto, "setTime", 1, [this_time, set_time](context & c, std::span<value> a) {
         double t = 0;
         if (!this_time(c, "Date.prototype.setTime", t)) { return value::undefined(); }
@@ -1048,6 +1076,10 @@ void install_date(context & cx) {
     stringer("toDateString", date_string);
     stringer("toTimeString", time_string);
     stringer("toUTCString", utc_string);
+    // B.2.3.3 toGMTString IS toUTCString - the same function object.
+    if (const value * utc = date_proto->find("toUTCString")) {
+        date_proto->define("toGMTString", *utc, attr_builtin);
+    }
     stringer("toLocaleString",
              [](const fields & f) { return date_string(f) + " " + time_string(f); });
     stringer("toLocaleDateString", date_string);
@@ -1203,29 +1235,57 @@ void install_globals(context & cx) {
     using detail::new_table;
     // 19.2.5 gives parseInt two parameters and 19.2.4 gives parseFloat one.
     detail::global_fn(cx, "parseInt", 2, [](context & c, std::span<value> a) {
+        // 19.2.5, step by step. ? ToString(string), then StrWhiteSpaceChar
+        // trimmed from the front (the Unicode spaces too - TrimString's set,
+        // not the ASCII one), the sign, ? ToInt32(radix) with 0 meaning 10
+        // and a 0x prefix meaning 16 unless a radix was demanded, [2, 36]
+        // or NaN, the longest digit prefix or NaN, and the value - through a
+        // double, which rounds past 2^53 as the note allows.
         const std::string s = str_at(c, a, 0);
-        const int given = a.size() > 1 ? static_cast<int>(num_at(a, 1)) : 0;
-        int base = given == 0 ? 10 : given;
-        // A LEADING 0x IS HEXADECIMAL when no radix was demanded - 19.2.5 step
-        // 8. Defaulting to 10 made `parseInt("0xFF")` stop at the `x` and
-        // answer 0, which is how a colour parser reads black without erroring.
-        const std::string_view body = trim(s, js_whitespace);
-        const std::string_view digits =
-            !body.empty() && (body.front() == '+' || body.front() == '-') ? body.substr(1) : body;
-        if ((given == 0 || given == 16) && digits.size() > 1 && digits[0] == '0' &&
-            (digits[1] == 'x' || digits[1] == 'X')) {
-            base = 16;
+        if (c.throw_pending()) { return value::undefined(); }
+        std::size_t from = 0;
+        std::size_t to = 0;
+        trim_bounds(s, true, false, from, to);
+        std::string_view rest = std::string_view{s}.substr(from);
+        double sign = 1;
+        if (!rest.empty() && (rest.front() == '+' || rest.front() == '-')) {
+            if (rest.front() == '-') { sign = -1; }
+            rest.remove_prefix(1);
         }
-        try {
-            std::size_t used = 0;
-            const long long out = std::stoll(s, &used, base == 0 ? 10 : base);
-            return used == 0 ? value::number(std::nan(""))
-                             : value::number(static_cast<double>(out));
-        } catch (...) {
-            // parseInt("abc") is NaN, not an error - a page must not blow up on
-            // a malformed number it is about to check with isNaN.
-            return value::number(std::nan(""));
+        const value radix_arg = arg_at(a, 1);
+        if (!numeric_arg(c, radix_arg)) { return value::undefined(); }
+        const double radix_number = c.to_number_value(radix_arg);
+        if (c.throw_pending()) { return value::undefined(); }
+        int radix = static_cast<int>(context::to_int32(value::number(radix_number)));
+        bool strip_prefix = true;
+        if (radix != 0) {
+            if (radix < 2 || radix > 36) { return value::number(std::nan("")); }
+            if (radix != 16) { strip_prefix = false; }
+        } else {
+            radix = 10;
         }
+        if (strip_prefix && rest.size() >= 2 && rest[0] == '0' &&
+            (rest[1] == 'x' || rest[1] == 'X')) {
+            rest.remove_prefix(2);
+            radix = 16;
+        }
+        const auto digit = [](char ch) {
+            if (ch >= '0' && ch <= '9') { return ch - '0'; }
+            if (ch >= 'a' && ch <= 'z') { return ch - 'a' + 10; }
+            if (ch >= 'A' && ch <= 'Z') { return ch - 'A' + 10; }
+            return 36;
+        };
+        std::size_t used = 0;
+        while (used < rest.size() && digit(rest[used]) < radix) { ++used; }
+        if (used == 0) { return value::number(std::nan("")); }
+        // Base 10 goes through the exact decimal-to-double conversion, as the
+        // note asks; the other radices accumulate.
+        if (radix == 10) {
+            return value::number(sign * string_to_number_prefix(rest.substr(0, used)));
+        }
+        double out = 0;
+        for (std::size_t i = 0; i < used; ++i) { out = out * radix + digit(rest[i]); }
+        return value::number(sign * out);
     });
     detail::global_fn(cx, "parseFloat", 1, [](context & c, std::span<value> a) {
         // string_to_number_prefix, not std::stod: stod reads LC_NUMERIC for the

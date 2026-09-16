@@ -106,6 +106,33 @@ void test_create_element_and_new_construct_through_the_class() {
              "ctor,ctor;true;X-BAR:false;ctor,ctor,in;ctor,ctor,in,out;true");
 }
 
+// A CUSTOMIZED BUILT-IN constructs through its own interface's constructor -
+// `super()` in `class extends HTMLScriptElement` - which is HTML's one "HTML
+// element constructor" with the interface check; an interface the definition
+// does not extend is a TypeError. And a script made that way runs when it
+// connects, before its connectedCallback
+// (Node-appendChild-cereactions-vs-script.window.js).
+void test_a_customized_built_in_constructs_through_its_interface() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var log = [];"
+                  "class S extends HTMLScriptElement {"
+                  "  constructor() { super(); }"
+                  "  connectedCallback() { log.push('connected'); }"
+                  "}"
+                  "customElements.define('s-1', S, {extends: 'script'});"
+                  "var s = new S();"
+                  "s.textContent = 'log.push(\"ran\")';"
+                  "alert(s.tagName + ':' + s.getAttribute('is') + ':' + (s instanceof S) + ':' +"
+                  "      (s instanceof HTMLScriptElement));"
+                  "document.body.append(s);"
+                  "alert(log.join(','));"
+                  "class D extends HTMLDivElement { constructor() { super(); } }"
+                  "customElements.define('d-1', D, {extends: 'span'});"
+                  "try { new D(); alert('constructed'); } catch (e) { alert(e.name); }"
+                  "</script></body></html>"),
+             "SCRIPT:s-1:true:true;ran,connected;TypeError");
+}
+
 void test_attribute_changed_follows_observed_attributes() {
     CHECK_EQ(said("<html><body><x-baz id=z lang=en data-x=1></x-baz><script>"
                   "var log = [];"
@@ -154,6 +181,7 @@ int main() {
     test_define_validates();
     test_define_upgrades_what_the_parser_made();
     test_create_element_and_new_construct_through_the_class();
+    test_a_customized_built_in_constructs_through_its_interface();
     test_attribute_changed_follows_observed_attributes();
     test_when_defined_resolves_on_define();
     test_a_page_without_a_definition_is_untouched();

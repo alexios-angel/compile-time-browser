@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ctbrowser/aot/aot.hpp>
+#include <ctbrowser/script/bigint.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -223,7 +224,27 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(add) do {
-            reg(in.a) = binary_op_static(op::add, reg(in.b), reg(in.c));
+            // `++`/`--` and the internal counters only (compile_binary maps
+            // source `+` to add_generic): ToNumeric of an object operand
+            // first, so `o++` on {valueOf: () => 3} stores 4. The postfix
+            // expression's own value is still the object it read - the
+            // old value is moved before this runs and there is no ToNumeric
+            // opcode to spend on every loop counter.
+            value lhs = numeric_operand(reg(in.b));
+            value rhs = numeric_operand(reg(in.c));
+            // `1n++`: the step is the integral Number 1 (or -1, or the 0 that
+            // reads the old value) beside a BigInt, and here - and only
+            // here, since this is never source `+` - it is that BigInt.
+            if (lhs.is_kind(heap_kind::bigint) != rhs.is_kind(heap_kind::bigint)) {
+                value & number = lhs.is_kind(heap_kind::bigint) ? rhs : lhs;
+                if (number.is_number()) {
+                    if (const std::optional<bigint> as_big =
+                            bigint_from_double(number.as_number())) {
+                        number = value::object(allocate<bigint_object>(*as_big));
+                    }
+                }
+            }
+            reg(in.a) = binary_op_static(op::add, lhs, rhs);
             break;
         }
         while (0);
@@ -331,31 +352,36 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(bit_and) do {
-            reg(in.a) = binary_op_static(op::bit_and, reg(in.b), reg(in.c));
+            reg(in.a) = binary_op_static(op::bit_and, numeric_operand(reg(in.b)),
+                                         numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_or) do {
-            reg(in.a) = binary_op_static(op::bit_or, reg(in.b), reg(in.c));
+            reg(in.a) = binary_op_static(op::bit_or, numeric_operand(reg(in.b)),
+                                         numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_xor) do {
-            reg(in.a) = binary_op_static(op::bit_xor, reg(in.b), reg(in.c));
+            reg(in.a) = binary_op_static(op::bit_xor, numeric_operand(reg(in.b)),
+                                         numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shl) do {
-            reg(in.a) = binary_op_static(op::shl, reg(in.b), reg(in.c));
+            reg(in.a) =
+                binary_op_static(op::shl, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(shr) do {
-            reg(in.a) = binary_op_static(op::shr, reg(in.b), reg(in.c));
+            reg(in.a) =
+                binary_op_static(op::shr, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
             break;
         }
         while (0);
@@ -364,13 +390,14 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // The BigInt arm REFUSES this one: an unsigned shift needs a WIDTH
             // to fill from and a BigInt has none. binary_op_static carries that
             // refusal, which is where it belongs.
-            reg(in.a) = binary_op_static(op::ushr, reg(in.b), reg(in.c));
+            reg(in.a) =
+                binary_op_static(op::ushr, numeric_operand(reg(in.b)), numeric_operand(reg(in.c)));
             break;
         }
         while (0);
         VM_NEXT;
         VM_CASE(bit_not) do {
-            reg(in.a) = bit_not_value(reg(in.b));
+            reg(in.a) = bit_not_value(numeric_operand(reg(in.b)));
             break;
         }
         while (0);
@@ -612,6 +639,20 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 const std::size_t arg_base = base + in.a + 1;
                 if (callee.is_kind(heap_kind::native)) {
                     auto * nat = static_cast<native_object *>(callee.as_heap());
+                    // A HEAP PAST ITS THRESHOLD COLLECTS HERE TOO. A loop whose
+                    // only calls are natives - `nodeList[j]` through a native
+                    // proxy trap, 250 million times - never reaches invoke's
+                    // safepoint and grew to the 4 GB cap (std::bad_alloc,
+                    // dom/nodes/NodeList-static-length-getter-tampered-*).
+                    // Not a stress point: the ABI's stress pins count
+                    // collections at invoke and the tick only.
+                    if (!gc_stress_ && live_objects_ >= collect_threshold_) [[unlikely]] {
+                        // The callee may exist only here (a trap made it) and the
+                        // receiver is a C++ local until the call.
+                        const rooted keep_callee{*this, callee};
+                        const rooted keep_receiver{*this, receiver};
+                        (void)collect_if_due();
+                    }
                     // COPIED, not spanned into the register stack. A native may call
                     // back into script - an event listener dispatching another
                     // event - and that grows registers_, which would leave a span
@@ -746,6 +787,14 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(load_this) do {
             reg(in.a) = effective_this((*vm_frame));
+            // 10.2.1.2 OrdinaryCallBindThis step 5.a: a SLOPPY function called
+            // with no receiver - `f()`, a native calling back with undefined -
+            // sees the global object; strict code and an arrow see what they
+            // were given. (A primitive receiver stays unboxed here - ponytail:
+            // ToObject lives in builtins/internal.hpp, box it when a test needs it.)
+            if (!vm_proto->is_strict && !vm_proto->is_arrow && reg(in.a).is_nullish()) {
+                reg(in.a) = global_this_;
+            }
             break;
         }
         while (0);
@@ -804,7 +853,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // A settled promise carries its value in `__value`; anything else
                 // awaits to itself. A REJECTED promise throws, which is what makes
                 // `try { await f() } catch` work.
-                const value awaited = reg(in.b);
+                const value awaited_raw = reg(in.b);
                 // EVERY AWAIT SUSPENDS THE FRAME (27.7.5.3 Await: PerformPromiseThen
                 // on a promise resolved with the value, so the continuation is
                 // a job even when the value is already settled - `await 1`
@@ -823,6 +872,26 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 // callee just queued. Draining re-enters the VM, so the
                 // frame and its window are re-derived afterwards.
                 const bool top_level = vm_frame->closure == nullptr;
+                // 27.7.5.3 step 2, PromiseResolve(%Promise%, value): an object
+                // that is not a promise is resolved INTO one - which is where a
+                // thenable's `then` is called (NewPromiseResolveThenableJob), so
+                // `await { then(_, reject) { reject(e) } }` throws e. A promise
+                // is awaited as itself and a primitive keeps the fast path below.
+                if (awaited_raw.is_object_like() && pending_promise_factory_ && promise_settler_ &&
+                    !(awaited_raw.is_object() &&
+                      static_cast<object_object *>(awaited_raw.as_heap())->find("__settled") !=
+                          nullptr)) {
+                    // The object stays rooted through the register until the
+                    // wrapper is in it; the wrapper is rooted by the register
+                    // from then on, and resolving allocates the thenable job.
+                    const rooted keep{*this, awaited_raw};
+                    reg(in.b) = pending_promise_factory_(*this);
+                    promise_settler_(*this, reg(in.b), awaited_raw, false);
+                    if (failed_) { break; }
+                    vm_frame = &frames_.back();
+                    base = vm_frame->base;
+                }
+                const value awaited = reg(in.b);
                 if (top_level && is_pending_promise(awaited)) {
                     drain_microtasks();
                     if (failed_) { break; }

@@ -30,9 +30,12 @@ void test_initial_on_a_custom_property_is_guaranteed_invalid() {
         // it with a real colour. Treating it as empty-but-defined made the var()
         // substitute NOTHING - so every table cell's `box-shadow` lost its colour
         // and no stripe was ever painted.
+        // A substituted value is re-spelled by the property's grammar, as
+        // el.style would spell it: a hex colour reads back as rgb() (CSS
+        // Color 4 §15), which is why every expectation below is rgb().
         fixture f;
         f.load("<div id=a></div>", "#a { --x: initial; color: var(--x, #123456) }");
-        expect_value(f, f.find("div"), "color", "#123456",
+        expect_value(f, f.find("div"), "color", "rgb(18, 52, 86)",
                      "`initial` makes var() take its fallback");
     }
     {
@@ -49,7 +52,7 @@ void test_initial_on_a_custom_property_is_guaranteed_invalid() {
         fixture f;
         f.load("<div id=outer><div id=a></div></div>",
                "#outer { --x: red } #a { --x: initial; color: var(--x, #123456) }");
-        expect_value(f, f.find_id("a"), "color", "#123456",
+        expect_value(f, f.find_id("a"), "color", "rgb(18, 52, 86)",
                      "and it beats an inherited value rather than revealing it");
     }
 }
@@ -60,7 +63,7 @@ void test_var_substitution() {
     {
         fixture f;
         f.load("<p id=a></p>", ":root { --c: #010101 } p { color: var(--c) }");
-        expect_value(f, f.find_id("a"), "color", "#010101", "a plain var()");
+        expect_value(f, f.find_id("a"), "color", "rgb(1, 1, 1)", "a plain var()");
     }
     {
         // From an INHERITED custom property two levels up, which is the Bootstrap
@@ -68,7 +71,7 @@ void test_var_substitution() {
         fixture f;
         f.load("<html><body><div><button id=b></button></div></body></html>",
                ":root { --c: #010101 } button { color: var(--c) }");
-        expect_value(f, f.find_id("b"), "color", "#010101", "inherited through the tree");
+        expect_value(f, f.find_id("b"), "color", "rgb(1, 1, 1)", "inherited through the tree");
     }
     {
         // The element's OWN definition wins over an inherited one - a component
@@ -76,7 +79,7 @@ void test_var_substitution() {
         fixture f;
         f.load("<html><body><button id=b class=btn></button></body></html>",
                ":root { --c: #010101 } .btn { --c: #020202; color: var(--c) }");
-        expect_value(f, f.find_id("b"), "color", "#020202", "own beats inherited");
+        expect_value(f, f.find_id("b"), "color", "rgb(2, 2, 2)", "own beats inherited");
     }
     {
         // A var() SURROUNDED by other tokens, and several in one value.
@@ -105,7 +108,7 @@ void test_var_substitution() {
         // custom property's value may itself be a comma list.
         fixture f;
         f.load("<p id=a></p>", "p { color: var(--missing, #030303) }");
-        expect_value(f, f.find_id("a"), "color", "#030303", "the fallback is used");
+        expect_value(f, f.find_id("a"), "color", "rgb(3, 3, 3)", "the fallback is used");
     }
     {
         fixture f;
@@ -118,18 +121,18 @@ void test_var_substitution() {
         // if a fallback was written.
         fixture f;
         f.load("<p id=a></p>", ":root { --c: #010101 } p { color: var(--c, #030303) }");
-        expect_value(f, f.find_id("a"), "color", "#010101", "present beats fallback");
+        expect_value(f, f.find_id("a"), "color", "rgb(1, 1, 1)", "present beats fallback");
     }
     {
         // NESTED var(), in the value and in the fallback.
         fixture f;
         f.load("<p id=a></p>", ":root { --a: var(--b); --b: #010101 } p { color: var(--a) }");
-        expect_value(f, f.find_id("a"), "color", "#010101", "a var() inside a var()");
+        expect_value(f, f.find_id("a"), "color", "rgb(1, 1, 1)", "a var() inside a var()");
     }
     {
         fixture f;
         f.load("<p id=a></p>", ":root { --b: #020202 } p { color: var(--missing, var(--b)) }");
-        expect_value(f, f.find_id("a"), "color", "#020202", "a var() inside a fallback");
+        expect_value(f, f.find_id("a"), "color", "rgb(2, 2, 2)", "a var() inside a fallback");
     }
     {
         // AN EMPTY BUT VALID custom property substitutes to NOTHING rather than making

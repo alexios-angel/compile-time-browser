@@ -262,5 +262,20 @@ int main() {
     js_expect("JSON.rawJSON('')", "THREW");
     js_expect("JSON.rawJSON('tru')", "THREW");
 
+    // 25.5.2 steps 4-8 and 10: a replacer list through Get (a proxy of an
+    // array), String/Number objects in it ToString'd, a Number/String object
+    // as space unwrapped, a proxy of an array serialised as an array, a proxy
+    // of an object through its traps, and an abrupt completion propagated.
+    js_expect("JSON.stringify({a: 1, b: 2, c: 3}, new Proxy(['a', 'c'], {}))", "{\"a\":1,\"c\":3}");
+    js_expect("JSON.stringify({a: 1, 1: 2}, [new String('a'), new Number(1)])",
+              "{\"a\":1,\"1\":2}");
+    js_expect("JSON.stringify([1], null, new Number(2))", "[\n  1\n]");
+    js_expect("JSON.stringify([1], null, new String('--'))", "[\n--1\n]");
+    js_expect("JSON.stringify(new Proxy([1, 2], {}))", "[1,2]");
+    js_expect("JSON.stringify(new Proxy({x: 1}, {}))", "{\"x\":1}");
+    js_expect("(function () { try { JSON.stringify({}, [{ toString() { throw new RangeError('r');"
+              " } }]); return 'no'; } catch (e) { return e.name; } })()",
+              "no");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

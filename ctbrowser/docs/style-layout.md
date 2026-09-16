@@ -25,6 +25,67 @@ splitter — the latter peels `!important` off and discards the flag, which is
 the entire question. Cached by attribute TEXT, so a table styling forty rows
 identically parses once and a re-resolve after a hover parses nothing.
 
+## THE CASCADE'S NEWER CRITERIA: @layer, @scope, nesting, @container (2026-09-16)
+
+`engine::resolve` sorts the matched rules by importance, origin, **layer**,
+specificity, **scope proximity**, source order (CSS Cascade 5 §6.1, Cascade 6
+§6.3). Origin and layer order both reverse for important declarations: the
+user agent's `!important` beats the author's, and the first-declared layer's
+beats the last's. The style attribute is still spliced at the importance
+boundary, above every layer.
+
+**Layers** are names filed in first-appearance order across every sheet
+(`engine::layer_names_`), merged by name, ranked once per `add_sheet`
+(`rerank_layers`): sub-layers before their parent's own rules, unlayered last.
+A rule carries the layer INDEX and the comparator reads the RANK, so a page
+that adds a sheet naming a new layer renumbers nothing. Anonymous layers get
+an unnameable name (it starts with `\x01`) unique per sheet. `@import
+url(x) layer(a) supports(c)` is spliced by `browser::expand_imports` and by
+the CSSOM's `author_style_text` inside `@layer a { @supports (c) { ... } }`.
+
+**`revert`, `revert-layer`, `revert-rule`** are all answered from the sorted
+matches (`rolled_back` in `resolve`): the value with an origin, a layer or a
+block struck out is the last remaining declaration of the property in
+cascade order, and the matches are already in it. The style attribute is a
+layer above all for `revert-layer`. What is found may be a keyword itself, so
+it loops, always to an earlier position.
+
+**Scope.** `@scope (<root>) to (<limit>)` records its two selector lists; a
+scoped rule is matched only when `scope_root_for` finds a root on the
+subject's chain with no limit between (the limit itself is out of scope,
+Cascade 6 §3.1), nearest first, nested scopes enumerated through their
+parent's roots. `:scope` and `&` in a scoped rule name that root; a selector
+naming neither never styles the root (`compiled_selector::explicit_scope`).
+Proximity is the distance to that root, and only scoped rules pay for any of
+it. The IMPLICIT scope (`@scope { }` with no prelude) is rooted at the owner
+node's parent, which the engine is not told, so it matches nothing yet.
+
+**Nesting.** `css::parser::consume_block_contents` walks a block as
+declarations and rules mixed (Syntax 3 §5.4.4). `&` compiles to
+`:is(<parent list>)` inside a style rule, `:where(:scope)` inside `@scope`,
+`:scope` at the top level (`compound::nesting` remembers it was written as
+`&` so `selectorText` gives it back); a leading combinator and a selector
+naming no `&` are anchored on it. Runs of declarations after a nested rule
+are filed as rules of their own under the same selectors, so their source
+order survives (Nesting 1 §4). `@supports` is decided at parse time through
+`supports_condition`; a false one files its rules under a never-true
+condition rather than dropping the block, so its `@layer` names still count.
+
+**`@container`** is a condition per rule the cascade asks per element
+(`container_holds`): the nearest ancestor that is a query container for the
+condition - any element for `style()`, `container-type: size | inline-size`
+for a size query - with the name if one was asked. `style(--x: y)` compares
+the container's computed value as text; a size feature goes through the
+media machinery with the viewport set to the container's box, which only
+layout knows, so `engine::set_container_size` takes it from the browser and
+a size query is unknown until the hook is installed and the cascade re-run
+after a layout that moved a container. The browser does not install it yet,
+and `container-type` is not in the property table, which is what
+`CSS.supports("container-type: size")` - the css-conditional harness gate -
+reads.
+
+`unittests/unit/cascade_layers` has a case per paragraph above.
+
 ## TABLES AND GENERATED CONTENT (stage 7, 2026-07-25)
 
 **`table_flow` is the third formatting context** the `LayoutAlgorithm` concept
@@ -152,3 +213,127 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+
+## SIZING: box-sizing, the intrinsic keywords, calc-size() (2026-09-16)
+
+**A stated size names the content box unless `box-sizing: border-box`** (CSS UI
+3 §3.1). Every stated `width`, `height`, `min-*`, `max-*` and `flex-basis` used
+to be read as the BORDER box regardless — right only on a page that sets
+border-box on `*`, which Bootstrap does and which is why nothing noticed. The
+two box models meet in exactly two helpers in `layout/algorithm.hpp`:
+`border_box_size` (a number, plus the axis's padding and border under
+content-box) and `calc_over_content` (a content size run through a calc-size()
+calculation, see below). Every formatting context resolves its sizes through
+them: `outer_width_of`/`width_bound`/`outer_intrinsic` for blocks,
+`clamp_used_height` and `block_flow::arrange` for heights, step 3 of
+`flex_flow::arrange` and `column_cross_size` for flex, `position.cpp` for an
+absolutely positioned width. `box_node::border_box` is the parsed property.
+The unit tests that modelled Bootstrap (`flex_basics`, the bootstrap grid) now
+say `* { box-sizing: border-box }` in their sheet, as Bootstrap does.
+
+**The keywords** (`min-content`, `max-content`, `fit-content`; `stretch` is
+`auto`) are units of `layout::length`. On the inline axis
+`intrinsic_border_width` answers them from `measure_box`; on the block axis a
+keyword height behaves as `auto` (CSS Sizing 3 §5.1) and `has_definite_height`
+says so — the box builder no longer erases keyword heights, because a
+calc-size() over one still has a calculation to run. A keyword `min-height` /
+`max-height` is applied by `clamp_used_height` over the automatic height once
+the content is laid out. `flex-basis: content` is the max-content size.
+
+**`calc-size(<basis>, <calc-sum>)`** (CSS Values 5 §10.2) is carried IN
+`length`: the existing fields are the basis and four more are the calculation
+as a linear function of `size` — `size_factor * size + calc_percent% + calc_px
++ calc_em`. A plain length is the identity, so nothing that never wrote
+calc-size() sees a difference, `calc-size(auto, size)` IS `auto`, and
+`is_auto()` is false for `calc-size(auto, size * 2)` because the auto size is
+its input. A numeric or `any` basis resolves through `resolve()` as before; a
+keyword or `auto` basis is `is_intrinsic()` and the formatting context supplies
+the size — the available width for a block's `auto`, shrink-to-fit for an
+inline-level or out-of-flow box, the content size on a flex item's own axis,
+and the main size property for `flex-basis: calc-size(auto, …)`. Nesting
+composes at parse time (`parse_calc_size`); `size` is measured in the
+box-sizing box and so is the answer, which is what makes `calc-size(auto, size
+* 2)` double the content box under content-box and the border box under
+border-box (calc-size-width-box-sizing). A percentage in the calculation
+against an indefinite height is zero, as Chrome answers. `fit-content(<length-
+percentage>)` keeps its argument in the same `length` (`fit_bound` is its unit)
+and clamps it between the two content sizes. Ceilings: a replaced element
+ignores a calc-size() over `auto` (it takes its intrinsic size); `calc-size(auto,
+…)` on `min-width` takes the block rule for `auto` rather than the automatic
+minimum; a flex container's own `min-height`/`max-height` are still not applied.
+
+**An absolutely positioned box inside a relative INLINE** is placed against the
+inline's fragment (CSS 2.1 §10.1 rule 4): `position.cpp` already treated every
+positioned fragment as an anchor, and inlines here are one fragment each. What
+was missing was `inset-inline-start`/`-end`: the cascade keeps the logical
+longhand as its own declaration and nothing mapped it, so the box builder reads
+it as the physical side's fallback in the one writing mode there is.
+
+## ANIMATIONS: CSS Animations and CSS Transitions on the Web Animations model (2026-09-16)
+
+There is ONE animation model, `lib/Shell/bindings/animations.cpp`: an
+`animation_record` over a `keyframe_effect_record`, sampled by
+`animated_values` as an OVERLAY on the cascade's text when getComputedStyle
+asks. Nothing paints it. `element.animate()` makes one record; the cascade now
+makes the other two kinds, in `lib/Shell/bindings/animations/css.cpp`, and
+composite order is transitions, then animations, then script (Web Animations
+§5.4.2) - `getAnimations()` returns them in that order and the overlay stacks
+them in it.
+
+**`@keyframes` is captured, not skipped.** `lib/Style/css/parser.cpp` records
+each rule as a `css::keyframes_block` (`style/css/keyframes.hpp`): the name,
+and per keyframe block its `from`/`to`/percentage offsets and a declaration
+range, like a `@font-face`. `engine::add_sheet` files them
+(`lib/Style/css/keyframes.cpp`) as `style::keyframes_rule`: shorthands
+expanded, values through `check_declaration` - the same grammar a rule's
+declaration goes through - two blocks at one offset merged, sorted by offset,
+`animation-timing-function` and `animation-composition` pulled out per
+keyframe. `engine::keyframes_of(name)` answers the LAST rule of that name
+whose `@media` holds; `clear_origin` drops a sheet's with its rules.
+
+**The style change event is `browser::resolve_styles`.** It keeps the previous
+map for the length of the resolution and hands both to
+`dom_bindings::update_css_animations`, which walks the document once and looks
+only at elements whose interned `computed_style` pointer moved. For each:
+CSS Transitions 1 §3 first - the before-change value is the previous text with
+the element's running animations sampled on top (that is what makes a reversal
+start from where it is), the after-change value the new text; a difference
+that is numeric of one type or two colours, and whose `transition-property`
+item matches, starts a `CSSTransition` with `fill: backwards`, the item's
+duration, delay and timing function; `allow-discrete` lets any difference flip
+at 50%; a running transition whose end moved is cancelled and replaced, with
+§3.1's reversing shortening when the new end is the old start. Then CSS
+Animations 1 §5: each `animation-name` index that names a rule gets a
+`CSSAnimation` whose effect is rebuilt from the rule and the longhands on every
+restyle while the name stays at that index - the record, its start time and
+the object the page holds survive - and a name that leaves is cancelled.
+Because the record is made at the flush, `animation-delay: -50s` on `100s` reads
+as the midpoint on the same getComputedStyle call, which is what
+css/support/interpolation-testcommon.js does for every `*-interpolation.html`.
+
+**Events fire from `browser::tick`**, after the timers: `tick_animations`
+compares each CSS-owned record's phase with the one it last reported and
+fires the crossings - `animationstart`/`animationiteration`/`animationend`/
+`animationcancel`, `transitionrun`/`transitionstart`/`transitionend`/
+`transitioncancel` - with the elapsed times CSS Animations 2 §4.2 and CSS
+Transitions 2 §5 give, as `AnimationEvent`/`TransitionEvent`. Never from the
+flush, which runs inside a script's own getComputedStyle. `next_wakeup_ms`
+asks `next_animation_event_ms` for the next boundary, so a page with a
+running animation wakes for its events and one with none goes idle again; a
+finished page settles.
+
+**What the property table decides.** `animation-timing-function`,
+`animation-direction`, `animation-fill-mode`, `animation-play-state`,
+`animation-composition` and `transition-behavior` are not rows of
+`lib/Style/css/properties/table.cpp` yet, so a page's `el.style` write of one
+is an expando and the initial value applies; the model reads them by name and
+needs nothing else once the rows exist. The `transition` and `animation`
+shorthands are filed whole by the cascade (`shape::whole`), so
+`animations/css.cpp` reads a shorthand's items itself when the longhands are
+empty - Bootstrap's `.fade` is `transition: opacity .15s linear`.
+
+Colours interpolate in premultiplied sRGB (`interpolate_value`, beside
+`style::interpolate_text`'s numbers); everything else still flips at the
+midpoint. Pseudo-elements do not animate, and `var()` inside a keyframe is not
+substituted. `unittests/unit/css_animations.cpp` pins the harness's shapes,
+the reversal, the events and the idle wakeup.

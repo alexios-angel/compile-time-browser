@@ -71,6 +71,17 @@ int main() {
     js_expect("Symbol.keyFor(Symbol(\"k\"))", "undefined"); // never registered
     js_expect("typeof Symbol.prototype", "object");
 
+    // --- a proxy trap is handed the SYMBOL, not its internal spelling ---------
+    // (js_expect takes an EXPRESSION, hence the IIFEs.)
+    js_expect("(function () { var seen = []; var p = new Proxy({}, { get: function (t, k) {"
+              " seen.push(typeof k); return 1; }, has: function (t, k) { seen.push(typeof k);"
+              " return true; } }); p[Symbol.iterator]; p.x; Symbol.iterator in p;"
+              " return seen.join(); })()",
+              "symbol,string,symbol");
+    js_expect("(function () { var got; new Proxy({}, { get: function (t, k) { got = k; } })"
+              "[Symbol.iterator]; return got === Symbol.iterator; })()",
+              "true");
+
     // --- KNOWN WRONG: a symbol must REFUSE implicit conversion ----------------
     // `"" + sym` and `sym + 1` are specified to throw TypeError, and that is a
     // feature: it is what stops a symbol silently reaching page output. Here
@@ -80,10 +91,11 @@ int main() {
     js_expect("(function(){try{return Symbol(\"x\")+1}catch(e){return \"THROWS \"+e.name}})()",
               "Symbol(x)1"); // V8: THROWS TypeError
 
-    // --- KNOWN WRONG ----------------------------------------------------------
-    // An ABSENT description is undefined, an empty one is "". This engine
-    // stores a plain std::string and cannot tell them apart.
-    js_expect("Symbol().description", ""); // V8: undefined
+    // An ABSENT description is undefined, an empty one is "" (20.4.3.2 -
+    // the prototype's getter tells them apart by the key).
+    js_expect("Symbol().description", "undefined");
+    js_expect("typeof Symbol('').description + ',' + Symbol('x').description", "string,x");
+    js_expect("Symbol('x').hasOwnProperty('description')", "false");
 
     REPORT("symbol_basics");
 }

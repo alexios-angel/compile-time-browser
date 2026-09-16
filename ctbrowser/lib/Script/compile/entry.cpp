@@ -39,6 +39,21 @@ void compiler_impl::compile_program() {
     if (!module_scope_) {
         hoist_nested_vars(ast_.root,
                           [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
+        // B.3.3 for a script: a block's function declaration is a global var
+        // too (undefined until the block runs - compile_function_decl writes
+        // it as a global at any depth of a classic script).
+        // Only the ones IN a block: a top-level function declaration is a
+        // global the declaration itself writes, and listing it here as well
+        // would show the native prover a var where it expects a function.
+        if (!fn().is_strict) {
+            std::vector<std::string> lexical;
+            for (const std::int32_t stmt : kids(root)) {
+                if (at(stmt).kind == vp::nk::func_decl) { continue; }
+                each_block_function(
+                    stmt, [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); },
+                    lexical);
+            }
+        }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());
@@ -79,6 +94,18 @@ void compiler_impl::compile_program() {
         if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
     }
     const std::span<const std::int32_t> body = kids(root);
+    // A `using` at the top level: the rest of the script is its region, and
+    // the completion value of an eval is not kept across one.
+    bool has_using = false;
+    for (const std::int32_t s : body) { has_using = has_using || is_using_decl(at(s)); }
+    if (has_using) {
+        compile_statement_list(body, true);
+        proto().emit(instruction{op::ret_undef});
+        finish_frame(fn().proto, 0);
+        pop_scope();
+        frames_.pop_back();
+        return;
+    }
     for (std::size_t i = 0; i < body.size(); ++i) {
         const std::int32_t s = body[i];
         if (at(declared_by(s)).kind == vp::nk::func_decl) { continue; }

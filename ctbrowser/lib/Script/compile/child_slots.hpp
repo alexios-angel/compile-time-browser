@@ -70,6 +70,13 @@ namespace ctbrowser::script::detail {
     // `eval("++x")` compiles - toured itself forever and overflowed the
     // stack. test262's eval-code/direct/cptn-* found it.
     case vp::nk::update: return {n.a, -1, -1, -1};
+    // `-a` / `a ?? b`: d = 1 says the node was PARENTHESISED (the parser's
+    // one trace of parentheses, for the `**` and `??` grammar), never a child.
+    case vp::nk::unary: return {n.a, -1, -1, -1};
+    case vp::nk::logical:
+    case vp::nk::binary: return {n.a, n.b, -1, -1};
+    // a = the tag, b = the template
+    case vp::nk::tagged: return {n.a, n.b, -1, -1};
     default: return {n.a, n.b, n.c, n.d};
     }
 }
