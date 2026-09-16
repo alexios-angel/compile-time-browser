@@ -415,13 +415,12 @@ struct interface_pair {
 void install_text_encoder(context & cx) {
     const interface_pair made = make_interface(cx, "TextEncoder");
     auto * ctor = made.ctor;
-    ctor->fn = [ctor, proto = made.proto](context & c, std::span<value>) {
+    ctor->fn = [ctor](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!self.is_object() || !c.instance_of(self, value::object(ctor))) {
             c.throw_error("TypeError", "TextEncoder constructor: 'new' is required");
             return value::undefined();
         }
-        (void)proto;
         static_cast<script::object_object *>(self.as_heap())
             ->define(encoder_key, value::boolean(true), script::attr_none);
         return self;
