@@ -249,6 +249,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    // THE INDIVIDUAL TRANSFORMS AND THE ORIGINS (transforms.cpp).
+    if (p->kind == k::freeform &&
+        ascii_iequals_any(property, {"rotate", "scale", "translate", "transform-origin"})) {
+        std::string serialized;
+        if (match_transform_property(property, ts, found, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // THE KEYWORD COMBINATIONS (keywords.cpp): `overline underline` is
     // `underline overline`, `size style layout paint` is `strict`.
     if (p->kind == k::freeform) {

@@ -927,7 +927,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             property == "grid-auto-columns" || property == "grid-auto-rows" ||
             property == "grid-row-start" || property == "grid-row-end" ||
             property == "grid-column-start" || property == "grid-column-end";
-        if (is_color_property(property) || image_property || filter_property || grid_property) {
+        const bool transform_property = property == "rotate" || property == "scale" ||
+                                        property == "translate" || property == "transform-origin" ||
+                                        property == "perspective-origin";
+        if (is_color_property(property) || image_property || filter_property || grid_property ||
+            transform_property) {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -947,6 +951,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             if (image_property) {
                 if (std::string computed = style::css::computed_image(text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+                return collapse_keyword(text);
+            }
+            if (transform_property) {
+                const float box_width = at.frag != nullptr ? at.frag->bounds.width : 0.0f;
+                const float box_height = at.frag != nullptr ? at.frag->bounds.height : 0.0f;
+                if (std::string computed = style::css::computed_transform_property(
+                        property, text, ctx, box_width, box_height);
                     !computed.empty()) {
                     return computed;
                 }

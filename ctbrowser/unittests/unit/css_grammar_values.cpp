@@ -198,6 +198,54 @@ void test_keyword_combinations() {
     ok("scroll-snap-align", "center end", "center end");
 }
 
+void test_transforms() {
+    ok("rotate", "-0.5 0 0 400grad", "x -400grad");
+    ok("rotate", "0 0 -1 400grad", "-400grad");
+    ok("rotate", "0 0 0 400grad", "0 0 0 400grad");
+    ok("rotate", "400grad 100 200 300", "100 200 300 400grad");
+    ok("rotate", "400grad z", "400grad");
+    bad("rotate", "1 2 3");
+    bad("rotate", "45deg x y");
+    bad("rotate", "100px");
+    ok("scale", "-100% -100% 1", "-1");
+    ok("scale", "100 200 1", "100 200");
+    ok("scale", "1%", "0.01");
+    bad("scale", "100px");
+    bad("scale", "calc(180deg) 2 3");
+    ok("translate", "0", "0px");
+    ok("translate", "100px 0px 0px", "100px");
+    ok("translate", "100px 0%", "100px 0%");
+    bad("translate", "100px 200px 300%");
+    bad("translate", "100deg");
+    ok("transform-origin", "bottom right 7px", "right bottom 7px");
+    ok("transform-origin", "bottom", "bottom");
+    ok("transform-origin", "-1px bottom 5px", "-1px bottom 5px");
+    bad("transform-origin", "top 1px");
+    bad("transform-origin", "bottom 10% right 20%");
+    bad("transform-origin", "1px 2px 3%");
+    length_context lengths;
+    lengths.font_size = 40;
+    color_context ctx;
+    ctx.lengths = &lengths;
+    using ctbrowser::style::css::computed_transform_property;
+    CHECK_EQ(computed_transform_property("rotate", "-1 0 0 400grad", ctx, 0, 0),
+             std::string{"x -360deg"});
+    CHECK_EQ(computed_transform_property("scale", "2 calc(300%)", ctx, 0, 0), std::string{"2 3"});
+    CHECK_EQ(computed_transform_property("translate", "0em 0em 100px", ctx, 0, 0),
+             std::string{"0px 0px 100px"});
+    CHECK_EQ(computed_transform_property("transform-origin", "10%", ctx, 200, 300),
+             std::string{"20px 150px"});
+    CHECK_EQ(computed_transform_property("transform-origin", "-1px bottom 5px", ctx, 200, 300),
+             std::string{"-1px 300px 5px"});
+    CHECK_EQ(
+        computed_transform_property("perspective-origin", "right 30% top -60px", ctx, 200, 300),
+        std::string{"140px -60px"});
+    CHECK_EQ(computed_transform_property(
+                 "transform-origin",
+                 "calc(-100% + 10px - 0.5em) calc(10px - 0.5em) calc(10px - 0.5em)", ctx, 200, 300),
+             std::string{"-210px -10px -10px"});
+}
+
 void test_filters() {
     ok("filter", "blur()", "blur()");
     ok("filter", "blur(0)", "blur(0px)");
@@ -243,6 +291,7 @@ int main() {
     test_the_small_shorthands();
     test_grid();
     test_keyword_combinations();
+    test_transforms();
     test_filters();
     REPORT("css_grammar_values");
 }

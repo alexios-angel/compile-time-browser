@@ -205,6 +205,14 @@ struct color_context {
 // Empty for a property or value this does not model.
 [[nodiscard]] std::string computed_grid(std::string_view property, std::string_view specified,
                                         const color_context & ctx);
+// THE COMPUTED VALUE OF rotate, scale, translate, transform-origin OR
+// perspective-origin (CSS Transforms 2): angles in degrees, a scale's
+// percentages as numbers, an origin resolved against the box's border
+// width and height. Empty for a property or value this does not model.
+[[nodiscard]] std::string computed_transform_property(std::string_view property,
+                                                      std::string_view specified,
+                                                      const color_context & ctx, float box_width,
+                                                      float box_height);
 // The same colour as sRGB, unclamped, for whoever paints it.
 struct srgb_color {
     float r = 0, g = 0, b = 0, a = 1;
