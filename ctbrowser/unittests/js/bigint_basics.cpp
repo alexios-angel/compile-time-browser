@@ -133,5 +133,23 @@ int main() {
     throws("BigInt(NaN)", "RangeError");
     throws("BigInt(\"zz\")", "SyntaxError");
 
+    // 21.2.2.1-2 asIntN / asUintN: the value modulo 2^bits, two's complement
+    // for the signed form; ToBigInt refuses a Number where BigInt() converts.
+    js_expect("BigInt.asUintN(8, 257n)", "1");
+    js_expect("BigInt.asUintN(8, -1n)", "255");
+    js_expect("BigInt.asIntN(8, 255n)", "-1");
+    js_expect("BigInt.asIntN(8, 128n)", "-128");
+    js_expect("BigInt.asIntN(8, 127n)", "127");
+    js_expect("BigInt.asIntN(64, 2n ** 63n)", "-9223372036854775808");
+    js_expect("BigInt.asUintN(64, -1n)", "18446744073709551615");
+    js_expect("BigInt.asUintN(0, 5n)", "0");
+    js_expect("BigInt.asUintN(200, 1n)", "1");
+    js_expect("BigInt.asIntN(3, 4n)", "-4");
+    js_expect("BigInt.asIntN(8, \"255\")", "-1");
+    js_expect("BigInt.asIntN(8, true)", "1");
+    js_expect("BigInt.asIntN.length + BigInt.asUintN.length", "4");
+    throws("BigInt.asIntN(8, 1)", "TypeError");
+    throws("BigInt.asIntN(-1, 1n)", "RangeError");
+
     REPORT("bigint_basics");
 }
