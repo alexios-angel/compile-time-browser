@@ -90,6 +90,20 @@ bool compiler_impl::mentions_arguments(std::int32_t idx) const {
     return false;
 }
 
+bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    if (n.kind == vp::nk::super_lit) { return true; }
+    if (!root && (n.kind == vp::nk::func_decl || n.kind == vp::nk::func_expr)) { return false; }
+    for (const std::int32_t slot : child_slots(n)) {
+        if (mentions_super(slot, false)) { return true; }
+    }
+    for (const std::int32_t k : kids(n)) {
+        if (mentions_super(k, false)) { return true; }
+    }
+    return false;
+}
+
 bool compiler_impl::is_captured(std::string_view name) const {
     const interval where = frames_.back().captures;
     if (where.empty()) { return false; }

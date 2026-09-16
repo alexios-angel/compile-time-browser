@@ -328,6 +328,17 @@ int main() {
             " try { new K().m(); } catch (e) { r = e.name; } return r;",
             "ReferenceError");
 
+    // --- an object literal's method has the literal as its home object
+    // (15.4.4) - and only a method that says `super` carries the link.
+    answers("const base = { hi() { return 'base'; } }; const o = { __proto__: base,"
+            " hi() { return 'o+' + super.hi(); }, get g() { return super.hi(); },"
+            " viaArrow() { return (() => super.hi())(); } };"
+            " return o.hi() + ':' + o.g + ':' + o.viaArrow();",
+            "o+base:base:base");
+    answers("const o = { m() { return 1; }, get g() { return 2; } };"
+            " return Object.getOwnPropertyNames(o.m).indexOf('__home');",
+            "-1");
+
     // --- Annex B.3.3: a block's function declaration is a `var` of the
     // enclosing sloppy function too, written when the block runs; strict
     // code keeps it block-local; a `let` of the same name takes precedence.

@@ -446,6 +446,12 @@ public:
     // inside one is a mention here. Making it a real local is what lets the
     // arrow reach it, as an ordinary captured variable.
     [[nodiscard]] bool mentions_arguments(std::int32_t idx) const;
+    // DOES THIS FUNCTION'S BODY SAY `super`, itself or through an arrow (an
+    // arrow has no [[HomeObject]] of its own, 15.3.4)? A non-arrow function
+    // inside it is its own home's business. Decides whether an object
+    // literal's method needs its home object wired at all. `root` is the
+    // function node itself, whose own parameters and body are walked.
+    [[nodiscard]] bool mentions_super(std::int32_t idx, bool root) const;
     [[nodiscard]] bool is_captured(std::string_view name) const;
 
     // Read up to `count` hex digits after position `at`, leaving `at` on the
