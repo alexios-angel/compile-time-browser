@@ -117,6 +117,16 @@ void test_utf16_and_a_single_byte_index() {
 
 } // namespace
 
+// A BufferSource's byteLength is read off the OBJECT, so a plain object with a
+// huge byteLength once made decode() reserve() gigabytes and abort the process
+// (security review DOS-004). The reserve is now bounded to the real bytes, so
+// this decodes the two bytes that exist and returns rather than crashing.
+void test_a_crafted_bytelength_does_not_over_reserve() {
+    is("var u = new Uint8Array([104, 105]);"
+       " return new TextDecoder().decode({ buffer: u.buffer, byteOffset: 0, byteLength: 1e12 });",
+       "hi");
+}
+
 int main() {
     test_the_encoder();
     test_encode_into_writes_whole_code_points_only();
@@ -124,5 +134,6 @@ int main() {
     test_the_utf8_decoder();
     test_the_bom_and_streaming();
     test_utf16_and_a_single_byte_index();
+    test_a_crafted_bytelength_does_not_over_reserve();
     REPORT("encoding_bindings");
 }

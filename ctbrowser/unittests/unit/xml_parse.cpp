@@ -63,6 +63,17 @@ var a = 1 < 2;
     CHECK(script_text.find("var a = 1 < 2;") != std::string::npos);
 }
 
+// A CDATA section is character data, legal only inside the document element.
+// After a self-closed root there is no open element, and `cdata()` read an
+// empty `open_` stack - UB, a crash under asan (security review OOBREAD-001).
+// It is a well-formedness error now, reported rather than crashed on.
+void test_cdata_outside_the_root_is_an_error_not_a_crash() {
+    atom_table atoms;
+    document doc{atoms};
+    const xml_parse_result out = parse_xml(doc, R"(<?xml version="1.0"?><r/><![CDATA[x]]>)");
+    CHECK(!out.error.empty());
+}
+
 // `viewBox` stays `viewBox` and `<i>` stays `i`. The HTML tokenizer folds both
 // and `dom/nodes/Node-nodeName-xhtml.xhtml` asserts the second by name.
 void test_case_is_preserved() {
@@ -278,6 +289,7 @@ void test_prolog() {
 
 int main() {
     test_cdata_is_character_data();
+    test_cdata_outside_the_root_is_an_error_not_a_crash();
     test_case_is_preserved();
     test_nothing_is_implied();
     test_any_tag_self_closes();

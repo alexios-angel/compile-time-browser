@@ -361,7 +361,12 @@ struct decoded {
     if (!source.is_object_like()) { return false; }
     const auto copy = [&out](script::array_object * store, std::size_t from, std::size_t count) {
         out.clear();
-        out.reserve(count);
+        // Reserve only what can actually be copied, never `count`: a view's
+        // byteLength/byteOffset are read off the source OBJECT, so a crafted
+        // `{buffer, byteLength: 2**53}` would otherwise reserve() a huge block
+        // and abort the process. The copy loop below is already store-bounded.
+        const std::size_t available = from < store->items.size() ? store->items.size() - from : 0;
+        out.reserve(std::min(count, available));
         for (std::size_t i = from; i < from + count && i < store->items.size(); ++i) {
             out.push_back(static_cast<std::uint8_t>(
                 static_cast<std::uint32_t>(context::to_number(store->items[i])) & 0xFFu));
