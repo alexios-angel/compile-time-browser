@@ -52,7 +52,8 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 //
 // A valid element local name is the tag names the HTML and the XML parsers
 // can both produce, which is the specification's one regular expression:
-//   ^(?:[A-Za-z][^NUL TAB LF FF CR SPACE / >]* | [:_ or U+0080 and up][A-Za-z0-9-.:_ or U+0080 and up]*)$
+//   ^(?:[A-Za-z][^NUL TAB LF FF CR SPACE / >]*
+//     | [:_ or U+0080 and up][A-Za-z0-9-.:_ or U+0080 and up]*)$
 // The first branch is what the HTML tokenizer will read back as a tag name -
 // it bans only the characters that would END one - and the second is the XML
 // Name production's shape.

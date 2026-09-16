@@ -226,11 +226,31 @@ public:
     struct shadow_tree {
         node_id host;
         bool open = true;
+        // THE REST OF `attachShadow(init)`, which the tree REMEMBERS because
+        // every one of them is readable back off the ShadowRoot and two of
+        // them decide what a clone and a serialisation contain. `manual_slots`
+        // is `slotAssignment: "manual"`: nothing is assigned to a slot by name
+        // and the page calls `slot.assign()` itself.
+        bool delegates_focus = false;
+        bool manual_slots = false;
+        bool clonable = false;
+        bool serializable = false;
+        // THE PARSER ATTACHED THIS ONE, from `<template shadowrootmode>`, and
+        // nothing has claimed it yet. `attachShadow` on such a root hands it
+        // back emptied instead of refusing - exactly once, which is what
+        // clearing the flag is for.
+        bool declarative = false;
     };
-    [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, bool open);
+    // `how.host` is ignored: the host is the argument.
+    [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, shadow_tree how);
+    [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, bool open) {
+        return attach_shadow(host, shadow_tree{.host = host, .open = open});
+    }
     [[nodiscard]] node_id shadow_root_of(node_id host) const;
     // Borrowed until the next attach_shadow; the document owns the metadata.
     [[nodiscard]] const shadow_tree * shadow_tree_of(node_id root) const;
+    // A declarative root, claimed: see shadow_tree::declarative.
+    void set_shadow_declarative(node_id root, bool declarative);
     // Snapshot for callers that walk trees and may attach another root.
     [[nodiscard]] std::vector<node_id> shadow_roots() const;
 

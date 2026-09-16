@@ -1985,6 +1985,16 @@ private:
     // replaces - querySelector and querySelectorAll, which have to search a
     // DETACHED subtree - overwrite the general ones rather than race them.
     void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // Slots, `assignedSlot`, `setHTMLUnsafe` and `getHTML` - bindings/shadow_dom.cpp.
+    // On the interface prototypes, so it runs once and AFTER the table exists.
+    void install_shadow_dom(context & cx);
+    // The slottables one <slot> has been given, in tree order. A function of
+    // the two trees rather than a stored list: see the file.
+    [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
+    // Every `<template shadowrootmode>` under `within` turned into the shadow
+    // root it declares. `setHTMLUnsafe` runs it; `innerHTML` deliberately
+    // does not.
+    void attach_declarative_shadow_roots(node_id within);
     // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
     // with `composed` the walk continues through each shadow host rather than
     // stopping at the ShadowRoot.
