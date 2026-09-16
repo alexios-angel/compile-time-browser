@@ -601,6 +601,11 @@ public:
     // is what makes every `op::closure` inside it index the right table.
     [[nodiscard]] value run_nested(const program & prog) {
         if (!prog.ok || prog.functions.empty()) { return value::undefined(); }
+        // Its `var`s exist before it starts, as run() gives a script's
+        // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
+        for (const std::string & name : prog.hoisted_vars) {
+            if (!has_global(name)) { define_global(name, value::undefined()); }
+        }
         auto * entry = allocate<closure_object>(&prog.functions[0]);
         entry->owner = &prog;
         return call(value::object(entry), std::span<const value>{});

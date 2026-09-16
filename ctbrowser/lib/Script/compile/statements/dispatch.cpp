@@ -116,15 +116,18 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         // function-scoped, so at any depth it is still the script's.
         if (frames_.size() == 1 && !module_scope_ &&
             (n.text == "var" || fn().scope_marks.size() <= 1)) {
-            const bool outer_declaring = declaring_;
-            declaring_ = true;
-            const struct restore {
-                bool & flag;
-                bool to;
-                ~restore() { flag = to; }
-            } restoring{declaring_, outer_declaring};
+            // NOT `declaring_` around the loop: an initialiser is an
+            // expression, and `'use strict'; var a = b = 1;` must still refuse
+            // `b`. The pattern path below sets it for its own writes only.
             for (const std::int32_t d : kids(n)) {
                 const vp::node & decl = at(d);
+                // `var x;` INITIALISES NOTHING (14.3.2.1: a VariableDeclaration
+                // without an Initializer evaluates to empty): the binding
+                // exists from instantiation - program::hoisted_vars, bound by
+                // context::run and run_nested before the first instruction -
+                // so `x = 5; var x;` keeps 5 and `for (var x of xs) { var x; }`
+                // keeps the element.
+                if (decl.a < 0 && decl.b < 0 && n.text == "var") { continue; }
                 const std::uint32_t mark = reg_mark();
                 const std::uint16_t r = alloc_reg();
                 if (decl.a >= 0) {

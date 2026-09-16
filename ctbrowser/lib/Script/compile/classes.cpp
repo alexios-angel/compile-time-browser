@@ -76,6 +76,9 @@ std::uint32_t compiler_impl::compile_field_initialiser(const std::vector<std::in
     frames_.emplace_back();
     frames_.back().proto = index;
     frames_.back().is_strict = true;
+    // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
+    // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
+    const not_declaring body_is_not_a_write{*this};
     push_scope();
     // A static block's `break`, `continue`, `return` and `try` stop at this
     // boundary exactly as a function body's do - see compile_function_body.

@@ -39,6 +39,13 @@ void compiler_impl::compile_program() {
     if (!module_scope_) {
         hoist_nested_vars(ast_.root,
                           [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
+        // B.3.3 for a script: a block's function declaration is a global var
+        // too (undefined until the block runs - compile_function_decl writes
+        // it as a global at any depth of a classic script).
+        if (!fn().is_strict) {
+            each_block_function(ast_.root,
+                                [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
+        }
         std::sort(out_.hoisted_vars.begin(), out_.hoisted_vars.end());
         out_.hoisted_vars.erase(std::unique(out_.hoisted_vars.begin(), out_.hoisted_vars.end()),
                                 out_.hoisted_vars.end());

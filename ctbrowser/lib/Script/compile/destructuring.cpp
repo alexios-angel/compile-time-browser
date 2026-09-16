@@ -64,6 +64,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
     case vp::nk::member:
     case vp::nk::index: {
         // `[o.a, o.b] = pair` - a target that is not a name at all.
+        const not_declaring expression{*this};
         const reference ref = prepare_reference(n);
         emit_store(ref, src);
         return;
@@ -84,7 +85,12 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         // into the source register before the target ever sees it.
         const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
         const std::uint32_t mark = reg_mark();
-        compile_named_expr(n.b, src, at(n.a).kind == vp::nk::ident ? at(n.a).text : "");
+        {
+            // THE DEFAULT IS AN EXPRESSION, not the declaration's write:
+            // `const {a = (b = 1)} = o` in strict code still refuses `b`.
+            const not_declaring expression{*this};
+            compile_named_expr(n.b, src, at(n.a).kind == vp::nk::ident ? at(n.a).text : "");
+        }
         release_to(mark);
         patch_here(skip);
         compile_pattern(n.a, src);
@@ -125,7 +131,10 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
                 compile_pattern(e.a, item);
             } else if ((e.d & computed_bit) != 0 && e.a >= 0) { // a computed key
                 const std::uint16_t key = alloc_reg();
-                compile_expr(e.a, key);
+                {
+                    const not_declaring expression{*this};
+                    compile_expr(e.a, key);
+                }
                 proto().emit(instruction{op::get_index, item, src, key});
                 compile_pattern(e.b, item);
             } else {

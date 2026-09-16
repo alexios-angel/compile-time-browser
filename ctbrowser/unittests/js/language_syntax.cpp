@@ -299,6 +299,10 @@ int main() {
     answers("const o = {}; class P { constructor() { return o; } } class D extends P { }"
             " return new D() === o;",
             "true");
+    answers("var n = 0; for (var x of [99]) { var x; n += x; } x = 5; var x; var u; return [n, x, "
+            "typeof u].join();",
+            "99,5,undefined");
+    answers("eval('var ev; var ew = 2;'); return typeof ev + ew;", "undefined2");
     answers("qq = 5; return qq;", "5"); // sloppy code still may
     answers(
         "'use strict'; var n = 0; for (const [p, q] = [1, 2]; n < 1; n++) {} for (var [s] = [3];;)"
@@ -308,6 +312,38 @@ int main() {
     answers("'use strict'; var a = 1; a = 2; let b = 1; b = 3; class C {} C = 0;"
             " const [d] = [4]; for (const e of [5]) { a += e; } return a + b + d;",
             "14");
+    // ...but an expression INSIDE a declaration is: an initialiser, a
+    // function body written in one, a pattern default (review of 2026-09-13:
+    // declaring_ once covered the whole declarator loop).
+    answers("'use strict'; var r = 'no'; var f = function () { zz3 = 1; };"
+            " try { f(); } catch (e) { r = e.name; } return r;",
+            "ReferenceError");
+    answers("'use strict'; var r = 'no'; try { var a4 = zz4 = 1; } catch (e) { r = e.name; }"
+            " return r;",
+            "ReferenceError");
+    answers("'use strict'; var r = 'no'; try { const { a5 = (zz5 = 1) } = {}; }"
+            " catch (e) { r = e.name; } return r;",
+            "ReferenceError");
+    answers("'use strict'; var r = 'no'; class K { m() { zz6 = 1; } }"
+            " try { new K().m(); } catch (e) { r = e.name; } return r;",
+            "ReferenceError");
+
+    // --- Annex B.3.3: a block's function declaration is a `var` of the
+    // enclosing sloppy function too, written when the block runs; strict
+    // code keeps it block-local; a `let` of the same name takes precedence.
+    answers("function init(c) { if (c) { function helper() { return 7; } } return helper(); }"
+            " return init(true);",
+            "7");
+    answers("function f() { var before = typeof helper; { function helper() {} }"
+            " return before + ':' + typeof helper; } return f();",
+            "undefined:function");
+    answers("'use strict'; function init(c) { if (c) { function helper() {} }"
+            " try { helper(); } catch (e) { return e.name; } return 'no'; } return init(true);",
+            "ReferenceError");
+    answers("function f() { let h = 1; { function h() {} } return typeof h; } return f();",
+            "number");
+    answers("var r = typeof blockFn; { function blockFn() { return 3; } } return r + blockFn();",
+            "undefined3");
 
     // --- `using` (9.13): the syntax and the early errors. The disposal
     // itself needs Symbol.dispose, which is not installed yet (see the

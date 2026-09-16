@@ -8,6 +8,8 @@
 
 #include "../compiler_impl.hpp"
 
+#include <algorithm>
+
 namespace ctbrowser::script::detail {
 
 const std::string * compiler_impl::derived_flag() {
@@ -98,11 +100,13 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     // to an unresolvable name. Declared before its body compiles, so a
     // recursive call inside resolves to it. Its register survives the
     // statement because compile_stmt does not release a declaration's.
+    bool block_local = false;
     if (!(frames_.size() == 1 && !module_scope_) &&
         find_local_in_current_scope(n.text) == nullptr) {
         const std::uint16_t r = declare_local(std::string{n.text});
         proto().emit(instruction{op::load_undef, r});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+        block_local = true;
     }
     const std::uint32_t index = compile_function_body(idx, std::string{n.text});
     const std::uint32_t mark = reg_mark();
@@ -134,6 +138,19 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
         proto().emit(instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
     } else {
         emit_write(n.text, r);
+        // B.3.3.1 step 1.a.ii.3.a: when the declaration is evaluated, the
+        // block binding's value is copied to the function's var binding of
+        // the same name - the one predeclare_locals made, the first entry the
+        // frame has for the name (the block's own is the last).
+        if (block_local && !fn().is_strict &&
+            std::find(fn().annex_b_functions.begin(), fn().annex_b_functions.end(), n.text) !=
+                fn().annex_b_functions.end()) {
+            const auto it = fn().local_index.find(n.text);
+            if (it != fn().local_index.end() && it->second.size() >= 2) {
+                const local & outer = fn().locals[it->second.front()];
+                proto().emit(instruction{outer.boxed ? op::cell_set : op::move, outer.reg, r});
+            }
+        }
     }
     release_to(mark);
 }
@@ -158,6 +175,9 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     frames_.back().proto = index;
     frames_.back().is_strict = strict;
     out_.functions[index].is_strict = strict;
+    // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
+    // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
+    const not_declaring body_is_not_a_write{*this};
     push_scope();
     // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
     //

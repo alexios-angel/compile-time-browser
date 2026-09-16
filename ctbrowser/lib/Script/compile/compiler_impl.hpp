@@ -98,7 +98,10 @@ public:
         interval captures;
         std::vector<std::string> upvalue_names; // parallel to proto().upvalues
         std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
-        std::vector<std::size_t> scope_marks;   // locals.size() at each scope entry
+        // The block-level function names that B.3.3 gave a var binding of
+        // this function too - see predeclare_locals and compile_function_decl.
+        std::vector<std::string> annex_b_functions;
+        std::vector<std::size_t> scope_marks; // locals.size() at each scope entry
         // WIDER THAN THE OPERAND THEY FEED, on purpose: counting in a wider
         // type lets the compiler SAY how many registers were wanted instead
         // of wrapping in silence.
@@ -491,6 +494,24 @@ public:
         }
         for (const std::int32_t slot : child_slots(n)) { hoist_nested_vars(slot, hoist); }
         for (const std::int32_t k : kids(n)) { hoist_nested_vars(k, hoist); }
+    }
+    // ANNEX B.3.3: in sloppy code a function declared in a nested block is
+    // ALSO a `var` of the enclosing function (or a global of the script),
+    // written when the declaration is evaluated. This walk names every
+    // function declaration below a body, at any block depth, stopping at
+    // function boundaries as hoist_nested_vars does; the caller decides
+    // which of them may take a var binding (none that a parameter or a
+    // lexical declaration already names).
+    template <typename Each> void each_block_function(std::int32_t index, const Each & each) {
+        if (index < 0) { return; }
+        const vp::node & n = at(index);
+        if (n.kind == vp::nk::func_decl) {
+            each(std::string{n.text});
+            return;
+        }
+        if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
+        for (const std::int32_t slot : child_slots(n)) { each_block_function(slot, each); }
+        for (const std::int32_t k : kids(n)) { each_block_function(k, each); }
     }
 
     [[nodiscard]] bool was_predeclared(std::string_view name) const;
@@ -1079,6 +1100,18 @@ public:
     // code only an ASSIGNMENT to a name nothing declares is the
     // ReferenceError - see emit_strict_assign_check.
     bool declaring_ = false;
+    // An expression met inside a declaration - a default, a computed key, a
+    // nested function body - is not its write: clears declaring_ for a scope.
+    struct not_declaring {
+        compiler_impl & self;
+        bool saved;
+        explicit not_declaring(compiler_impl & c) : self{c}, saved{c.declaring_} {
+            c.declaring_ = false;
+        }
+        ~not_declaring() { self.declaring_ = saved; }
+        not_declaring(const not_declaring &) = delete;
+        not_declaring & operator=(const not_declaring &) = delete;
+    };
     void emit_strict_assign_check(std::string_view name);
     // WHILE A FUNCTION'S PARAMETER EXPRESSIONS ARE BEING COMPILED: the names
     // bound in that scope, which a direct `eval` written there may not

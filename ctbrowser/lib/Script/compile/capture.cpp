@@ -10,6 +10,8 @@
 
 #include "compiler_impl.hpp"
 
+#include <algorithm>
+
 namespace ctbrowser::script::detail {
 
 bool compiler_impl::is_function_node(const vp::node & n) {
@@ -197,7 +199,30 @@ void compiler_impl::predeclare_locals(std::int32_t body) {
     // And every `var` in a NESTED block, which the loop above cannot see -
     // it walks this body's own statements only. `hoist` returns early on a
     // name already declared, so the statements just handled cost a lookup.
-    for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist); }
+    std::vector<std::string> vars; // every `var` name below this body, any depth
+    const auto hoist_var = [&](std::string name) {
+        vars.push_back(name);
+        hoist(std::move(name));
+    };
+    for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist_var); }
+    // ANNEX B.3.3 (sloppy code only): a function declared in a nested block
+    // takes a var binding of this function as well, unless a parameter or a
+    // lexical declaration already has the name - which is what "already a
+    // local, and not one of the vars" means here, the parameters and the
+    // body's own let/const/class having been declared above.
+    if (!fn().is_strict) {
+        for (const std::int32_t stmt : kids(at(body))) {
+            each_block_function(stmt, [&](std::string name) {
+                const bool fresh = find_local_entry(fn(), name) == nullptr;
+                if (fresh) {
+                    hoist(name);
+                } else if (std::find(vars.begin(), vars.end(), name) == vars.end()) {
+                    return;
+                }
+                fn().annex_b_functions.push_back(std::move(name));
+            });
+        }
+    }
 }
 
 bool compiler_impl::was_predeclared(std::string_view name) const {
