@@ -468,6 +468,13 @@ change the native backend sees as a divergence until it follows.
   `scope_marks.size() <= 1` is the script's own level, where a declaration
   IS the global. `var x;` at a script's top level STILL writes undefined
   (`statements/dispatch.cpp` says which native prover needs the write).
+  **BYTECODE SHAPE.** That last part changed one: a function declared in a
+  block of a classic script used to compile to `closure; set_global` and now
+  compiles to `load_undef` (plus `new_cell` when captured), `closure`,
+  `move`/`cell_set` into the block's own register, and `set_global` only
+  when B.3.3 applies. No new opcode, and no other construct moved - but a
+  consumer that pins the sequence for this one (the native backend does)
+  sees a different one.
 * **A Module's ModuleItemList.** `import` and `export` are ModuleItems and
   not Statements (16.2.1), so the early-error pass refuses either one
   nested in a block, a clause or a function body, and refuses both outright
