@@ -196,6 +196,12 @@ void test_keyword_combinations() {
     bad("scroll-snap-type", "x y");
     ok("scroll-snap-align", "start start", "start");
     ok("scroll-snap-align", "center end", "center end");
+    ok("font-size-adjust", "ex-height 0.5", "0.5");
+    ok("font-size-adjust", "cap-height calc(0.5 + 1)", "cap-height calc(1.5)");
+    ok("font-size-adjust", "from-font", "from-font");
+    bad("font-size-adjust", "0.5 ex-height");
+    bad("font-size-adjust", "ex-height");
+    bad("font-size-adjust", "-10");
 }
 
 void test_transforms() {

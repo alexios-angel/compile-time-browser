@@ -242,6 +242,46 @@ constexpr or_grammar or_grammars[] = {
     return words[0] + " mandatory";
 }
 
+// font-size-adjust: `none | [ ex-height | cap-height | ch-width | ic-width |
+// ic-height ]? [ from-font | <number [0,inf]> ]`, the default `ex-height`
+// dropped.
+[[nodiscard]] std::optional<std::string> font_size_adjust(const token_stream & ts,
+                                                          const scan & found) {
+    if (found.significant.empty()) { return std::nullopt; }
+    const css_token & first = ts.tokens[found.significant.front()];
+    const css_token & last = ts.tokens[found.significant.back()];
+    if (first.text >= ts.source_length || last.text >= ts.source_length) { return std::nullopt; }
+    const std::string_view text =
+        std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+    const std::vector<std::string_view> parts = split_top_level(text, " \t\n\r\f");
+    if (parts.empty() || parts.size() > 2) { return std::nullopt; }
+    std::size_t k = 0;
+    std::string metric;
+    const std::string word = ascii_lower_copy(parts[0]);
+    if (word == "none") { return parts.size() == 1 ? std::optional{word} : std::nullopt; }
+    if (has_keyword("ex-height cap-height ch-width ic-width ic-height", word)) {
+        metric = word == "ex-height" ? "" : word + " ";
+        k = 1;
+    }
+    if (k + 1 != parts.size()) { return std::nullopt; }
+    const std::string_view value = parts[k];
+    if (ascii_iequals(value, "from-font")) { return metric + "from-font"; }
+    const token_stream sub = tokenize(value);
+    if (sub.tokens.size() == 2 && sub.tokens.front().type == token_type::number) {
+        if (sub.tokens.front().number < 0) { return std::nullopt; }
+        return metric + serialize_number(sub.tokens.front().number);
+    }
+    if (sub.tokens.front().type == token_type::function && may_have_math(value)) {
+        const math_answer answer = evaluate_math(value, length_context{});
+        if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
+        if (answer.outcome == math_outcome::resolved && !answer.value.is_number) {
+            return std::nullopt;
+        }
+        return metric + simplify_math(value);
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 namespace detail {
@@ -255,6 +295,10 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         const std::optional<std::vector<std::string>> words = words_of(ts, found);
         if (words) { answer = match_or(g, *words); }
+    }
+    if (!handled && ascii_iequals(property, "font-size-adjust")) {
+        handled = true;
+        answer = font_size_adjust(ts, found);
     }
     if (!handled && ascii_iequals(property, "will-change")) {
         handled = true;
