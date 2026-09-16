@@ -228,6 +228,30 @@ void test_an_inserted_frame_has_its_window_at_once() {
     CHECK_EQ(page.bindings().console_output().back(), std::string{"BODY,true"});
 }
 
+void test_a_frame_and_a_script_inserted_together_run_in_tree_order() {
+    // Node-appendChild-script-and-iframe.html: the post-connection steps run
+    // per inserted node in tree order, so a script inserted AFTER a frame in
+    // the same appendChild sees the frame's window, and one inserted BEFORE
+    // it sees null - the frame is set up after the script has run.
+    browser page{browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var seen = [];"
+                   "function both(frameFirst) {"
+                   "  window.f = document.createElement('iframe');"
+                   "  var s = document.createElement('script');"
+                   "  s.textContent = 'seen.push(f.contentWindow ? \"window\" : \"null\")';"
+                   "  var div = document.createElement('div');"
+                   "  if (frameFirst) { div.append(f, s); } else { div.append(s, f); }"
+                   "  document.body.appendChild(div);"
+                   "  seen.push(f.contentWindow ? 'later:window' : 'later:null');"
+                   "}"
+                   "both(true); both(false);"
+                   "console.log(seen.join());"
+                   "</script></body></html>");
+    CHECK_EQ(page.bindings().console_output().back(),
+             std::string{"window,later:window,null,later:window"});
+}
+
 void test_a_frame_document_is_a_full_member_of_the_realm() {
     // Node-isConnected.html's iframe case: the page's node goes INTO a frame's
     // document (adopted, connected there), and a frame inside a frame gets a
@@ -308,6 +332,7 @@ int main() {
     test_the_frames_are_indexed_on_the_window();
     test_a_frame_loaded_at_a_fragment_has_a_target();
     test_an_inserted_frame_has_its_window_at_once();
+    test_a_frame_and_a_script_inserted_together_run_in_tree_order();
     test_a_frame_document_is_a_full_member_of_the_realm();
     test_a_named_frame_is_its_window_on_the_window();
     test_a_frame_has_a_document_of_its_own();

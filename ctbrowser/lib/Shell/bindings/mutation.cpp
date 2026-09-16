@@ -146,16 +146,16 @@ void common_subsequence(const std::vector<node_id> & before, const std::vector<n
 
 // --- the plumbing -----------------------------------------------------------
 
+// BY IDENTITY, not by the index the object carries: an observer the page made
+// (always in the primary's list) is entered into a second document's list too
+// when it observes one of that document's nodes, at whatever index that list
+// has free - so each bindings answers with its own position for the object.
 std::size_t dom_bindings::mutation_observer_index(value v) const {
     if (!v.is_object()) { return std::numeric_limits<std::size_t>::max(); }
-    const value * held =
-        static_cast<script::object_object *>(v.as_heap())->find(std::string{observer_index_key});
-    if (held == nullptr) { return std::numeric_limits<std::size_t>::max(); }
-    const double index = context::to_number(*held);
-    if (!(index >= 0) || index >= static_cast<double>(mutation_observers_.size())) {
-        return std::numeric_limits<std::size_t>::max();
+    for (std::size_t i = 0; i < mutation_observers_.size(); ++i) {
+        if (mutation_observers_[i].bits() == v.bits()) { return i; }
     }
-    return static_cast<std::size_t>(index);
+    return std::numeric_limits<std::size_t>::max();
 }
 
 script::object_object * dom_bindings::mutation_observer_at(std::size_t index) {
@@ -198,6 +198,15 @@ void dom_bindings::queue_mutation_record(std::size_t observer, value record) {
 }
 
 void dom_bindings::queue_mutation_delivery() {
+    // A SECOND DOCUMENT'S RECORDS ARE DELIVERED BY THE PRIMARY: the records
+    // sit on the observer object, which is in the primary's list, and the
+    // primary owns the trampoline and the queued flag. Forwarding is what
+    // keeps that flag honest - a secondary that set its own would never see
+    // it cleared, and would queue nothing a second time.
+    if (primary_ != nullptr) {
+        primary_->queue_mutation_delivery();
+        return;
+    }
     if (mutation_delivery_queued_ || cx_ == nullptr || !mutation_trampoline_.is_callable()) {
         return;
     }
@@ -649,8 +658,8 @@ void dom_bindings::install_mutation_observer(context & cx) {
     set_method(
         cx, *observer_proto, "observe",
         [this](context & c, std::span<value> args) {
-            const std::size_t index = mutation_observer_index(c.current_this());
-            if (index == std::numeric_limits<std::size_t>::max()) {
+            const value self = c.current_this();
+            if (mutation_observer_index(self) == std::numeric_limits<std::size_t>::max()) {
                 c.throw_error("TypeError", "Illegal invocation");
                 return value::undefined();
             }
@@ -659,17 +668,31 @@ void dom_bindings::install_mutation_observer(context & cx) {
                                            "argument required, but only 0 present.");
                 return value::undefined();
             }
+            // WHOSE NODE. A node of another document in the realm - a DOMParser's,
+            // a frame's - registers with THAT document's bindings, whose
+            // record_mutations is the one that sees it change; the observer joins
+            // that list at whatever index it has free (MutationObserver-textContent
+            // .html's CDATASection case, processing-instruction-attributes.html's
+            // xml-dom rows). Its records still land on the observer object and are
+            // delivered by the primary - see queue_mutation_delivery.
+            dom_bindings * owner = owner_of(args[0]);
+            dom_bindings & where = owner != nullptr && owner != this ? *owner : *this;
+            if (&where != this &&
+                where.mutation_observer_index(self) == std::numeric_limits<std::size_t>::max()) {
+                where.mutation_observers_.push_back(self);
+            }
+            const std::size_t index = where.mutation_observer_index(self);
             // WHICH NODE. An element wrapper carries its handle; the document
             // object carries none, this tree builder having no Document node above
             // `<html>`, so `observe(document, ...)` registers on the root element
             // and remembers that it stands for the document.
-            node_id target = handle_of(args[0]);
+            node_id target = where.handle_of(args[0]);
             bool whole_document = false;
             // `is_object_like`, because `document` is a Proxy and `is_object()` is
             // false for one - see make_document_proxy in bindings/document/named_access.cpp.
-            if (!target && args[0].is_object_like() && document_.is_object_like() &&
-                args[0].bits() == document_.bits()) {
-                target = doc_->root();
+            if (!target && args[0].is_object_like() && where.document_.is_object_like() &&
+                args[0].bits() == where.document_.bits()) {
+                target = where.doc_->root();
                 whole_document = true;
             }
             if (!target) {
@@ -750,19 +773,19 @@ void dom_bindings::install_mutation_observer(context & cx) {
             // re-observes the same node three times and counts on getting one
             // record per change rather than three.
             const auto existing = std::ranges::find_if(
-                mutation_registrations_, [&](const mutation_registration & reg) {
+                where.mutation_registrations_, [&](const mutation_registration & reg) {
                     return reg.observer == index && reg.target == target;
                 });
-            if (existing != mutation_registrations_.end()) {
+            if (existing != where.mutation_registrations_.end()) {
                 existing->options = std::move(options);
                 existing->whole_document = whole_document;
             } else {
-                mutation_registrations_.push_back(
+                where.mutation_registrations_.push_back(
                     mutation_registration{index, target, whole_document, std::move(options)});
             }
             // THE SNAPSHOT IS TAKEN HERE, which is what makes the diff mean
             // "since you started observing" rather than "since the page loaded".
-            take_mutation_snapshot();
+            where.take_mutation_snapshot();
             sync_mutation_roots();
             return value::undefined();
         },
@@ -776,6 +799,15 @@ void dom_bindings::install_mutation_observer(context & cx) {
             std::erase_if(mutation_registrations_, [index](const mutation_registration & reg) {
                 return reg.observer == index;
             });
+            // ...in every document it observed a node of, each under its own index.
+            for (const auto & other : secondary_documents_) {
+                const std::size_t there = other->mutation_observer_index(c.current_this());
+                if (there == std::numeric_limits<std::size_t>::max()) { continue; }
+                std::erase_if(
+                    other->mutation_registrations_,
+                    [there](const mutation_registration & reg) { return reg.observer == there; });
+                other->take_mutation_snapshot();
+            }
             // ...AND THE QUEUE WITH THEM. `disconnect()` empties the record list,
             // which is the whole point of the second half of
             // MutationObserver-disconnect.html: mutations made before it are

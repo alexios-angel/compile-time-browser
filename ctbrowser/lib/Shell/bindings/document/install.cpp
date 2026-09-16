@@ -523,11 +523,14 @@ void dom_bindings::install_document(context & cx) {
     // Each answer below is a FACT about this engine rather than a plausible
     // string:
     //
-    //   characterSet   the tokenizer decodes bytes as UTF-8 and there is no
-    //                  <meta charset> override path, so UTF-8 is not a default
-    //                  it is the only answer. `charset` and `inputEncoding` are
-    //                  the two legacy aliases of the same value, and a page
-    //                  that feature-detects picks whichever it learned first.
+    //   characterSet   the NAME the document declared - dom/encoding.hpp's
+    //                  label table over the BOM or `<meta charset>` prescan the
+    //                  loader ran - and "UTF-8" for a document that declared
+    //                  nothing or was not loaded from bytes. The tokenizer
+    //                  decodes as UTF-8 whatever the name says. `charset` and
+    //                  `inputEncoding` are the two legacy aliases of the same
+    //                  value, and a page that feature-detects picks whichever
+    //                  it learned first.
     //   contentType    a document only ever gets here through the HTML parser.
     //   compatMode     the doctype's quirks decision, which the tree builder now
     //                  carries: `<!DOCTYPE html>` is "CSS1Compat" and a document
@@ -546,7 +549,7 @@ void dom_bindings::install_document(context & cx) {
     //                  `undefined` says "this engine has never heard of
     //                  doctypes", which is a different and less useful claim.
     for (const char * name : {"characterSet", "charset", "inputEncoding"}) {
-        doc->set(name, cx.string("UTF-8"));
+        doc->set(name, cx.string(doc_->encoding()));
     }
     // AND THE ONE THAT IS NO LONGER A CONSTANT. A document parsed as XML - see
     // dom/xml.hpp - is `application/xhtml+xml`, and `createDocument` makes one

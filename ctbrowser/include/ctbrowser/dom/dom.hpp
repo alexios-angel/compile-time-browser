@@ -14,6 +14,7 @@
 #include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/element.hpp>
+#include <ctbrowser/dom/encoding.hpp>
 #include <ctbrowser/dom/html.hpp>
 #include <ctbrowser/dom/node.hpp>
 #include <ctbrowser/dom/token_list.hpp>

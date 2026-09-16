@@ -926,6 +926,29 @@ void dom_bindings::install_window(context & cx) {
                                          !frame_at(c, name).is_undefined() ||
                                          !named_element(name).empty());
                });
+    // AND A DESCRIPTOR FOR EACH, so `Object.getOwnPropertyDescriptor(window,
+    // 'x')` and a hasOwnProperty that asks [[GetOwnProperty]] (ES 20.1.3.2)
+    // agree with `has`: a global is an own data property of the Window - the
+    // globals table IS its property storage here - and a named element or
+    // frame is HTML 7.3.3's, enumerable and configurable and not writable.
+    set_method(cx, *window_handler, "getOwnPropertyDescriptor",
+               [named_value, frame_at](context & c, std::span<value> args) {
+                   if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+                   const std::string name = c.to_string(args[1]);
+                   context::property_descriptor own;
+                   if (c.own_property(args[0], name, own)) {
+                       return c.from_property_descriptor(own);
+                   }
+                   if (c.has_global(name)) {
+                       return c.from_property_descriptor(context::property_descriptor::data(
+                           c.global(name), script::attr_default));
+                   }
+                   value held = frame_at(c, name);
+                   if (held.is_undefined()) { held = named_value(c, name); }
+                   if (held.is_undefined()) { return value::undefined(); }
+                   return c.from_property_descriptor(context::property_descriptor::data(
+                       held, script::attr_enumerable | script::attr_configurable));
+               });
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
     cx.define_global("window", window_view);

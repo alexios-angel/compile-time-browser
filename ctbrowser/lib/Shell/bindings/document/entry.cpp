@@ -370,11 +370,54 @@ void dom_bindings::run_inserted_scripts() {
         if (auto * doc = document_object()) {
             if (const value * had = doc->find("currentScript"); had != nullptr) { outer = *had; }
         }
+        // POST-CONNECTION ORDER, DOM "insert" step 7.7: the post-connection
+        // steps run per inserted node in tree order, and an <iframe>'s are
+        // what give it a document. So a frame that PRECEDES this script has
+        // one by the time the script runs, and a frame that FOLLOWS it does
+        // not yet - `iframe.contentWindow` is null from inside the script
+        // (Node-appendChild-script-and-iframe.html). The frames before are
+        // loaded here and the lazy reconcile is held off while the script
+        // runs; a mutation the script makes re-arms it.
+        // ponytail: tree order stands in for insertion order, so a frame an
+        // EARLIER mutation inserted later in the tree is held off too; keep
+        // the batch's own nodes if a page ever shows the difference.
+        {
+            std::vector<std::pair<node_id, std::string>> preceding;
+            {
+                const auto txn = doc_->read();
+                const atom iframe_tag = atoms_->intern_lower("iframe");
+                bool passed = false;
+                const auto walk = [&](auto && self, node_id at) -> void {
+                    if (passed) { return; }
+                    if (at == id) {
+                        passed = true;
+                        return;
+                    }
+                    if (txn.tag(at).value_or(atom{}) == iframe_tag &&
+                        txn.element_ns(at) == node_ns::html) {
+                        const bool loaded = std::ranges::any_of(
+                            frames_, [at](const auto & entry) { return entry.element == at; });
+                        if (!loaded) {
+                            preceding.emplace_back(at,
+                                                   std::string{txn.attribute_value(at, src_name)});
+                        }
+                    }
+                    for (const node_id child : txn.children(at)) { self(self, child); }
+                };
+                walk(walk, txn.root());
+            }
+            for (const auto & [frame, src] : preceding) {
+                frames_.push_back(frame_entry{frame, src, load_frame(cx, frame, src)});
+            }
+        }
+        const bool frames_were_dirty = frames_dirty_;
+        frames_dirty_ = false;
         set_current_script(id);
         script::program compiled = script::compiler::compile(source);
         if (!compiled.ok) {
             (void)dispatch_error(compiled.error);
             if (auto * doc = document_object()) { doc->set("currentScript", outer); }
+            frames_dirty_ = frames_dirty_ || frames_were_dirty;
             continue;
         }
         const script::program & kept = cx.own_program(std::move(compiled));
@@ -383,9 +426,13 @@ void dom_bindings::run_inserted_scripts() {
         bool threw = false;
         value thrown = value::undefined();
         (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);
-        if (auto * doc = document_object()) { doc->set("currentScript", outer); }
         // AN UNCAUGHT THROW IS REPORTED AND THE INSERTING SCRIPT CARRIES ON,
         // exactly as a listener's is - see fire_at for the two ways to fail.
+        // Reported BEFORE currentScript is put back: "run a classic script"
+        // reports the exception inside "execute the script element" step 6,
+        // and step 7 is the restore - so a window.onerror reading
+        // document.currentScript sees the script that threw
+        // (Document.currentScript.html, "script-window-error").
         if (threw || cx.failed()) {
             const context::rooted keep_thrown{cx, thrown};
             const std::string fault =
@@ -397,6 +444,8 @@ void dom_bindings::run_inserted_scripts() {
             const bool handled = dispatch_error_value(fault, thrown);
             if (!handled && callback_error_.empty()) { callback_error_ = fault; }
         }
+        if (auto * doc = document_object()) { doc->set("currentScript", outer); }
+        frames_dirty_ = frames_dirty_ || frames_were_dirty;
     }
 }
 

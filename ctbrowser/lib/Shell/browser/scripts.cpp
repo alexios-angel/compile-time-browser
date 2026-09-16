@@ -185,11 +185,15 @@ void browser::run_scripts() {
         const atom script_tag = atoms_.intern_lower("script");
         const atom type_attribute = atoms_.intern("type");
         const auto walk = [&](auto && self, node_id at) -> void {
-            // HTML <script> ONLY, for the same reason as <style> and <title>
-            // above: SVG has a <script> of its own and it interns to the same
-            // atom, so without this a graphic's script would run as the page's.
+            // HTML's <script> AND SVG's - an inline `<svg><script>` in an HTML
+            // document runs as the page's script (SVG 2 §15.3, and
+            // Document.currentScript.html's "script-svg" names the element).
+            // The two intern to the same atom and differ in where an external
+            // source is named: `src` on one, `href` (or the legacy
+            // `xlink:href`) on the other.
+            const bool is_svg = txn.element_ns(at) == ctbrowser::node_ns::svg;
             if (txn.tag(at).value_or(atom{}) == script_tag &&
-                txn.element_ns(at) == ctbrowser::node_ns::html) {
+                (txn.element_ns(at) == ctbrowser::node_ns::html || is_svg)) {
                 // `<script src>` FIRST, then the element's own text - which is
                 // what the spec says (a src'd script ignores its content, and
                 // an element has one or the other in practice) and what any
@@ -215,7 +219,11 @@ void browser::run_scripts() {
                 std::string specifier =
                     is_module ? "<inline:" + std::to_string(modules.size()) + ">" : std::string{};
 
-                const std::string_view src = txn.attribute_value(at, atoms_.intern("src"));
+                std::string_view src =
+                    txn.attribute_value(at, atoms_.intern(is_svg ? "href" : "src"));
+                if (is_svg && src.empty()) {
+                    src = txn.attribute_value(at, atoms_.intern("xlink:href"));
+                }
                 if (!src.empty()) {
                     const std::string url{src};
                     const std::vector<std::byte> bytes = assets_.load(url);

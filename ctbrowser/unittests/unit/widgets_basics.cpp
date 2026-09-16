@@ -640,10 +640,17 @@ void test_window_is_an_object_too() {
                    "console.log('canvas ' + window.hasOwnProperty('HTMLCanvasElement'));"
                    // Other Object.prototype methods arrive by the same route.
                    "console.log('str ' + (typeof window.toString));"
+                   // And [[GetOwnProperty]] describes a global and a named
+                   // element as the Window's own (HTML 7.3.3), so a
+                   // hasOwnProperty that asks for the descriptor agrees.
+                   "var d1 = Object.getOwnPropertyDescriptor(window, '__mine');"
+                   "var d2 = Object.getOwnPropertyDescriptor(window, '__nope');"
+                   "console.log('desc ' + d1.value + ',' + d1.writable + ',' + d2);"
                    "</script></body></html>");
     const auto & log = page.bindings().console_output();
-    check(log.size() == 7, "seven answers");
-    if (log.size() != 7) { return; }
+    check(log.size() == 8, "eight answers");
+    if (log.size() != 8) { return; }
+    check(log[7] == "desc 1,true,undefined", "a global has a data descriptor: " + log[7]);
     check(log[0] == "has function", "window.hasOwnProperty is a function: " + log[0]);
     check(log[1] == "global true", "it sees an engine global: " + log[1]);
     check(log[2] == "mine true", "and one the page just made: " + log[2]);

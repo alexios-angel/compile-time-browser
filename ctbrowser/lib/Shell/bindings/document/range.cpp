@@ -359,6 +359,114 @@ void dom_bindings::install_range(context & cx) {
         cx, *proto, "detach", [](context &, std::span<value>) { return value::undefined(); },
         script::attr_builtin);
 
+    // --- THE FOUR COMPARISONS, DOM 5.5 -----------------------------------------
+    //
+    // `isPointInRange` and `comparePoint` share their checks: a doctype is an
+    // InvalidNodeTypeError, an offset past the node's length an IndexSizeError,
+    // and another tree is `false` for the one and a WrongDocumentError for the
+    // other. `intersectsNode` asks about (parent, index) and (parent, index + 1);
+    // `compareBoundaryPoints` about this range's boundary against the other's.
+    const auto checked_point = [this](context & c, std::span<value> a, script::object_object * self,
+                                      bool other_tree_throws, point & out) {
+        const nodes n{c};
+        const value node = arg(a, 0);
+        if (!n.is_node(node)) {
+            c.throw_error("TypeError", "Range: the argument is not a Node");
+            return false;
+        }
+        const value start_node = c.lookup_property(value::object(self), "startContainer");
+        if (!same(n.root(node), n.root(start_node))) {
+            if (other_tree_throws) {
+                throw_dom_exception(c, "WrongDocumentError", "the node is in another tree");
+            }
+            return false;
+        }
+        if (n.type(node) == doctype_node) {
+            throw_dom_exception(c, "InvalidNodeTypeError", "a doctype has no boundary points");
+            return false;
+        }
+        const double offset = static_cast<double>(context::to_uint32(arg(a, 1)));
+        if (offset > n.length(node)) {
+            throw_dom_exception(c, "IndexSizeError", "the offset is past the end of the node");
+            return false;
+        }
+        out = point{node, offset};
+        return true;
+    };
+    set_method(
+        cx, *proto, "isPointInRange",
+        [self_of, start_of, end_of, checked_point](context & c, std::span<value> a) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            point p;
+            if (!checked_point(c, a, self, false, p)) { return value::boolean(false); }
+            const nodes n{c};
+            return value::boolean(n.position(p, start_of(c, self)) >= 0 &&
+                                  n.position(p, end_of(c, self)) <= 0);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "comparePoint",
+        [self_of, start_of, end_of, checked_point](context & c, std::span<value> a) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            point p;
+            if (!checked_point(c, a, self, true, p)) { return value::undefined(); }
+            const nodes n{c};
+            if (n.position(p, start_of(c, self)) < 0) { return value::number(-1); }
+            if (n.position(p, end_of(c, self)) > 0) { return value::number(1); }
+            return value::number(0);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "intersectsNode",
+        [self_of, start_of, end_of](context & c, std::span<value> a) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            const nodes n{c};
+            const value node = arg(a, 0);
+            if (!n.is_node(node)) {
+                c.throw_error("TypeError", "Range: the argument is not a Node");
+                return value::undefined();
+            }
+            const point s = start_of(c, self);
+            if (!same(n.root(node), n.root(s.node))) { return value::boolean(false); }
+            const value up = n.parent(node);
+            if (!up.is_object_like()) { return value::boolean(true); }
+            const double offset = n.index(node);
+            return value::boolean(n.position({up, offset}, end_of(c, self)) < 0 &&
+                                  n.position({up, offset + 1}, s) > 0);
+        },
+        script::attr_builtin);
+    set_method(
+        cx, *proto, "compareBoundaryPoints",
+        [this, self_of, start_of, end_of](context & c, std::span<value> a) {
+            script::object_object * self = self_of(c);
+            if (self == nullptr) { return value::undefined(); }
+            const double how = context::to_number(arg(a, 0));
+            const value other = arg(a, 1);
+            if (!(how == 0 || how == 1 || how == 2 || how == 3)) {
+                throw_dom_exception(c, "NotSupportedError",
+                                    "compareBoundaryPoints: `how` is not one of the four");
+                return value::undefined();
+            }
+            if (!other.is_object()) {
+                c.throw_error("TypeError", "compareBoundaryPoints: the argument is not a Range");
+                return value::undefined();
+            }
+            auto * source = static_cast<script::object_object *>(other.as_heap());
+            const nodes n{c};
+            const point this_point = how == 0 || how == 3 ? start_of(c, self) : end_of(c, self);
+            const point other_point =
+                how == 0 || how == 1 ? start_of(c, source) : end_of(c, source);
+            if (!same(n.root(this_point.node), n.root(other_point.node))) {
+                throw_dom_exception(c, "WrongDocumentError", "the ranges are in different trees");
+                return value::undefined();
+            }
+            return value::number(n.position(this_point, other_point));
+        },
+        script::attr_builtin);
+
     // DOM 5.5 "contained": (node, 0) after the start and (node, length)
     // before the end, in the range's tree.
     const auto contained = [](const nodes & n, value node, point s, point e) {

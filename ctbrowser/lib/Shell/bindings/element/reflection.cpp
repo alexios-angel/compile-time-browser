@@ -1026,6 +1026,13 @@ node_id dom_bindings::element_reference_by_id(const read_txn & txn, node_id elem
 value dom_bindings::element_reference_get(context & cx, std::string_view idl,
                                           std::string_view content, bool list) {
     const value self = cx.current_this();
+    // THE DOCUMENT THAT OWNS THE RECEIVER answers, as every prototype method
+    // shared across the realm's documents does: a createHTMLDocument's element
+    // reads its own tree (aria-element-reflection.html, "Adopting element
+    // keeps references").
+    if (dom_bindings * owner = owner_of(self); owner != nullptr && owner != this) {
+        return owner->element_reference_get(cx, idl, content, list);
+    }
     const node_id id = receiver(cx);
     if (!id || !self.is_object()) { return value::null(); }
     auto * object = static_cast<script::object_object *>(self.as_heap());
@@ -1100,6 +1107,10 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
 void dom_bindings::element_reference_set(context & cx, std::string_view idl,
                                          std::string_view content, bool list, value given) {
     const value self = cx.current_this();
+    if (dom_bindings * owner = owner_of(self); owner != nullptr && owner != this) {
+        owner->element_reference_set(cx, idl, content, list, given);
+        return;
+    }
     const node_id id = receiver(cx);
     if (!id || !self.is_object()) { return; }
     auto * object = static_cast<script::object_object *>(self.as_heap());

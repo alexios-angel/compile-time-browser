@@ -353,6 +353,35 @@ void test_a_content_attribute_compiles_to_a_function() {
        " el.dispatchEvent(new Event('scroll'));"
        " return window.seenType; })()",
        "scroll");
+    // THE SCOPE CHAIN, HTML 8.1.8.1: the document, then the form owner, then
+    // the element, are object environments around the body - innermost last,
+    // so `id` reads the element's, `body` the document's (an element has no
+    // `body`), `acceptCharset` the form owner's - and `remove` is the GLOBAL,
+    // because Element.prototype[@@unscopables] vetoes the method
+    // (remove-unscopable.html).
+    is("(function () {"
+       " var el = document.createElement('div');"
+       " el.id = 'the-id';"
+       " el.setAttribute('onscroll', 'window.seen = id + \"/\" + body.tagName');"
+       " el.dispatchEvent(new Event('scroll'));"
+       " return window.seen; })()",
+       "the-id/BODY");
+    is("(function () {"
+       " window.remove = 'global';"
+       " var el = document.createElement('div');"
+       " el.setAttribute('onscroll', 'window.seen = typeof remove + \"/\" + typeof this.remove');"
+       " el.dispatchEvent(new Event('scroll'));"
+       " return window.seen; })()",
+       "string/function");
+    is("(function () {"
+       " var form = document.createElement('form');"
+       " form.acceptCharset = 'utf-8';"
+       " var el = document.createElement('input');"
+       " form.appendChild(el);"
+       " el.setAttribute('onscroll', 'window.seen = acceptCharset');"
+       " el.dispatchEvent(new Event('scroll'));"
+       " return window.seen; })()",
+       "utf-8");
     // A changed attribute compiles again, and a removed one reads null.
     is("(function () {"
        " var el = document.createElement('div');"

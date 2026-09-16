@@ -48,9 +48,26 @@ std::size_t dom_bindings::run_due_callbacks() {
     // FETCHES FIRST, so a handler waiting on one runs in the same turn as the
     // timers rather than a turn behind them. Copied before running, because a
     // handler resolved by one may start another.
+    //
+    // AND ROOTED WHILE THEY RUN. The queue is what mark_roots walks, and the
+    // swap below empties it - so from the first callback of the batch the
+    // rest were reachable from a local vector and nothing else, and a
+    // collection during that callback freed the reader, image or promise the
+    // next one was about to touch. image_basics' three FileReaders crashed in
+    // exactly that order once the heap was one allocation busier.
+    const auto root_all = [this](auto & due, auto member) {
+        std::vector<value> held;
+        held.reserve(due.size() * 2);
+        for (const auto & waiting : due) { member(waiting, held); }
+        return context::rooted_values{*cx_, held};
+    };
     if (!fetches_.empty()) {
         std::vector<pending_fetch> due;
         due.swap(fetches_);
+        const auto keep = root_all(due, [](const pending_fetch & w, std::vector<value> & held) {
+            held.push_back(w.promise);
+            held.push_back(w.signal);
+        });
         for (const pending_fetch & waiting : due) {
             settle_fetch(*cx_, waiting);
             note_callback_fault("fetch");
@@ -76,6 +93,10 @@ std::size_t dom_bindings::run_due_callbacks() {
     if (!image_loads_.empty()) {
         std::vector<pending_image> due;
         due.swap(image_loads_);
+        const auto keep = root_all(due, [](const pending_image & w, std::vector<value> & held) {
+            held.push_back(w.target);
+            held.push_back(w.promise);
+        });
         for (const pending_image & waiting : due) {
             settle_image(*cx_, waiting);
             note_callback_fault("image load");
@@ -86,6 +107,10 @@ std::size_t dom_bindings::run_due_callbacks() {
     if (!reads_.empty()) {
         std::vector<pending_read> due;
         due.swap(reads_);
+        const auto keep = root_all(due, [](const pending_read & w, std::vector<value> & held) {
+            held.push_back(w.reader);
+            held.push_back(w.blob);
+        });
         for (const pending_read & waiting : due) {
             settle_read(*cx_, waiting);
             note_callback_fault("FileReader");
