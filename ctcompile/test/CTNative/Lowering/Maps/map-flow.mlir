@@ -8,7 +8,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-capture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CELL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED
 
-// NATIVE: emitc.verbatim {{.*}}using map_storage = std::map<K, V, map_key_less<K>>
+// No snapshot anywhere in the program, so no CTNATIVE_ORDERED_MAPS define
+// precedes the runtime include: lookup is the associative storage.
+// NATIVE-NOT: CTNATIVE_ORDERED_MAPS
+// NATIVE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NATIVE: emitc.declare_func @makeStore_1
 // NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::string_to_number_map>">
 // NATIVE: emitc.func @initialize_2({{.*}}!emitc.opaque<"std::shared_ptr<ctnative::string_to_number_map>">

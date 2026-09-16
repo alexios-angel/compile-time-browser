@@ -39,7 +39,7 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 // (ops inside emitc.func print without their dialect prefix)
 //
 // CHECK: module attributes {ctnative.deduced_count = 4 : i64}
-// CHECK: emitc.include <"cmath">
+// CHECK: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // CHECK-NEXT: emitc.include <"type_traits">
 // CHECK-NEXT: emitc.verbatim "#ifndef CTCOMPILE_NO_TYPE_PINS
 // CHECK: "emitc.constant"() <{value = 2.000000e+00 : f64}> : () -> f64

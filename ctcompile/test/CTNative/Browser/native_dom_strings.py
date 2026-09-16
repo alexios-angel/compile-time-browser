@@ -1508,10 +1508,7 @@ def emitted(args, module, name, *, optional_read=True, uri_call=False):
         )
         or (
             optional_read
-            and (
-                "ctbrowser::get_element_attribute" not in cpp
-                or "std::optional<std::string>" not in cpp
-            )
+            and ("ctnative::get_attribute" not in cpp or "std::optional<std::string>" not in cpp)
         )
         or (not optional_read and "ctnative::has_attribute" not in cpp)
         or (uri_call and re.search(r"\bcatch\s*\(", cpp))

@@ -129,7 +129,7 @@
 // choosing its storage. A use-list's order cannot select bool or double and
 // make otherwise identical sites disagree about the shape key.
 //
-// CONFLICT: struct nullable_scalar {
+// CONFLICT: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // CONFLICT: emitc.class @ctn_v
 // CONFLICT-NEXT: emitc.field @v : !emitc.opaque<"ctnative::nullable_scalar">
 // CONFLICT: emitc.func @twofaced_1

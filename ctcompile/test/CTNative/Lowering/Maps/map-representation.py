@@ -119,11 +119,12 @@ def main():
             # matching storage contract has been removed or replaced.
             forged = args.work / "missing-order-contract.mlir"
             original = module.read_text()
+            # The ordered contract is the define in front of the runtime include.
             altered = (
                 "\n".join(
                     line
                     for line in original.splitlines()
-                    if "ctcompile: insertion order is observable" not in line
+                    if "#define CTNATIVE_ORDERED_MAPS 1" not in line
                 )
                 + "\n"
             )

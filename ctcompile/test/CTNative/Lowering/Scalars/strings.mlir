@@ -9,7 +9,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SHARED-MIXED
 
-// NATIVE: emitc.include <"string">
+// NATIVE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NATIVE: emitc.func @main() -> i32
 // NATIVE: emitc.func @placements_{{[0-9]+}}({{.*}}!emitc.opaque<"std::string">{{.*}}) -> !emitc.opaque<"std::string">
 // COERCION: ctjs.func private @add$1

@@ -245,7 +245,7 @@ def main():
             key_carrier = "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
             assert f"ctnative::number_map<{key_carrier}>" in cpp
             assert f"ctnative::map_storage<{key_carrier}, ctnative::object_value>" in cpp
-            assert ("struct map_storage" in cpp) == ordered
+            assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered
             out = args.work / f"{name}-{label}.cpp"
             out.write_text(number_object_lifetime(cpp, ordered))
             for index, compiler in enumerate(compilers):

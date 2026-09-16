@@ -27,15 +27,11 @@
 // --- the include and the preamble, and ONLY when there is an array ----------
 //
 // The other native lits pin line positions and the printing gate reports byte
-// counts, so an include and a preamble emitted unconditionally would move both
-// for every program that has no array in it. `native-numeric.mlir` is the
-// witness: it has no `<vector>` line to find.
+// counts. Since 2026-09-15 the helpers are Runtime/ctnative.hpp's and the
+// program spells one include; what this pins is that a dense array reaches
+// them by name and by no other route.
 //
-// DENSE: emitc.include <"vector">
-// DENSE: emitc.verbatim
-// DENSE-SAME: inline nullable_scalar vec_at
-// DENSE-SAME: inline double vec_length
-// DENSE-SAME: inline void vec_push
+// DENSE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 // --- one variable, one push per element, one call per read ------------------
 //

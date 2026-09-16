@@ -30,9 +30,9 @@
 // RUN: cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%t/globalstring.js -DOUTPUT=%t/globalstring.mlir -P %S/../../Checks/pipeline.cmake
 // RUN: FileCheck %s --check-prefix=GLOBALSTRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/globalstring.mlir
 // RUN: ctjs-translate --mlir-to-cpp %t/globalstring.mlir > %t/globalstring.cpp
-// RUN: g++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic -ffp-contract=off %t/globalstring.cpp -o %t/globalstring-gcc
+// RUN: %gxx -O2 -ffp-contract=off %t/globalstring.cpp -o %t/globalstring-gcc
 // RUN: %t/globalstring-gcc | FileCheck %s --check-prefix=GLOBALSTRINGOUT --match-full-lines
-// RUN: clang++ -std=c++23 -O2 -Wall -Wextra -Werror -Wconversion -pedantic -ffp-contract=off %t/globalstring.cpp -o %t/globalstring-clang
+// RUN: %clangxx -O2 -ffp-contract=off %t/globalstring.cpp -o %t/globalstring-clang
 // RUN: %t/globalstring-clang | FileCheck %s --check-prefix=GLOBALSTRINGOUT --match-full-lines
 // RUN: nm -C %t/globalstring-gcc | FileCheck %s --check-prefix=GLOBALSTRINGBIN --implicit-check-not=ctbrowser::script
 

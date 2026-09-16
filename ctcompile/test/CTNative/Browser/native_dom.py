@@ -601,12 +601,15 @@ def standalone(args, native, name, checks, compilers, includes, libraries):
             raise RuntimeError(f"{name}/{mode}: missing typed standalone DOM entry\n{cpp}")
         if "nullable_scalar" in cpp:
             raise RuntimeError(f"{name}/{mode}: Boolean DOM entry carries a scalar value model")
+        # The runtime header's helpers are the shared browser API's callers
+        # (toggle_class -> ctbrowser::toggle_token, and so on); the program
+        # must reach the DOM through them and nothing else.
         if "action" in name and (
-            "ctbrowser::toggle_token" not in cpp or "ctbrowser::set_element_attribute" not in cpp
+            "ctnative::toggle_class" not in cpp or "ctnative::set_attribute" not in cpp
         ):
             raise RuntimeError(f"{name}/{mode}: action bypasses the shared browser API\n{cpp}")
         if name.startswith(("forced-", "attributes-", "attribute-noops-", "explicit-forces-")):
-            if "ctbrowser::toggle_element_attribute" not in cpp:
+            if "ctnative::toggle_attribute" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: attribute toggle bypasses the shared DOM API")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp + client)
