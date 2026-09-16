@@ -582,6 +582,14 @@ void test_this() {
     expect_result("var a = {n: 1, get: function () { return this.n; }};"
                   "var b = {n: 2, get: a.get}; return b.get();",
                   "2");
+    // A SLOPPY FUNCTION CALLED WITH NO RECEIVER sees the global object
+    // (10.2.1.2 step 5.a) - a plain `f()`, a callback a native fires with
+    // undefined, `f.call(null)`; strict code keeps the undefined it was given.
+    expect_result("function f() { return this === globalThis; } return f();", "true");
+    expect_result("function f() { return this === globalThis; } return [1].map(f)[0];", "true");
+    expect_result("function f() { return this === globalThis; } return f.call(null);", "true");
+    expect_result("function f() { 'use strict'; return this === undefined; } return f();", "true");
+    expect_result("const f = () => this === globalThis; return f();", "true");
 }
 
 // `new Function(body)` - A COMPILER AT RUN TIME.
