@@ -1024,17 +1024,23 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return unsupported;
         }
         auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
-        auto compare =
-            truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-        if (!compare ||
-            (compare.getKind() != ctjs::CompareKind::Lt &&
-             compare.getKind() != ctjs::CompareKind::Gt) ||
+        auto negation = truthy ? truthy.getValue().getDefiningOp<ctjs::UnaryOp>() : ctjs::UnaryOp{};
+        auto compare = truthy ? (negation ? negation.getOperand() : truthy.getValue())
+                                    .getDefiningOp<ctjs::CompareOp>()
+                              : ctjs::CompareOp{};
+        const auto forwardKind = negation ? ctjs::CompareKind::Ge : ctjs::CompareKind::Lt;
+        const auto reversedKind = negation ? ctjs::CompareKind::Le : ctjs::CompareKind::Gt;
+        if (!compare || (compare.getKind() != forwardKind && compare.getKind() != reversedKind) ||
+            (negation &&
+             (negation.getKind() != ctjs::UnaryKind::Not || negation->getBlock() != header)) ||
             truthy->getBlock() != header || compare->getBlock() != header) {
             return unsupported;
         }
         // Normalize only the proof operands. The original comparison and its
-        // evaluation order stay intact, with both operands independently proved Numbers.
-        const bool reversed = compare.getKind() == ctjs::CompareKind::Gt;
+        // evaluation order stay intact. Negated inclusive comparisons require
+        // both operands independently proved bounded Numbers below: NaN would
+        // invalidate !(index >= length) == (index < length).
+        const bool reversed = compare.getKind() == reversedKind;
         auto index =
             llvm::dyn_cast<mlir::BlockArgument>(reversed ? compare.getRhs() : compare.getLhs());
         auto length =

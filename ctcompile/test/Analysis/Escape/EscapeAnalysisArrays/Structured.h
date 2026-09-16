@@ -161,6 +161,24 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                     "%index = %zero", "%index = %one"),
                     .arrays = "a:[x]",
                     .exit = "zero -> {}"});
+    const std::string negated =
+        replace(replace(original, "compare lt %index, %length", "compare ge %index, %length"),
+                "    %continue = ctjs.truthy %less",
+                "    %negated = ctjs.unary not %less\n    %continue = ctjs.truthy %negated");
+    const std::string negatedReversed =
+        replace(negated, "compare ge %index, %length", "compare le %length, %index");
+    for (const std::string & source : {negated, negatedReversed}) {
+        rows.push_back({.what = "structured negated guards preserve reordered aliases",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured negated guards preserve zero-trip starts",
+                        .body = replace(replace(source, "  ctjs.append %y to %a\n", ""),
+                                        "%index = %zero", "%index = %one"),
+                        .arrays = "a:[x]",
+                        .exit = "zero -> {}"});
+    }
     const std::string computedStart = prefix + "  %start = ctjs.unary plus %zero\n" +
                                       replace(loop, "%index = %zero", "%index = %start") +
                                       "  ctjs.return %result\n";
@@ -431,6 +449,20 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(original, "compare lt", "compare le"));
     reject("a structured reversed inclusive guard does not prove an own index",
            replace(reversed, "compare gt", "compare ge"));
+    reject("a negated structured greater-than guard remains inclusive",
+           replace(negated, "compare ge", "compare gt"));
+    reject("a negated structured reversed less-than guard remains inclusive",
+           replace(negatedReversed, "compare le", "compare lt"));
+    reject("a structured negated guard cannot use a dynamic bound",
+           replace(negated, "compare ge %index, %length", "compare ge %index, %p"));
+    reject("a structured negated guard cannot invert a NaN comparison",
+           replace(negated, "#ctjs.number<0>", "#ctjs.number<9221120237041090560>"));
+    reject("a structured negated guard cannot hide a bound change",
+           replace(negated, "    %read =",
+                   "    %name = ctjs.constant #ctjs.string<\"length\">\n"
+                   "    ctjs.set_property %base[%name], %zero\n    %read ="));
+    reject("a structured typeof guard is not logical negation",
+           replace(negated, "unary not %less", "unary typeof %less"));
     reject("a structured greater-than guard still requires length on the left",
            replace(reversed, "compare gt %length, %index", "compare gt %index, %length"));
     reject("a structured reversed strict guard cannot hide a bound change",

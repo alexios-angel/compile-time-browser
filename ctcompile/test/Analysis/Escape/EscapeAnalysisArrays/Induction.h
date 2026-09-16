@@ -103,6 +103,30 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,x]",
          .exit = "zero -> {}"},
         "x");
+    const std::string negated =
+        replace(replace(savedChild, "compare lt %index, %length", "compare ge %index, %length"),
+                "  %flag = ctjs.truthy %less",
+                "  %negated = ctjs.unary not %less\n  %flag = ctjs.truthy %negated");
+    const std::string negatedReversed =
+        replace(negated, "compare ge %index, %length", "compare le %length, %index");
+    for (const std::string & source : {negated, negatedReversed}) {
+        run({.what = "negated inclusive comparisons retain the exact returned child",
+             .body = source,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "negated guards discharge only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        run({.what = "negated guards preserve the exact zero-trip start",
+             .body = replace(source, "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+             .arrays = "a:[one,x]",
+             .exit = "zero -> {}"},
+            "x");
+    }
     const std::string makeStart =
         "  %start = ctjs.binary sub %one, %one {storage_test_id = \"start\"}\n";
     const std::string computed =
@@ -464,6 +488,28 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(original, "compare lt", "compare le"));
     reject("reversed inclusive guards do not prove an own index",
            replace(reversed, "compare gt", "compare ge"));
+    reject("negated greater-than still includes the inherited length index",
+           replace(negated, "compare ge", "compare gt"));
+    reject("negated reversed less-than still includes the inherited length index",
+           replace(negatedReversed, "compare le", "compare lt"));
+    reject("negated guards cannot use a different bound",
+           replace(negated, "compare ge %index, %length", "compare ge %index, %two"));
+    reject("negated guards still reject a dynamic bound",
+           replace(negated, "compare ge %index, %length", "compare ge %index, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("negated guards cannot conceal an array mutation",
+           replace(negated, "  %read =", "  ctjs.set_property %base[%key], %zero\n  %read ="));
+    reject("negated guards check every own index before releasing children",
+           replace(negated, "%base[%i]", "%base[%two]"), ArrayContentsFailure::MissingElement);
+    reject("logical negation cannot borrow a NaN initialization",
+           replace(negated, "#ctjs.number<0>", "#ctjs.number<9221120237041090560>"));
+    reject("logical negation cannot borrow a String initialization",
+           replace(negated, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
+    reject("typeof does not complement the comparison",
+           replace(negated, "unary not %less", "unary typeof %less"));
+    reject("a second logical negation does not certify the strict guard",
+           replace(negated, "  %flag = ctjs.truthy %negated",
+                   "  %twice = ctjs.unary not %negated\n  %flag = ctjs.truthy %twice"));
     reject("greater-than guards still require length on the left",
            replace(reversed, "compare gt %length, %index", "compare gt %index, %length"));
     reject("reversed strict guards cannot use a different bound",
