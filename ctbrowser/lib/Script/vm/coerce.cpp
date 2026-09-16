@@ -217,6 +217,13 @@ double context::to_number_value(value v) {
         throw_error("TypeError", "Cannot convert a BigInt value to a number");
         return std::nan("");
     }
+    // A SYMBOL OUT OF ToPrimitive - `Object(Symbol())`, a valueOf answering
+    // one - is 7.1.4's TypeError; a bare symbol argument is the caller's
+    // numeric_arg check, for the reason internal.hpp gives.
+    if (out.is_kind(heap_kind::symbol)) {
+        throw_error("TypeError", "Cannot convert a Symbol value to a number");
+        return std::nan("");
+    }
     return to_number(out);
 }
 

@@ -107,6 +107,27 @@ int main() {
     js_expect("parseInt(\"42px\")", "42"); // a PREFIX parse
     js_expect("parseFloat(\"3.14abc\")", "3.14");
     js_expect("parseInt(\"0xFF\")", "255");
+    // 19.2.5 in full: the radix through ToInt32 (an object's valueOf, undefined
+    // and NaN mean 10, a huge one wraps), out of [2, 36] is NaN, a 0x prefix
+    // only without a demanded radix, Unicode spaces trimmed, big values kept.
+    js_expect("[parseInt('11', true), parseInt('11', undefined), parseInt('11', new Number(2)),"
+              " parseInt('11', {valueOf() { return 2; }}), parseInt('11', NaN),"
+              " parseInt('11', 4294967298), parseInt('0', 1), parseInt('0', 37)].join()",
+              "NaN,11,3,3,11,3,NaN,NaN");
+    js_expect("[parseInt('\u00A01'), parseInt('\u20281'), parseInt('0x10', 10),"
+              " parseInt('-10000000000000000000', 10), parseInt('0x10000000000000000', 16)].join()",
+              "1,1,0,-10000000000000000000,18446744073709552000");
+    // 19.2.2 / 19.2.3 go through ToPrimitive: a valueOf runs and its throw
+    // propagates, a Symbol is a TypeError.
+    const auto throws = [](std::string_view code) {
+        return "(function () { try { " + std::string{code} +
+               "; return 'no'; } catch (e) { return e.name; } })()";
+    };
+    js_expect("isNaN({valueOf() { return 1; }}) + ',' + isFinite({valueOf() { return 1; }})",
+              "false,true");
+    js_expect(throws("isNaN({valueOf() { throw new RangeError('x'); }})"), "RangeError");
+    js_expect(throws("isFinite(Symbol())"), "TypeError");
+    js_expect(throws("isFinite(Object(Symbol()))"), "TypeError");
 
     // --- arithmetic edges -----------------------------------------------------
     js_expect("5 % 3", "2");

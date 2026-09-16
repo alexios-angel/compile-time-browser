@@ -1308,12 +1308,22 @@ void install_promise(context & cx) {
     // install_weak_refs(cx);
     install_disposable(cx);
 
-    // 19.2.2 and 19.2.3, both of arity 1.
-    detail::global_fn(cx, "isNaN", 1, [](context &, std::span<value> a) {
-        return value::boolean(std::isnan(num_at(a, 0)));
+    // 19.2.2 and 19.2.3, both of arity 1: ? ToNumber(number) - through
+    // ToPrimitive, so a valueOf runs and a throw from it (or a Symbol, or a
+    // BigInt) propagates rather than reading as NaN.
+    detail::global_fn(cx, "isNaN", 1, [](context & c, std::span<value> a) {
+        const value v = arg_at(a, 0);
+        if (!numeric_arg(c, v)) { return value::undefined(); }
+        const double n = c.to_number_value(v);
+        if (c.throw_pending()) { return value::undefined(); }
+        return value::boolean(std::isnan(n));
     });
-    detail::global_fn(cx, "isFinite", 1, [](context &, std::span<value> a) {
-        return value::boolean(std::isfinite(num_at(a, 0)));
+    detail::global_fn(cx, "isFinite", 1, [](context & c, std::span<value> a) {
+        const value v = arg_at(a, 0);
+        if (!numeric_arg(c, v)) { return value::undefined(); }
+        const double n = c.to_number_value(v);
+        if (c.throw_pending()) { return value::undefined(); }
+        return value::boolean(std::isfinite(n));
     });
     // `String` is a NAMESPACE as well as a coercion, the same way Number is.
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array

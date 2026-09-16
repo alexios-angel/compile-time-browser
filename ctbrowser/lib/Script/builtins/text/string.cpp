@@ -171,6 +171,8 @@ inline constexpr std::uint32_t not_a_code_point = 0xFFFFFFFFu;
 // than as a copy so all three methods are one algorithm - they were three
 // copies of the same set, which is how `trim` and `trimEnd` came to disagree
 // about an empty result.
+} // namespace
+
 void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t & from,
                  std::size_t & to) {
     from = 0;
@@ -195,6 +197,8 @@ void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t
         }
     }
 }
+
+namespace {
 
 // 22.1.3.14 step 2.b and 22.1.3.20 step 2.b: `matchAll` and `replaceAll`
 // REFUSE a RegExp without `g`, because both mean "every match" and a

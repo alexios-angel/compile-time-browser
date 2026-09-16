@@ -5,6 +5,7 @@
 // functions' declarations - is in internal.hpp.
 
 #include "internal.hpp"
+#include "text/internal.hpp"
 
 #include <chrono>
 #include <format>
@@ -1234,29 +1235,57 @@ void install_globals(context & cx) {
     using detail::new_table;
     // 19.2.5 gives parseInt two parameters and 19.2.4 gives parseFloat one.
     detail::global_fn(cx, "parseInt", 2, [](context & c, std::span<value> a) {
+        // 19.2.5, step by step. ? ToString(string), then StrWhiteSpaceChar
+        // trimmed from the front (the Unicode spaces too - TrimString's set,
+        // not the ASCII one), the sign, ? ToInt32(radix) with 0 meaning 10
+        // and a 0x prefix meaning 16 unless a radix was demanded, [2, 36]
+        // or NaN, the longest digit prefix or NaN, and the value - through a
+        // double, which rounds past 2^53 as the note allows.
         const std::string s = str_at(c, a, 0);
-        const int given = a.size() > 1 ? static_cast<int>(num_at(a, 1)) : 0;
-        int base = given == 0 ? 10 : given;
-        // A LEADING 0x IS HEXADECIMAL when no radix was demanded - 19.2.5 step
-        // 8. Defaulting to 10 made `parseInt("0xFF")` stop at the `x` and
-        // answer 0, which is how a colour parser reads black without erroring.
-        const std::string_view body = trim(s, js_whitespace);
-        const std::string_view digits =
-            !body.empty() && (body.front() == '+' || body.front() == '-') ? body.substr(1) : body;
-        if ((given == 0 || given == 16) && digits.size() > 1 && digits[0] == '0' &&
-            (digits[1] == 'x' || digits[1] == 'X')) {
-            base = 16;
+        if (c.throw_pending()) { return value::undefined(); }
+        std::size_t from = 0;
+        std::size_t to = 0;
+        trim_bounds(s, true, false, from, to);
+        std::string_view rest = std::string_view{s}.substr(from);
+        double sign = 1;
+        if (!rest.empty() && (rest.front() == '+' || rest.front() == '-')) {
+            if (rest.front() == '-') { sign = -1; }
+            rest.remove_prefix(1);
         }
-        try {
-            std::size_t used = 0;
-            const long long out = std::stoll(s, &used, base == 0 ? 10 : base);
-            return used == 0 ? value::number(std::nan(""))
-                             : value::number(static_cast<double>(out));
-        } catch (...) {
-            // parseInt("abc") is NaN, not an error - a page must not blow up on
-            // a malformed number it is about to check with isNaN.
-            return value::number(std::nan(""));
+        const value radix_arg = arg_at(a, 1);
+        if (!numeric_arg(c, radix_arg)) { return value::undefined(); }
+        const double radix_number = c.to_number_value(radix_arg);
+        if (c.throw_pending()) { return value::undefined(); }
+        int radix = static_cast<int>(context::to_int32(value::number(radix_number)));
+        bool strip_prefix = true;
+        if (radix != 0) {
+            if (radix < 2 || radix > 36) { return value::number(std::nan("")); }
+            if (radix != 16) { strip_prefix = false; }
+        } else {
+            radix = 10;
         }
+        if (strip_prefix && rest.size() >= 2 && rest[0] == '0' &&
+            (rest[1] == 'x' || rest[1] == 'X')) {
+            rest.remove_prefix(2);
+            radix = 16;
+        }
+        const auto digit = [](char ch) {
+            if (ch >= '0' && ch <= '9') { return ch - '0'; }
+            if (ch >= 'a' && ch <= 'z') { return ch - 'a' + 10; }
+            if (ch >= 'A' && ch <= 'Z') { return ch - 'A' + 10; }
+            return 36;
+        };
+        std::size_t used = 0;
+        while (used < rest.size() && digit(rest[used]) < radix) { ++used; }
+        if (used == 0) { return value::number(std::nan("")); }
+        // Base 10 goes through the exact decimal-to-double conversion, as the
+        // note asks; the other radices accumulate.
+        if (radix == 10) {
+            return value::number(sign * string_to_number_prefix(rest.substr(0, used)));
+        }
+        double out = 0;
+        for (std::size_t i = 0; i < used; ++i) { out = out * radix + digit(rest[i]); }
+        return value::number(sign * out);
     });
     detail::global_fn(cx, "parseFloat", 1, [](context & c, std::span<value> a) {
         // string_to_number_prefix, not std::stod: stod reads LC_NUMERIC for the
