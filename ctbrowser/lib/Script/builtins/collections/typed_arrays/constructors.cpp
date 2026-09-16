@@ -78,6 +78,9 @@ constexpr spec kinds[] = {
                                             double len) {
     const value out = allocate_typed_array(cx, kind, len);
     if (out.is_undefined()) { return out; }
+    // Both rooted across the element coercions, which can run script.
+    const context::rooted keep_source{cx, source};
+    const context::rooted keep_out{cx, out};
     auto * arr = static_cast<array_object *>(out.as_heap());
     for (double k = 0; k < len; k += 1) {
         const value v = cx.lookup_index(source, value::number(k));
@@ -244,8 +247,10 @@ constexpr spec kinds[] = {
         if (c.throw_pending()) { return value::undefined(); }
     }
     const value len_arg[1] = {value::number(len)};
+    const context::rooted keep_items{c, items};
     const value out = typed_array_create_from_constructor(c, ctor, len_arg, true);
     if (out.is_undefined()) { return out; }
+    const context::rooted keep_out{c, out};
     auto * made = static_cast<array_object *>(out.as_heap());
     for (double k = 0; k < len; k += 1) {
         value v = c.lookup_index(items, value::number(k));
@@ -271,6 +276,7 @@ constexpr spec kinds[] = {
     const value len_arg[1] = {value::number(static_cast<double>(a.size()))};
     const value out = typed_array_create_from_constructor(c, ctor, len_arg, true);
     if (out.is_undefined()) { return out; }
+    const context::rooted keep_out{c, out};
     auto * made = static_cast<array_object *>(out.as_heap());
     for (std::size_t k = 0; k < a.size(); ++k) {
         if (!typed_element_set(c, *made, k, a[k])) { return value::undefined(); }
