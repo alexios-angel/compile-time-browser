@@ -14,11 +14,11 @@ from .driver_umd import check_umd
 from CTNative.harness import find_compilers
 
 
-def check_positive(args, node, reference, compilers, nm, item):
+def check_positive(args, node, reference, compilers, nm, name, spec):
     """One native program: its source chain and call boundaries, the Node and
     interpreter observations, the owning proof, the standalone build and the
     emitted C++, returning what the forgery controls read back."""
-    name, (source, binding, value) = item
+    source, binding, value = spec
     js, ir, count = boundary.prepare(args, name, source)
     functions = (
         object_argument_cases()[name]["functions"]
@@ -180,8 +180,8 @@ def check_object_keys(args, node, reference, compilers, nm):
     positives = object_argument_sources()
     check_object_argument_observations(args, node, reference)
     saved = {
-        name: check_positive(args, node, reference, compilers, nm, item)
-        for name, item in positives.items()
+        name: check_positive(args, node, reference, compilers, nm, name, spec)
+        for name, spec in positives.items()
     }
     check_object_argument_controls(args, saved)
     print(f"object keys: {len(positives)} native programs and their controls")
@@ -351,8 +351,8 @@ def main(group=None):
     }
     check_source_observations(args, node, reference, positives)
     saved = {
-        name: check_positive(args, node, reference, compilers, nm, item)
-        for name, item in positives.items()
+        name: check_positive(args, node, reference, compilers, nm, name, spec)
+        for name, spec in positives.items()
     }
     check_primitive_absence_forgeries(args, saved, node, reference)
     check_leaf_object_forgeries(args, saved)
