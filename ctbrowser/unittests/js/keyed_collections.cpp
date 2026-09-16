@@ -102,9 +102,29 @@ void test_extras() {
                   "[object Map][object Set]");
 }
 
+// 24.1.1.2 AddEntriesFromIterable, one step at a time: an endless iterator
+// ends when the adder throws, the iterator is CLOSED (return() called once)
+// and the adder's throw is the one that surfaces; a non-object entry closes
+// it too; a non-iterable is a TypeError before anything is read.
+void test_constructor_steps_its_iterable() {
+    expect_result("var count = 0; var it = { [Symbol.iterator]() { return { next() { return {"
+                  " value: [], done: false }; }, return() { count++; return {}; } }; } };"
+                  " var saved = Map.prototype.set; Map.prototype.set = function () { throw new"
+                  " RangeError('adder'); }; var r; try { new Map(it); } catch (e) { r = e.name; }"
+                  " Map.prototype.set = saved; return r + ',' + count;",
+                  "RangeError,1");
+    expect_result("var count = 0; var it = { [Symbol.iterator]() { return { next() { return {"
+                  " value: 1, done: false }; }, return() { count++; return {}; } }; } };"
+                  " var r; try { new Map(it); } catch (e) { r = e.name; } return r + ',' + count;",
+                  "TypeError,1");
+    expect_result("try { new Set({}); } catch (e) { return e.name; }", "TypeError");
+    expect_result("return new Map([[1, 2], [3, 4]]).size + new Set([1, 1, 2]).size;", "4");
+}
+
 } // namespace
 
 int main() {
+    test_constructor_steps_its_iterable();
     test_receivers();
     test_keys();
     test_weak();
