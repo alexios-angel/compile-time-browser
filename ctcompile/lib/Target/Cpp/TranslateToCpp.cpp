@@ -351,6 +351,12 @@ struct CppEmitter {
 
   // Resets the value counter to 0.
   void resetValueCounter();
+  /// After a nested callable body: its locals were numbered past this
+  /// emitter's, so continue after them and the function has one namespace.
+  void continueValueCounter(const CppEmitter &nested) {
+    if (nested.valueCount > valueCount)
+      valueCount = nested.valueCount;
+  }
 
   // Increases the loop nesting level by 1.
   void increaseLoopNestingLevel();
