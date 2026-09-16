@@ -6,35 +6,67 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## JSON recovery in flight, 2026-09-16 UTC
+## Native JSON chain recovered and gated, 2026-09-16 UTC
 
-Resumed **efe8daa8**, found in the previous checkpoint below, by replaying it in
-`../wt/codex-json-resume-20260916` on branch `codex-json-resume-20260916`.
-The repaired native JSON implementation and regressions are still uncommitted
-there; finish their gate before choosing new work. Three agents split recovery
-review, native regressions and the next Bootstrap boundary. September 7 WIP is
-already an ancestor and needs no further recovery.
+Resumed **efe8daa8**, identified in the previous handoff and AGENT-SYNC, by
+replaying its draft over the audit landings in `codex-json-resume-20260916`.
+**53b9f68a** and **0a7c0302** finish that thread; the old `claude-json-chain`
+draft is superseded. Three agents split recovery review, native regressions and
+the Bootstrap boundary survey. September 7 WIP is already an ancestor.
 
-Integrated **09341902** passed the complete devbox build and **604/604 CTests
-in 1503.00s**, including the lit wrapper in **1086.91s**; wrapper exit **0**.
+**53b9f68a** recovers bounded checked-call chains in source order. JSON member
+origins follow complete register flow; both failure paths retain the exact saved
+input. Zero-call limits, every insufficient budget and failed proofs publish no
+partial evidence or source mutation. **0a7c0302** adds explicit original JSON/parse
+identity, reuses the existing `JsonType` only behind a complete DOM proof, and
+emits public `ctbrowser::parse_json` with owning `ctbrowser::json_value` results.
+Success moves from `std::expected`; String failure arms own their bytes. No Script,
+VM, collector, generic JSON fallback or second parser is emitted. **47d6e275**
+documents the contract in [native DOM entries](native-dom-entry.md).
+
+Focused gates passed **2/2 proof tests (3.92s)** and **3/3 DOM drivers (178.24s)**.
+JSON covers **7 sources / 14 Node-VM observations / 8 GCC-Clang binaries / 72
+refusals**, both providers, policies and layouts, plus a lifetime sanitizer after
+document destruction. DOM Strings now reports **775 Node-VM observations / 8
+binaries / 1,060 source refusals**, with its separate provenance/budget checks.
+Complete **310-step build / 605/605 CTests (1706.00s) / 177/177 lit (1305.06s)
+PASS**; full wrapper exit **0**. All **1,561 frozen input files / 113 submodule
+files** match the devbox and implementation commit **0a7c0302**; API and checkpoint
+docs were updated afterward. Evidence: `/tmp/ctcompile-json-resume/`, including
+`full.log`, `full.exit`, `full-last-test.log`, manifests and measured JSON reports.
+
 **a244a2f9** fixes remote sync with `rsync --checksum --no-times`: changed older
-worktree inputs now invalidate Ninja, while identical files retain their times.
-Standalone rsync checks and shell syntax pass. The first candidate run linked
-stale objects and is invalid. The fresh 85-step rebuild compiled the compiler,
-then caught a const MLIR handle in a new recovery test; its one-line fix is queued.
+worktree contents invalidate Ninja, while identical files keep their timestamps.
+Standalone rsync/shell checks pass. The first candidate run mixed stale objects
+and is invalid; the fresh compile's const-MLIR-handle test error was fixed before
+the green gates. The integrated **09341902** baseline also passed **604/604 CTests
+(1503.00s)**. Formatting with 23.1.1 passes **844 C++ / 95 Python / 106 web**;
+the required pinned formatter retains the same nine-file/26-diagnostic baseline.
 
-The active script is `/tmp/ctcompile-json-resume/full.sh`, with `full.log` and
-`full.exit`; it rebuilds, runs two proof tests, three native drivers, the complete
-gate, Bootstrap probes and frozen-input verification. `focused-unit.exit` and
-`focused-fresh.exit` are written only after their respective gates pass. Local
-manifests cover **1,561 source files / 113 submodule files**. Formatting with
-23.1.1 passes; the pinned formatter retains the known nine-file/26-diagnostic
-baseline. No candidate native result or full-bundle gain is claimed yet.
+Fresh Bootstrap remains **19/574 native / 0 of 43 globals**, both policies, without
+skips or pruning. DOM Data remains **7/7**, Button **4/86**, with 22 Node lifecycle
+observations and the unchanged VM inheritance failure. Those reports are identical
+to the preceding measurements. All **1,123 escape rows match the current pinned
+baseline**; only the already-landed audit program hash differs from the older
+pre-format evidence. No browser/runtime or escape-analysis source changed.
 
-After JSON recovery: original M's Boolean/Number/null prefix and mixed-result
-ownership, then F's original regexp/callback key conversion before H's attribute
-read. Runtime and escape-analysis source are unchanged. Current claims and the
-devbox queue are recorded in AGENT-SYNC.
+**Exact next native boundary:** original `H.getDataAttribute -> M` now reaches the
+complete typed DOM proof and refuses at **`ctjs.unary`**, under all four
+provider/policy combinations. Original M retains **24 nine-register blocks** and
+its handler at **^bb12**. Start with its Number truthiness (`!0`/`!1`), then prove
+the full Boolean/Number/null prefix and mixed JSON result ownership, including the
+saved optional-String guard. F's original regexp/callback key conversion and H's
+attribute-key construction follow. Full dataset/config, initialization/inheritance,
+retained callbacks and the application driver remain open; no full-bundle gain
+is claimed.
+
+**Independent next compiler task:** Claude's 2026-09-16T03:53 journal records a
+temporary restoration of top-level `var x;` writes in **7ad52ce2** to satisfy
+`bootstrap-host-prefix.py`'s wrapper proof. Import and prove the existing
+`program::hoisted_vars` declaration metadata instead of depending on those writes;
+keep runtime semantics as the oracle. The CTJS importer currently carries no such
+metadata. Claude's pending runtime/audit branches remain his to land. Earlier
+sections below are historical checkpoints.
 
 ## Helper/URI composition, the JSON chain draft and the audit, 2026-09-15 UTC
 
@@ -50,23 +82,8 @@ Focused gate: `ctcompile_native_dom_strings` PASS 133.48 s; the full gate on
 that tip was 605/606 with `ctcompile_native_dom_entry` at its 300 s cap under
 `-j8` (223 s in the previous green run) — both DOM driver caps are 900 s now.
 
-**Next native boundary, drafted but UNBUILT:** branch `claude-json-chain`
-(efe8daa8, worktree `~/Downloads/claude/wt/claude-json-chain`) carries original
-M's protected body `JSON.parse(decodeURIComponent(t))` as a two-call chain:
-`inspectSingleInvocationRegion(fn, steps, maxCalls)` accepts checked calls on one
-success path, `normalizeDOMURI` emits nested invokes when the contract binds the
-initial `JSON`, `DOMEntryAnalysis` gains `jsonIntrinsic`/`jsonParse`/`json` kinds
-with `HostDOMMethod::jsonParse`, the lattice's existing `JsonType` gets
-`carrier::json = ctbrowser::json_value` (String arms convert with
-`ctbrowser::json_value(text)`), the emitter lowers the parse invoke to
-`ctbrowser::parse_json` with `std::expected` moves, and
-`test/CTNative/Browser/native_dom_json.py` (5 sources / 6 refusals, Node + VM
-oracles) is registered as `ctcompile_native_dom_json`. It predates the audit
-merges below and must be rebased (EmitC/Types.cpp, ScalarConversions.cpp,
-LowerToEmitC.cpp and DOMEntry.cpp all moved) before its first devbox build.
-After it: M's remaining prefix (`'true'`/`'false'`/`Number(t).toString()`/
-`''`/`'null'` arms joining into `json_value`), then H.getDataAttribute's
-`data-bs-${F(key)}` template.
+The **efe8daa8** JSON draft at this checkpoint has been recovered and gated as
+**53b9f68a / 0a7c0302**, described above. Do not resume the old draft again.
 
 **Operator-directed ponytail audit** (this session, all by locked merge, each
 branch gated in its own devbox dir): `41d0185a` tools/cmake (mingw builders in
@@ -93,8 +110,7 @@ Two audit branches were still in their final gates at hand-over —
 emitted identifiers removed, locals are `v<N>`) and `audit-ctcompile-tests`
 (24 `cmake -P` checks and 7 driver registrations → lit, ~320 CTests → ~250 lit
 tests; `check()` copies → `ctbrowser/test/support/check.hpp`) — see AGENT-SYNC
-for who lands them. The integrated tip had NOT had one combined full gate yet;
-run `tools/remote-build.sh` first. Sanitizer findings outside the audit, not
+for who lands them. The integrated **09341902** baseline has since passed the combined gate above. Sanitizer findings outside the audit, not
 fixed: `Script/builtins/collections/keyed.cpp:593` UAF,
 `Style/css/calc/units.cpp:36` UAF, `Core/number_format.cpp:194` UB cast.
 
