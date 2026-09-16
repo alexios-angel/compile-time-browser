@@ -367,7 +367,17 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
         const auto txn = doc_->read();
         for (node_id walk = at.node; walk;) {
             path.push_back(path_step{walk, listen_on::node});
-            node_id up = txn.parent(walk);
+            // THE FLAT TREE, not the light-DOM chain: a slotted node's next step
+            // is its assigned slot - DOM "get the parent" returns the assigned
+            // slot for a slottable. A closed slot still routes the event, so
+            // assigned_slot_of ignores mode. event-inside-slotted-node.html
+            // walks [target, …, slot, slot parent, shadow root, host].
+            node_id up = assigned_slot_of(walk);
+            if (up) {
+                walk = up;
+                continue;
+            }
+            up = txn.parent(walk);
             if (!up) {
                 const shadow_tree * tree = shadow_tree_of(walk);
                 if (tree != nullptr && composed) {

@@ -312,9 +312,40 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
 
 // HTML 13.2, "serializing HTML fragments": the children of `target`, or with
 // `outer` the node itself, as markup.
-std::string dom_bindings::serialize_html(node_id target, bool outer) const {
+std::string dom_bindings::serialize_html(node_id target, bool outer, bool serializable_shadow_roots,
+                                         const std::vector<node_id> & shadow_roots) const {
     const auto txn = doc_->read();
     std::string out;
+    // Skip the per-element shadow-root lookup entirely when nothing asked for
+    // one, so `innerHTML`/`outerHTML` stay byte identical and pay nothing.
+    const bool want_shadow = serializable_shadow_roots || !shadow_roots.empty();
+    const auto in_list = [&](node_id root) {
+        for (const node_id r : shadow_roots) {
+            if (r == root) { return true; }
+        }
+        return false;
+    };
+    // An element's shadow root, written as `<template shadowrootmode>` + the
+    // root's children, BEFORE the host's own children - HTML fragment
+    // serialisation's shadow step. `wr` is the child writer of whichever pass
+    // is running (target vs. a descendant), so nested shadow trees recurse.
+    const auto emit_shadow = [&](node_id node, auto && wr) {
+        if (!want_shadow) { return; }
+        const node_id root = shadow_root_of(node);
+        if (!root) { return; }
+        const shadow_tree * how = shadow_tree_of(root);
+        if (how == nullptr) { return; }
+        if (!(in_list(root) || (serializable_shadow_roots && how->serializable))) { return; }
+        out += "<template shadowrootmode=\"";
+        out += how->open ? "open" : "closed";
+        out += "\"";
+        if (how->delegates_focus) { out += " shadowrootdelegatesfocus=\"\""; }
+        if (how->serializable) { out += " shadowrootserializable=\"\""; }
+        if (how->clonable) { out += " shadowrootclonable=\"\""; }
+        out += ">";
+        for (const node_id child : txn.children(root)) { wr(child); }
+        out += "</template>";
+    };
     const auto write = [&](auto && self, node_id node, bool raw) -> void {
         switch (txn.kind(node).value_or(node_kind::element)) {
         case node_kind::text:
@@ -364,6 +395,7 @@ std::string dom_bindings::serialize_html(node_id target, bool outer) const {
         }
         out += ">";
         if (ctbrowser::html::is_void_element(tag)) { return; }
+        emit_shadow(node, [&](node_id c) { self(self, c, false); });
         const bool raw_below = txn.element_ns(node) == node_ns::html && serializes_raw(tag);
         for (const node_id child : txn.children(node)) { self(self, child, raw_below); }
         out += "</";
@@ -374,6 +406,9 @@ std::string dom_bindings::serialize_html(node_id target, bool outer) const {
         write(write, target, false);
         return out;
     }
+    // `innerHTML`/`getHTML` on the target: its own shadow root comes before its
+    // children, exactly as a descendant host's would inside `write`.
+    emit_shadow(target, [&](node_id c) { write(write, c, false); });
     for (const node_id child : txn.children(target)) { write(write, child, false); }
     return out;
 }

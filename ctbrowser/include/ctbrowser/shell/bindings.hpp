@@ -2012,6 +2012,11 @@ private:
     // The slottables one <slot> has been given, in tree order. A function of
     // the two trees rather than a stored list: see the file.
     [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
+    // The <slot> a slottable is assigned to, or a null id - the FLAT-TREE
+    // parent of a slotted node, which is not its light-DOM parent. Ignores
+    // open/closed mode: an event still routes through a closed slot, so
+    // Slottable.assignedSlot (which hides a closed tree) keeps its own check.
+    [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
     // Every `<template shadowrootmode>` under `within` turned into the shadow
     // root it declares, IN `doc` - which is the scratch document a fragment
     // was parsed into. `setHTMLUnsafe` runs it; `innerHTML` deliberately does
@@ -2162,7 +2167,16 @@ private:
     // result in the element's place. See document/tree_ops.cpp.
     [[nodiscard]] std::string outer_html(node_id target) const;
     void set_outer_html(context & cx, node_id target, std::string_view markup);
-    [[nodiscard]] std::string serialize_html(node_id target, bool outer) const;
+    // The optional two parameters are the "serializable shadow roots" set of
+    // HTML fragment serialisation (`getHTML({serializableShadowRoots, shadowRoots})`):
+    // an element's shadow root is written out as a `<template shadowrootmode>`
+    // before the element's own children when the root's `serializable` is set
+    // and `serializable_shadow_roots` is true, or when the root is in
+    // `shadow_roots`. Both default off, so `innerHTML`/`outerHTML` are byte
+    // identical to before.
+    [[nodiscard]] std::string serialize_html(node_id target, bool outer,
+                                             bool serializable_shadow_roots = false,
+                                             const std::vector<node_id> & shadow_roots = {}) const;
     // "Validate and extract" for an ELEMENT name, DOM 4.9, shared by
     // createElementNS and createDocument: false having thrown the
     // InvalidCharacterError or NamespaceError the pair earns.
