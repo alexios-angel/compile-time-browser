@@ -113,7 +113,8 @@ enum class HostDOMMethod {
     jsonParse,
     datasetKeys,
     filterStrings,
-    startsWith
+    startsWith,
+    removeStringPrefix
 };
 
 struct HostDOMCall {
@@ -131,7 +132,8 @@ struct HostDOMCall {
     // An owning ctbrowser::json_value tree, from the shared public Core parser.
     [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
     [[nodiscard]] bool returnsString() const {
-        return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent;
+        return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent ||
+               kind == HostDOMMethod::removeStringPrefix;
     }
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
@@ -182,6 +184,7 @@ public:
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] bool isStringPrefixRegExp(ctjs::CallOp call) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
     // One URI or JSON.parse call with owning String/json_value continuations;
@@ -214,9 +217,11 @@ private:
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
+    std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics;
+    std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics,
+        regexpIntrinsics;
     std::vector<ctjs::InvokeOp> invocations;
     std::vector<mlir::Value> optionalStrings;
     std::vector<HostDOMStringRefinement> refinements;

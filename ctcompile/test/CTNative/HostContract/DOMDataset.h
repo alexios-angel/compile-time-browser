@@ -368,4 +368,114 @@ module {
     checkDOMDatasetFilter(context);
 }
 
+inline void checkDOMStringPrefix(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"MLIR(
+module {
+  ctjs.func @prefix$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %text = ctjs.constant #ctjs.string<"bsTitle">
+    %methodName = ctjs.constant #ctjs.string<"replace">
+    %method = ctjs.get_property %text[%methodName]
+    %factory = ctjs.load_global "__ctbrowser_regexp"
+    %pattern = ctjs.constant #ctjs.string<"^bs">
+    %flags = ctjs.constant #ctjs.string<"">
+    %replacement = ctjs.constant #ctjs.string<"">
+    %regex = ctjs.call %factory(%u, %pattern, %flags)
+    %answer = ctjs.call %method(%text, %regex, %replacement)
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    HostContract contract;
+    contract.entry = "prefix$0";
+    contract.elementParameters = {0};
+    contract.initialIntrinsics = {"String", "RegExp", "__ctbrowser_regexp"};
+    const auto noEvidence = [](mlir::ModuleOp input, const DOMEntryAnalysis & proof) {
+        bool empty = !proof.proved() && !proof.entry() && proof.parameters().empty();
+        input.walk([&](ctjs::CallOp call) {
+            empty &= !proof.call(call) && !proof.isStringPrefixRegExp(call);
+        });
+        input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
+        input.walk([&](ctjs::GetPropertyOp read) { empty &= !proof.method(read); });
+        return empty;
+    };
+    auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    check(static_cast<bool>(input), "anchored prefix source fixture parses");
+    if (!input) { return; }
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        contract.provider = provider;
+        DOMEntryAnalysis proof(*input, contract);
+        check(proof.proved(), "exact confined /^bs/ replacement proves with original identities");
+        if (!proof.proved()) {
+            std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+            continue;
+        }
+        unsigned literals = 0, replacements = 0;
+        input->walk([&](ctjs::CallOp call) {
+            if (proof.isStringPrefixRegExp(call)) {
+                ++literals;
+                check(!proof.call(call), "literal bookkeeping has no runtime call edge");
+            } else if (const auto * edge = proof.call(call)) {
+                ++replacements;
+                check(edge->kind == HostDOMMethod::removeStringPrefix && edge->returnsString() &&
+                          !edge->returnsBoolean() && edge->element == call.getReceiver(),
+                      "prefix removal retains its original String receiver and owning result");
+            }
+        });
+        check(literals == 1 && replacements == 1 &&
+                  hostContractFingerprint(*input) == contract.moduleSha256,
+              "prefix proof covers both calls without changing source");
+        check(DOMEntryAnalysis(*input, contract, proof.steps()).proved(),
+              "prefix proof reproduces its exact work budget");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, contract, budget);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "every incomplete prefix proof withholds literal and replacement evidence");
+        }
+        for (const std::string & missing : contract.initialIntrinsics) {
+            auto request = contract;
+            std::erase(request.initialIntrinsics, missing);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "prefix proof requires each original String/RegExp/factory identity");
+        }
+    }
+    for (const auto & changed : {
+             replaced(source, "#ctjs.string<\"^bs\">", "#ctjs.string<\"bs\">"),
+             replaced(source, "#ctjs.string<\"^bs\">", "#ctjs.string<\"^b.\">"),
+             replaced(source, "%flags = ctjs.constant #ctjs.string<\"\">",
+                      "%flags = ctjs.constant #ctjs.string<\"g\">"),
+             replaced(source, "%flags = ctjs.constant #ctjs.string<\"\">",
+                      "%flags = ctjs.constant #ctjs.number<0>"),
+             replaced(source, "%replacement = ctjs.constant #ctjs.string<\"\">",
+                      "%replacement = ctjs.constant #ctjs.string<\"x\">"),
+             replaced(source, "%replacement = ctjs.constant #ctjs.string<\"\">",
+                      "%replacement = ctjs.constant #ctjs.null"),
+             replaced(source, "%u, %pattern, %flags", "%element, %pattern, %flags"),
+             replaced(source, "%u, %pattern, %flags", "%u, %text, %flags"),
+             replaced(source, "%u, %pattern, %flags", "%u, %pattern, %text"),
+             replaced(source, "%text, %regex, %replacement", "%element, %regex, %replacement"),
+             replaced(source, "%text, %regex, %replacement", "%text, %regex, %text"),
+             replaced(source, "%text, %regex, %replacement", "%text, %regex, %replacement, %u"),
+             replaced(source, "ctjs.return %answer", "ctjs.return %regex"),
+             replaced(source, "ctjs.return %answer",
+                      "%twice = ctjs.call %method(%text, %regex, %replacement)\n    ctjs.return "
+                      "%answer"),
+             replaced(source, "ctjs.return %answer",
+                      "ctjs.store_global \"saved\", %regex\n    ctjs.return %answer"),
+             replaced(source, "%regex = ctjs.call",
+                      "ctjs.set_property %factory[%methodName], %u\n    %regex = ctjs.call"),
+         }) {
+        auto negative = mlir::parseSourceString<mlir::ModuleOp>(changed, &context);
+        check(static_cast<bool>(negative), "prefix refusal fixture parses");
+        if (!negative) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*negative);
+        check(noEvidence(*negative, DOMEntryAnalysis(*negative, request)),
+              "nonliteral, stateful, escaped, mutated and wrong-receiver prefix operations refuse");
+    }
+}
+
 } // namespace ctcompile::test::host_contract

@@ -60,6 +60,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             domUnusedPayloads.insert(invocation.getUnwindBody().front().getArgument(0));
         });
         function.walk([&](ctjs::CallOp call) {
+            if (entry.isStringPrefixRegExp(call)) { domReads.insert(call); }
             if (const auto * edge = entry.call(call)) {
                 domCalls[call] = *edge;
                 if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {
@@ -346,6 +347,24 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         swap(value.getResult(0));
         return true;
     }
+    if (edge.kind == HostDOMMethod::removeStringPrefix) {
+        auto prefix = stringConstant(at, where, "bs");
+        auto matches = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{at.getI1Type()}, call.getReceiver(),
+            at.getStringAttr("starts_with"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{prefix});
+        const auto indexType = ec::OpaqueType::get(context, "std::size_t");
+        auto zero = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"));
+        auto two = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "2"));
+        auto offset =
+            ec::ConditionalOp::create(at, where, indexType, matches.getResult(0), two, zero);
+        auto value = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)}, call.getReceiver(),
+            at.getStringAttr("substr"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{offset});
+        swap(value.getResult(0));
+        return true;
+    }
     if (edge.kind == HostDOMMethod::filterStrings) {
         auto callback = edge.callback;
         auto value = callWithConstValueOperands(
@@ -388,6 +407,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         break;
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
     case HostDOMMethod::filterStrings:
+    case HostDOMMethod::removeStringPrefix:
     case HostDOMMethod::startsWith: llvm_unreachable("String filter handled above");
     case HostDOMMethod::decodeURIComponent:
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");

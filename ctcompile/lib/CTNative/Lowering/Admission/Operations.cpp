@@ -53,7 +53,10 @@ bool admission::op(mlir::Operation * o) {
                      domEntry->isDataset(read.getResult()))) {
             return true;
         }
-        if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
+        if (auto call = llvm::dyn_cast<CallOp>(o);
+            call && (domEntry->call(call) || domEntry->isStringPrefixRegExp(call))) {
+            return true;
+        }
         if (auto invoke = llvm::dyn_cast<InvokeOp>(o); invoke && domEntry->invocation(invoke)) {
             return true;
         }

@@ -146,6 +146,10 @@ bool admission::function(ctjs::FuncOp fn) {
             load && domEntry && domEntry->isInitialIntrinsic(load)) {
             return;
         }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(o);
+            call && domEntry && domEntry->isStringPrefixRegExp(call)) {
+            return;
+        }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
             read && domEntry &&
             (domEntry->method(read) || domEntry->isTokenList(read.getResult()) ||

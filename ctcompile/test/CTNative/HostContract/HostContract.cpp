@@ -845,6 +845,7 @@ int main() {
     checkDOMEntry(context);
     checkDOMNumbers(context);
     checkDOMDataset(context);
+    checkDOMStringPrefix(context);
     checkDOMBranchFilter(context);
     checkDOMIteration(context);
     checkDOMURI(context);

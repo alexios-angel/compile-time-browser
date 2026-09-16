@@ -51,6 +51,8 @@ ITERATION_INTRINSICS = [
     "__ctbrowser_iter_next",
     "__ctbrowser_iter_close",
 ]
+PREFIX_INTRINSICS = ITERATION_INTRINSICS + ["RegExp", "__ctbrowser_regexp"]
+PREFIX = 'let i = n.replace(/^bs/, "");'
 LOOP_SOURCES = {
     "dataset_loop": f"function dataset_loop(t) {{ {LOOP_COUNT} }}\n",
     "dataset_loop_order": f"function dataset_loop_order(t) {{ let joined = ''; "
@@ -59,6 +61,13 @@ LOOP_SOURCES = {
     "t.setAttribute('data-bs-later', 'x'); t.removeAttribute('data-bs-z'); let joined = ''; "
     "for (const n of selected) { joined = joined + n + '|'; } return joined; }\n",
 }
+PREFIX_SOURCES = {
+    "dataset_loop_prefix": f"function dataset_loop_prefix(t) {{ let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ {PREFIX} joined = joined + i + '|'; }} return joined; }}\n",
+    "dataset_loop_prefix_all": "function dataset_loop_prefix_all(t) { let joined = ''; "
+    f"for (const n of Object.keys(t.dataset)) {{ {PREFIX} joined = joined + i + '|'; }} return joined; }}\n",
+}
+LOOP_SOURCES.update(PREFIX_SOURCES)
 # Web IDL's named-property order is attribute order, including numeric names.
 # Chrome independently measures this order; an ordinary object is the wrong double.
 KEYS = ["bsZ", "10", "2", "01", "", "__proto__", "Foo", "foo-Bar"]
@@ -116,6 +125,22 @@ SOURCES = {
     for name, body in (BODIES | FILTER_BODIES).items()
 } | LOOP_SOURCES
 CASES = {name: [(ATTRS, KEYS, KEYS)] if name in BODIES else FILTER_CASES for name in SOURCES}
+for name in PREFIX_SOURCES:
+    CASES[name] = FILTER_CASES + [
+        (
+            [
+                "data-bsÉtage",
+                "data-bsİtem",
+                "data-bs𐐀name",
+                "data-bs😀name",
+                "data-",
+                "data-b",
+                "data-abs",
+            ],
+            ["bsÉtage", "bsİtem", "bs𐐀name", "bs😀name", "", "b", "abs"],
+            ["bsÉtage", "bsİtem", "bs𐐀name", "bs😀name"],
+        ),
+    ]
 REFUSALS = {
     "missing_read": "return element.dataset.missing;",
     "dataset_escape": "return element.dataset;",
@@ -188,6 +213,43 @@ REFUSALS = {
     "{ element(n); count = count + 1; } return count;",
 }
 
+PREFIX_LOOP = f"const t = element; let joined = ''; for (const n of {BOOTSTRAP_FILTER}) {{ {PREFIX} joined = joined + i; }} return joined;"
+REFUSALS.update(
+    {
+        "prefix_unanchored": PREFIX_LOOP.replace("/^bs/", "/bs/"),
+        "prefix_flags": PREFIX_LOOP.replace("/^bs/", "/^bs/i"),
+        "prefix_stateful": PREFIX_LOOP.replace("/^bs/", "/^bs/g"),
+        "prefix_pattern": PREFIX_LOOP.replace("/^bs/", "/^b./"),
+        "prefix_nonempty": PREFIX_LOOP.replace('replace(/^bs/, "")', 'replace(/^bs/, "x")'),
+        "prefix_nonstring": PREFIX_LOOP.replace('replace(/^bs/, "")', "replace(/^bs/, 0)"),
+        "prefix_dynamic_replacement": PREFIX_LOOP.replace(
+            'replace(/^bs/, "")', "replace(/^bs/, n)"
+        ),
+        "prefix_dynamic_flags": PREFIX_LOOP.replace("/^bs/", '__ctbrowser_regexp("^bs", n)'),
+        "prefix_wrong_receiver": PREFIX_LOOP.replace(
+            PREFIX, 'const replace = n.replace; let i = replace(/^bs/, "");'
+        ),
+        "prefix_extra_argument": PREFIX_LOOP.replace('replace(/^bs/, "")', 'replace(/^bs/, "", 1)'),
+        "prefix_escape": PREFIX_LOOP.replace(
+            PREFIX, 'const regex = /^bs/; element.saved = regex; let i = n.replace(regex, "");'
+        ),
+        "prefix_reuse": PREFIX_LOOP.replace(
+            PREFIX, 'const regex = /^bs/; n.replace(regex, ""); let i = n.replace(regex, "");'
+        ),
+        **{
+            f"prefix_replaced_{index}": f"{target} = element; {PREFIX_LOOP}"
+            for index, target in enumerate(
+                (
+                    "__ctbrowser_regexp",
+                    "String.prototype.replace",
+                    "RegExp.prototype.exec",
+                    "RegExp.prototype[Symbol.replace]",
+                )
+            )
+        },
+    }
+)
+
 
 def oracles(args):
     source = "".join(SOURCES.values())
@@ -205,6 +267,10 @@ def oracles(args):
                     selected = keys + ["later"]
                 elif name == "dataset_reread":
                     selected = keys[1:] + ["later"]
+            if name in PREFIX_SOURCES:
+                if name == "dataset_loop_prefix_all":
+                    selected = keys
+                selected = [key.removeprefix("bs") for key in selected]
             number = name in ("dataset_filter_length", "dataset_loop")
             if number:
                 wanted[name].append(str(len(selected)))
@@ -260,7 +326,8 @@ def client(symbol, owned, name):
     )
     call = "session.invoke(element)" if owned else f"{symbol}(element)"
     fixtures = ",".join(
-        "{" + ",".join(json.dumps(key) for key in attrs) + "}" for attrs, _, _ in CASES[name]
+        "{" + ",".join(json.dumps(key, ensure_ascii=False) for key in attrs) + "}"
+        for attrs, _, _ in CASES[name]
     )
     number = name in ("dataset_filter_length", "dataset_loop")
     saved_type = (
@@ -326,6 +393,7 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
+    assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
     expected = oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -348,12 +416,16 @@ def main():
                             contract,
                             provider=provider,
                             initial_intrinsics=(
-                                ITERATION_INTRINSICS
-                                if name in LOOP_SOURCES
+                                PREFIX_INTRINSICS
+                                if name in PREFIX_SOURCES
                                 else (
-                                    ["Object", "Array", "String"]
-                                    if name not in BODIES
-                                    else ["Object"]
+                                    ITERATION_INTRINSICS
+                                    if name in LOOP_SOURCES
+                                    else (
+                                        ["Object", "Array", "String"]
+                                        if name not in BODIES
+                                        else ["Object"]
+                                    )
                                 )
                             ),
                             dataset_parameters=[0],
@@ -366,9 +438,9 @@ def main():
                         run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
                         native = deduced
                     entries = dom.NATIVE.findall(native.read_text())
-                    assert len(entries) == (1 if name in BODIES else 2) and not dom.FUNCTION.search(
-                        native.read_text()
-                    ), native.read_text()
+                    assert len(entries) == (
+                        1 if name in BODIES or name == "dataset_loop_prefix_all" else 2
+                    ) and not dom.FUNCTION.search(native.read_text()), native.read_text()
                     entry = next(
                         symbol
                         for symbol in entries
@@ -377,6 +449,9 @@ def main():
                     cpp = run([args.translate, "--mlir-to-cpp", native]).stdout
                     assert "ctnative::dataset_keys" in cpp and not dom.VM.search(cpp), cpp
                     assert "__ctbrowser_" not in cpp, cpp
+                    if name in PREFIX_SOURCES:
+                        assert ".starts_with(" in cpp and ".substr(" in cpp, cpp
+                        assert not re.search(r"regex|RegExp", cpp), cpp
                     assert not re.search(
                         r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
                     ), cpp
@@ -440,7 +515,7 @@ def main():
                     dict(
                         contract,
                         provider=provider,
-                        initial_intrinsics=ITERATION_INTRINSICS,
+                        initial_intrinsics=PREFIX_INTRINSICS,
                         dataset_parameters=[0],
                     ),
                     f"refuse-{name}-{provider}-{optimize}",
@@ -510,6 +585,24 @@ def main():
                         dataset_parameters=[0],
                     ),
                     f"loop-premise-{refusals}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+    _, ir, contract = next(item for item in prepared if item[0] == "dataset_loop_prefix")
+    for missing in ("String", "RegExp", "__ctbrowser_regexp"):
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        dataset_parameters=[0],
+                        initial_intrinsics=[name for name in PREFIX_INTRINSICS if name != missing],
+                    ),
+                    f"prefix-premise-{refusals}",
                     optimize=optimize,
                     success=False,
                 )

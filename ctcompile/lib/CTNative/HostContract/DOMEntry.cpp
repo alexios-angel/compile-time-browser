@@ -50,17 +50,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 9 ||
-        llvm::any_of(contract.initialIntrinsics,
-                     [&](const auto & name) {
-                         return (name != "Object" && name != "Number" &&
-                                 name != "decodeURIComponent" && name != "JSON" &&
-                                 name != "Array" && name != "String" &&
-                                 name != "__ctbrowser_for_of_open" &&
-                                 name != "__ctbrowser_iter_next" &&
-                                 name != "__ctbrowser_iter_close") ||
-                                !intrinsicNames.insert(name).second;
-                     }) ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 11 ||
+        llvm::any_of(
+            contract.initialIntrinsics,
+            [&](const auto & name) {
+                return (name != "Object" && name != "Number" && name != "decodeURIComponent" &&
+                        name != "JSON" && name != "Array" && name != "String" && name != "RegExp" &&
+                        name != "__ctbrowser_regexp" && name != "__ctbrowser_for_of_open" &&
+                        name != "__ctbrowser_iter_next" && name != "__ctbrowser_iter_close") ||
+                       !intrinsicNames.insert(name).second;
+            }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
         refusal = "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
@@ -157,6 +156,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         filterStrings,
         callback,
         startsWith,
+        replacePrefix,
+        regexpFactory,
+        prefixRegExp,
         toggle,
         attribute,
         getAttribute,
@@ -183,7 +185,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
         provedStringVectorIndices;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
-        provedJSONIntrinsics, provedObjectIntrinsics;
+        provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
+    std::vector<ctjs::CallOp> provedPrefixRegExps;
     std::vector<ctjs::InvokeOp> provedInvocations;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
@@ -207,6 +210,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     const bool suppliedJSON = llvm::is_contained(contract.initialIntrinsics, "JSON");
     const bool suppliedArray = llvm::is_contained(contract.initialIntrinsics, "Array");
     const bool suppliedString = llvm::is_contained(contract.initialIntrinsics, "String");
+    const bool suppliedRegExp =
+        llvm::is_contained(contract.initialIntrinsics, "RegExp") &&
+        llvm::is_contained(contract.initialIntrinsics, "__ctbrowser_regexp");
+    const auto emptyString = [](mlir::Value value) {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        auto string =
+            constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
+        return string && string.getValue().empty();
+    };
     if (declaration) {
         for (ctjs::StoreGlobalOp store :
              declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
@@ -723,6 +735,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         values[load.getResult()] = Kind::undefined;
                         continue;
                     }
+                    if (suppliedString && suppliedRegExp &&
+                        load.getName() == "__ctbrowser_regexp") {
+                        values[load.getResult()] = Kind::regexpFactory;
+                        provedRegExpIntrinsics.push_back(load);
+                        continue;
+                    }
                     if (suppliedURI && load.getName() == "decodeURIComponent") {
                         values[load.getResult()] = Kind::uriIntrinsic;
                         provedURIIntrinsics.push_back(load);
@@ -790,6 +808,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         key == "startsWith") {
                         values[read.getResult()] = Kind::startsWith;
                         provedMethods.emplace_back(read, HostDOMMethod::startsWith);
+                        continue;
+                    }
+                    if (suppliedString && suppliedRegExp &&
+                        hasKind(read.getObject(), Kind::string) && key == "replace") {
+                        values[read.getResult()] = Kind::replacePrefix;
+                        provedMethods.emplace_back(read, HostDOMMethod::removeStringPrefix);
                         continue;
                     }
                     if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
@@ -863,6 +887,33 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
                     auto arguments = invoke.getArgs();
+                    if (hasKind(invoke.getCallee(), Kind::regexpFactory)) {
+                        if (!hasKind(invoke.getReceiver(), Kind::undefined) ||
+                            arguments.size() != 2 || ctjs::constantKey(arguments[0]) != "^bs" ||
+                            !emptyString(arguments[1])) {
+                            refusal = "DOM prefix removal requires the original /^bs/ literal";
+                            return false;
+                        }
+                        unsigned uses = 0;
+                        for (mlir::OpOperand & use : invoke.getResult().getUses()) {
+                            if (!spend()) { return false; }
+                            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                            if (!call || use.getOperandNumber() != 2 ||
+                                call.getArgs().size() != 2) {
+                                refusal = "DOM prefix RegExp escapes its single replacement";
+                                return false;
+                            }
+                            ++uses;
+                        }
+                        if (uses != 1) {
+                            refusal = "DOM prefix RegExp requires one confined replacement";
+                            return false;
+                        }
+                        values[invoke.getResult()] = Kind::prefixRegExp;
+                        provedPrefixRegExps.push_back(invoke);
+                        continue;
+                    }
                     if (hasKind(invoke.getCallee(), Kind::uriIntrinsic)) {
                         auto parent = llvm::dyn_cast<ctjs::InvokeOp>(invoke->getParentOp());
                         if (!parent || invoke->getParentRegion() != &parent.getBody() ||
@@ -909,6 +960,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     if (!method || method.getObject() != invoke.getReceiver()) {
                         refusal = "DOM call does not preserve its proved method receiver";
                         return false;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::replacePrefix) && arguments.size() == 2 &&
+                        hasKind(arguments[0], Kind::prefixRegExp) && emptyString(arguments[1])) {
+                        // ponytail: the exact ASCII /^bs/ with no flags needs no
+                        // regex engine. Broader patterns require their own proof.
+                        // Initial String/RegExp/factory identities fix @@replace,
+                        // exec and flag accessors; the census excludes mutation
+                        // and reentry, and the literal has no observable state.
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::removeStringPrefix, invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::string;
+                        continue;
                     }
                     if (hasKind(invoke.getCallee(), Kind::filterStrings) && arguments.size() == 1 &&
                         hasKind(arguments[0], Kind::callback)) {
@@ -1197,8 +1260,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     datasets = std::move(provedDatasets);
     stringVectorLengths = std::move(provedStringVectorLengths);
     stringVectorIndices = std::move(provedStringVectorIndices);
+    stringPrefixRegExps = std::move(provedPrefixRegExps);
     datasetElements = std::move(provedDatasetElements);
     objectIntrinsics = std::move(provedObjectIntrinsics);
+    regexpIntrinsics = std::move(provedRegExpIntrinsics);
     numberIntrinsics = std::move(provedNumberIntrinsics);
     uriIntrinsics = std::move(provedURIIntrinsics);
     jsonIntrinsics = std::move(provedJSONIntrinsics);
@@ -1254,13 +1319,18 @@ bool DOMEntryAnalysis::isStringVectorIndex(ctjs::GetPropertyOp read) const {
     return llvm::is_contained(stringVectorIndices, read);
 }
 
+bool DOMEntryAnalysis::isStringPrefixRegExp(ctjs::CallOp call) const {
+    return llvm::is_contained(stringPrefixRegExps, call);
+}
+
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
     return llvm::is_contained(numberIntrinsics, load);
 }
 
 bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
     return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load) ||
-           llvm::is_contained(jsonIntrinsics, load) || llvm::is_contained(objectIntrinsics, load);
+           llvm::is_contained(jsonIntrinsics, load) || llvm::is_contained(objectIntrinsics, load) ||
+           llvm::is_contained(regexpIntrinsics, load);
 }
 
 bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {
