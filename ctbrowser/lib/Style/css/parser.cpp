@@ -430,6 +430,9 @@ private:
                     ++nesting_;
                     at_rule_block_of(name, prelude, run[end]);
                     --nesting_;
+                    // The nested rules wrote THEIR declarations after ours:
+                    // the next run of ours starts past them.
+                    run_first = static_cast<std::uint32_t>(sheet_.declarations.size());
                     i = end + 1;
                 } else {
                     // A statement at-rule inside a block: `@layer a;` still
@@ -476,6 +479,7 @@ private:
             }
             flush();
             style_rule(run.subspan(i, open - i), run[open]);
+            run_first = static_cast<std::uint32_t>(sheet_.declarations.size());
             i = open + 1;
         }
         flush();
