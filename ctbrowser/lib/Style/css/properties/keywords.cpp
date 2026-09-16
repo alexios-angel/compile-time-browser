@@ -451,6 +451,171 @@ constexpr string_grammar string_grammars[] = {
     return keyword + " " + angle;
 }
 
+// The source text of a run of significant tokens, empty when any of it came
+// from the decoded-escape tail of the pool rather than the author's bytes.
+[[nodiscard]] std::string_view run_text(const token_stream & ts, std::span<const std::size_t> at) {
+    if (at.empty()) { return {}; }
+    const css_token & first = ts.tokens[at.front()];
+    const css_token & last = ts.tokens[at.back()];
+    if (first.text >= ts.source_length || last.text >= ts.source_length) { return {}; }
+    return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
+}
+
+// One `<length-percentage>`, literal or a math function, canonical.
+[[nodiscard]] std::optional<std::string> length_percentage(const token_stream & ts,
+                                                           std::span<const std::size_t> at) {
+    static constexpr property_syntax any_length{"", k::length_percentage, "", "", false, false};
+    if (at.empty()) { return std::nullopt; }
+    if (at.size() == 1) {
+        std::string one;
+        if (match_typed(ts, ts.tokens[at.front()], any_length, one)) { return one; }
+        if (ts.tokens[at.front()].type != token_type::function) { return std::nullopt; }
+    }
+    const std::string_view text = run_text(ts, at);
+    if (text.empty() || !may_have_math(text)) { return std::nullopt; }
+    const math_answer answer = evaluate_math(text, length_context{});
+    if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
+    if (answer.outcome == math_outcome::resolved &&
+        (answer.value.is_number || answer.value.type != numeric_type::length)) {
+        return std::nullopt;
+    }
+    return simplify_math(text);
+}
+
+// The comma-separated items of a value, each a run of significant tokens.
+// `nullopt` for an empty item - a leading, trailing or doubled comma.
+[[nodiscard]] std::optional<std::vector<std::vector<std::size_t>>> comma_items(
+    const token_stream & ts, const scan & found) {
+    std::vector<std::vector<std::size_t>> items{{}};
+    for (const std::size_t i : found.significant) {
+        if (ts.tokens[i].type == token_type::comma) {
+            if (items.back().empty()) { return std::nullopt; }
+            items.emplace_back();
+            continue;
+        }
+        items.back().push_back(i);
+    }
+    if (items.back().empty()) { return std::nullopt; }
+    return items;
+}
+
+// `[ normal | <length-percentage> | <timeline-range-name> <length-percentage>? ]#`
+// (Scroll-driven Animations §animation-range). The offset that names the whole
+// of the named range is dropped, which is 0% at the start and 100% at the end.
+[[nodiscard]] std::optional<std::string> animation_range(std::string_view property,
+                                                         const token_stream & ts,
+                                                         const scan & found) {
+    const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
+    if (!items) { return std::nullopt; }
+    const std::string_view whole = ascii_iequals(property, "animation-range-start") ? "0%" : "100%";
+    std::string out;
+    for (const std::vector<std::size_t> & item : *items) {
+        std::string one;
+        std::size_t k = 0;
+        if (ts.tokens[item.front()].type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(ts.tokens[item.front()]));
+            if (word == "normal") {
+                if (item.size() != 1) { return std::nullopt; }
+                one = word;
+            } else if (has_keyword("cover contain entry exit entry-crossing exit-crossing", word)) {
+                one = word;
+                k = 1;
+            } else {
+                return std::nullopt;
+            }
+        }
+        if (one != "normal" && k < item.size()) {
+            const std::optional<std::string> offset =
+                length_percentage(ts, std::span<const std::size_t>{item}.subspan(k));
+            if (!offset) { return std::nullopt; }
+            if (one.empty()) {
+                one = *offset;
+            } else if (*offset != whole) {
+                one += " " + *offset;
+            }
+        } else if (one.empty()) {
+            return std::nullopt;
+        }
+        out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+}
+
+// `[ from-image || <resolution> ] && snap?` (CSS Images 4). The `&&` is why
+// `3dpi snap from-image` is invalid and `snap 3dpi from-image` is not: `snap`
+// sits beside the pair, never inside it. Written as the author wrote it.
+[[nodiscard]] std::optional<std::string> image_resolution(const token_stream & ts,
+                                                          const scan & found) {
+    std::string out;
+    bool from_image = false;
+    bool resolution = false;
+    std::size_t snap_at = found.significant.size();
+    for (std::size_t k = 0; k < found.significant.size(); ++k) {
+        const css_token & t = ts.tokens[found.significant[k]];
+        if (t.type == token_type::ident) {
+            const std::string word = ascii_lower_copy(ts.text_of(t));
+            if (word == "snap") {
+                if (snap_at != found.significant.size()) { return std::nullopt; }
+                snap_at = k;
+            } else if (word == "from-image" && !from_image) {
+                from_image = true;
+            } else {
+                return std::nullopt;
+            }
+            out += (out.empty() ? "" : " ") + word;
+            continue;
+        }
+        if (t.type != token_type::dimension || resolution) { return std::nullopt; }
+        const std::string_view unit = ts.unit_of(t);
+        if (!ascii_iequals_any(unit, {"dpi", "dpcm", "dppx", "x"})) { return std::nullopt; }
+        resolution = true;
+        out += (out.empty() ? "" : " ") + serialize_number(t.number) + ascii_lower_copy(unit);
+    }
+    if (!from_image && !resolution) { return std::nullopt; }
+    if (snap_at != found.significant.size() && snap_at != 0 &&
+        snap_at + 1 != found.significant.size()) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+// `auto | rect( [ <length> | auto ]#{4} )` (CSS Masking 1, the CSS 2.1
+// property). The comma-separated form is the only one: `rect(10px 20px, 30px
+// 40px)` is a syntax error however many engines once took it.
+[[nodiscard]] std::optional<std::string> clip_rect(const token_stream & ts, const scan & found) {
+    const std::vector<std::size_t> & at = found.significant;
+    if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
+        ascii_iequals(ts.text_of(ts.tokens[at[0]]), "auto")) {
+        return "auto";
+    }
+    if (at.size() < 2 || ts.tokens[at.front()].type != token_type::function ||
+        !ascii_iequals(ts.text_of(ts.tokens[at.front()]), "rect(") ||
+        ts.tokens[at.back()].type != token_type::close_paren) {
+        return std::nullopt;
+    }
+    static constexpr property_syntax any_length{"", k::length, "", "", false, false};
+    std::string out{"rect("};
+    std::size_t side = 0;
+    for (std::size_t k = 1; k + 1 < at.size(); ++k) {
+        const css_token & t = ts.tokens[at[k]];
+        if (side % 2 == 1) {
+            if (t.type != token_type::comma) { return std::nullopt; }
+            ++side;
+            continue;
+        }
+        std::string one;
+        if (t.type == token_type::ident && ascii_iequals(ts.text_of(t), "auto")) {
+            one = "auto";
+        } else if (!match_typed(ts, t, any_length, one)) {
+            return std::nullopt;
+        }
+        out += (side == 0 ? "" : ", ") + one;
+        ++side;
+    }
+    if (side != 7) { return std::nullopt; }
+    return out + ")";
+}
+
 } // namespace
 
 namespace detail {
@@ -509,6 +674,18 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && ascii_iequals(property, "offset-rotate")) {
         handled = true;
         answer = offset_rotate(ts, found);
+    }
+    if (!handled && ascii_iequals_any(property, {"animation-range-start", "animation-range-end"})) {
+        handled = true;
+        answer = animation_range(property, ts, found);
+    }
+    if (!handled && ascii_iequals(property, "image-resolution")) {
+        handled = true;
+        answer = image_resolution(ts, found);
+    }
+    if (!handled && ascii_iequals(property, "clip")) {
+        handled = true;
+        answer = clip_rect(ts, found);
     }
     if (!handled) { return false; }
     out = answer.value_or(std::string{});
