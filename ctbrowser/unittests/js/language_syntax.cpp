@@ -303,7 +303,7 @@ int main() {
     // statements/dispatch.cpp): `var x;` after a write reads undefined here.
     answers("var n = 0; for (var x of [99]) { var x; n += x; } x = 5; var x; var u; return [n, x, "
             "typeof u].join();",
-            "NaN,undefined,undefined"); // spec: "99,5,undefined"
+            "NaN,,undefined"); // spec: "99,5,undefined"; join() spells undefined ""
     answers("eval('var ev; var ew = 2;'); return typeof ev + ew;", "undefined2");
     answers("qq = 5; return qq;", "5"); // sloppy code still may
     answers(
@@ -361,7 +361,7 @@ int main() {
     answers("function f() { const g = () => w; let w = 5; return g(); } return f();", "5");
     answers("function f() { const {a, b = a + 1} = {a: 1}; let [c, d = c * 2] = [3]; return"
             " a + b + c + d; } return f();",
-            "11");
+            "12");
     // ...and a template substitution, re-parsed from its own text, reads a
     // binding declared before the template without a false dead zone.
     answers("function f() { const map = new Map([['k', 1]]); return `${[...map.keys()][0]}:${map"

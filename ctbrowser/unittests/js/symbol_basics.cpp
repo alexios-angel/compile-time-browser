@@ -72,12 +72,14 @@ int main() {
     js_expect("typeof Symbol.prototype", "object");
 
     // --- a proxy trap is handed the SYMBOL, not its internal spelling ---------
-    js_expect("var seen = []; var p = new Proxy({}, { get: function (t, k) { seen.push(typeof k);"
-              " return 1; }, has: function (t, k) { seen.push(typeof k); return true; } });"
-              " p[Symbol.iterator]; p.x; Symbol.iterator in p; seen.join()",
+    // (js_expect takes an EXPRESSION, hence the IIFEs.)
+    js_expect("(function () { var seen = []; var p = new Proxy({}, { get: function (t, k) {"
+              " seen.push(typeof k); return 1; }, has: function (t, k) { seen.push(typeof k);"
+              " return true; } }); p[Symbol.iterator]; p.x; Symbol.iterator in p;"
+              " return seen.join(); })()",
               "symbol,string,symbol");
-    js_expect("var got; new Proxy({}, { get: function (t, k) { got = k; } })[Symbol.iterator];"
-              " got === Symbol.iterator",
+    js_expect("(function () { var got; new Proxy({}, { get: function (t, k) { got = k; } })"
+              "[Symbol.iterator]; return got === Symbol.iterator; })()",
               "true");
 
     // --- KNOWN WRONG: a symbol must REFUSE implicit conversion ----------------

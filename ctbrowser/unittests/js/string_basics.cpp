@@ -350,15 +350,16 @@ int main() {
     // 22.1.3.20 step order: the argument's @@replace and the global-flag
     // refusal come BEFORE ToString(this) - a receiver whose toString throws
     // never runs it when the argument answers or is refused.
-    js_expect(
-        "var poison = { toString() { throw 'no'; } }; var r; try {"
-        " ''.replaceAll.call(poison, /a/, 'b'); } catch (e) { r = e instanceof TypeError; } r",
-        "true");
-    js_expect("var poison = { toString() { throw 'no'; } };"
-              " ''.replace.call(poison, { [Symbol.replace]() { return 'ok'; } }, 'b')",
+    // (js_expect takes an EXPRESSION, hence the IIFEs.)
+    js_expect("(function () { var poison = { toString() { throw 'no'; } }; var r; try {"
+              " ''.replaceAll.call(poison, /a/, 'b'); } catch (e) { r = e instanceof TypeError; }"
+              " return r; })()",
+              "true");
+    js_expect("(function () { var poison = { toString() { throw 'no'; } };"
+              " return ''.replace.call(poison, { [Symbol.replace]() { return 'ok'; } }, 'b'); })()",
               "ok");
-    js_expect("var poison = { toString() { throw 'no'; } }; var r; try {"
-              " ''.split.call(poison, 'x'); } catch (e) { r = e; } r",
+    js_expect("(function () { var poison = { toString() { throw 'no'; } }; var r; try {"
+              " ''.split.call(poison, 'x'); } catch (e) { r = e; } return r; })()",
               "no");
 
     // --- normalize checks its form even though it normalises nothing --------
