@@ -9,11 +9,10 @@
 // and 278 of 278, 2026-09-16) - so the file asserts the total rather than a
 // ratchet.
 //
-// IdnaTestV2.json is the exception, and is a RATCHET at 2,534 of 2,671: the
-// UTS #46 processing in url.cpp does not normalise to NFC (see the note above
-// domain_to_ascii there), and the 137 cases that miss are the ones that need
-// it, plus the one that needs CheckBidi. Raise the floor when either lands;
-// never lower it.
+// IdnaTestV2.json is the exception, and is a RATCHET at 2,668 of 2,671: the
+// UTS #46 processing in url.cpp does not do CheckBidi (see the note above
+// domain_to_ascii there), and the three cases that miss are the ones that need
+// it. Raise the floor when it lands; never lower it.
 
 #include <ctbrowser.hpp>
 #include <ctbrowser/core/json.hpp>
@@ -268,7 +267,7 @@ void test_the_idna_corpus() {
         }
         std::printf("url_wpt: %s %d / %d\n", name, passed, total);
         // The ratchet, and the removed-codepoint file which is exact.
-        CHECK(passed >= (total > 100 ? 2534 : total));
+        CHECK(passed >= (total > 100 ? 2668 : total));
     }
 }
 

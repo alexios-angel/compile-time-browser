@@ -413,6 +413,156 @@ void percent_encode(std::string & out, char32_t c, encode_set set) {
     return out;
 }
 
+// --- NFC, Unicode Annex #15 -------------------------------------------------
+//
+// UTS #46 step 2 normalises the mapped string, and 4.1's first validity
+// criterion is that a label already be NFC. Both want the canonical
+// decomposition, the combining classes and the composition table, and nothing
+// else in the engine has ever needed them - text is compared byte for byte
+// everywhere else, deliberately (core/algorithms.hpp is ASCII-only so a render
+// cannot depend on a locale). This is Unicode's data, not a locale's, so it is
+// the same answer on every host.
+
+struct nfd_entry {
+    char32_t cp;
+    std::uint16_t at;
+    std::uint8_t len;
+};
+struct ccc_range {
+    char32_t first;
+    char32_t last;
+    std::uint8_t ccc;
+};
+struct compose_pair {
+    char32_t a;
+    char32_t b;
+    char32_t cp;
+};
+
+#include "nfc_table.inc"
+
+// Hangul is ALGORITHMIC (3.12): 11,172 syllables that would be 11,172 table
+// rows and are three multiplications instead.
+constexpr char32_t hangul_sbase = 0xAC00;
+constexpr char32_t hangul_lbase = 0x1100;
+constexpr char32_t hangul_vbase = 0x1161;
+constexpr char32_t hangul_tbase = 0x11A7;
+constexpr std::uint32_t hangul_lcount = 19;
+constexpr std::uint32_t hangul_vcount = 21;
+constexpr std::uint32_t hangul_tcount = 28;
+constexpr std::uint32_t hangul_ncount = hangul_vcount * hangul_tcount;
+constexpr std::uint32_t hangul_scount = hangul_lcount * hangul_ncount;
+
+[[nodiscard]] std::uint8_t combining_class(char32_t c) {
+    std::size_t lo = 0;
+    std::size_t hi = std::size(ccc_ranges);
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (c < ccc_ranges[mid].first) {
+            hi = mid;
+        } else if (c > ccc_ranges[mid].last) {
+            lo = mid + 1;
+        } else {
+            return ccc_ranges[mid].ccc;
+        }
+    }
+    return 0;
+}
+
+void decompose_into(std::u32string & out, char32_t c) {
+    if (c >= hangul_sbase && c < hangul_sbase + hangul_scount) {
+        const std::uint32_t index = c - hangul_sbase;
+        out.push_back(hangul_lbase + index / hangul_ncount);
+        out.push_back(hangul_vbase + (index % hangul_ncount) / hangul_tcount);
+        if (const std::uint32_t t = index % hangul_tcount; t != 0) {
+            out.push_back(hangul_tbase + t);
+        }
+        return;
+    }
+    std::size_t lo = 0;
+    std::size_t hi = std::size(nfd_table);
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (c < nfd_table[mid].cp) {
+            hi = mid;
+        } else if (c > nfd_table[mid].cp) {
+            lo = mid + 1;
+        } else {
+            out.append(&nfd_data[nfd_table[mid].at], nfd_table[mid].len);
+            return;
+        }
+    }
+    out.push_back(c);
+}
+
+// "Compose a starter with what follows it", or 0 for a pair that does not.
+[[nodiscard]] char32_t compose(char32_t a, char32_t b) {
+    if (a >= hangul_lbase && a < hangul_lbase + hangul_lcount && b >= hangul_vbase &&
+        b < hangul_vbase + hangul_vcount) {
+        return hangul_sbase +
+               ((a - hangul_lbase) * hangul_vcount + (b - hangul_vbase)) * hangul_tcount;
+    }
+    if (a >= hangul_sbase && a < hangul_sbase + hangul_scount &&
+        (a - hangul_sbase) % hangul_tcount == 0 && b > hangul_tbase &&
+        b < hangul_tbase + hangul_tcount) {
+        return a + (b - hangul_tbase);
+    }
+    std::size_t lo = 0;
+    std::size_t hi = std::size(compose_pairs);
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (a < compose_pairs[mid].a || (a == compose_pairs[mid].a && b < compose_pairs[mid].b)) {
+            hi = mid;
+        } else if (a > compose_pairs[mid].a ||
+                   (a == compose_pairs[mid].a && b > compose_pairs[mid].b)) {
+            lo = mid + 1;
+        } else {
+            return compose_pairs[mid].cp;
+        }
+    }
+    return 0;
+}
+
+[[nodiscard]] std::u32string to_nfc(std::u32string_view text) {
+    std::u32string parts;
+    parts.reserve(text.size());
+    for (const char32_t c : text) { decompose_into(parts, c); }
+    // Canonical ordering (3.11): an insertion sort, which IS the stable sort
+    // the algorithm asks for and is cheaper than one on a sequence that is
+    // almost always already ordered.
+    for (std::size_t i = 1; i < parts.size(); ++i) {
+        const std::uint8_t klass = combining_class(parts[i]);
+        if (klass == 0) { continue; }
+        std::size_t j = i;
+        while (j > 0 && combining_class(parts[j - 1]) > klass) {
+            std::swap(parts[j], parts[j - 1]);
+            --j;
+        }
+    }
+    if (parts.empty()) { return parts; }
+    // Canonical composition (3.11), the annex's own loop: each character is
+    // either folded into the last STARTER or appended, and a character is
+    // blocked from its starter by one of equal or higher class before it.
+    std::u32string out;
+    out.push_back(parts[0]);
+    std::size_t starter = 0;
+    auto last_class = static_cast<int>(combining_class(parts[0]));
+    if (last_class != 0) { last_class = 256; }
+    for (std::size_t i = 1; i < parts.size(); ++i) {
+        const char32_t c = parts[i];
+        const auto klass = static_cast<int>(combining_class(c));
+        const char32_t composed = compose(out[starter], c);
+        if (composed != 0 && (last_class < klass || last_class == 0)) {
+            out[starter] = composed;
+            continue;
+        }
+        if (klass == 0) { starter = out.size(); }
+        last_class = klass;
+        out.push_back(c);
+    }
+    return out;
+}
+
 // --- UTS #46, "domain to ASCII" ---------------------------------------------
 //
 // THE WHOLE PROCESSING, not a hand-picked subset. What was here before mapped
@@ -427,12 +577,10 @@ void percent_encode(std::string & out, char32_t c, encode_set set) {
 // valid and a disallowed_STD3_* is its permissive self), General_Category=M,
 // Canonical_Combining_Class=Virama and Joining_Type.
 //
-// NOT DONE, and each costs a measured handful of IdnaTestV2's cases:
-//   * step 2's NFC normalisation, and the validity criterion that a label must
-//     already be NFC - 134 cases. It wants the canonical decomposition and
-//     composition tables, which are a bigger data set than all four above.
-//   * CheckBidi (5.4) - ONE case in the whole file, which is why a table of
-//     every code point's Bidi_Class is not carried for it.
+// Step 2's NFC is above, over Annex #15's data (tools/gen/nfc_table.py).
+//
+// NOT DONE: CheckBidi (5.4), which costs THREE of IdnaTestV2's 2,671 cases -
+// which is why a table of every code point's Bidi_Class is not carried for it.
 // CheckHyphens is false and VerifyDnsLength is false: the URL Standard says so.
 // IgnoreInvalidPunycode is TRUE, which is what leaves `xn--ASCII-` alone
 // instead of failing the domain.
@@ -569,6 +717,10 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
 // leading combining mark, every code point valid, and the two ContextJ rules.
 [[nodiscard]] bool valid_label(std::u32string_view label) {
     if (label.empty()) { return true; }
+    // Criterion 1: the label must ALREADY be in NFC. It is, for a label that
+    // came through the step above; it need not be for one punycode just
+    // decoded, which is the case this catches.
+    if (to_nfc(label) != label) { return false; }
     if (in_pairs(combining_mark_ranges, label.front())) { return false; }
     for (const char32_t c : label) {
         if (c == '.') { return false; }
@@ -614,6 +766,10 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
             mapped.push_back(c);
         }
     }
+    // Step 2, "Normalize": NFC over the whole mapped string, BEFORE it is cut
+    // into labels - a combining mark can only compose with what precedes it,
+    // and the label boundary is a U+002E that composes with nothing.
+    mapped = to_nfc(mapped);
     // Steps 3-5: break on U+002E, convert and validate each label, then
     // re-encode the ones that are not ASCII.
     std::string out;

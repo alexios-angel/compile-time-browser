@@ -28,10 +28,13 @@
 // punycode in both directions, so an `xn--` label is decoded and checked rather
 // than taken on trust. tools/gen/idna_table.py generates the four tables.
 //
-// WHAT IT DOES NOT DO: step 2's NFC normalisation, and CheckBidi. The first
-// costs 134 of url/IdnaTestV2.any.js's 2,671 cases and wants the canonical
-// decomposition and composition data; the second costs ONE, which is why no
-// Bidi_Class table is carried. See the note above domain_to_ascii in url.cpp.
+// Step 2's NFC is done too, from Annex #15's own data (tools/gen/nfc_table.py):
+// the only Unicode normalisation in the engine, and it is here because a domain
+// is the one string the platform normalises before comparing.
+//
+// WHAT IT DOES NOT DO: CheckBidi (UTS #46 5.4), which costs THREE of
+// url/IdnaTestV2.any.js's 2,671 cases - the reason no table of every code
+// point's Bidi_Class is carried. See the note above domain_to_ascii in url.cpp.
 //
 // NOTHING THIRD-PARTY IS INCLUDED ABOVE, and nothing of the VM either: this is
 // plain C++ over strings, which is what lets a unit test drive it with the

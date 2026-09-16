@@ -216,13 +216,14 @@ and `Joining_Type` - are generated from unicode.org by
 `tools/gen/idna_table.py` into `lib/Shell/net/idna_table.inc`; regenerate,
 never hand-edit.
 
-**What it still leaves out**, each measured against `IdnaTestV2.json`
-(2,534 of 2,671, up from 1,395): step 2's NFC normalisation and the criterion
-that a label already be NFC, worth 134 cases and wanting the canonical
-decomposition and composition data; and CheckBidi (§5.4), worth exactly ONE,
-which is why no `Bidi_Class` table is carried. CheckHyphens and
-VerifyDnsLength are false because the URL Standard says so. `url_wpt` drives
-`IdnaTestV2.json` as a ratchet at 2,534 and `IdnaTestV2-removed.json` exactly.
+Step 2's NFC is done too, from Annex #15's own data
+(`tools/gen/nfc_table.py`): the only Unicode normalisation in the engine, and
+it is here because a domain is the one string the platform normalises before
+comparing. **What it still leaves out** is CheckBidi (§5.4), worth THREE of
+`IdnaTestV2.json`'s 2,671 cases - which is why no `Bidi_Class` table is
+carried. CheckHyphens and VerifyDnsLength are false because the URL Standard
+says so. `url_wpt` drives `IdnaTestV2.json` as a ratchet at 2,668 (up from
+1,395 measured) and `IdnaTestV2-removed.json` exactly.
 
 **`TextEncoder` and `TextDecoder`** live beside them in
 `lib/Shell/bindings/window/encoding.cpp`: the Encoding Standard's UTF-8 decoder
