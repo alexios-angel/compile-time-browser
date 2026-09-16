@@ -1,49 +1,63 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-16, session 12.** Round one is MERGED (§1 below is history
-now: `c5682f32` T, `20f17da4` P, `247a7c53` W, `9c70aaa0` E on top of the
-audit's `09341902`; measured in `docs/test262.md` `9c70aaa0` and
-`docs/wpt.md` 2026-09-16). Round two is RUNNING as four agents in their own
-worktrees cut from `9c70aaa0` - A animations, G the value grammar, L layout,
-C the cascade - with the briefs of §3 (copies in
-`~/Downloads/claude/wt/wpt11-session/round2/`, with `COMMON.md`). Five more
-briefs are written and waiting for a free slot, in this order:
+**Updated 2026-09-16, session 13.** Round one and round two are MERGED (§1
+and §3 below are history: round two landed as four merge commits ending
+`c5c660cb` on session 12's `99122ca1` - L layout `ffabd5db`, G properties
+`888fe52d`, C cascade `eb0b0add`, A animations `2b7a298c` - followed by the
+fixes their own gates had shown: a nested rule's declarations leaking into
+the parent rule (`57e8c9e7`), a calc() media value read as a resolution
+(`6978e58f`), CSSOM interface objects not inheriting and the anonymous
+`@layer` block refused (`e29e197f`), then the six session-12 pins that had
+never run (`3cbe733c`..`f9967aad`: the 19.1 refusal for a plain assignment,
+the block-level static TDZ, the bound-function retained layout, the alpha a
+colour serialises to). Round three is RUNNING as four agents in their own
+worktrees cut from `e29e197f` - B typed-array kinds, U the URL parser, D
+document.write + html/syntax, F forms/ranges/traversal - with the briefs in
+`~/Downloads/claude/wt/wpt11-session/round3/` (`COMMON.md` says the tip and
+where the before-numbers are). Brief S (shadow DOM, custom elements,
+Selection, DOMParser) waits for a free slot.
 
-| brief | what | why now |
-|---|---|---|
-| `brief-B.md` | `BigInt64Array`/`BigUint64Array`/`Float16Array` (`element_kind` big_i64/big_u64/f16) | the single largest lever in `built-ins`: ~900 files die on `BigInt64Array is not defined` in the harness |
-| `brief-U.md` | the WHATWG URL parser behind `URL`, `URLSearchParams`, `location` (replacing the Boost.URL split in `shell/net/url.cpp`) | `url` 11/34, `URLSearchParams` undefined = 12 HARNESS_ERRORs in html/dom |
-| `brief-D.md` | `document.open/write/close`, html/syntax fixtures, the script processing model | html/syntax 22/268 (133 TIMEOUT), webappapis dynamic-markup-insertion |
-| `brief-F.md` | forms, Range's mutation algorithms, NodeIterator/TreeWalker | forms 58/647, ranges 16/72 (9,294 failing subtests), traversal 8/18 |
-| `brief-S.md` | shadow DOM, custom elements reactions, Selection, DOMParser | shadow-dom 74/345, custom-elements 37/193, selection 8/177 |
+**Measured** (devbox, the recorded instrument): the tip `e29e197f` and
+`a8b2d9af` (= `e29e197f` + the six fixes + ctcompile-v1 `53fef8aa`) are in
+`docs/wpt.md` and `docs/test262.md` once their runs land (`/tmp/m-<sha>`,
+`/tmp/w-<sha>` on the WSL box).
 
-**Open in the VM, not briefed** (each a day's work, with a Codex notice
-because the native backend follows the bytecode):
+**What round two left open, by agent** (each a brief's worth, not yet
+briefed):
 
-- **TDZ for `let`/`const`/`class`**: the engine has none except parameter
-  defaults (`compile_ident` emits a static throw there). A textual read
-  before the declaration in the same scope can be a static throw the same
-  way; a read from a nested closure needs a hole value in the register and a
-  check on captured reads - a new op or a new value tag, which is an ABI
-  change for ctcompile. ~150 test262 files (`block-scope`, `using`'s TDZ
-  family, class heritage).
-- **RegExp `\p{...}` property escapes** (469 `property-escapes/generated`
-  files) and the `v` flag's `unicodeSets` (85): the first is a data job -
-  the UCD tables behind General_Category, Script, Script_Extensions and the
-  binary properties, generated into a header by a tool under `tools/gen/`.
-- **`Object.prototype.toString` of an arguments object** is `[object Array]`
-  (arguments objects are arrays here), `Function.prototype` is not callable,
-  `NaN`/`Infinity`/`undefined` are writable globals (the globals table has
-  no attributes) - each a handful of files.
-- `var x;` at a script's top level writes undefined over an existing value:
-  `statements/dispatch.cpp` says why it stays (Codex's
-  `bootstrap-host-prefix.py` prover reads the write as the declaration).
+- **G2 - the grammars that accept too much.** Modelling 211 properties
+  gained 292 css files and lost 57, every one a `*-invalid.html`: a property
+  that was an expando refused everything, and its real grammar now accepts
+  some invalid forms. The list is the `LOST` block of the `t3` vs `tb` tally
+  in the session-13 notes (`wtally.py /tmp/agentG/t3 /tmp/agentG/tb`):
+  grid (`grid-auto-columns/rows`, `grid`, `grid-template`), counters,
+  `clip-path`/`mask`/`clip`, `columns`/`column-count`, `line-clamp`,
+  `offset-*`, `shape-outside`, `will-change`, `image-orientation`,
+  `text-autospace`, `hyphenate-character`, `caret-color-valid`, and five
+  css-values computed tests (`sin-cos-tan-computed`, `minmax-angle-computed`,
+  `calc-background-position-003`, `calc-linear-radial-conic-gradient-001`,
+  `random-serialize`). `lib/Style/css/properties/**` only.
+- **A2 - the interpolation rows.** CSS Animations/Transitions run from the
+  cascade now, and the harness's pages are 3x faster since `16f50178`; the
+  failing subtests are per-property interpolation shapes (`box-shadow`
+  lists, `background-*` layers, `border-image-*`, `calc-size()`, the
+  `transition: all` row). `bindings/animations/**` + `style::interpolate_text`.
+- **The cascade** still has `@container` size queries through a layout hook
+  only, `:has()` matching, and css-conditional's 172 `assert_implements`
+  HARNESS_ERRORs.
+
+**Open in the VM, not briefed:** a self-referencing closure in a NESTED
+block (`function f() { { let y = () => y; return typeof y(); } }` answers
+`undefined`; at the function's top level it is `function`) - the cell is
+made after the initialiser and the closure captured the register;
+`Object.prototype.toString` of an arguments object; RegExp `\p{...}` (469
+files) and the `v` flag (85); `var x;` at a script's top level still writes
+undefined (`statements/dispatch.cpp` says why).
 
 **Open in the DOM/CSS half, not briefed:** `scrollTop`/`scrollLeft` and the
 scroll event on elements (css/cssom-view 44/239 + 8 dom/events files),
 `FontFace` (3 HARNESS_ERRORs), `showModal`, the `NodeList` index read that
-allocates (250 million of them in `NodeList-static-length-getter-tampered-*`,
-now collected but slow).
+allocates.
 
 ## 1. (DONE 2026-09-16) The four round-one branches — merged as c5682f32, 20f17da4, 247a7c53, 9c70aaa0
 
@@ -110,7 +124,7 @@ called from a native with `this` undefined must bind `globalThis`.
   bogus COMMENT (data `?processing data?`), the tree builder makes a
   ProcessingInstruction.
 
-## 3. The round-two briefs
+## 3. (DONE 2026-09-16, session 13) The round-two briefs
 
 Each is one agent, disjoint paths, own worktree and devbox dir, briefed as
 `/tmp/wpt11/brief-{A,G,L,C}.md` were (the standing rules are
