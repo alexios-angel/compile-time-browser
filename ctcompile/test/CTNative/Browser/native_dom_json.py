@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Original M's protected body, JSON.parse(decodeURIComponent(t)), as native json_value.
+"""Original M's primitive prefix and JSON.parse(decodeURIComponent(t)) as native C++.
 
 The decode and parse calls become nested invokes on one success path; either
 failure returns the original String. Native results are ctbrowser::json_value
@@ -15,6 +15,7 @@ import shutil
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser import native_dom as dom
+from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser import native_dom_strings as strings
 from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
@@ -38,23 +39,97 @@ SOURCES = {
 SOURCES["json_helper"] = SOURCES["json_helper"].replace(
     BODY, "function parse(text) { " + BODY + " } return parse(text);"
 )
+BOOTSTRAP_M = """    function M(t) {
+        if ("true" === t) return !0;
+        if ("false" === t) return !1;
+        if (t === Number(t).toString()) return Number(t);
+        if ("" === t || "null" === t) return null;
+        if ("string" != typeof t) return t;
+        try {
+            return JSON.parse(decodeURIComponent(t))
+        } catch (e) {
+            return t
+        }
+    }"""
+BOOTSTRAP_F = """    function F(t) {
+        return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
+    }"""
+BOOTSTRAP_GET = "        getDataAttribute: (t, e) => M(t.getAttribute(`data-bs-${F(e)}`))"
+ATTRIBUTE_HELPERS = BOOTSTRAP_M + "\n" + BOOTSTRAP_F + "\nconst H = {\n" + BOOTSTRAP_GET + "\n};\n"
+GET = "element.getAttribute('data-bs-config')"
+NULLABLE_JOIN = (
+    "const saved = element.getAttribute('x'); if ('string' != typeof saved) return saved; "
+    + BODY.replace("text", "saved")
+)
+ATTRIBUTE_CASES = {
+    "json_number_not": f"return !Number({GET});",
+    "json_boolean_prefix": f"const text = {GET}; "
+    + "if ('true' === text) return !0; if ('false' === text) return !1; "
+    + "if ('string' != typeof text) return text; "
+    + BODY,
+    "json_bootstrap_m": BOOTSTRAP_M + f"\nreturn M({GET});",
+    "json_bootstrap_attribute": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "config");',
+    # Preserve the former refusal body, including its earlier DOM observation.
+    "json_nullable_join": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
+    + NULLABLE_JOIN,
+}
+SOURCES.update(
+    (name, f"function {name}(element) {{ {body} }}\n") for name, body in ATTRIBUTE_CASES.items()
+)
+INPUTS = tuple(value for value, _ in numbers.VALUES) + (
+    "true",
+    "false",
+    "null",
+    "1",
+    "1.0",
+    "-0.0",
+    "0e0",
+    "00",
+    "-00",
+    "1e0",
+    "1e+0",
+    " -Infinity",
+    "%7B%22saved%22%3A%5B1%2Ctrue%2Cnull%5D%7D",
+    "%5B%22%C3%A9%22%5D",
+    "%22a%5Cu0000%5C%22%5C%5C%C3%A9%22",
+    "%",
+    "not%20json",
+    "%5B1%2C",
+    "a\0b",
+)
 OBSERVE = """
-function observe(result) { return typeof result + ':' + JSON.stringify(result); }
+function observe(result) {
+    if (typeof result === 'number') {
+        if (result !== result) return 'number:NaN';
+        if (result === Infinity) return 'number:Infinity';
+        if (result === -Infinity) return 'number:-Infinity';
+        if (result === 0 && 1 / result < 0) return 'number:-0';
+    }
+    return typeof result + ':' + JSON.stringify(result);
+}
 """
 
 
 def check_oracles(args):
     source = "".join(SOURCES.values()) + OBSERVE
-    names = [f"jsonObservation{i:03}" for i in range(2 * len(CASES))]
-    observations = "".join(
-        f"var {names[2 * i + good]} = (function() {{ "
-        f"const queries = []; const result = {name}({{hasAttribute(key) {{ "
-        f"queries.push(key); return {str(bool(good)).lower()}; }}}}); "
-        "if (queries.join('|') !== 'good') throw new Error('JSON prefix order'); "
-        "return observe(result); })();\n"
-        for i, name in enumerate(CASES)
-        for good in (0, 1)
-    )
+    names, observations = [], []
+    for name in SOURCES:
+        inputs = INPUTS if name in ATTRIBUTE_CASES else (None, "")
+        trace = "get:data-bs-config" if name in ATTRIBUTE_CASES else "has:good"
+        if name == "json_nullable_join":
+            trace = "has:good|get:x"
+        for value in inputs:
+            label = f"jsonObservation{len(names):03}"
+            names.append(label)
+            observations.append(
+                f"var {label} = (function() {{ "
+                f"const queries = []; const result = {name}({{hasAttribute(key) {{ "
+                f"queries.push('has:' + key); return {str(value is not None).lower()}; "
+                f"}}, getAttribute(key) {{ queries.push('get:' + key); return {json.dumps(value)}; }} }}); "
+                f"if (queries.join('|') !== {json.dumps(trace)}) throw new Error('JSON prefix order'); "
+                "return observe(result); })();\n"
+            )
+    observations = "".join(observations)
     node = args.work / "json-node.js"
     node.write_text(source + observations + "".join(f"console.log({n});\n" for n in names))
     expected = run([args.node, str(node)]).stdout.splitlines()
@@ -75,7 +150,9 @@ def quote(value):
 
 CLIENT = r"""
 #include <cassert>
+#include <cmath>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -113,7 +190,9 @@ static std::string stringify(const json_value & value) {
     struct visitor {
         std::string operator()(std::nullptr_t) const { return "null"; }
         std::string operator()(bool flag) const { return flag ? "true" : "false"; }
-        std::string operator()(double number) const { return number_to_string(number); }
+        std::string operator()(double number) const {
+            return std::isfinite(number) ? number_to_string(number) : "null";
+        }
         std::string operator()(const std::string & text) const { return quote_json(text); }
         std::string operator()(const json_value::array & items) const {
             std::string out = "[";
@@ -132,6 +211,13 @@ static std::string stringify(const json_value & value) {
 }
 
 static void observe(const json_value & value) {
+    if (const auto * number = std::get_if<double>(&value.data)) {
+        if (std::isnan(*number)) { std::cout << "number:NaN\n"; return; }
+        if (std::isinf(*number)) {
+            std::cout << (*number < 0 ? "number:-Infinity\n" : "number:Infinity\n"); return;
+        }
+        if (*number == 0 && std::signbit(*number)) { std::cout << "number:-0\n"; return; }
+    }
     const char * type = std::holds_alternative<bool>(value.data)     ? "boolean"
                         : std::holds_alternative<double>(value.data) ? "number"
                         : std::holds_alternative<std::string>(value.data) ? "string"
@@ -146,13 +232,32 @@ int main() {
 """
 
 
-def client(entry, owned):
+def client(name, entry, owned):
     setup = (
         f"{entry}_session session; auto & doc = session.document();"
         if owned
         else "atom_table atoms; document doc{atoms};"
     )
     call = "session.invoke(element)" if owned else entry + "(element)"
+    inputs = INPUTS if name in ATTRIBUTE_CASES else (None, "")
+    samples = ", ".join(
+        (
+            "std::nullopt"
+            if value is None
+            else f"std::string{{{numbers.cpp_string(value)}, {len(value.encode())}}}"
+        )
+        for value in inputs
+    )
+    attribute = "data-bs-config" if name in ATTRIBUTE_CASES else "good"
+    earlier_read = ""
+    if name == "json_nullable_join":
+        attribute = "x"
+        earlier_read = """
+                const auto good = doc.atoms().intern("good");
+                if (input) { assert(doc.set_attribute(node, good, "")); }
+                else { assert(doc.remove_attribute(node, good)); }
+"""
+    result_type = "bool" if name == "json_number_not" else "json_value"
     return f"""
     {{
         std::vector<json_value> survivors;
@@ -160,18 +265,19 @@ def client(entry, owned):
             {setup}
             const auto node = doc.create_element(doc.atoms().intern("button"));
             const element_ref element{{&doc, node}};
-            const auto good = doc.atoms().intern("good");
+            const auto state = doc.atoms().intern("{attribute}");
             doc.log_writes(true);
-            for (bool present : {{false, true}}) {{
-                if (present) {{ assert(doc.set_attribute(node, good, "")); }}
-                else {{ assert(doc.remove_attribute(node, good)); }}
+            for (const auto & input : std::vector<std::optional<std::string>>{{{samples}}}) {{
+                if (input) {{ assert(doc.set_attribute(node, state, *input)); }}
+                else {{ assert(doc.remove_attribute(node, state)); }}
+                {earlier_read}
                 (void)doc.take_writes();
                 const auto version = doc.version();
                 auto result = {call};
-                static_assert(std::is_same_v<decltype(result), json_value>);
+                static_assert(std::is_same_v<decltype(result), {result_type}>);
                 assert(doc.version() == version && doc.take_writes().empty());
-                assert(doc.set_attribute(node, good, "later"));
-                survivors.push_back(std::move(result));
+                assert(doc.set_attribute(node, state, "later"));
+                survivors.emplace_back(std::move(result));
             }}
         }}
         for (const auto & result : survivors) {{ observe(result); }}
@@ -180,9 +286,18 @@ def client(entry, owned):
 
 
 REFUSALS = {
-    # A nullable saved read joins optional String with json_value: not yet proved.
-    "json_nullable_join": "const saved = element.getAttribute('x'); if ('string' != typeof saved) return saved; "
-    + BODY.replace("text", "saved"),
+    "json_config_typeof": ATTRIBUTE_HELPERS
+    + 'const parsed = H.getDataAttribute(element, "config"); return "object" == typeof parsed;',
+    "json_matching_key": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "Config");',
+    "json_live_key": ATTRIBUTE_HELPERS
+    + 'return H.getDataAttribute(element, element.getAttribute("key"));',
+    "json_nullable_sibling": NULLABLE_JOIN.replace(
+        "typeof saved", "typeof element.getAttribute('other')"
+    ),
+    "json_not_element": "return !element;",
+    "json_number_shadowed": "const Number = element; return !Number(text);",
+    "json_number_replaced": "Number = element; return !Number(text);",
+    "json_number_string_replaced": "Number.prototype.toString = element; return Number(text).toString();",
     "json_payload": BODY.replace("return text;", "return ignored;"),
     "json_payload_read": BODY.replace("return text;", "return ignored.message;"),
     "json_reversed": "try { return decodeURIComponent(JSON.parse(text)); } catch (ignored) { return text; }",
@@ -210,13 +325,30 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     if not args.nm:
         raise RuntimeError("native DOM JSON gate requires nm")
+    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    if any(
+        source not in vendor.read_text() for source in (BOOTSTRAP_M, BOOTSTRAP_F, BOOTSTRAP_GET)
+    ):
+        raise RuntimeError("Bootstrap M/F/getDataAttribute source pin changed")
     expected = check_oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
-    intrinsics = ["decodeURIComponent", "JSON"]
+    intrinsics = ["decodeURIComponent", "JSON", "Number"]
+    source_intrinsics = {
+        "json_number_not": ["Number"],
+        "json_bootstrap_m": intrinsics,
+        "json_bootstrap_attribute": intrinsics,
+    }
     prepared = [
-        (name, ir, dict(contract, initial_intrinsics=intrinsics))
+        (
+            name,
+            ir,
+            dict(
+                contract,
+                initial_intrinsics=source_intrinsics.get(name, intrinsics[:2]),
+            ),
+        )
         for name, source in SOURCES.items()
         for ir, contract in [dom.prepare(args, name, source, 1, entry_name=name)]
     ]
@@ -232,7 +364,11 @@ def main():
                     dict(
                         contract,
                         provider=provider,
-                        initial_intrinsics=list(reversed(intrinsics)) if owned else intrinsics,
+                        initial_intrinsics=(
+                            list(reversed(contract["initial_intrinsics"]))
+                            if owned
+                            else contract["initial_intrinsics"]
+                        ),
                     ),
                     label,
                     optimize=optimize,
@@ -245,9 +381,13 @@ def main():
             for name, owned, layouts in modules:
                 namespace = f"{name}_{'session' if owned else 'free'}"
                 cpp, symbol = strings.emitted(
-                    args, layouts[layout], namespace, optional_read=False, uri_call=True
+                    args,
+                    layouts[layout],
+                    namespace,
+                    optional_read=name in ATTRIBUTE_CASES,
+                    uri_call=name != "json_number_not",
                 )
-                if (
+                if name != "json_number_not" and (
                     any(
                         token not in cpp
                         for token in ("ctbrowser::parse_json", "ctbrowser::json_value", "std::move")
@@ -260,7 +400,7 @@ def main():
                 headers.update(re.findall(r"^#include[^\n]*", cpp, re.M))
                 body = re.sub(r"^#include[^\n]*\n?", "", cpp, flags=re.M)
                 bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
-                runs.append(client(namespace + "::" + symbol, owned))
+                runs.append(client(name, namespace + "::" + symbol, owned))
             path = args.work / f"combined-{optimize}-{layout}.cpp"
             path.write_text(
                 "\n".join(sorted(headers))
@@ -314,6 +454,7 @@ def main():
             + body
             + " }\n",
             1,
+            entry_name="invalid",
         )
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -328,33 +469,50 @@ def main():
                 if "DOM" not in diagnostic:
                     raise RuntimeError(f"{name}: missing JSON source refusal\n{diagnostic}")
                 refusals += 1
-    _, ir, contract = prepared[0]
-    for index, names in enumerate(
-        (
+    premises = {
+        "json_object": (
+            None,
             [],
             ["decodeURIComponent"],
             ["JSON"],
             ["JSON", "JSON", "decodeURIComponent"],
             ["JSON", "decodeURIComponent", "decodeURIComponent"],
-        )
-    ):
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider, initial_intrinsics=names),
-                    f"json-premise-{index}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic and "initial_intrinsics" not in diagnostic:
-                    raise RuntimeError(
-                        f"json_premise: missing or duplicate intrinsic binding\n{diagnostic}"
+        ),
+        "json_number_not": (None, [], ["decodeURIComponent", "JSON"], ["Number", "Number"]),
+        "json_bootstrap_m": (
+            None,
+            [],
+            ["decodeURIComponent", "JSON"],
+            ["Number", "JSON"],
+            ["Number", "decodeURIComponent"],
+            ["Number", "Number", "decodeURIComponent", "JSON"],
+        ),
+    }
+    for name, variants in premises.items():
+        _, ir, contract = next(row for row in prepared if row[0] == name)
+        for index, names in enumerate(variants):
+            premise = dict(contract)
+            if names is None:
+                del premise["initial_intrinsics"]
+            else:
+                premise["initial_intrinsics"] = names
+            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+                for optimize in (False, True):
+                    diagnostic = dom.lower(
+                        args,
+                        ir,
+                        dict(premise, provider=provider),
+                        f"{name}-premise-{index}-{provider}-{optimize}",
+                        optimize=optimize,
+                        success=False,
                     )
-                refusals += 1
+                    if "DOM" not in diagnostic and "initial_intrinsics" not in diagnostic:
+                        raise RuntimeError(
+                            f"{name}: missing or duplicate intrinsic binding\n{diagnostic}"
+                        )
+                    refusals += 1
     print(
-        f"native DOM JSON: {len(CASES)} sources, {len(expected)} Node/VM observations, "
+        f"native DOM JSON: {len(SOURCES)} sources, {len(expected)} Node/VM observations, "
         f"8 GCC/Clang binaries, lifetime sanitizer, both providers/policies/layouts, {refusals} refusals"
     )
 

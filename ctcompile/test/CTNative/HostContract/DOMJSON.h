@@ -116,6 +116,56 @@ module {
     refused(replaced(source, "ctjs.invoke_yield(%parsedTree)", "ctjs.invoke_yield(%element)"));
     refused(replaced(source, "ctjs.invoke_yield(%text)", "ctjs.invoke_yield(%parseError)"));
     refused(replaced(source, "%json =", "ctjs.store_global \"JSON\", %element\n    %json ="));
+    for (llvm::StringRef primitive :
+         {"%primitive = ctjs.constant #ctjs.boolean<true>",
+          "%primitive = ctjs.constant #ctjs.number<4631107791820423168>",
+          "%primitive = ctjs.constant #ctjs.null",
+          "%getKey = ctjs.constant #ctjs.string<\"getAttribute\">\n"
+          "    %get = ctjs.get_property %element[%getKey]\n"
+          "    %primitive = ctjs.call %get(%element, %key)",
+          "%primitive = ctjs.constant #ctjs.undefined"}) {
+        const bool supported = !primitive.contains("undefined");
+        for (bool reverse : {false, true}) {
+            const std::string scalar = reverse ? "%answer" : "%primitive";
+            const std::string tree = reverse ? "%primitive" : "%answer";
+            const auto text = replaced(source, "ctjs.return %answer", primitive.str() + R"MLIR(
+    %zero = ctjs.constant #ctjs.number<0>
+    %not = ctjs.unary not %zero
+    %condition = ctjs.truthy %zero
+    %joined = scf.if %condition -> (!ctjs.value) {
+      scf.yield )MLIR" + scalar + R"MLIR( : !ctjs.value
+    } else {
+      scf.yield )MLIR" + tree + R"MLIR( : !ctjs.value
+    }
+    ctjs.return %joined)MLIR");
+            if (!supported) {
+                refused(text);
+                continue;
+            }
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+            check(static_cast<bool>(input), "DOM JSON primitive join fixture parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "DOM JSON joins preserve both primitive arm orders");
+            if (!proof.proved()) { continue; }
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*input, request, budget);
+                check(limited.exhausted() && !limited.proved() && !limited.entry() &&
+                          limited.stringRefinements().empty(),
+                      "incomplete JSON primitive join proofs publish no evidence");
+            }
+            for (llvm::StringRef operation :
+                 {"ctjs.unary not %joined", "ctjs.truthy %joined", "ctjs.unary typeof %joined",
+                  "ctjs.compare strict_eq %joined, %primitive"}) {
+                refused(replaced(text, "ctjs.return %joined",
+                                 "%observed = " + operation.str() + "\n    ctjs.return %joined"));
+            }
+            check(hostContractFingerprint(*input) == request.moduleSha256,
+                  "JSON primitive proof keeps source and optional producer unchanged");
+        }
+    }
     check(hostContractFingerprint(*module) == contract.moduleSha256,
           "JSON proof and exhausted attempts leave original source unchanged");
 }

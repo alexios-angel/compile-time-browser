@@ -289,9 +289,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 continue;
                             }
                             if (joined[index] == kind) { continue; }
-                            // A String arm converts into the owning json_value.
-                            if ((joined[index] == Kind::json && kind == Kind::string) ||
-                                (joined[index] == Kind::string && kind == Kind::json)) {
+                            const auto jsonScalar = [](Kind k) {
+                                return k == Kind::string || k == Kind::boolean ||
+                                       k == Kind::number || k == Kind::null ||
+                                       k == Kind::optionalString;
+                            };
+                            // Primitive arms become owning JSON alternatives. Undefined
+                            // and borrowed browser values have no JSON representation.
+                            if ((joined[index] == Kind::json && jsonScalar(kind)) ||
+                                (jsonScalar(joined[index]) && kind == Kind::json)) {
                                 joined[index] = Kind::json;
                                 continue;
                             }
@@ -718,6 +724,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
                     truth && (hasKind(truth.getValue(), Kind::boolean) ||
+                              hasKind(truth.getValue(), Kind::number) ||
                               hasKind(truth.getValue(), Kind::string) ||
                               hasKind(truth.getValue(), Kind::optionalString) ||
                               hasKind(truth.getValue(), Kind::null))) {
@@ -732,6 +739,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                     unary && unary.getKind() == ctjs::UnaryKind::Not &&
                     (hasKind(unary.getOperand(), Kind::boolean) ||
+                     hasKind(unary.getOperand(), Kind::number) ||
                      hasKind(unary.getOperand(), Kind::optionalString) ||
                      hasKind(unary.getOperand(), Kind::string) ||
                      hasKind(unary.getOperand(), Kind::null))) {
