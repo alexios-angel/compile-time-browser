@@ -35,6 +35,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                             c.throw_error("TypeError", std::string{"Illegal constructor: "} + name);
                             return value::undefined();
                         }});
+        // The interface object inherits too (Web IDL §3.7.1):
+        // `CSSStyleRule.__proto__ === CSSGroupingRule`.
+        if (inherits != nullptr) {
+            if (const value * parent = internals->find(std::string{inherits})) {
+                ctor->proto_link = *parent;
+            }
+        }
         ctor->define("prototype", value::object(proto), script::attr_none);
         proto->define("constructor", value::object(ctor), script::attr_builtin);
         // `@@toStringTag`, which is what `Object.prototype.toString` - and so

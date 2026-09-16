@@ -634,7 +634,9 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
             // none. A `<layer-name>` is identifiers joined by `.` with nothing
             // between (CSS Cascade 5 §6.4.1); anything else is no rule at all.
             std::vector<std::string> names;
-            for (const std::string_view part : split_on_commas(made.prelude)) {
+            const bool anonymous = trim(made.prelude, html_whitespace).empty();
+            for (const std::string_view part :
+                 anonymous ? std::vector<std::string_view>{} : split_on_commas(made.prelude)) {
                 const std::string_view name = trim(part, html_whitespace);
                 bool ok = !name.empty();
                 for (const std::string_view piece : split_top_level(name, ".")) {
