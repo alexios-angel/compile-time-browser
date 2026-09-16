@@ -23,12 +23,15 @@
 // IPv6, the percent-encode sets of §1.3, the serialiser of §4.5, the setter
 // steps of §6.1 and application/x-www-form-urlencoded of §5.
 //
-// WHAT IT DOES NOT DO: the full UTS #46 mapping table. `domain to ASCII` here is
-// ASCII case folding, the handful of mappings the WPT corpus reaches for (the
-// ideographic full stops, full-width ASCII, the Latin-1 and mathematical
-// alphabets, the ignorable format characters) and RFC 3492 punycode for
-// anything else non-ASCII. Normalisation (NFC), Bidi and joiner checks are not
-// done, and a label already spelled `xn--` is passed through unverified.
+// UTS #46 IS DONE FROM UNICODE'S OWN TABLES: `domain to ASCII` runs the whole
+// mapping table, the validity criteria and both ContextJ rules, and RFC 3492
+// punycode in both directions, so an `xn--` label is decoded and checked rather
+// than taken on trust. tools/gen/idna_table.py generates the four tables.
+//
+// WHAT IT DOES NOT DO: step 2's NFC normalisation, and CheckBidi. The first
+// costs 134 of url/IdnaTestV2.any.js's 2,671 cases and wants the canonical
+// decomposition and composition data; the second costs ONE, which is why no
+// Bidi_Class table is carried. See the note above domain_to_ascii in url.cpp.
 //
 // NOTHING THIRD-PARTY IS INCLUDED ABOVE, and nothing of the VM either: this is
 // plain C++ over strings, which is what lets a unit test drive it with the
