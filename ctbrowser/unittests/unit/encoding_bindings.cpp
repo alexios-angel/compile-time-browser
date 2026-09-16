@@ -66,9 +66,15 @@ void test_the_label_table() {
 void test_the_utf8_decoder() {
     is("return new TextDecoder().decode(new Uint8Array([104, 195, 169]));", "h\xc3\xa9");
     // A truncated sequence is ONE U+FFFD, not one per byte, and the byte that
-    // ended it is decoded again from scratch: "\xE0\x41" is TWO characters.
-    is("return new TextDecoder().decode(new Uint8Array([0xE0, 0x41])).length;", "2");
-    is("return new TextDecoder().decode(new Uint8Array([0xC2])).charCodeAt(0);", "65533");
+    // ended it is decoded again from scratch, so E0 41 is U+FFFD then "A".
+    //
+    // EVERY CASE HERE COMPARES THE STRING, never `length` or `charCodeAt`:
+    // a JS string is UTF-8 bytes in this engine and those two count bytes
+    // rather than UTF-16 code units (docs/script.md, "The UTF-16 gap"), so an
+    // index-based assertion would pin the gap instead of the decoder.
+    is("return new TextDecoder().decode(new Uint8Array([0xE0, 0x41]));", "\xef\xbf\xbd"
+                                                                         "A");
+    is("return new TextDecoder().decode(new Uint8Array([0xC2]));", "\xef\xbf\xbd");
     // `fatal` turns the same input into a TypeError.
     is("try { new TextDecoder('utf-8', {fatal: true}).decode(new Uint8Array([0xC2]));"
        " return 'no throw'; } catch (e) { return e.name; }",
@@ -78,11 +84,12 @@ void test_the_utf8_decoder() {
 
 void test_the_bom_and_streaming() {
     // The BOM is stripped when it matches the decoder's own encoding...
-    is("return new TextDecoder().decode(new Uint8Array([0xEF, 0xBB, 0xBF, 65])).length;", "1");
+    is("return new TextDecoder().decode(new Uint8Array([0xEF, 0xBB, 0xBF, 65]));", "A");
     // ...and kept when ignoreBOM says so.
     is("return new TextDecoder('utf-8', {ignoreBOM: true})"
-       ".decode(new Uint8Array([0xEF, 0xBB, 0xBF, 65])).length;",
-       "2");
+       ".decode(new Uint8Array([0xEF, 0xBB, 0xBF, 65]));",
+       "\xef\xbb\xbf"
+       "A");
     // A code point split across two calls: `stream` holds the half.
     is("var d = new TextDecoder();"
        " var first = d.decode(new Uint8Array([0xC3]), {stream: true});"
@@ -96,15 +103,14 @@ void test_utf16_and_a_single_byte_index() {
        "AB");
     is("return new TextDecoder('utf-16be').decode(new Uint8Array([0x00, 0x41, 0x00, 0x42]));",
        "AB");
-    // A surrogate pair, both ways round.
+    // A surrogate pair, decoded to the one code point U+1F320.
     is("return new TextDecoder('utf-16le')"
-       ".decode(new Uint8Array([0x3C, 0xD8, 0x20, 0xDF])).codePointAt(0);",
-       "127776");
+       ".decode(new Uint8Array([0x3C, 0xD8, 0x20, 0xDF]));",
+       "\xf0\x9f\x8c\xa0");
     // windows-1252's 0x80 is the euro sign, which is the difference between it
     // and ISO-8859-1 and the reason the indexes are carried at all.
-    is("return new TextDecoder('windows-1252').decode(new Uint8Array([0x80])).charCodeAt(0);",
-       "8364");
-    is("return new TextDecoder('koi8-r').decode(new Uint8Array([0xC1])).charCodeAt(0);", "1072");
+    is("return new TextDecoder('windows-1252').decode(new Uint8Array([0x80]));", "\xe2\x82\xac");
+    is("return new TextDecoder('koi8-r').decode(new Uint8Array([0xC1]));", "\xd0\xb0");
     // An ArrayBuffer is a BufferSource too, not only a view of one.
     is("return new TextDecoder().decode(new Uint8Array([65, 66]).buffer);", "AB");
 }
