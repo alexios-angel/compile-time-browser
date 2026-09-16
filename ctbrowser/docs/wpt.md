@@ -14,6 +14,35 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-16, night: round five merged
+
+**783 of the 1,104 that ran (70.9%) in the five suites; wide corpus 2,404 of
+5,156 (46.6%), 231,262 subtests PASS** - from 781 / 2,310 / 220,908 at
+`6edb7421`: five suites **+2 files -0**, wide **+94 files, ZERO lost**.
+Engine at `9cd0a9e4` on `ctbrowser-wpt` (round five on `6edb7421`: S2 the
+shadow-tree serialisation + flat-tree event path, C2 the shadow cascade
+selectors, T3 a VM capture bug + test262 class reading, U3 IDNA CheckBidi),
+gated 221/221 green.
+
+The moves, all in the wide corpus:
+- **`html/syntax` 28 -> 109 (+81 files)**, the largest single jump this
+  session - NOT a parser change but T3's VM fix (`e1538500`): a name captured
+  only through an object-literal shorthand `{ x }` inside a nested function
+  was left unboxed and read `undefined`, which made the html5lib test harness
+  see "N duplicate test names" and error the whole file. With the capture
+  fixed the per-fixture variants report their real per-case results.
+- **`shadow-dom` 57 -> 60 files, subtests 1,489 -> 8,356** (S2's `getHTML`
+  serialises `<template shadowrootmode>` roots - gethtml.html alone is 6,528
+  subtests - and the event path now walks the flat tree).
+- `custom-elements` subtests 2,175 -> 2,356, `url` 38 -> 39 (9,269 subtests,
+  CheckBidi), `dom/nodes` +1. The single-activation regression of round four
+  is FIXED (S2: it was a pre-existing reset-button bug - a reset control now
+  fires a cancelable `reset` event before clearing).
+
+test262 is unchanged at `39,175 / 48,624 (80.6%)`: T3's fix moved WPT
+harness errors, not test262 counts, and the other three agents touch no
+test262 path. `docs/test262.md`'s `6edb7421` row still stands.
+
 ## The baseline — 2026-09-16, evening: round four merged
 
 **781 of the 1,104 that ran (70.7%); subtests 83,566 PASS, 4,462 FAIL** -
