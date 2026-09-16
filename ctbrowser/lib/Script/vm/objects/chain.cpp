@@ -171,7 +171,10 @@ value context::get_prototype(value target) {
     if (target.is_kind(heap_kind::function)) {
         const value link = static_cast<closure_object *>(target.as_heap())->proto_link;
         if (!link.is_null()) { return link; }
-        object_object * table = prototype(proto_kind::function);
+        // ...else the intrinsic its shape names: %GeneratorFunction.prototype%
+        // for a `function*`, and so on (function_proto_kind).
+        object_object * table = prototype(function_proto_kind(target));
+        if (table == nullptr) { table = prototype(proto_kind::function); }
         return table != nullptr ? value::object(table) : value::undefined();
     }
     return value::undefined();

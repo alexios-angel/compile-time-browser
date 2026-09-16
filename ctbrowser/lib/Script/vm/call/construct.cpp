@@ -61,9 +61,25 @@ value context::ensure_prototype(value fn) {
     if (!fn.is_kind(heap_kind::function)) { return value::undefined(); }
     auto * closure = static_cast<closure_object *>(fn.as_heap());
     if (value * existing = closure->find("prototype")) { return *existing; }
-    // An arrow is not a constructor and never needs one.
-    if (closure->proto != nullptr && closure->proto->is_arrow) { return value::undefined(); }
+    // An arrow is not a constructor and never needs one; nor is an async
+    // function (27.7.4: no `prototype` property at all).
+    if (closure->proto != nullptr &&
+        (closure->proto->is_arrow || (closure->proto->is_async && !closure->proto->is_generator))) {
+        return value::undefined();
+    }
     value made = make_object();
+    if (closure->proto != nullptr && closure->proto->is_generator) {
+        // 27.3.1.1 / 27.4.1.1 step 7: a generator function's `prototype` is
+        // an ordinary object inheriting %GeneratorPrototype% (or the async
+        // one), with NO `constructor` of its own - the instances made by
+        // calling the function inherit from it (make_generator).
+        if (object_object * table = prototype(closure->proto->is_async ? proto_kind::async_generator
+                                                                       : proto_kind::generator)) {
+            static_cast<object_object *>(made.as_heap())->prototype = value::object(table);
+        }
+        closure->define("prototype", made, attr_writable);
+        return made;
+    }
     // 10.2.5 / 15.7.14: `F.prototype` is { true, false, false } on an ordinary
     // function and `F.prototype.constructor` is { true, false, true }. Both
     // were enumerable, so `constructor` turned up in `Object.keys(C.prototype)`

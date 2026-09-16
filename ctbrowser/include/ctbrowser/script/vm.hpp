@@ -1085,8 +1085,29 @@ public:
         promise,
         generator,
         async_generator,
+        // %GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype%
+        // and %AsyncFunction.prototype% (27.3.3, 27.4.3, 27.7.3): what a
+        // `function*`, `async function*` or `async function` closure's
+        // [[Prototype]] is instead of Function.prototype.
+        generator_function,
+        async_generator_function,
+        async_function,
         count_
     };
+
+    // THE [[Prototype]] KIND OF A FUNCTION VALUE by its shape: the three above
+    // for the generator and async forms, `function` for the rest and for
+    // every native.
+    [[nodiscard]] static proto_kind function_proto_kind(value v) noexcept {
+        if (!v.is_kind(heap_kind::function)) { return proto_kind::function; }
+        const function_proto * fp = static_cast<closure_object *>(v.as_heap())->proto;
+        if (fp == nullptr) { return proto_kind::function; }
+        if (fp->is_generator) {
+            return fp->is_async ? proto_kind::async_generator_function
+                                : proto_kind::generator_function;
+        }
+        return fp->is_async ? proto_kind::async_function : proto_kind::function;
+    }
 
     // THE IMPLICIT PROTOTYPES FOR A VALUE'S KIND, most derived first.
     //
@@ -1126,6 +1147,10 @@ public:
             return {table(proto_kind::symbol), table(proto_kind::object), nullptr};
         }
         if (v.is_kind(heap_kind::function) || v.is_kind(heap_kind::native)) {
+            const proto_kind own = function_proto_kind(v);
+            if (own != proto_kind::function && table(own) != nullptr) {
+                return {table(own), table(proto_kind::function), table(proto_kind::object)};
+            }
             return {table(proto_kind::function), table(proto_kind::object), nullptr};
         }
         if (v.is_object()) { return {table(proto_kind::object), nullptr, nullptr}; }

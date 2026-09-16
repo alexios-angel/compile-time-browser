@@ -125,8 +125,15 @@ value context::make_generator(closure_object * closure, value receiver,
     auto * obj = static_cast<object_object *>(out.as_heap());
     saved->async_gen = closure->proto->is_async;
     saved->self = out;
-    if (object_object * table =
-            prototype(saved->async_gen ? proto_kind::async_generator : proto_kind::generator)) {
+    // 27.5.3.x / 27.6.3.x: OrdinaryCreateFromConstructor(functionObject,
+    // "%GeneratorPrototype%") - the function's own `prototype` when it is an
+    // object (ensure_prototype makes one inheriting the intrinsic), else the
+    // intrinsic itself.
+    const value own = ensure_prototype(value::object(closure));
+    if (own.is_object_like()) {
+        obj->prototype = own;
+    } else if (object_object * table = prototype(saved->async_gen ? proto_kind::async_generator
+                                                                  : proto_kind::generator)) {
         obj->prototype = value::object(table);
     }
     obj->set("__co", value::object(saved));

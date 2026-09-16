@@ -172,6 +172,37 @@ void test_generator_return_runs_finally() {
 }
 
 void test_generators() {
+    // 27.3 / 27.4 / 27.7: the three function-kind intrinsics. A `function*`'s
+    // [[Prototype]] is %GeneratorFunction.prototype%, whose `prototype` is
+    // %GeneratorPrototype%; the function's own `prototype` inherits that and
+    // has no constructor; its instances inherit the function's prototype;
+    // an async function has no `prototype` at all; each constructor makes a
+    // function of its kind from source.
+    expect_result("function* g() {} const GF = Object.getPrototypeOf(g);"
+                  " return [GF === g.constructor.prototype, GF.prototype === "
+                  "Object.getPrototypeOf(g.prototype), g.prototype.hasOwnProperty('constructor'),"
+                  " Object.getPrototypeOf(g()) === g.prototype, GF[Symbol.toStringTag],"
+                  " Object.getPrototypeOf(GF) === Function.prototype,"
+                  " Object.getPrototypeOf(g.constructor) === Function].join();",
+                  "true,true,false,true,GeneratorFunction,true,true");
+    expect_result("const GF = (function* () {}).constructor; const g = GF('a', 'yield a * 2;');"
+                  " return g(21).next().value + ',' + g.length + ',' + GF.name + ',' + GF.length;",
+                  "42,1,GeneratorFunction,1");
+    expect_result(
+        "const AF = (async function () {}).constructor; const f = async () => 1;"
+        " return [AF.name, Object.getPrototypeOf(f) === AF.prototype,"
+        " 'prototype' in (async function () {}), f.hasOwnProperty('prototype'),"
+        " AF.prototype[Symbol.toStringTag], typeof AF('a', 'await 1; return a;')].join();",
+        "AsyncFunction,true,false,false,AsyncFunction,function");
+    expect_result("const AGF = (async function* () {}).constructor; async function* ag() {}"
+                  " return [AGF.name, Object.getPrototypeOf(ag) === AGF.prototype,"
+                  " Object.getPrototypeOf(ag()) === ag.prototype,"
+                  " Object.getPrototypeOf(ag.prototype) === AGF.prototype.prototype,"
+                  " AGF.prototype.prototype[Symbol.toStringTag]].join();",
+                  "AsyncGeneratorFunction,true,true,true,AsyncGenerator");
+    expect_result("function f() {} return [Object.getPrototypeOf(f) === Function.prototype,"
+                  " f.prototype.constructor === f].join();",
+                  "true,true");
     expect_result("function* g() { yield 1; yield 2; }"
                   "const it = g(); const a = it.next();"
                   "return a.value + ',' + a.done;",

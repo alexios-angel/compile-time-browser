@@ -276,6 +276,9 @@ namespace {
     if (of.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(of.as_heap());
         if (!closure->proto_link.is_null()) { return closure->proto_link; }
+        // A generator or async function's is its own intrinsic (27.3.3 etc.).
+        const context::proto_kind own = context::function_proto_kind(of);
+        if (cx.prototype(own) != nullptr) { return table(own); }
         return table(context::proto_kind::function);
     }
     if (of.is_kind(heap_kind::native)) {

@@ -249,33 +249,44 @@ void install_function(context & cx) {
 // The body is wrapped in a function expression and returned, so the parameters
 // and the body go through exactly the path a written-out function does. p5.js
 // builds three of these for shader source; a bundle may build any number.
+namespace {
+// CreateDynamicFunction (20.2.1.1.1) for the four kinds: `Function`,
+// %GeneratorFunction%, %AsyncFunction% and %AsyncGeneratorFunction% differ
+// only in the keyword the source is wrapped in.
+value dynamic_function(context & c, std::span<value> a, const char * keyword) {
+    // `new Function(a, b, 'return a + b')` - every argument but the last
+    // names a parameter, and the last is the body. `new Function()` is a
+    // function that does nothing, which is what the spec says.
+    std::string params;
+    for (std::size_t i = 0; i + 1 < a.size(); ++i) {
+        if (!params.empty()) { params += ","; }
+        params += c.to_string(a[i]);
+        if (c.throw_pending()) { return value::undefined(); }
+    }
+    const std::string body = a.empty() ? std::string{} : c.to_string(a[a.size() - 1]);
+    if (c.throw_pending()) { return value::undefined(); }
+    // RETURNED, not left as an expression statement: the program's value is
+    // what its top level returns, and a bare expression yields nothing.
+    // The newlines are the spec's own formatting, and they matter - they
+    // keep a `//` comment at the end of the body from swallowing the brace.
+    const std::string source =
+        std::string{"return ("} + keyword + " anonymous(" + params + "\n) {\n" + body + "\n});";
+
+    program compiled = compiler::compile(source);
+    if (!compiled.ok) {
+        // A SyntaxError a page can catch, because `new Function` on
+        // user-supplied text is exactly where one is expected.
+        c.throw_error("SyntaxError", compiled.error);
+        return value::undefined();
+    }
+    const program & kept = c.own_program(std::move(compiled));
+    return c.run_nested(kept);
+}
+} // namespace
+
 void install_dynamic_function(context & cx) {
     cx.define_native("Function", [](context & c, std::span<value> a) {
-        // `new Function(a, b, 'return a + b')` - every argument but the last
-        // names a parameter, and the last is the body. `new Function()` is a
-        // function that does nothing, which is what the spec says.
-        std::string params;
-        for (std::size_t i = 0; i + 1 < a.size(); ++i) {
-            if (!params.empty()) { params += ","; }
-            params += c.to_string(a[i]);
-        }
-        const std::string body = a.empty() ? std::string{} : c.to_string(a[a.size() - 1]);
-        // RETURNED, not left as an expression statement: the program's value is
-        // what its top level returns, and a bare expression yields nothing.
-        // The newlines are the spec's own formatting, and they matter - they
-        // keep a `//` comment at the end of the body from swallowing the brace.
-        const std::string source =
-            "return (function anonymous(" + params + "\n) {\n" + body + "\n});";
-
-        program compiled = compiler::compile(source);
-        if (!compiled.ok) {
-            // A SyntaxError a page can catch, because `new Function` on
-            // user-supplied text is exactly where one is expected.
-            c.throw_error("SyntaxError", compiled.error);
-            return value::undefined();
-        }
-        const program & kept = c.own_program(std::move(compiled));
-        return c.run_nested(kept);
+        return dynamic_function(c, a, "function");
     });
     // `eval(x)`, 19.2.1 - AS AN INDIRECT EVAL, always: the source runs at the
     // global scope, through the same run_nested `new Function` uses, and its
@@ -396,6 +407,43 @@ void install_dynamic_function(context & cx) {
             ->set("prototype", value::object(table));
         link_constructor(cx, table, "Function", 1, cx.global("Function"));
     }
+    // %GeneratorFunction% (27.3), %AsyncGeneratorFunction% (27.4) and
+    // %AsyncFunction% (27.7): not globals - reached through
+    // `(function* () {}).constructor` - each a CreateDynamicFunction over its
+    // keyword whose [[Prototype]] is %Function%, with a prototype object
+    // inheriting Function.prototype that every closure of that shape has as
+    // its [[Prototype]] (context::function_proto_kind). The generator kinds'
+    // prototype objects carry `prototype` = %GeneratorPrototype% and the
+    // reverse `constructor` link, both { false, false, true }.
+    const auto intrinsic = [&](context::proto_kind kind, const char * name, const char * keyword,
+                               context::proto_kind instances) {
+        object_object * table = detail::new_table(cx);
+        if (object_object * fn_proto = cx.prototype(context::proto_kind::function)) {
+            table->prototype = value::object(fn_proto);
+        }
+        table->define("@@toStringTag", cx.string(name), attr_configurable);
+        auto * ctor = cx.allocate<native_object>(name, [keyword](context & c, std::span<value> a) {
+            return dynamic_function(c, a, keyword);
+        });
+        ctor->proto_link = cx.global("Function");
+        ctor->define("prototype", value::object(table), attr_none);
+        table->define("constructor", value::object(ctor), attr_configurable);
+        ctor->define("length", value::number(1), attr_configurable);
+        ctor->define("name", cx.string(name), attr_configurable);
+        if (instances != context::proto_kind::count_) {
+            if (object_object * proto = cx.prototype(instances)) {
+                table->define("prototype", value::object(proto), attr_configurable);
+                proto->define("constructor", value::object(table), attr_configurable);
+            }
+        }
+        cx.set_prototype(kind, table);
+    };
+    intrinsic(context::proto_kind::generator_function, "GeneratorFunction", "function*",
+              context::proto_kind::generator);
+    intrinsic(context::proto_kind::async_generator_function, "AsyncGeneratorFunction",
+              "async function*", context::proto_kind::async_generator);
+    intrinsic(context::proto_kind::async_function, "AsyncFunction", "async function",
+              context::proto_kind::count_);
 }
 
 // See class_defined_name: the class's own members, made non-enumerable.
