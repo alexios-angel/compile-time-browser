@@ -6,9 +6,11 @@
 //
 // EVERY METHOD STARTS WITH ValidateTypedArray - `this` must be a typed array
 // whose buffer is neither detached nor shrunk out from under it - and reads
-// its elements through typed_array_get, which answers undefined past the
+// its elements through typed_element_get, which answers undefined past the
 // length AS IT IS NOW: a callback may have shrunk or detached the buffer,
-// and 23.2.3 specifies exactly that Get(O, Pk) answers undefined then.
+// and 23.2.3 specifies exactly that Get(O, Pk) answers undefined then. The
+// elements are `value`s throughout - a number, or a bigint for a BigInt kind
+// - and the kind decides the coercion on the way in (internal.hpp).
 //
 // NOT HERE: `toString`, which 23.2.3.32 says IS Array.prototype.toString.
 // install_array runs after this installer, so the function does not exist yet
@@ -25,10 +27,6 @@ namespace {
 inline constexpr std::string_view iter_array_key = "@#IteratedArray";
 inline constexpr std::string_view iter_index_key = "@#ArrayIteratorNextIndex";
 inline constexpr std::string_view iter_kind_key = "@#ArrayIterationKind";
-
-[[nodiscard]] double as_number(value v) {
-    return v.is_number() ? v.as_number() : 0.0;
-}
 
 // The kind's element count now, as a double for the index arithmetic below.
 [[nodiscard]] double len_of(array_object * arr) {
@@ -112,6 +110,9 @@ value typed_array_set_method(context & c, std::span<value> a) {
     if (is_typed_array(source)) {
         array_object * src = validate_typed_array(c, source, "TypedArray.prototype.set");
         if (src == nullptr) { return value::undefined(); }
+        if (!same_content_type(c, target->elements, src->elements, "TypedArray.prototype.set")) {
+            return value::undefined();
+        }
         const double src_len = len_of(src);
         if (std::isinf(offset) || src_len + offset > target_len) {
             c.throw_error("RangeError", "offset is out of bounds");
@@ -130,9 +131,9 @@ value typed_array_set_method(context & c, std::span<value> a) {
         }
         // Different kinds over the SAME buffer read every source element
         // before writing any (step 12: "let srcByteIndex ... clone").
-        std::vector<double> held(n);
-        for (std::size_t i = 0; i < n; ++i) { held[i] = as_number(typed_array_get(src, i)); }
-        for (std::size_t i = 0; i < n; ++i) { typed_array_set(target, at + i, held[i]); }
+        std::vector<value> held(n);
+        for (std::size_t i = 0; i < n; ++i) { held[i] = typed_element_get(c, *src, i); }
+        for (std::size_t i = 0; i < n; ++i) { typed_array_put(c, target, at + i, held[i]); }
         return value::undefined();
     }
     const value src = detail::box_primitive(c, source);
@@ -149,10 +150,9 @@ value typed_array_set_method(context & c, std::span<value> a) {
     for (double k = 0; k < src_len; k += 1) {
         const value v = c.lookup_index(src, value::number(k));
         if (c.throw_pending()) { return value::undefined(); }
-        if (!numeric_arg(c, v)) { return value::undefined(); }
-        const double n = c.to_number_value(v);
-        if (c.throw_pending()) { return value::undefined(); }
-        typed_array_set(target, static_cast<std::size_t>(offset + k), n);
+        if (!typed_element_set(c, *target, static_cast<std::size_t>(offset + k), v)) {
+            return value::undefined();
+        }
     }
     return value::undefined();
 }
@@ -179,14 +179,14 @@ object_object * install_iterator_prototype(context & cx) {
         if (target->is_undefined()) { return c.iter_result(value::undefined(), true); }
         array_object * arr = validate_typed_array(c, *target, "Array Iterator next");
         if (arr == nullptr) { return value::undefined(); }
-        const double at = as_number(*index);
+        const double at = index->is_number() ? index->as_number() : 0;
         if (at >= len_of(arr)) {
             *target = value::undefined();
             return c.iter_result(value::undefined(), true);
         }
         *index = value::number(at + 1);
-        const value item = typed_array_get(arr, static_cast<std::size_t>(at));
-        const double which = as_number(*kind);
+        const value item = typed_element_get(c, *arr, static_cast<std::size_t>(at));
+        const double which = kind->is_number() ? kind->as_number() : 0;
         if (which == 0) { return c.iter_result(value::number(at), false); }
         if (which == 1) { return c.iter_result(item, false); }
         const value pair = c.make_array();
@@ -213,13 +213,20 @@ object_object * install_iterator_prototype(context & cx) {
 
 } // namespace
 
-bool sort_numbers(context & cx, std::vector<double> & work, value comparator) {
+bool sort_elements(context & cx, std::vector<value> & work, value comparator) {
     const std::size_t n = work.size();
     if (n <= 1) { return true; }
     // SortCompare (23.2.4.7) without a comparator: numeric, -0 before +0, NaN
-    // last - a total order, so the standard library's stable sort is safe.
+    // last - a total order, so the standard library's stable sort is safe. A
+    // BigInt kind's elements are all bigints and compare exactly.
     if (!comparator.is_callable()) {
-        std::stable_sort(work.begin(), work.end(), [](double x, double y) {
+        std::stable_sort(work.begin(), work.end(), [](value a, value b) {
+            if (a.is_kind(heap_kind::bigint) && b.is_kind(heap_kind::bigint)) {
+                return static_cast<const bigint_object *>(a.as_heap())->digits <
+                       static_cast<const bigint_object *>(b.as_heap())->digits;
+            }
+            const double x = a.is_number() ? a.as_number() : 0;
+            const double y = b.is_number() ? b.as_number() : 0;
             if (std::isnan(x)) { return false; }
             if (std::isnan(y)) { return true; }
             if (x < y) { return true; }
@@ -231,14 +238,14 @@ bool sort_numbers(context & cx, std::vector<double> & work, value comparator) {
     // A comparator written in JavaScript can answer anything, so this is the
     // bottom-up merge sort Array.prototype.sort uses: every index it reads is
     // one it computed itself.
-    std::vector<double> spare(n);
+    std::vector<value> spare(n);
     for (std::size_t width = 1; width < n; width *= 2) {
         for (std::size_t lo = 0; lo < n; lo += 2 * width) {
             const std::size_t mid = std::min(lo + width, n);
             const std::size_t hi = std::min(lo + 2 * width, n);
             std::size_t left = lo, right = mid, out = lo;
             while (left < mid && right < hi) {
-                const value pair[2] = {value::number(work[left]), value::number(work[right])};
+                const value pair[2] = {work[left], work[right]};
                 const value answer = cx.call(comparator, pair);
                 if (cx.throw_pending()) { return false; }
                 if (!numeric_arg(cx, answer)) { return false; }
@@ -316,7 +323,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (!to_integer_or_infinity(c, arg_at(a, 0), rel)) { return value::undefined(); }
         const double k = rel >= 0 ? rel : len + rel;
         if (k < 0 || k >= len) { return value::undefined(); }
-        return typed_array_get(arr, static_cast<std::size_t>(k));
+        return typed_element_get(c, *arr, static_cast<std::size_t>(k));
     });
     // --- 23.2.3.6 copyWithin --------------------------------------------------
     method(cx, proto, "copyWithin", 2, [](context & c, std::span<value> a) {
@@ -392,7 +399,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             for (double k = 0; k < len; k += 1) {
                 value answer = value::undefined();
                 if (!call_back(c, a[0], arg_at(a, 1),
-                               typed_array_get(arr, static_cast<std::size_t>(k)), k, self,
+                               typed_element_get(c, *arr, static_cast<std::size_t>(k)), k, self,
                                answer)) {
                     return value::undefined();
                 }
@@ -412,9 +419,9 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (arr == nullptr) { return value::undefined(); }
         const value self = c.current_this();
         double len = len_of(arr);
-        if (!numeric_arg(c, arg_at(a, 0))) { return value::undefined(); }
-        const double v = c.to_number_value(arg_at(a, 0));
-        if (c.throw_pending()) { return value::undefined(); }
+        value v = value::undefined();
+        if (!coerce_for_kind(c, arr->elements, arg_at(a, 0), v)) { return value::undefined(); }
+        const context::rooted keep{c, v};
         double k = 0, final = len;
         if (!relative_arg(c, a, 1, len, 0, k) || !relative_arg(c, a, 2, len, len, final)) {
             return value::undefined();
@@ -424,7 +431,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         }
         len = len_of(arr);
         final = std::min(final, len);
-        for (; k < final; k += 1) { typed_array_set(arr, static_cast<std::size_t>(k), v); }
+        for (; k < final; k += 1) { typed_array_put(c, arr, static_cast<std::size_t>(k), v); }
         return self;
     });
     // --- 23.2.3.10 filter ------------------------------------------------------
@@ -435,9 +442,10 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (!callback_arg(c, a, "filter")) { return value::undefined(); }
         const value self = c.current_this();
         const value kept = c.make_array();
+        const context::rooted keep{c, kept};
         auto * list = static_cast<array_object *>(kept.as_heap());
         for (double k = 0; k < len; k += 1) {
-            const value item = typed_array_get(arr, static_cast<std::size_t>(k));
+            const value item = typed_element_get(c, *arr, static_cast<std::size_t>(k));
             value answer = value::undefined();
             if (!call_back(c, a[0], arg_at(a, 1), item, k, self, answer)) {
                 return value::undefined();
@@ -449,7 +457,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (out.is_undefined()) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         for (std::size_t i = 0; i < list->items.size(); ++i) {
-            typed_array_set(made, i, as_number(list->items[i]));
+            typed_array_put(c, made, i, list->items[i]);
         }
         return out;
     });
@@ -464,7 +472,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             const value self = c.current_this();
             for (double i = 0; i < len; i += 1) {
                 const double k = backwards ? len - 1 - i : i;
-                const value item = typed_array_get(arr, static_cast<std::size_t>(k));
+                const value item = typed_element_get(c, *arr, static_cast<std::size_t>(k));
                 value answer = value::undefined();
                 if (!call_back(c, a[0], arg_at(a, 1), item, k, self, answer)) {
                     return value::undefined();
@@ -490,7 +498,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         double k = n >= 0 ? n : std::max(len + n, 0.0);
         const value wanted = arg_at(a, 0);
         for (; k < len; k += 1) {
-            if (typed_array_get(arr, static_cast<std::size_t>(k)).same_value_zero(wanted)) {
+            if (typed_element_get(c, *arr, static_cast<std::size_t>(k)).same_value_zero(wanted)) {
                 return value::boolean(true);
             }
         }
@@ -509,7 +517,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         // HasProperty(O, k) is false past the CURRENT length (step 10.a).
         const double now = std::min(len, len_of(arr));
         for (; k < now; k += 1) {
-            if (typed_array_get(arr, static_cast<std::size_t>(k)).strict_equals(wanted)) {
+            if (typed_element_get(c, *arr, static_cast<std::size_t>(k)).strict_equals(wanted)) {
                 return value::number(k);
             }
         }
@@ -528,7 +536,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         const double now = len_of(arr);
         for (; k >= 0; k -= 1) {
             if (k < now &&
-                typed_array_get(arr, static_cast<std::size_t>(k)).strict_equals(wanted)) {
+                typed_element_get(c, *arr, static_cast<std::size_t>(k)).strict_equals(wanted)) {
                 return value::number(k);
             }
         }
@@ -548,7 +556,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         std::string out;
         for (double k = 0; k < len; k += 1) {
             if (k > 0) { out += sep; }
-            const value item = typed_array_get(arr, static_cast<std::size_t>(k));
+            const value item = typed_element_get(c, *arr, static_cast<std::size_t>(k));
             if (!item.is_undefined()) { out += c.to_string(item); }
         }
         return c.string(std::move(out));
@@ -560,7 +568,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         std::string out;
         for (double k = 0; k < len; k += 1) {
             if (k > 0) { out += ","; }
-            const value item = typed_array_get(arr, static_cast<std::size_t>(k));
+            const value item = typed_element_get(c, *arr, static_cast<std::size_t>(k));
             if (item.is_nullish()) { continue; }
             const value fn = c.lookup_property(item, "toLocaleString");
             if (c.throw_pending()) { return value::undefined(); }
@@ -586,17 +594,18 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         const value args[1] = {value::number(len)};
         const value out = typed_array_species_create(c, arr, args, true);
         if (out.is_undefined()) { return out; }
+        const context::rooted keep{c, out};
         auto * made = static_cast<array_object *>(out.as_heap());
         for (double k = 0; k < len; k += 1) {
             value mapped = value::undefined();
-            if (!call_back(c, a[0], arg_at(a, 1), typed_array_get(arr, static_cast<std::size_t>(k)),
-                           k, self, mapped)) {
+            if (!call_back(c, a[0], arg_at(a, 1),
+                           typed_element_get(c, *arr, static_cast<std::size_t>(k)), k, self,
+                           mapped)) {
                 return value::undefined();
             }
-            if (!numeric_arg(c, mapped)) { return value::undefined(); }
-            const double n = c.to_number_value(mapped);
-            if (c.throw_pending()) { return value::undefined(); }
-            typed_array_set(made, static_cast<std::size_t>(k), n);
+            if (!typed_element_set(c, *made, static_cast<std::size_t>(k), mapped)) {
+                return value::undefined();
+            }
         }
         return out;
     });
@@ -618,12 +627,12 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             if (a.size() >= 2) {
                 acc = a[1];
             } else {
-                acc = typed_array_get(arr, static_cast<std::size_t>(backwards ? len - 1 : 0));
+                acc = typed_element_get(c, *arr, static_cast<std::size_t>(backwards ? len - 1 : 0));
                 i = 1;
             }
             for (; i < len; i += 1) {
                 const double k = backwards ? len - 1 - i : i;
-                const value args[4] = {acc, typed_array_get(arr, static_cast<std::size_t>(k)),
+                const value args[4] = {acc, typed_element_get(c, *arr, static_cast<std::size_t>(k)),
                                        value::number(k), self};
                 acc = c.call(a[0], args);
                 if (c.throw_pending()) { return value::undefined(); }
@@ -640,10 +649,10 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (arr == nullptr) { return value::undefined(); }
         const std::size_t len = typed_array_length(arr);
         for (std::size_t lo = 0, hi = len; lo + 1 < hi; ++lo, --hi) {
-            const double a = as_number(typed_array_get(arr, lo));
-            const double b = as_number(typed_array_get(arr, hi - 1));
-            typed_array_set(arr, lo, b);
-            typed_array_set(arr, hi - 1, a);
+            const value a = typed_element_get(c, *arr, lo);
+            const value b = typed_element_get(c, *arr, hi - 1);
+            typed_array_put(c, arr, lo, b);
+            typed_array_put(c, arr, hi - 1, a);
         }
         return c.current_this();
     });
@@ -655,7 +664,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (out.is_undefined()) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         for (std::size_t k = 0; k < len; ++k) {
-            typed_array_set(made, k, as_number(typed_array_get(arr, len - 1 - k)));
+            typed_array_put(c, made, k, typed_element_get(c, *arr, len - 1 - k));
         }
         return out;
     });
@@ -701,8 +710,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             return out;
         }
         for (double n = 0; n < count; n += 1) {
-            typed_array_set(made, static_cast<std::size_t>(n),
-                            as_number(typed_array_get(arr, static_cast<std::size_t>(k + n))));
+            typed_array_put(c, made, static_cast<std::size_t>(n),
+                            typed_element_get(c, *arr, static_cast<std::size_t>(k + n)));
         }
         return out;
     });
@@ -724,11 +733,18 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
                 target = create_same_type(c, arr, static_cast<double>(len));
                 if (target.is_undefined()) { return target; }
             }
-            std::vector<double> work(len);
-            for (std::size_t i = 0; i < len; ++i) { work[i] = as_number(typed_array_get(arr, i)); }
-            if (!sort_numbers(c, work, comparator)) { return value::undefined(); }
+            const context::rooted keep{c, target};
+            // The elements ROOTED while the comparator runs: a BigInt kind's
+            // are fresh heap objects off a view, and a C++ vector is not a
+            // root (docs/script.md) - an array the collector can see is.
+            const value scratch = c.make_array();
+            const context::rooted keep_work{c, scratch};
+            std::vector<value> & work = static_cast<array_object *>(scratch.as_heap())->items;
+            work.resize(len);
+            for (std::size_t i = 0; i < len; ++i) { work[i] = typed_element_get(c, *arr, i); }
+            if (!sort_elements(c, work, comparator)) { return value::undefined(); }
             auto * into = static_cast<array_object *>(target.as_heap());
-            for (std::size_t i = 0; i < len; ++i) { typed_array_set(into, i, work[i]); }
+            for (std::size_t i = 0; i < len; ++i) { typed_array_put(c, into, i, work[i]); }
             return target;
         });
     };
@@ -785,9 +801,9 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         double rel = 0;
         if (!to_integer_or_infinity(c, arg_at(a, 0), rel)) { return value::undefined(); }
         const double actual = rel >= 0 ? rel : len + rel;
-        if (!numeric_arg(c, arg_at(a, 1))) { return value::undefined(); }
-        const double v = c.to_number_value(arg_at(a, 1));
-        if (c.throw_pending()) { return value::undefined(); }
+        value v = value::undefined();
+        if (!coerce_for_kind(c, arr->elements, arg_at(a, 1), v)) { return value::undefined(); }
+        const context::rooted keep{c, v};
         // IsValidIntegerIndex against the length NOW - the coercions ran script.
         if (!(actual >= 0) || actual >= len_of(arr) || typed_array_out_of_bounds(arr)) {
             c.throw_error("RangeError", "Invalid typed array index");
@@ -797,9 +813,9 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (out.is_undefined()) { return out; }
         auto * made = static_cast<array_object *>(out.as_heap());
         for (double k = 0; k < len; k += 1) {
-            typed_array_set(
-                made, static_cast<std::size_t>(k),
-                k == actual ? v : as_number(typed_array_get(arr, static_cast<std::size_t>(k))));
+            typed_array_put(c, made, static_cast<std::size_t>(k),
+                            k == actual ? v
+                                        : typed_element_get(c, *arr, static_cast<std::size_t>(k)));
         }
         return out;
     });

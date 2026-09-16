@@ -321,8 +321,22 @@ enum class element_kind : std::uint8_t {
     i32,
     u32,
     f32,
-    f64
+    f64,
+    // The three that are not a double: binary16, and the two 64-bit kinds
+    // whose element VALUE is a bigint (Table 71). A BigInt kind's owning
+    // `items` hold bigint_objects and a view of one holds 8 little-endian
+    // bytes; view_get/view_set are the Number kinds' and never see them -
+    // view_get_raw/view_set_raw are theirs.
+    f16,
+    big_i64,
+    big_u64
 };
+
+// The [[ContentType]] of 23.2.4: a BigInt array and a Number array never
+// exchange elements without a TypeError.
+[[nodiscard]] constexpr bool is_bigint_kind(element_kind k) noexcept {
+    return k == element_kind::big_i64 || k == element_kind::big_u64;
+}
 
 // THE GLOBAL THAT CONSTRUCTS THIS KIND - `Uint8Array` for u8 - and therefore
 // where its own `prototype` object lives, which lookup and [[GetPrototypeOf]]
@@ -338,21 +352,42 @@ enum class element_kind : std::uint8_t {
     case element_kind::u32: return "Uint32Array";
     case element_kind::f32: return "Float32Array";
     case element_kind::f64: return "Float64Array";
+    case element_kind::f16: return "Float16Array";
+    case element_kind::big_i64: return "BigInt64Array";
+    case element_kind::big_u64: return "BigUint64Array";
     case element_kind::none: return nullptr;
     }
     return nullptr;
 }
 
-// Coerce a number the way a store into that element type does.
+// IEEE 754 binary16 through the compiler's `_Float16`: the conversion from a
+// double is correctly rounded (ties to even) in one step, which a detour
+// through `float` would not be. The bits rather than the type cross the
+// engine, so a NaN's payload survives a store and canonicalises on the read.
+[[nodiscard]] inline std::uint16_t double_to_half(double v) noexcept {
+    return std::bit_cast<std::uint16_t>(static_cast<_Float16>(v));
+}
+[[nodiscard]] inline double half_to_double(std::uint16_t h) noexcept {
+    const double d = static_cast<double>(std::bit_cast<_Float16>(h));
+    return std::isnan(d) ? canonical_nan() : d;
+}
+
+// Coerce a number the way a store into that element type does. A BigInt kind
+// has no number to coerce: its store is ToBigInt's, in bigint.hpp.
 [[nodiscard]] inline double coerce_element(element_kind kind, double v) {
     const auto wrap = [](double x, double modulus) {
         if (!std::isfinite(x)) { return 0.0; }
         double r = std::fmod(std::trunc(x), modulus);
         if (r < 0) { r += modulus; }
-        return r;
+        // AN INTEGER KIND HAS NO -0: fmod keeps the sign of -0, and ToInt8(-0)
+        // is 0. The `+ 0.0` is what turns -0 into +0 under round-to-nearest.
+        return r + 0.0;
     };
     switch (kind) {
-    case element_kind::none: return v;
+    case element_kind::none:
+    case element_kind::big_i64:
+    case element_kind::big_u64: return v;
+    case element_kind::f16: return half_to_double(double_to_half(v));
     case element_kind::f32: return static_cast<double>(static_cast<float>(v));
     case element_kind::f64: return v;
     case element_kind::u8_clamped:
@@ -386,8 +421,11 @@ enum class element_kind : std::uint8_t {
     case element_kind::u8:
     case element_kind::u8_clamped: return 1;
     case element_kind::i16:
-    case element_kind::u16: return 2;
-    case element_kind::f64: return 8;
+    case element_kind::u16:
+    case element_kind::f16: return 2;
+    case element_kind::f64:
+    case element_kind::big_i64:
+    case element_kind::big_u64: return 8;
     default: return 4;
     }
 }
@@ -587,6 +625,7 @@ struct array_object final : heap_object {
         const double d = std::bit_cast<double>(raw);
         return std::isnan(d) ? canonical_nan() : d;
     }
+    case element_kind::f16: return half_to_double(static_cast<std::uint16_t>(raw));
     case element_kind::i8: return static_cast<std::int8_t>(raw);
     case element_kind::i16: return static_cast<std::int16_t>(raw);
     case element_kind::i32: return static_cast<std::int32_t>(raw);
@@ -594,11 +633,26 @@ struct array_object final : heap_object {
     }
 }
 
-inline void view_set(array_object & view, std::size_t i, double v) noexcept {
+// The element's bytes as one little-endian word, and the write of one: what
+// a BigInt kind reads and stores (the boxing to a bigint is the caller's,
+// through bigint.hpp), and what every Number kind goes through below.
+[[nodiscard]] inline std::uint64_t view_get_raw(const array_object & view, std::size_t i) noexcept {
+    return view_raw(view, i, bytes_per_element(view.elements));
+}
+inline void view_set_raw(array_object & view, std::size_t i, std::uint64_t raw) noexcept {
     auto * bytes = static_cast<array_object *>(view.viewed.as_heap());
     const std::size_t width = bytes_per_element(view.elements);
+    const std::size_t at = view.byte_offset + i * width;
+    for (std::size_t b = 0; b < width; ++b) {
+        if (at + b >= bytes->items.size()) { break; }
+        bytes->items[at + b] = value::number(static_cast<double>((raw >> (8 * b)) & 0xFF));
+    }
+}
+
+inline void view_set(array_object & view, std::size_t i, double v) noexcept {
     std::uint64_t raw = 0;
     switch (view.elements) {
+    case element_kind::f16: raw = double_to_half(v); break;
     case element_kind::f32: raw = std::bit_cast<std::uint32_t>(static_cast<float>(v)); break;
     case element_kind::f64: raw = std::bit_cast<std::uint64_t>(v); break;
     default:
@@ -609,12 +663,20 @@ inline void view_set(array_object & view, std::size_t i, double v) noexcept {
             static_cast<std::uint64_t>(static_cast<std::int64_t>(coerce_element(view.elements, v)));
         break;
     }
-    const std::size_t at = view.byte_offset + i * width;
-    for (std::size_t b = 0; b < width; ++b) {
-        if (at + b >= bytes->items.size()) { break; }
-        bytes->items[at + b] = value::number(static_cast<double>((raw >> (8 * b)) & 0xFF));
-    }
+    view_set_raw(view, i, raw);
 }
+
+// ONE TYPED ELEMENT AS A `value`, either storage shape, any kind: the number,
+// or for a BigInt kind the bigint (fresh off a view). Undefined past the
+// length. The write is TypedArraySetElement (10.4.5.16): ToNumber - ToBigInt
+// for a BigInt kind - of `v` FIRST, because it can run script, then the
+// store against the length as it is after that, dropped past it. False with
+// the throw in flight. Defined in builtins/collections/typed_arrays/, which
+// owns the storage model; the VM's index paths call them for the kinds
+// view_get/view_set cannot answer.
+class context;
+[[nodiscard]] value typed_element_get(context & cx, const array_object & arr, std::size_t i);
+[[nodiscard]] bool typed_element_set(context & cx, array_object & arr, std::size_t i, value v);
 
 // --- PROPERTY ATTRIBUTES -------------------------------------------------
 //

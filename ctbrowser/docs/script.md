@@ -1269,21 +1269,41 @@ directory is the storage model; two decisions in it are worth knowing:
   detach re-bound every registered view; a `subarray` over a fixed-length
   buffer is not registered, since nothing can shrink under it.
 
-What the VM cannot answer yet, and where: `element_kind` (value.hpp) has no
-BigInt or Float16 member, so `BigInt64Array`, `BigUint64Array` and
-`Float16Array` are not installed - test262's harness tests each with `typeof`,
-and ~890 of its typed-array files want the BigInt pair; a typed array's
-[[Prototype]] is found through its kind's global, so a subclass instance cannot
-be one; and `vm/objects/lookup.cpp` answers `buffer`, `length`, `byteLength`
-and `byteOffset` for a view before any prototype getter is asked, building a
+**The twelve kinds (2026-09-16).** `element_kind` gained `f16`, `big_i64`
+and `big_u64`, so `Float16Array`, `BigInt64Array` and `BigUint64Array` are
+installed. A BigInt kind's element VALUE is a bigint (Table 71): owning
+`items` hold `bigint_object`s (one shared `0n` at allocation), a view holds
+eight little-endian bytes through `view_get_raw`/`view_set_raw`, and every
+read and write in the directory and in the VM's index paths goes through
+`typed_element_get`/`typed_element_set` (declared in value.hpp, defined in
+constructors.cpp) - a `value` in, a `value` out, the kind deciding the
+coercion: ToNumber, or ToBigInt (`bigint.hpp`'s `to_bigint`, shared with
+`BigInt.asIntN` and `DataView`), where a Number is a TypeError. The Number
+kinds keep their double path and Shell still reads their `items` as
+numbers. binary16 is the compiler's `_Float16` (`double_to_half`/
+`half_to_double`, one correctly rounded step, shared with `DataView`).
+[[ContentType]] is enforced where 23.2.4 says: the constructor from a typed
+array, `set` from one, and a species result of the other content type are
+TypeErrors. `[[DefineOwnProperty]]` over a typed array's integer index is
+10.4.5.3 now, for every kind: false past the length or for a descriptor that
+would make the element non-configurable, non-enumerable, read-only or an
+accessor, the value coerced to the kind - before, a view answered true for
+anything and an owning array could be grown or handed an uncoerced element.
+
+What the VM cannot answer yet, and where: a typed array's [[Prototype]] is
+found through its kind's global, so a subclass instance cannot be one; and
+`vm/objects/lookup.cpp` answers `buffer`, `length`, `byteLength` and
+`byteOffset` for a view before any prototype getter is asked, building a
 fresh wrapper for `buffer` each read, so `ta.buffer === ta.buffer` is false.
 `$262.detachArrayBuffer` in tools/ct262 still throws; the engine's detach is
 `ArrayBuffer.prototype.transfer`'s, one call away. Smaller, found by the same
-measurement and also the VM's: `ta[i] = -0` on an integer kind keeps the -0
-(`coerce_element`'s wrap), `Object.defineProperty(ta, "length", ...)` resizes
-an owning typed array, a typed array reports `length` as an own key, and
-`class X extends Uint8Array` neither inherits the statics nor produces a typed
-array from `super()`.
+measurement and also the VM's: `ta[i] = v` on a Number kind runs the STATIC
+ToNumber (an object's `valueOf` is not called; a BigInt kind's ToBigInt does
+run it), `ta[i] = -0` on an integer kind keeps the -0 (`coerce_element`'s
+wrap), `Object.defineProperty(ta, "length", ...)` resizes an owning typed
+array, a typed array reports `length` as an own key, `Object.freeze` of a
+non-empty typed array does not throw, and `class X extends Uint8Array`
+neither inherits the statics nor produces a typed array from `super()`.
 
 Measured on the devbox at the commit that landed this (test262 files, PASS
 before -> after, 4 workers, 10 s, 2 GB, the detachArrayBuffer.js tests still

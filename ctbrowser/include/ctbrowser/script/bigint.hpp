@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -66,6 +67,18 @@ namespace ctbrowser::script {
 // EXACT, deliberately: a bigint past 2^53 must not be rounded into equality
 // with the double beside it, which is the one thing the type exists to prevent.
 [[nodiscard]] std::optional<int> bigint_compare_double(const bigint & a, double b);
+
+// ToBigInt64 / ToBigUint64 (7.1.15-16) share this: the value modulo 2^64 as
+// the raw word a BigInt64Array element or a DataView's setBigInt64 stores.
+// `bigint{static_cast<std::int64_t>(raw)}` and `bigint{raw}` are the reads.
+[[nodiscard]] std::uint64_t bigint_to_uint64_wrap(const bigint & a);
+
+// ToBigInt (7.1.13): ToPrimitive with hint number, then a BigInt is itself, a
+// Boolean 0n/1n, a String parses (SyntaxError when it is not an integer), and
+// a Number - unlike `BigInt(1)` - is a TypeError, as are undefined, null and
+// a Symbol. False with the throw in flight.
+class context;
+[[nodiscard]] bool to_bigint(context & cx, value v, bigint & out);
 
 // The double NEAREST this value, for `Number(1n)`. Saturates to an infinity
 // when the magnitude is past what a double can hold.

@@ -258,7 +258,9 @@ constexpr std::string_view handlings[] = {"loose", "strict", "stop-before-partia
 [[nodiscard]] std::vector<std::uint8_t> bytes_of(array_object * arr) {
     std::vector<std::uint8_t> out(arr->length());
     for (std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::uint8_t>(context::to_number(typed_array_get(arr, i)));
+        // A Uint8Array's elements are numbers in either storage shape.
+        out[i] = static_cast<std::uint8_t>(arr->is_view() ? view_get(*arr, i)
+                                                          : context::to_number(arr->items[i]));
     }
     return out;
 }

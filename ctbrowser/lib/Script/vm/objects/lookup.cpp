@@ -122,9 +122,14 @@ value context::lookup_index(value target, value key) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
         if (arr->is_view()) {
-            return i >= 0 && static_cast<std::size_t>(i) < arr->length()
-                       ? value::number(view_get(*arr, static_cast<std::size_t>(i)))
-                       : value::undefined();
+            if (i < 0 || static_cast<std::size_t>(i) >= arr->length()) {
+                return value::undefined();
+            }
+            // A BigInt kind's element is a fresh bigint off the bytes; every
+            // other kind's is view_get's double.
+            return is_bigint_kind(arr->elements)
+                       ? typed_element_get(*this, *arr, static_cast<std::size_t>(i))
+                       : value::number(view_get(*arr, static_cast<std::size_t>(i)));
         }
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
             // A HOLE READS THROUGH TO THE PROTOTYPES and an ACCESSOR element

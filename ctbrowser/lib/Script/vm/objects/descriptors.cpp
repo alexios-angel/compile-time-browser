@@ -7,12 +7,14 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
+#include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
 namespace ctbrowser::script {
@@ -55,6 +57,20 @@ bool array_set_length(array_object & arr, double n) {
 }
 
 namespace {
+
+// CanonicalNumericIndexString (7.1.21) for a key that array_index_key already
+// refused: "-0", "1.5", "-1", "NaN", "Infinity" and the like. On a typed
+// array such a key names NO property (10.4.5.1, 10.4.5.3) - it is neither an
+// element nor a name the table may hold - where "01" or "foo" is an ordinary
+// property.
+[[nodiscard]] bool numeric_non_index_key(const std::string & name) {
+    if (name == "-0") { return true; }
+    if (name.empty() || !(std::isdigit(static_cast<unsigned char>(name.front())) ||
+                          name.front() == '-' || name.front() == 'I' || name.front() == 'N')) {
+        return false;
+    }
+    return number_to_string(string_to_number(name)) == name;
+}
 
 // 10.4.2.1 step 2 for a NEW element at `at`: a length that is not writable
 // refuses an index at or past it, and the slot is materialised the way
@@ -196,11 +212,21 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         std::uint32_t at = 0;
+        if (arr->elements != element_kind::none && !object_object::array_index_key(name, at) &&
+            numeric_non_index_key(name)) {
+            return false;
+        }
         if (object_object::array_index_key(name, at)) {
             if (arr->is_view()) {
                 if (at < arr->length()) {
-                    out =
-                        property_descriptor::data(value::number(view_get(*arr, at)), attr_default);
+                    // 10.4.5.1: { [[Writable]]: true, [[Enumerable]]: true,
+                    // [[Configurable]]: true } around the element - a bigint
+                    // for a BigInt kind, which is why the read is not
+                    // view_get's double.
+                    out = property_descriptor::data(is_bigint_kind(arr->elements)
+                                                        ? typed_element_get(*this, *arr, at)
+                                                        : value::number(view_get(*arr, at)),
+                                                    attr_default);
                     out.virtual_slot = true;
                     return true;
                 }
@@ -463,6 +489,27 @@ bool context::define_own_property(value target, const std::string & name,
         return truthy(call(trap, args, p->handler));
     }
 
+    // 10.4.5.3: A TYPED ARRAY'S INTEGER INDEX is its own algorithm, before
+    // ValidateAndApplyPropertyDescriptor. The index must be valid now, the
+    // descriptor may not make the element non-configurable, non-enumerable,
+    // an accessor or read-only, and a value goes through the kind's coercion
+    // (TypedArraySetElement) - which may throw, and answers true past it.
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        std::uint32_t at = 0;
+        if (arr->elements != element_kind::none && object_object::array_index_key(name, at)) {
+            if (at >= arr->length()) { return false; }
+            if ((wanted.has_configurable && !wanted.configurable) ||
+                (wanted.has_enumerable && !wanted.enumerable) || wanted.is_accessor() ||
+                (wanted.has_writable && !wanted.writable)) {
+                return false;
+            }
+            if (wanted.has_value) { (void)typed_element_set(*this, *arr, at, wanted.held); }
+            return true;
+        }
+        if (arr->elements != element_kind::none && numeric_non_index_key(name)) { return false; }
+    }
+
     property_descriptor current;
     const bool exists = own_property(target, name, current);
 
@@ -603,10 +650,6 @@ bool context::define_own_property(value target, const std::string & name,
         }
         std::uint32_t at = 0;
         if (object_object::array_index_key(name, at)) {
-            if (arr->is_view()) {
-                if (at < arr->length() && wanted.has_value) { view_set(*arr, at, to_number(held)); }
-                return true;
-            }
             if (!array_slot_for_define(*arr, at, exists)) { return false; }
             if (at >= arr->items.size()) {
                 // Recorded sparse (array_object::dense_limit); attributes dropped.

@@ -9,9 +9,8 @@
 // resizable buffer. The bytes are the store's, so a Uint8Array over the same
 // buffer sees every setInt32 at once.
 //
-// THIS FILE HAS Float16 AND THE BigInt64 PAIR even though the typed arrays
-// do not: a DataView's element type is an argument to a method here, not an
-// element_kind the VM has to know.
+// The binary16 and 64-bit BigInt encodings are value.hpp's and bigint.hpp's,
+// shared with Float16Array, BigInt64Array and BigUint64Array.
 
 #include "internal.hpp"
 
@@ -46,54 +45,6 @@ constexpr type_spec types[] = {
     {"Float64", view_type::f64, 8},       {"BigInt64", view_type::big_i64, 8},
     {"BigUint64", view_type::big_u64, 8},
 };
-
-// --- IEEE 754 binary16, which nothing else in the engine has ---------------
-//
-// Round-to-nearest-even straight from the double, not through a float: the
-// double rounding of a float on the way would answer differently for a value
-// that lands exactly between two halves after the first rounding. nearbyint
-// rounds ties to even under the default environment, which is the mode every
-// build here runs in.
-[[nodiscard]] std::uint16_t to_half(double v) {
-    if (std::isnan(v)) { return 0x7E00; }
-    const std::uint16_t sign = std::signbit(v) ? 0x8000 : 0;
-    const double a = std::fabs(v);
-    if (std::isinf(a) || a >= 65520.0) { return static_cast<std::uint16_t>(sign | 0x7C00); }
-    if (a == 0) { return sign; }
-    int e = 0;
-    const double m = std::frexp(a, &e); // a = m * 2^e, m in [0.5, 1)
-    const int exp = e - 1;              // a = (2m) * 2^exp, 2m in [1, 2)
-    if (exp < -14) {
-        // Subnormal: a multiple of 2^-24. 1023.5 rounds to 1024, which IS
-        // the smallest normal's bit pattern.
-        const double f = std::nearbyint(a * 16777216.0);
-        return static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(f));
-    }
-    double f = std::nearbyint((m * 2 - 1) * 1024);
-    int biased = exp + 15;
-    if (f >= 1024) {
-        f = 0;
-        ++biased;
-    }
-    if (biased >= 31) { return static_cast<std::uint16_t>(sign | 0x7C00); }
-    return static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(biased << 10) |
-                                      static_cast<std::uint16_t>(f));
-}
-
-[[nodiscard]] double from_half(std::uint16_t h) {
-    const bool negative = (h & 0x8000) != 0;
-    const int exp = (h >> 10) & 0x1F;
-    const int frac = h & 0x3FF;
-    double v = 0;
-    if (exp == 0) {
-        v = std::ldexp(static_cast<double>(frac), -24);
-    } else if (exp == 31) {
-        v = frac != 0 ? canonical_nan() : std::numeric_limits<double>::infinity();
-    } else {
-        v = std::ldexp(static_cast<double>(1024 + frac), exp - 25);
-    }
-    return negative ? -v : v;
-}
 
 // --- the slots -----------------------------------------------------------------
 
@@ -168,43 +119,6 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
     return t == view_type::big_i64 || t == view_type::big_u64;
 }
 
-// ToBigInt (7.1.13): false with the throw in flight.
-[[nodiscard]] bool to_bigint(context & cx, value v, bigint & out) {
-    value prim = v;
-    if (v.is_object_like()) {
-        if (!cx.to_primitive_hint(v, "number", prim)) { return false; }
-    }
-    if (prim.is_kind(heap_kind::bigint)) {
-        out = static_cast<bigint_object *>(prim.as_heap())->digits;
-        return true;
-    }
-    if (prim.is_boolean()) {
-        out = prim.as_boolean() ? 1 : 0;
-        return true;
-    }
-    if (prim.is_string()) {
-        const std::optional<bigint> parsed =
-            bigint_from_string(static_cast<string_object *>(prim.as_heap())->text);
-        if (!parsed) {
-            cx.throw_error("SyntaxError", "Cannot convert this string to a BigInt");
-            return false;
-        }
-        out = *parsed;
-        return true;
-    }
-    cx.throw_error("TypeError",
-                   "Cannot convert " + std::string{context::type_of(prim)} + " to a BigInt");
-    return false;
-}
-
-// BigInt::asUintN(64, x) as the raw word a store holds.
-[[nodiscard]] std::uint64_t bigint_to_u64(const bigint & x) {
-    static const bigint modulus = bigint{1} << 64;
-    bigint r = x % modulus;
-    if (r < 0) { r += modulus; }
-    return r.convert_to<std::uint64_t>();
-}
-
 [[nodiscard]] value raw_to_value(context & cx, view_type t, std::uint64_t raw) {
     switch (t) {
     case view_type::i8: return value::number(static_cast<std::int8_t>(raw));
@@ -213,7 +127,7 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
     case view_type::u16: return value::number(static_cast<std::uint16_t>(raw));
     case view_type::i32: return value::number(static_cast<std::int32_t>(raw));
     case view_type::u32: return value::number(static_cast<std::uint32_t>(raw));
-    case view_type::f16: return value::number(from_half(static_cast<std::uint16_t>(raw)));
+    case view_type::f16: return value::number(half_to_double(static_cast<std::uint16_t>(raw)));
     case view_type::f32: {
         const double d = std::bit_cast<float>(static_cast<std::uint32_t>(raw));
         return value::number(std::isnan(d) ? canonical_nan() : d);
@@ -231,7 +145,7 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
 
 [[nodiscard]] std::uint64_t number_to_raw(view_type t, double v) {
     switch (t) {
-    case view_type::f16: return to_half(v);
+    case view_type::f16: return double_to_half(v);
     case view_type::f32: return std::bit_cast<std::uint32_t>(static_cast<float>(v));
     case view_type::f64: return std::bit_cast<std::uint64_t>(v);
     case view_type::i8:
@@ -287,7 +201,7 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
     if (is_bigint_type(t.type)) {
         bigint n;
         if (!to_bigint(c, arg_at(a, 1), n)) { return value::undefined(); }
-        raw = bigint_to_u64(n);
+        raw = bigint_to_uint64_wrap(n);
     } else {
         if (!numeric_arg(c, arg_at(a, 1))) { return value::undefined(); }
         const double n = c.to_number_value(arg_at(a, 1));
