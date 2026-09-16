@@ -127,7 +127,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                     return std::move(failure);
                 }
                 if (llvm::any_of(result.initialIntrinsics, [](const auto & name) {
-                        return name != "Number" && name != "decodeURIComponent";
+                        return name != "Number" && name != "decodeURIComponent" && name != "JSON";
                     })) {
                     return error("unsupported DOM initial intrinsic identity");
                 }

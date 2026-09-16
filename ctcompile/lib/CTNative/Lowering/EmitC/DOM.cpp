@@ -55,6 +55,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             needsDOMNumber |=
                 edge->kind == HostDOMMethod::number || edge->kind == HostDOMMethod::numberToString;
             needsDOMURI |= edge->kind == HostDOMMethod::decodeURIComponent;
+            needsDOMJSON |= edge->kind == HostDOMMethod::jsonParse;
             needsDOMAttributeToggle |= edge->kind == HostDOMMethod::toggleAttribute;
             needsDOMAttributePresence |= edge->kind == HostDOMMethod::hasAttribute;
             needsDOMAttributeRemoval |= edge->kind == HostDOMMethod::removeAttribute;
@@ -165,9 +166,19 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domInvocations.contains(operation)) {
         auto invocation = llvm::cast<ctjs::InvokeOp>(operation);
         auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
+        // decodeURIComponent answers std::optional<std::string>; parse_json
+        // answers std::expected<json_value, std::size_t>. Both move on success.
+        const bool parses = domCalls.find(call)->second.kind == HostDOMMethod::jsonParse;
+        const auto fallible =
+            parses
+                ? ec::OpaqueType::get(context, "std::expected<ctbrowser::json_value, std::size_t>")
+                : optionalString;
+        const mlir::Type produced =
+            parses ? carrierType(context, carrier::json) : carrierType(context, carrier::string);
         auto decoded = callWithConstValueOperands(
-            at, where, mlir::TypeRange{optionalString},
-            at.getStringAttr("ctbrowser::decode_uri_component"), call.getArgs());
+            at, where, mlir::TypeRange{fallible},
+            at.getStringAttr(parses ? "ctbrowser::parse_json" : "ctbrowser::decode_uri_component"),
+            call.getArgs());
         auto present = ec::MemberCallOpaqueOp::create(
             at, where, mlir::TypeRange{at.getI1Type()}, decoded.getResult(0),
             at.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
@@ -180,18 +191,18 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&success);
         // Move only on success. The original input and failure continuation
         // remain untouched; foreign allocation failures never select this else.
-        const auto stringType = carrierType(context, carrier::string);
-        auto value = ec::ExpressionOp::create(inside, where, stringType,
+        auto value = ec::ExpressionOp::create(inside, where, produced,
                                               mlir::ValueRange{decoded.getResult(0)}, false);
         value.createBody();
         inside.setInsertionPointToStart(&value.getRegion().front());
         auto moved = ec::CallOpaqueOp::create(
             inside, where,
-            mlir::TypeRange{ec::OpaqueType::get(context, "std::optional<std::string> &&")},
+            mlir::TypeRange{ec::OpaqueType::get(
+                context, llvm::cast<ec::OpaqueType>(fallible).getValue().str() + " &&")},
             inside.getStringAttr("std::move"),
             mlir::ValueRange{value.getRegion().front().getArgument(0)});
         auto extracted = ec::MemberCallOpaqueOp::create(
-            inside, where, mlir::TypeRange{stringType}, moved.getResult(0),
+            inside, where, mlir::TypeRange{produced}, moved.getResult(0),
             inside.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
             mlir::ValueRange{});
         ec::YieldOp::create(inside, where, extracted.getResult(0));
@@ -264,7 +275,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (found == domCalls.end()) { return false; }
     auto call = llvm::cast<ctjs::CallOp>(operation);
     const auto & edge = found->second;
-    if (edge.kind == HostDOMMethod::decodeURIComponent) { return true; }
+    if (edge.kind == HostDOMMethod::decodeURIComponent || edge.kind == HostDOMMethod::jsonParse) {
+        return true;
+    }
     llvm::SmallVector<mlir::Value> arguments;
     if (edge.kind == HostDOMMethod::number) {
         // Earlier replacements update the live call operands. The source
@@ -293,7 +306,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                                : "ctbrowser::string_to_number";
         break;
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
-    case HostDOMMethod::decodeURIComponent: llvm_unreachable("URI call belongs to its invocation");
+    case HostDOMMethod::decodeURIComponent:
+    case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");
     }
     if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString() ||
         edge.returnsNumber() || edge.returnsString()) {
