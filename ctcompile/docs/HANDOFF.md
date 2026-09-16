@@ -6,6 +6,90 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original dataset filter and moved-VM recovery, 2026-09-16 UTC
+
+Resumed the interrupted dataset filter and runtime integration from **17 dirty
+ctcompile paths** and the **16:07:28 abandoned-loop AGENT-SYNC entry**. Both commit
+histories and pending branches were checked; September 7 work was already landed.
+Three delegated recovery tasks hit service limits before editing; root completed
+them. A later agent reviewed the next iteration boundary and found no concrete defects
+in the filter proof.
+Claude's integrated runtime is the differential oracle; no browser source changed.
+
+**32155832** compiles Bootstrap's original
+`Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))`.
+The complete proof requires original Object/keys, Array/filter/default species and
+String/startsWith identities, a confined capture-free callback, a Boolean result,
+and literal ASCII prefixes. The callback becomes an ordinary native function;
+`std::copy_if` produces an owning String vector. Source callbacks, effects,
+identity uses, budgets and duplicate function indices remain checked. No VM, GC,
+Script symbol, copied browser implementation or external dependency was added.
+
+**bf7a56d5** fixes native and host-prefix String concatenation after the VM's
+surrogate normalization changed. Both ordinary and optional String operands reuse
+public `ctbrowser::join_surrogates`; standalone programs need public Core headers
+and link no browser library. The unchanged `split41` witness now agrees with the VM;
+new optional-String and provider snapshot-key checks cover both compiler paths.
+The MLIR Analysis object target now declares C++23 for that public header.
+
+**4bf39afe** proves the frontend's exact static-getter `__home` assignments before
+removing unobservable setup. Wrong/repeated homes, identity observation and missing
+proof budgets still refuse. Class checks cover **69 source observations / 152 native
+executions / 138 unprepared and 84 preparation refusals**, plus constructed-method
+controls. **9659f0bf** updates preserved Button and sloppy-undefined source witnesses:
+Node and VM now agree on **22 original Button lifecycle observations**, inherited
+statics and the two inheritance isolates. Explicit raw-IR writes to the fixed
+undefined binding remain refused; an empty conditional still lacks a global-owner
+proof. DOM checks cover **19 entries / 42 refusal controls**.
+
+**56a39f38** preserves delete sources at their new opaque host-call boundary,
+including zero-fact controls, while retaining positive provider-object coverage.
+Provider suites pass **39 object / 29 diagnostic cases**. **0e0fa2d7** refreshes the
+measured escape snapshot: **1,123 rows**, changed bytecode offsets/program hash and
+**79 Stored-to-Passed reasons**, with every observation and confinement result
+unchanged. Historical oracle: **895 sites / 35 unclaimed / 40 sound / zero violations /
+zero partial or pending / 40 of 172 precision (23.3%)**.
+Previously landed **618f5775** commuted Add induction is included in this gate:
+**15/15 observed sites / 6 of 8 precision / zero violations**. Current array suites
+cover **567 dense / 151 induction / 109 structured rows**, with **21,925 / 11,227 /
+6,312** conservative budget cutoffs.
+
+Focused build, **3/3 CTests (0.87s) / 13/13 lit (279.05s) PASS**. Dataset tests cover
+**11 sources / 29 Node-VM source-double observations / eight GCC-Clang binaries /
+146 refusals**, both providers/policies/layouts, HTML/SVG and lifetime sanitization.
+Complete build and **305/305 CTests (2238.51s) / 255/255 lit (1954.77s) PASS**,
+wrapper **0**; no tests skipped.
+All **1,771 frozen input hashes** match local and devbox sources before these docs.
+Stable formatter 23.1.1 passes **877 C++ / 104 Python / 105 web**; the required pinned
+formatter's **nine files / 26 diagnostics** independently reproduce from unchanged
+HEAD files. Evidence: `/tmp/ctcompile-filter-1624/` (full/focused logs and exits,
+source manifest, generated C++, measured reports, escape snapshots and next probes).
+Earlier failed focused runs are archived; their four failures were repaired before
+the green run. The full WPT/test262 corpus measurement was not rerun.
+
+Fresh full Bootstrap remains **19/574 native**, with **0/47 globals resolved**
+(the imported global denominator was previously 43), without skips or pruning.
+DOM Data remains **7/7** and Button **4/86**. The separate dataset filter compiles
+**two native functions** in all four provider/policy modes; original M/H and Config
+typeof/spread each compile one. No full-bundle admission gain is claimed.
+
+**Exact next native boundary:** the count-only `for...of` over the original filtered key
+snapshot refuses **DOM helper completion observes an inactive value** in all four
+provider/policy modes. Full original `H.getDataAttributes` refuses **DOM helper
+completion requires acyclic structured source** in all four modes.
+Prove the original for-of helper/iterator identities over the owning dense String
+vector, preserve snapshot order/lifetime and scalar loop-carried values, then reuse
+existing vector length/index helpers and SCF lowering. Current DOM preparation and
+entry proof reject loop regions and block arguments; allowing a loop alone does not
+prove its open/next/close calls. Then address original `replace(/^bs/, "")`, dynamic
+key normalization, live `dataset[n]` reads with Undefined/prototype semantics, M
+composition and dynamic result writes (`__proto__` assignment is a setter, unlike
+spread). Matching/live F keys, r(e), inherited defaults/initialization, retained
+callbacks and the application driver remain open. Original M still has **24
+nine-register blocks / handler ^bb12** before preparation.
+
+Earlier entries below are historical checkpoints.
+
 ## Dataset key snapshots and dynamic Add induction, 2026-09-16 UTC
 
 Continued **c5682b0f** and the **10:24:07 AGENT-SYNC** next-boundary journal.

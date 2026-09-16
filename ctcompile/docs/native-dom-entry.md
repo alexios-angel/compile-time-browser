@@ -68,9 +68,26 @@ The complete source proof requires the original Object/keys identity and receive
 A saved dataset alias is accepted only when no DOM mutation intervenes before
 its enumeration. Returning a saved key vector after a mutation and rereading
 `element.dataset` for a fresh snapshot are supported. Dataset/value writes,
-vector mutation or identity, dynamic value reads, callback filtering and loops
-remain refused. Missing dataset values need an Undefined/prototype proof separate
-from getAttribute's String-or-null result.
+vector mutation or identity, dynamic value reads and loops remain refused. Missing
+dataset values need an Undefined/prototype proof separate from getAttribute's
+String-or-null result.
+
+The original Bootstrap filter is also supported:
+
+```javascript
+Object.keys(element.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))
+```
+
+Its manifest supplies `"initial_intrinsics": ["Object", "Array", "String"]`.
+Array fixes the original filter method and default Array species; String fixes the
+original startsWith method. The complete source proof requires a capture-free,
+confined callback with one String parameter and a Boolean result. Implicit arguments,
+callback identity, side effects and prefixes not proved as ASCII String constants
+remain refused.
+The callback becomes an ordinary C++ function; `std::copy_if` creates a second owning
+String vector. Empty/all-rejected results, source order, saved snapshots, and lifetime
+after document destruction are covered. Missing intrinsics, replacement methods,
+forged proof attributes and every insufficient work budget withdraw all evidence.
 
 The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
 Proxy. Chromium independently confirms attribute order and live saved-dataset
@@ -378,14 +395,14 @@ admits captured F with distinct names and forwarded call chains; F with captures
 of its own remains outside this specialization. Matching strings, other patterns/
 flags and prototype mutations still refuse.
 
-Template concatenation also reuses ordinary owning String addition when both
-operands are proved Strings. Original Bootstrap H `setDataAttribute` and
+Template concatenation also uses the owning surrogate-normalizing Core helper
+when both operands are proved Strings. Original Bootstrap H `setDataAttribute` and
 `removeDataAttribute` compose with captured F, including a factory-exported entry
 table. Nullable values, objects, Numbers and Booleans do not gain implicit template
 conversion. H's `getDataAttribute` composes with original M for a proved constant
-no-match key such as `"config"`. Matching/live keys and the full dataset filtering
-and iteration in `getDataAttributes` remain unproved; dataset key snapshots have
-the separate complete proof above.
+no-match key such as `"config"`. Matching/live keys and iteration in
+`getDataAttributes` remain unproved; dataset key snapshots and the original filter
+have the separate complete proof above.
 
 Explicit undefined force preserves the current platform adapters: classList
 treats it as omitted, while Element.toggleAttribute treats it as false. Private

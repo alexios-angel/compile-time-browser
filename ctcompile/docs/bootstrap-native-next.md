@@ -1,6 +1,42 @@
 # What native Bootstrap needs next
 
-## Current boundary: dataset keys, 2026-09-16
+## Current boundary: filtered dataset iteration, 2026-09-16
+
+**32155832** compiles Bootstrap's original dataset key filter through an ordinary
+native predicate and `std::copy_if`, with original Object/Array/String identities,
+default Array species, callback confinement and complete-budget proofs. Dataset:
+**11 sources / 29 Node-VM observations / eight binaries / 146 refusals**, HTML/SVG
+and lifetime sanitization. **bf7a56d5** shares public Core surrogate normalization
+with both native String concatenation and host-prefix evaluation. **4bf39afe**
+proves the frontend's exact static-getter home setup. **56a39f38 / 0e0fa2d7 /
+9659f0bf** recover moved-bytecode refusals, the measured escape snapshot and source
+drivers. No browser implementation changed; generated code names no Script/VM/GC.
+
+Full **305/305 CTests (2238.51s) / 255/255 lit (1954.77s), wrapper 0**;
+**1,771 frozen input hashes** verified locally and on the devbox. Focused **3/3
+CTests / 13/13 lit** pass. Stable formatting passes; the required pinned formatter's
+unchanged **nine files / 26 diagnostics** reproduce from HEAD. Fresh Bootstrap is
+**19/574 native / 0 of 47 globals** (previous global denominator 43), without skips
+or pruning. Data is **7/7**, Button **4/86**; Node and VM now agree on all **22 original
+Button lifecycle observations**. No full-bundle admission gain is claimed.
+
+Escape: **1,123 rows**, changed PCs/hash and **79 Stored-to-Passed reasons**, with
+all observations and confinement unchanged; **895 sites / 40 sound / zero violations /
+40 of 172 precision**. Previously landed **618f5775** commuted Add induction is
+included: **15/15 sites / 6 of 8 precision / zero violations**; current dense,
+induction and structured suites have **567 / 151 / 109 rows**.
+
+**Exact next:** count-only `for...of` over the filtered snapshot refuses **DOM helper
+completion observes an inactive value**; full original `H.getDataAttributes` refuses
+**DOM helper completion requires acyclic structured source**, each in all four
+provider/policy modes. Prove the exact owning-vector iterator path and scalar loop
+state before reusing existing vector/SCF lowering. Then dynamic key normalization,
+live dataset values, M composition and result writes remain; `__proto__` assignment
+has setter semantics. Matching/live F keys, inheritance/defaults, retained callbacks
+and the driver remain open. Original M preserves **24 nine-register blocks / handler
+^bb12**. Evidence: `/tmp/ctcompile-filter-1624/`; details in HANDOFF.
+
+## Previous boundary: dataset keys, 2026-09-16
 
 **2dbd73b6 / 3d80df96, 2026-09-16 UTC:** owning HTML/SVG dataset key snapshots
 through public DOM, and exact bounded Number dynamic Add induction. Dataset input
@@ -136,14 +172,11 @@ JavaScript test double; this is a source/progress gate, not native DOM support.
 Node passes **22 lifecycle observations**, including Data identity, config parsing,
 two toggles and disposal's otherwise easy-to-miss event-registry mutation.
 
-The interpreter fails uncaught in `_typeCheckConfig` with
-`Object.entries called on null or undefined`. A separate original-source prefix
-shows missing inherited `Default`, `DefaultType`, `getInstance`, `DATA_KEY` and
-`EVENT_KEY`, while Button's own `NAME` works. Two independent witnesses isolate
-missing constructor linkage and inherited closure-accessor lookup even after
-explicit linkage. Those measured discrepancies are journaled for Claude; the test
-fails when they change so the next measurement cannot silently reuse them.
-The older driver catches this failure and never disposes Button.
+The interpreter now agrees with Node on all 22 lifecycle observations. The original
+static probe and the separate inherited-method/getter witnesses also agree.
+The original source remains pinned; native still claims only 4/86 functions and
+continues to refuse the complete component. These updated observations are recorded
+by **9659f0bf** after Claude's runtime compliance changes.
 
 **075bdd9c** supplies the first trusted class-initialization slice. The explicit
 `ctnative-specialize-class-initialization` pass binds the complete source fingerprint
