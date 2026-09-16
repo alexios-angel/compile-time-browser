@@ -34,9 +34,23 @@ namespace ctbrowser::style::css {
 // unrepresentable are all UNSUPPORTED here and none of them sets this flag - they
 // are valid CSS that a browser parses and this engine cannot answer, and throwing
 // on them would fail a test that a wrong answer merely fails differently.
+// WHAT `&` STANDS FOR, and what a selector without one is prefixed with.
+//
+// Inside a style rule (CSS Nesting 1 §2) `&` is `:is(<parent list>)`, a
+// relative selector `> .a` is `& > .a`, and one naming no `&` at all is
+// `& <selector>`. Inside `@scope` (CSS Cascade 6 §3.3) the parent is empty and
+// `&` is `:where(:scope)` - a scoped selector is not prefixed with anything,
+// since the scope's own in-scope test does that job. At the top level `&` is
+// `:scope`, and this is null.
+struct nesting_context {
+    std::span<const compiled_selector> parent;
+    bool in_scope = false;
+};
+
 [[nodiscard]] std::uint32_t parse_selector_list(stylesheet & sheet,
                                                 std::span<const component_value> prelude,
-                                                atom_table & atoms, bool * invalid = nullptr);
+                                                atom_table & atoms, bool * invalid = nullptr,
+                                                const nesting_context * nesting = nullptr);
 
 // A pseudo-element name this parser knows - `before`, `marker`, `backdrop`, a
 // vendor-prefixed one - which is what `getComputedStyle(el, "::x")` asks

@@ -83,19 +83,47 @@ std::string dom_bindings::author_style_text() {
             !link_explicitly_enabled(sheet->owner)) {
             return;
         }
+        // The sheet's own media list - the `media` attribute, as the CSSOM
+        // holds it - gates every rule in it (CSSOM §5.1), as
+        // browser::collect_author_styles wraps the attribute.
+        const std::string sheet_media = serialize_media_query_list(sheet->media_queries);
+        if (!sheet_media.empty()) { out += "@media " + sheet_media + " {\n"; }
         for (const std::size_t rule : sheet->rules) {
             if (rule >= css_rule_store_.size()) { continue; }
             const css_rule_record & record = *css_rule_store_[rule];
             if (record.type == import_rule && record.imported_sheet != no_index) {
+                // ...and in the import's `layer(x)` and `supports()` blocks
+                // (CSS Cascade 5 §5.1), which `prelude` keeps as written.
                 const std::string media = serialize_media_query_list(record.media_queries);
-                if (!media.empty()) { out += "@media " + media + " {\n"; }
+                std::string closers;
+                if (!media.empty()) {
+                    out += "@media " + media + " {\n";
+                    closers += "}\n";
+                }
+                std::size_t at = 0;
+                for (;;) {
+                    const std::string_view part = next_component(record.prelude, at);
+                    if (part.empty()) { break; }
+                    if (ascii_iequals(part.substr(0, 9), "supports(") && part.back() == ')') {
+                        out +=
+                            "@supports (" + std::string{part.substr(9, part.size() - 10)} + ") {\n";
+                        closers += "}\n";
+                    } else if (ascii_iequals(part.substr(0, 6), "layer(") && part.back() == ')') {
+                        out += "@layer " + std::string{part.substr(6, part.size() - 7)} + " {\n";
+                        closers += "}\n";
+                    } else if (ascii_iequals(part, "layer")) {
+                        out += "@layer {\n";
+                        closers += "}\n";
+                    }
+                }
                 self(self, record.imported_sheet, depth + 1);
-                if (!media.empty()) { out += "}\n"; }
+                out += closers;
                 continue;
             }
             out += rule_css_text(record);
             out += '\n';
         }
+        if (!sheet_media.empty()) { out += "}\n"; }
     };
     for (const std::size_t at : css_document_sheets_) { emit(emit, at, 0); }
     // AND THE ADOPTED SHEETS, AFTER THEM AND IN THEIR OWN ORDER.

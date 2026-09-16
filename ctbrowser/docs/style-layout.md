@@ -25,6 +25,67 @@ splitter — the latter peels `!important` off and discards the flag, which is
 the entire question. Cached by attribute TEXT, so a table styling forty rows
 identically parses once and a re-resolve after a hover parses nothing.
 
+## THE CASCADE'S NEWER CRITERIA: @layer, @scope, nesting, @container (2026-09-16)
+
+`engine::resolve` sorts the matched rules by importance, origin, **layer**,
+specificity, **scope proximity**, source order (CSS Cascade 5 §6.1, Cascade 6
+§6.3). Origin and layer order both reverse for important declarations: the
+user agent's `!important` beats the author's, and the first-declared layer's
+beats the last's. The style attribute is still spliced at the importance
+boundary, above every layer.
+
+**Layers** are names filed in first-appearance order across every sheet
+(`engine::layer_names_`), merged by name, ranked once per `add_sheet`
+(`rerank_layers`): sub-layers before their parent's own rules, unlayered last.
+A rule carries the layer INDEX and the comparator reads the RANK, so a page
+that adds a sheet naming a new layer renumbers nothing. Anonymous layers get
+an unnameable name (it starts with `\x01`) unique per sheet. `@import
+url(x) layer(a) supports(c)` is spliced by `browser::expand_imports` and by
+the CSSOM's `author_style_text` inside `@layer a { @supports (c) { ... } }`.
+
+**`revert`, `revert-layer`, `revert-rule`** are all answered from the sorted
+matches (`rolled_back` in `resolve`): the value with an origin, a layer or a
+block struck out is the last remaining declaration of the property in
+cascade order, and the matches are already in it. The style attribute is a
+layer above all for `revert-layer`. What is found may be a keyword itself, so
+it loops, always to an earlier position.
+
+**Scope.** `@scope (<root>) to (<limit>)` records its two selector lists; a
+scoped rule is matched only when `scope_root_for` finds a root on the
+subject's chain with no limit between (the limit itself is out of scope,
+Cascade 6 §3.1), nearest first, nested scopes enumerated through their
+parent's roots. `:scope` and `&` in a scoped rule name that root; a selector
+naming neither never styles the root (`compiled_selector::explicit_scope`).
+Proximity is the distance to that root, and only scoped rules pay for any of
+it. The IMPLICIT scope (`@scope { }` with no prelude) is rooted at the owner
+node's parent, which the engine is not told, so it matches nothing yet.
+
+**Nesting.** `css::parser::consume_block_contents` walks a block as
+declarations and rules mixed (Syntax 3 §5.4.4). `&` compiles to
+`:is(<parent list>)` inside a style rule, `:where(:scope)` inside `@scope`,
+`:scope` at the top level (`compound::nesting` remembers it was written as
+`&` so `selectorText` gives it back); a leading combinator and a selector
+naming no `&` are anchored on it. Runs of declarations after a nested rule
+are filed as rules of their own under the same selectors, so their source
+order survives (Nesting 1 §4). `@supports` is decided at parse time through
+`supports_condition`; a false one files its rules under a never-true
+condition rather than dropping the block, so its `@layer` names still count.
+
+**`@container`** is a condition per rule the cascade asks per element
+(`container_holds`): the nearest ancestor that is a query container for the
+condition - any element for `style()`, `container-type: size | inline-size`
+for a size query - with the name if one was asked. `style(--x: y)` compares
+the container's computed value as text; a size feature goes through the
+media machinery with the viewport set to the container's box, which only
+layout knows, so `engine::set_container_size` takes it from the browser and
+a size query is unknown until the hook is installed and the cascade re-run
+after a layout that moved a container. The browser does not install it yet,
+and `container-type` is not in the property table, which is what
+`CSS.supports("container-type: size")` - the css-conditional harness gate -
+reads.
+
+`unittests/unit/cascade_layers` has a case per paragraph above.
+
 ## TABLES AND GENERATED CONTENT (stage 7, 2026-07-25)
 
 **`table_flow` is the third formatting context** the `LayoutAlgorithm` concept
