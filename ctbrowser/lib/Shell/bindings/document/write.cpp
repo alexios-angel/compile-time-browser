@@ -222,13 +222,14 @@ void dom_bindings::parser_finished(bool initial) {
         doc->set("compatMode", cx_->string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
     }
     set_ready_state("interactive");
-    // Steps 4-6: the async scripts are fetched by now, then the deferred ones
-    // in the order they were seen, each before DOMContentLoaded.
+    // Steps 3-6: the deferred scripts in the order they were seen, still in
+    // the parser's task; then the async ones, whose tasks were queued when
+    // their (synchronous) fetch finished - before the DOMContentLoaded task.
     std::vector<parser_script> asap;
     asap.swap(asap_scripts_);
     std::vector<parser_script> deferred;
     deferred.swap(deferred_scripts_);
-    for (const std::vector<parser_script> * batch : {&asap, &deferred}) {
+    for (const std::vector<parser_script> * batch : {&deferred, &asap}) {
         for (const parser_script & script : *batch) {
             if (!run_script_) { break; }
             if (!run_script_(script)) { return; }
