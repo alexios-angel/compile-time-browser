@@ -89,6 +89,12 @@ String vector. Empty/all-rejected results, source order, saved snapshots, and li
 after document destruction are covered. Missing intrinsics, replacement methods,
 forged proof attributes and every insufficient work budget withdraw all evidence.
 
+An exact `.length` read on either owning snapshot returns a JavaScript Number
+through the existing `ctnative::vec_length` helper. The complete proof identifies
+each read and its owning String-vector receiver, and rejects vector writes.
+Indexed reads and the original `for...of` loop still require their own bounds,
+iterator-identity and loop-state proofs.
+
 The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
 Proxy. Chromium independently confirms attribute order and live saved-dataset
 keys. Shell's current binding instead refills an ordinary proxy target on dataset

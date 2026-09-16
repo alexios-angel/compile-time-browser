@@ -1,6 +1,43 @@
 # What native Bootstrap needs next
 
-## Current boundary: filtered dataset iteration, 2026-09-16
+## Current boundary: snapshot length and original iteration, 2026-09-16
+
+**0f3fbe91** proves exact `.length` reads on owning dataset-key and filtered String
+snapshots, reusing existing native `vec_length`. The filter still requires its original
+Array/Object/String identities and callback confinement; every snapshot requires no
+vector mutation and complete proof budgets. Dataset checks pass **12 sources / 33
+Node-VM source-double observations / eight GCC-Clang binaries / 150 refusals**, HTML/SVG
+and lifetime sanitization. Original `for...of` sources remain unchanged and refused.
+
+**e1bbd9e4** proves increasing dynamic Sub array latches with bounded original negative
+Number strides, including literal negation and an unchanged carried stride. New escape
+oracle: **15 sites / six sound / zero violations / six of eight precision (75%)**.
+Historical **1,123-row** snapshot still matches: **895 sites / 40 sound / zero
+violations / 40 of 172 precision (23.3%)**. Array suites cover **567 dense / 174
+induction / 123 structured rows**. Three old diagnostic assertions now expect exact
+MissingElement instead of UnknownIndex; all three sources still refuse, and the
+corrected focused gate passes **3/3 CTests (0.91s) / 3/3 lit (27.32s)**.
+
+Full **305/305 CTests (2262.84s) / 256/256 lit (1983.71s), wrapper 0**; **1,772 frozen
+hashes** verified locally and on the devbox. Fresh full Bootstrap remains **19/574
+native / 0 of 47 globals**, Data **7/7**, Button **4/86** with **22 Node-VM lifecycle
+observations**. Both policy reports and Data/Button/next reports are byte-identical to
+the prior gate. No skips or pruning and no full-bundle admission gain. Stable formatting
+passes; the required pinned formatter has the unchanged **nine files / 26 diagnostics**
+baseline. No browser implementation or runtime semantics changed. Evidence:
+`/tmp/ctcompile-dataset-iteration/`; details in [HANDOFF](HANDOFF.md).
+
+**Exact next:** the original filtered `for...of` needs proofs of helper identity,
+original Array iterator behavior and scalar loop state, including the before-region
+index switch and inactive final completion slot. Snapshot length is available; indexed
+String reads still need an exact integral in-bounds proof before using existing
+`vec_at`. The current completion copier handles one function-result value, not the loop
+condition/yield tuple. Original IR and a preserved count/order/snapshot regression draft
+are linked in HANDOFF. Then key normalization, live dataset values, M composition and
+result writes remain; `__proto__` assignment has setter semantics. Matching/live F keys,
+full Config/inheritance/defaults, retained callbacks and the driver remain open.
+
+## Previous boundary: filtered dataset iteration, 2026-09-16
 
 **32155832** compiles Bootstrap's original dataset key filter through an ordinary
 native predicate and `std::copy_if`, with original Object/Array/String identities,

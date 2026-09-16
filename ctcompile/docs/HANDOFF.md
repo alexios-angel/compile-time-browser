@@ -6,6 +6,69 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Owning snapshot length and negative Number strides, 2026-09-16 UTC
+
+Continued the clean **26ba2f8e** handoff and its exact original dataset iteration
+boundary. Both histories and unmerged branches were checked; September 7 WIP was already
+an ancestor and old lens branches were explicitly superseded in the journal. Three
+agents split source preparation, regressions and escape analysis. Two hit service
+limits; root recovered their drafts. A further read-only review found no proof defect;
+root removed a duplicate new oracle before the source freeze.
+
+**0f3fbe91** proves `.length` on an owning original dataset-key or filtered String
+snapshot. Evidence identifies each exact property read; existing `vec_length` lowering
+returns its Number without a browser/VM lookup. Filter identities, callback confinement,
+snapshot immutability and complete-budget proof remain required. The original `for...of`
+source has not been rewritten into `.length`. The next-loop count/order/saved-snapshot
+regression draft is preserved separately at
+`/tmp/ctcompile-dom-iterator-tests/native_dom_dataset.loop-draft.py`.
+
+**e1bbd9e4** proves increasing dynamic Sub latches with bounded original negative Number
+strides, including the frontend's single literal negation and an unchanged carried
+stride. It reuses the existing exact initialization/final-update proof; commuted
+subtraction, String/BigInt/unknown and changing strides remain refused. CFG/SCF tests
+retain returned children and cover zero trips/overshoot.
+
+Corrected focused build, **3/3 CTests (0.91s)** and **3/3 lit (27.32s)** pass, including
+**12 dataset sources / 33 Node-VM source-double observations / eight GCC-Clang binaries
+/ 150 refusals**, HTML/SVG and lifetime sanitization. The first array CTest identified
+three old UnknownIndex assertions. The unchanged negative-offset sources now prove an
+exact absent index/growing length, so still refuse at MissingElement. All three
+assertions were corrected and the array CTest rerun successfully.
+
+New escape oracle: **15 observed sites / six sound / zero violations / six of eight
+precision (75%)**. Historical oracle remains **895 sites / 40 sound / zero violations /
+40 of 172 precision (23.3%)**. The existing **1,123-row** snapshot still matches. Array
+suites cover **567 dense / 174 induction / 123 structured rows**, with **21,928 / 12,506
+/ 7,047** conservative budget cutoffs.
+
+Complete build and **305/305 CTests (2262.84s) / 256/256 lit (1983.71s) PASS**, wrapper
+**0**, with no skips. All **1,772 frozen input hashes** match locally and on the devbox
+before these documentation changes. Fresh full Bootstrap remains **19/574 native / 0 of
+47 globals**, Data **7/7**, and Button **4/86**, including all **22 Node-VM lifecycle
+observations**. Both Bootstrap policy reports, Data, Button and next-boundary reports
+are byte-identical to the prior gate. Original M preserves **24 nine-register blocks /
+handler ^bb12**. The full WPT/test262 corpus measurement was not rerun. Evidence lives
+in `/tmp/ctcompile-dataset-iteration/`. Stable formatting passes **877 C++ / 104 Python
+/ 105 web**; the pinned formatter's **nine files / 26 diagnostics** independently match
+unchanged HEAD files. No browser implementation or runtime semantics changed.
+
+Exact next (original IR is now local at `/tmp/ctcompile-dataset-filter-next/`): the
+count-only filtered `for...of` still refuses **DOM helper completion observes an
+inactive value**; full original H refuses **DOM helper completion requires acyclic
+structured source**, each in all four provider/policy modes. The loop needs proofs of
+iterator-helper identity, original Array iterator behavior, scalar loop state and
+inactive completion slots. Its before region contains an index switch; after-region
+arguments forward count/index/completion slots. The completion copier currently returns
+one function-result value and cannot model that loop terminal tuple merely by accepting
+While. Read-only details are in
+`/tmp/ctcompile-dataset-iteration/iteration-boundary.md`. Native snapshot length is now
+available for its index path; String extraction still needs an exact integral in-bounds
+index proof before using existing `vec_at`. Then key normalization, live dataset reads,
+M composition and dynamic result writes remain, as do full Config/inheritance, retained
+callbacks and the application driver. No full-bundle admission gain is claimed by this
+prerequisite.
+
 ## Original dataset filter and moved-VM recovery, 2026-09-16 UTC
 
 Resumed the interrupted dataset filter and runtime integration from **17 dirty
