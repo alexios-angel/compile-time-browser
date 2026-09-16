@@ -304,24 +304,33 @@ void dom_bindings::install_shadow_dom(context & cx) {
                       [this](context & c, std::span<value>) {
                           const node_id id = handle_of(c.current_this());
                           if (!id) { return value::null(); }
-                          node_id host;
-                          std::string name;
-                          {
-                              const auto txn = doc_->read();
-                              host = txn.parent(id);
-                              if (!host) { return value::null(); }
-                              name = slot_name_of(txn, *atoms_, id, "slot");
-                          }
+                          const node_id host = doc_->read().parent(id);
+                          if (!host) { return value::null(); }
                           const node_id root = doc_->shadow_root_of(host);
                           const document::shadow_tree * tree = shadow_tree_of(root);
                           if (tree == nullptr || !tree->open) { return value::null(); }
+                          // ASKED OF THE SLOTS, not worked out a second way: a
+                          // manual tree's assignment is not a name at all, and
+                          // two answers to one question is how they come to
+                          // disagree.
+                          node_id answer;
                           const auto txn = doc_->read();
-                          const node_id found = first_slot_named(txn, *atoms_, root, name);
-                          if (!found) { return value::null(); }
-                          for (const node_id one : assigned_nodes_of(found)) {
-                              if (one == id) { return wrap(c, found); }
-                          }
-                          return value::null();
+                          const auto walk = [&](auto && self, node_id at) -> void {
+                              for (const node_id child : txn.children(at)) {
+                                  if (answer) { return; }
+                                  if (is_slot(txn, child)) {
+                                      for (const node_id one : assigned_nodes_of(child)) {
+                                          if (one == id) {
+                                              answer = child;
+                                              return;
+                                          }
+                                      }
+                                  }
+                                  self(self, child);
+                              }
+                          };
+                          walk(walk, root);
+                          return answer ? wrap(c, answer) : value::null();
                       });
     }
 
