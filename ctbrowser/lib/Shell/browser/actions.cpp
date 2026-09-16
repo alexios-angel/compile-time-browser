@@ -62,8 +62,7 @@ void browser::activate(node_id target) {
     }
     if (kind != control_kind::button) { return; }
     if (type == "reset") {
-        forms_.reset_form(txn, form);
-        mark(dirty::paint);
+        reset(form);
         return;
     }
     // A <button> with no type is a submit button, which is the default
@@ -219,6 +218,18 @@ void browser::submit(node_id form) {
     if (bindings_->dispatch("submit", form)) { return; } // cancelled
     const auto txn = doc_->read();
     last_submission_ = forms_.form_data(txn, atoms_, form);
+}
+
+// HTML 4.10.21.4 "reset the form": fire a cancelable `reset` event at the form
+// FIRST - so `onreset` runs whether or not the reset is then cancelled - and
+// clear the controls only when it was not. The reset button's default action
+// called reset_form() straight, with no event, so a form's `onreset` never
+// fired. `dispatch` returns true when a listener cancelled it.
+void browser::reset(node_id form) {
+    if (!form) { return; }
+    if (bindings_->dispatch("reset", form)) { return; } // cancelled
+    forms_.reset_form(doc_->read(), form);
+    mark(dirty::paint);
 }
 
 } // namespace ctbrowser::shell
