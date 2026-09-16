@@ -43,7 +43,9 @@ constexpr char32_t max_code_point = 0x10FFFF;
 // §4.3.8, and NOT `\` followed by anything: a backslash at the end of a line does
 // not escape it, which is what makes an unterminated string recoverable.
 [[nodiscard]] constexpr bool is_valid_escape(std::string_view s, std::size_t at) noexcept {
-    return at < s.size() && s[at] == '\\' && at + 1 < s.size() && !is_newline(s[at + 1]);
+    // A backslash at EOF IS a valid escape (§4.3.8: only a newline after it is
+    // not), and consumes to U+FFFD.
+    return at < s.size() && s[at] == '\\' && (at + 1 >= s.size() || !is_newline(s[at + 1]));
 }
 
 // §4.3.7's replacement, then the shared byte encoder.
@@ -74,6 +76,13 @@ void append_code_point(std::string & out, char32_t cp) {
             out += '\n';
         } else if (c == '\0') {
             append_code_point(out, replacement_character);
+        } else if (static_cast<unsigned char>(c) == 0xED && at + 2 < css.size() &&
+                   static_cast<unsigned char>(css[at + 1]) >= 0xA0 &&
+                   static_cast<unsigned char>(css[at + 1]) <= 0xBF) {
+            // A SURROGATE CODE POINT, as a JS string with a lone surrogate
+            // arrives in WTF-8: §3.3 replaces it with U+FFFD.
+            append_code_point(out, replacement_character);
+            at += 2;
         } else {
             out += c;
         }

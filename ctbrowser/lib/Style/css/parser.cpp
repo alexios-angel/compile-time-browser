@@ -299,6 +299,20 @@ private:
         }
         if (at_eof()) { return; } // §5.4.2: a prelude with no block is dropped
         const component_value block = consume_component_value(); // the `{...}`
+        // A prelude that reads as a custom property declaration - `--x:hover
+        // { }` - is no rule (§5.4.2, "consume a qualified rule").
+        std::size_t k = 0;
+        while (k < prelude.size() && sheet_.is_space(prelude[k])) { ++k; }
+        if (k + 1 < prelude.size() && prelude[k].kind == cv_kind::token &&
+            sheet_.tokens[prelude[k].token].type == token_type::ident &&
+            text(sheet_.tokens[prelude[k].token]).starts_with("--")) {
+            std::size_t c = k + 1;
+            while (c < prelude.size() && sheet_.is_space(prelude[c])) { ++c; }
+            if (c < prelude.size() && prelude[c].kind == cv_kind::token &&
+                sheet_.tokens[prelude[c].token].type == token_type::colon) {
+                return;
+            }
+        }
         style_rule(span_of(prelude), block);
     }
 
@@ -908,6 +922,8 @@ private:
         // `--foo` are different properties, and the value is a token stream that
         // is never parsed until something reads it through var().
         d.custom = property.size() >= 2 && property[0] == '-' && property[1] == '-';
+        // `--` alone is reserved and no property (CSS Variables 1 §2).
+        if (property == "--") { return; }
         d.property = d.custom ? atoms_->intern(property) : atoms_->intern_lower(property);
 
         // `!important`, as a trailing delim `!` and ident `important` with optional
@@ -951,7 +967,15 @@ private:
         // append is not self-aliasing and the span survives it. Read first
         // regardless: it costs nothing and it is one less thing depending on a
         // caller three frames up.
-        const auto [text_at, text_len] = source_span(value);
+        auto [text_at, text_len] = source_span(value);
+        // AN EMPTY CUSTOM PROPERTY IS ONE SPACE (CSS Variables 1 §2): `--x:;`
+        // and `--x: ` both read back as " " from every engine, and substitute
+        // to whitespace.
+        if (d.custom && text_len == 0) {
+            text_at = static_cast<std::uint32_t>(sheet_.pool.size());
+            text_len = 1;
+            sheet_.pool += ' ';
+        }
         d.first_value = static_cast<std::uint32_t>(sheet_.values.size());
         d.value_count = static_cast<std::uint32_t>(value.size());
         sheet_.values.insert(sheet_.values.end(), value.begin(), value.end());

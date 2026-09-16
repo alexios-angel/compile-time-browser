@@ -764,6 +764,13 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     }
     bool bad = false;
     const std::string_view prelude = trim(trimmed.substr(0, open), html_whitespace);
+    // A prelude that reads as a custom property declaration - `--x:hover { }`
+    // - is no rule (CSS Syntax 3 §5.4.2).
+    if (prelude.starts_with("--") && scan_to(prelude, 0, ":") < prelude.size()) {
+        css_rule_store_.pop_back();
+        error = "SyntaxError";
+        return no_index;
+    }
     const std::vector<style::css::namespace_declaration> namespaces = sheet_namespaces(sheet);
     const style::css::stylesheet selectors =
         style::css::parse_selector_text(prelude, *atoms_, bad, &namespaces);
