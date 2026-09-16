@@ -450,6 +450,8 @@ void test_module_longhands() {
     bad("image-resolution", "3dpi snap from-image");
     ok("clip", "rect(10px, -20px, auto, auto)", "rect(10px, -20px, auto, auto)");
     ok("clip", "rect(0 0 0 0)", "rect(0px, 0px, 0px, 0px)");
+    ok("clip", "rect(10px, 20px, calc(1em + 10px), 1em)",
+       "rect(10px, 20px, calc(1em + 10px), 1em)");
     bad("clip", "rect(10px 20px, 30px 40px)");
     bad("clip", "rect(10px, 20px, 30px)");
 }

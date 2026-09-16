@@ -725,6 +725,15 @@ constexpr pair_grammar pair_grammars[] = {
         std::string one;
         if (t.type == token_type::ident && ascii_iequals(ts.text_of(t), "auto")) {
             one = "auto";
+        } else if (t.type == token_type::function) {
+            // A side may be a math function: `rect(10px, 20px, calc(-1em +
+            // 10px), 1em)` is clip-computed's, and `k` lands on its close paren.
+            std::size_t block = k;
+            const std::optional<std::string> math =
+                math_component(ts, found, block, numeric_type::length);
+            if (!math) { return std::nullopt; }
+            one = *math;
+            k = block;
         } else if (!match_typed(ts, t, any_length, one)) {
             return std::nullopt;
         }
