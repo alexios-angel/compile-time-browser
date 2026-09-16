@@ -36,8 +36,8 @@ set(ENV{CTBROWSER_FONTS} font8x8)
 # MEASURED: ANGLE over SwiftShader is byte-identical between Linux and the
 # Windows cross build, which is the property that lets it be goldened at all.
 if(DEFINED BACKEND)
-  set(ENV{CTBROWSER_WEBGL} ${BACKEND})
-  # AND PIN THE DEVICE, not just the back end. "ANGLE" is not one rasteriser: it
+  # There is no back end to choose any more (the engine only has ANGLE), so
+  # BACKEND selects the golden directory and PINS THE DEVICE. "ANGLE" is not one rasteriser: it
   # is whatever Vulkan device the loader hands it, and ctbrowser/test/golden/angle/ was
   # made on SwiftShader. A machine with something else renders something else -
   # legitimately, and then the byte comparison fails for a reason that is not a
