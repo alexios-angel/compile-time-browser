@@ -232,7 +232,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true;
     }
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-    if (needsDOMJSON && unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
+    if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
         unary.getOperand().getType() == carrierType(context, carrier::json)) {
         const auto stringType = carrierType(context, carrier::string);
         const auto dataType = ec::OpaqueType::get(context, "decltype(ctbrowser::json_value::data)");
