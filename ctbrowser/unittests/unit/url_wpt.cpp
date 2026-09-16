@@ -89,6 +89,9 @@ void test_the_parser_corpus() {
             if (const json_value * origin = member(c, "origin"); ok && origin != nullptr) {
                 ok = url->origin() == text_of(origin);
             }
+            // And the serialisation re-parses to itself - see the setters below.
+            const std::optional<url_record> again = parse_url(url->serialize());
+            if (!again || again->serialize() != url->serialize()) { ok = false; }
         }
         if (ok) {
             ++passed;
@@ -162,6 +165,15 @@ void test_the_setters_corpus() {
             if (fields == nullptr) { continue; }
             for (const json_value::member & e : *fields) {
                 if (read(*url, e.key) != text_of(&e.value)) { ok = false; }
+            }
+            // THE BINDINGS KEEP THE SERIALISATION, NOT THE RECORD (bindings/
+            // window/url.cpp re-parses on every read), so every record a
+            // setter can produce must survive the round trip unchanged.
+            if (const std::optional<url_record> again = parse_url(url->serialize());
+                !again || again->serialize() != url->serialize() ||
+                again->pathname() != url->pathname() || again->host != url->host ||
+                again->username != url->username || again->query != url->query) {
+                ok = false;
             }
             if (ok) {
                 ++passed;
