@@ -491,6 +491,17 @@ value context::lookup_property(value target, const std::string & name) {
         // and `bind` live there, and p5.js cannot install a single event
         // listener without bind. Then Object.prototype, which is
         // Function.prototype's own [[Prototype]] - see the native arm above.
+        // A generator or async function has ITS intrinsic in between
+        // (function_proto_kind): `(function* () {}).constructor` is
+        // %GeneratorFunction%, and `.prototype` of that its prototype.
+        if (const proto_kind own = function_proto_kind(target); own != proto_kind::function) {
+            if (object_object * table = prototype(own)) {
+                if (value * found = table->find(name)) { return *found; }
+                if (accessor_entry * entry = table->find_accessor(name)) {
+                    return call_getter(*this, *entry, target);
+                }
+            }
+        }
         if (object_object * table = prototype(proto_kind::function)) {
             if (value * found = table->find(name)) { return *found; }
             if (accessor_entry * entry = table->find_accessor(name)) {

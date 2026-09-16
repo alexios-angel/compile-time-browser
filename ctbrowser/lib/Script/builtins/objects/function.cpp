@@ -503,7 +503,17 @@ void install_generator(context & cx) {
     object_object * table = detail::new_table(cx);
     const auto driver = [](context::resume_mode how) {
         return [how](context & c, std::span<value> a) {
-            return c.generator_resume(c.current_this(), arg_at(a, 0), how);
+            // 27.5.3.2 GeneratorValidate: a receiver that is not a generator
+            // object is a TypeError, not a finished iteration.
+            const value self = c.current_this();
+            const value * held = self.is_object()
+                                     ? static_cast<object_object *>(self.as_heap())->find("__co")
+                                     : nullptr;
+            if (held == nullptr || !held->is_kind(heap_kind::coroutine)) {
+                c.throw_error("TypeError", "the receiver is not a generator object");
+                return value::undefined();
+            }
+            return c.generator_resume(self, arg_at(a, 0), how);
         };
     };
     detail::method(cx, table, "next", 1, driver(context::resume_mode::next));

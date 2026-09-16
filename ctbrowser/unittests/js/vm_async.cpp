@@ -203,6 +203,15 @@ void test_generators() {
     expect_result("function f() {} return [Object.getPrototypeOf(f) === Function.prototype,"
                   " f.prototype.constructor === f].join();",
                   "true,true");
+    // GeneratorValidate: a receiver that is not a generator is a TypeError;
+    // the instance's prototype is read AFTER the parameters ran (27.5.3.x
+    // EvaluateBody: FunctionDeclarationInstantiation first).
+    expect_result("const next = Object.getPrototypeOf(function* () {}).prototype.next;"
+                  " try { next.call({}); return 'no'; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("function* g(a = (g.prototype = null)) {} const old = g.prototype;"
+                  " return Object.getPrototypeOf(g()) !== old;",
+                  "true");
     expect_result("function* g() { yield 1; yield 2; }"
                   "const it = g(); const a = it.next();"
                   "return a.value + ',' + a.done;",
