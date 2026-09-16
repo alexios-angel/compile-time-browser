@@ -6,6 +6,7 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
+#include "DOMDataset.h"
 #include "DOMJSON.h"
 #include "DOMNullable.h"
 #include "DOMNumbers.h"
@@ -841,6 +842,7 @@ int main() {
     checkFingerprint(context);
     checkDOMEntry(context);
     checkDOMNumbers(context);
+    checkDOMDataset(context);
     checkDOMURI(context);
     checkDOMJSON(context);
     checkDOMNullable(context);

@@ -41,7 +41,8 @@ bool admission::op(mlir::Operation * o) {
             return true;
         }
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read && (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {
+            read && (domEntry->method(read) || domEntry->isTokenList(read.getResult()) ||
+                     domEntry->isDataset(read.getResult()))) {
             return true;
         }
         if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }

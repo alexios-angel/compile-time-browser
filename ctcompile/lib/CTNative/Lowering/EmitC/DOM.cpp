@@ -30,12 +30,18 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     domStringRefinements.assign(entry.stringRefinements().begin(), entry.stringRefinements().end());
     domOptionalStrings.insert(entry.optionalStringJoins().begin(),
                               entry.optionalStringJoins().end());
-    for (mlir::BlockArgument parameter : entry.parameters()) { domParameters.insert(parameter); }
+    for (mlir::BlockArgument parameter : entry.parameters()) {
+        domParameters.insert(parameter);
+        if (entry.isDatasetElement(parameter)) { domDatasetParameters.insert(parameter); }
+    }
     entry.entry().walk([&](ctjs::ConstantOp constant) {
         if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
     });
     entry.entry().walk([&](ctjs::GetPropertyOp read) {
-        if (entry.method(read) || entry.isTokenList(read.getResult())) { domReads.insert(read); }
+        if (entry.method(read) || entry.isTokenList(read.getResult()) ||
+            entry.isDataset(read.getResult())) {
+            domReads.insert(read);
+        }
     });
     entry.entry().walk([&](ctjs::LoadGlobalOp load) {
         if (entry.isInitialIntrinsic(load)) { domReads.insert(load); }
@@ -322,10 +328,13 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     } else {
         arguments.push_back(edge.element);
         if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.element)); }
-        llvm::append_range(arguments, call.getArgs());
+        if (edge.kind != HostDOMMethod::datasetKeys) {
+            llvm::append_range(arguments, call.getArgs());
+        }
     }
     llvm::StringRef callee;
     switch (edge.kind) {
+    case HostDOMMethod::datasetKeys: callee = "ctnative::dataset_keys"; break;
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
     case HostDOMMethod::setAttribute: callee = "ctnative::set_attribute"; break;
     case HostDOMMethod::getAttribute: callee = "ctnative::get_attribute"; break;
@@ -344,13 +353,14 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");
     }
     if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString() ||
-        edge.returnsNumber() || edge.returnsString()) {
-        const mlir::Type type = edge.returnsOptionalString()
-                                    ? ec::OpaqueType::get(context, kDOMOptionalStringType)
-                                : edge.returnsElement() ? carrierType(context, carrier::domElement)
-                                : edge.returnsNumber()  ? at.getF64Type()
-                                : edge.returnsString()  ? carrierType(context, carrier::string)
-                                                        : at.getI1Type();
+        edge.returnsNumber() || edge.returnsString() || edge.returnsStringVector()) {
+        const mlir::Type type =
+            edge.returnsOptionalString() ? ec::OpaqueType::get(context, kDOMOptionalStringType)
+            : edge.returnsStringVector() ? ec::OpaqueType::get(context, kStringVectorType)
+            : edge.returnsElement()      ? carrierType(context, carrier::domElement)
+            : edge.returnsNumber()       ? at.getF64Type()
+            : edge.returnsString()       ? carrierType(context, carrier::string)
+                                         : at.getI1Type();
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);
         call.getResult().replaceAllUsesWith(value.getResult(0));

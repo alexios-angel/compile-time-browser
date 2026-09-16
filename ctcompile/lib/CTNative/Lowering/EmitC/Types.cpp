@@ -54,10 +54,16 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (auto call = domCalls.find(v.getDefiningOp());
             call != domCalls.end() && !call->second.returnsBoolean() &&
             !call->second.returnsElement() && !call->second.returnsNumber() &&
-            !call->second.returnsString() && !call->second.returnsJSON()) {
+            !call->second.returnsString() && !call->second.returnsJSON() &&
+            !call->second.returnsStringVector()) {
             // The proof requires this result to be unused, and the effect is
             // emitted as a void call. This placeholder never reaches C++.
             v.setType(mlir::Float64Type::get(context));
+            return;
+        }
+        if (auto call = domCalls.find(v.getDefiningOp());
+            call != domCalls.end() && call->second.returnsStringVector()) {
+            v.setType(ec::OpaqueType::get(context, kStringVectorType));
             return;
         }
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;

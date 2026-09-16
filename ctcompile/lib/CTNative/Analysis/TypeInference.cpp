@@ -671,6 +671,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 : edge->returnsNumber()  ? doubleType(c)
                 : edge->returnsString()  ? mlir::Type(StrType::get(c, StrEncoding::UTF8))
                 : edge->returnsElement() ? mlir::Type(DOMElementType::get(c))
+                : edge->returnsStringVector()
+                    ? mlir::Type(VecType::get(c, StrType::get(c, StrEncoding::UTF8)))
                 : edge->returnsJSON()    ? mlir::Type(JsonType::get(c))
                 : edge->returnsBoolean() ? boolType(c)
                                          : absentType(c);

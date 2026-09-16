@@ -137,7 +137,8 @@ bool admission::function(ctjs::FuncOp fn) {
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
             read && domEntry &&
-            (domEntry->method(read) || domEntry->isTokenList(read.getResult()))) {
+            (domEntry->method(read) || domEntry->isTokenList(read.getResult()) ||
+             domEntry->isDataset(read.getResult()))) {
             return;
         }
         if (o->getName().getStringRef() == "ub.poison") { return; }

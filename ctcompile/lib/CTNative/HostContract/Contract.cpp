@@ -82,7 +82,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                      "ctbrowser-dom-data-session-v1");
     }
     if (dom ? !keys(*object, {"version", "provider", "module_sha256", "entry", "element_parameters",
-                              "initial_intrinsics"})
+                              "initial_intrinsics", "dataset_parameters"})
             : !keys(*object,
                     {"version", "provider", "module_sha256", "entry", "roots", "observations",
                      "absent_bindings", "undefined_bindings", "initial_intrinsics",
@@ -121,13 +121,28 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             result.elementParameters.push_back(static_cast<unsigned>(*index));
         }
         if (dom) {
+            if (const auto * requested = object->get("dataset_parameters")) {
+                const auto * indices = requested->getAsArray();
+                if (!indices) { return error("DOM dataset_parameters must be an index array"); }
+                for (const auto & value : *indices) {
+                    const auto index = value.getAsInteger();
+                    if (!index || *index < 0 ||
+                        static_cast<std::uint64_t>(*index) >= result.elementParameters.size() ||
+                        (!result.datasetParameters.empty() &&
+                         static_cast<std::uint64_t>(*index) <= result.datasetParameters.back())) {
+                        return error("DOM dataset_parameters must be an ordered element subset");
+                    }
+                    result.datasetParameters.push_back(static_cast<unsigned>(*index));
+                }
+            }
             if (object->get("initial_intrinsics")) {
                 if (auto failure =
                         names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
                     return std::move(failure);
                 }
                 if (llvm::any_of(result.initialIntrinsics, [](const auto & name) {
-                        return name != "Number" && name != "decodeURIComponent" && name != "JSON";
+                        return name != "Object" && name != "Number" &&
+                               name != "decodeURIComponent" && name != "JSON";
                     })) {
                     return error("unsupported DOM initial intrinsic identity");
                 }

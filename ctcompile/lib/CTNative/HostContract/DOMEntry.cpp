@@ -49,11 +49,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 3 ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 4 ||
         llvm::any_of(contract.initialIntrinsics,
                      [&](const auto & name) {
-                         return (name != "Number" && name != "decodeURIComponent" &&
-                                 name != "JSON") ||
+                         return (name != "Object" && name != "Number" &&
+                                 name != "decodeURIComponent" && name != "JSON") ||
                                 !intrinsicNames.insert(name).second;
                      }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
@@ -115,11 +115,27 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         provedElements.push_back(targetBlock.getArgument(index + ctjs::implicit_arguments));
     }
 
+    std::vector<mlir::BlockArgument> provedDatasetElements;
+    for (unsigned index : contract.datasetParameters) {
+        if (!spend()) { return; }
+        if (index >= provedElements.size() ||
+            (!provedDatasetElements.empty() &&
+             index + ctjs::implicit_arguments <= provedDatasetElements.back().getArgNumber())) {
+            refusal = "DOM dataset_parameters must be an ordered element subset";
+            return;
+        }
+        provedDatasetElements.push_back(provedElements[index]);
+    }
+
     enum class Kind {
         implicit,
         element,
         nullableElement,
         tokenList,
+        dataset,
+        objectIntrinsic,
+        objectKeys,
+        stringVector,
         toggle,
         attribute,
         getAttribute,
@@ -143,9 +159,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         null,
         undefined
     };
-    std::vector<ctjs::GetPropertyOp> provedTokens;
+    std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
-        provedJSONIntrinsics;
+        provedJSONIntrinsics, provedObjectIntrinsics;
     std::vector<ctjs::InvokeOp> provedInvocations;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
     std::vector<HostDOMCall> provedCalls;
@@ -163,6 +179,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
     const bool suppliedNumber = llvm::is_contained(contract.initialIntrinsics, "Number");
     const bool suppliedURI = llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent");
+    const bool suppliedObject = llvm::is_contained(contract.initialIntrinsics, "Object");
     const bool suppliedJSON = llvm::is_contained(contract.initialIntrinsics, "JSON");
     if (declaration) {
         for (ctjs::StoreGlobalOp store :
@@ -177,6 +194,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     {
         auto & block = target.getBody().front();
         llvm::DenseMap<mlir::Value, Kind> values;
+        unsigned mutationEpoch = 0;
+        llvm::DenseMap<mlir::Value, unsigned> datasetEpochs;
         struct Predicate {
             mlir::Value optional;
             bool stringOnTrue;
@@ -481,7 +500,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                          !hasKind(result.getValue(), Kind::string) &&
                          !hasKind(result.getValue(), Kind::optionalString) &&
                          !hasKind(result.getValue(), Kind::json) &&
-                         !hasKind(result.getValue(), Kind::jsonAggregate))) {
+                         !hasKind(result.getValue(), Kind::jsonAggregate) &&
+                         !hasKind(result.getValue(), Kind::stringVector))) {
                         refusal =
                             "DOM entry return must be a scalar with no borrowed browser handle";
                         return false;
@@ -506,6 +526,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedNumberIntrinsics.push_back(load);
                         continue;
                     }
+                    if (suppliedObject && load.getName() == "Object") {
+                        values[load.getResult()] = Kind::objectIntrinsic;
+                        provedObjectIntrinsics.push_back(load);
+                        continue;
+                    }
                     if (suppliedJSON && load.getName() == "JSON") {
                         values[load.getResult()] = Kind::jsonIntrinsic;
                         provedJSONIntrinsics.push_back(load);
@@ -514,6 +539,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     const auto key = ctjs::constantKey(read.getKey());
+                    if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
+                        llvm::is_contained(provedDatasetElements, read.getObject())) {
+                        values[read.getResult()] = Kind::dataset;
+                        datasetEpochs[read.getResult()] = mutationEpoch;
+                        provedDatasets.push_back(read);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::objectIntrinsic) && key == "keys") {
+                        values[read.getResult()] = Kind::objectKeys;
+                        provedMethods.emplace_back(read, HostDOMMethod::datasetKeys);
+                        continue;
+                    }
                     if (hasKind(read.getObject(), Kind::jsonIntrinsic) && key == "parse") {
                         values[read.getResult()] = Kind::jsonParse;
                         provedMethods.emplace_back(read, HostDOMMethod::jsonParse);
@@ -620,6 +657,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         refusal = "DOM call does not preserve its proved method receiver";
                         return false;
                     }
+                    if (hasKind(invoke.getCallee(), Kind::objectKeys) && arguments.size() == 1 &&
+                        hasKind(arguments[0], Kind::dataset)) {
+                        if (datasetEpochs.lookup(arguments[0]) != mutationEpoch) {
+                            refusal = "DOM dataset enumeration crosses a source mutation";
+                            return false;
+                        }
+                        auto dataset = arguments[0].getDefiningOp<ctjs::GetPropertyOp>();
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::datasetKeys, dataset.getObject()});
+                        values[invoke.getResult()] = Kind::stringVector;
+                        continue;
+                    }
                     if (hasKind(invoke.getCallee(), Kind::numberToString) && arguments.empty()) {
                         provedCalls.push_back(
                             {invoke, HostDOMMethod::numberToString, invoke.getReceiver()});
@@ -647,6 +696,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                          (arguments.size() == 2 && (hasKind(arguments[1], Kind::boolean) ||
                                                     hasKind(arguments[1], Kind::undefined)))) &&
                         hasKind(arguments[0], Kind::string)) {
+                        ++mutationEpoch;
                         const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
                         auto element = classes ? invoke.getReceiver()
                                                      .getDefiningOp<ctjs::GetPropertyOp>()
@@ -687,6 +737,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 return false;
                             }
                         }
+                        ++mutationEpoch;
                         provedCalls.push_back(
                             {invoke,
                              sets ? HostDOMMethod::setAttribute : HostDOMMethod::removeAttribute,
@@ -831,6 +882,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     checkedWrapper = declaration;
     elements = std::move(provedElements);
     tokenLists = std::move(provedTokens);
+    datasets = std::move(provedDatasets);
+    datasetElements = std::move(provedDatasetElements);
+    objectIntrinsics = std::move(provedObjectIntrinsics);
     numberIntrinsics = std::move(provedNumberIntrinsics);
     uriIntrinsics = std::move(provedURIIntrinsics);
     jsonIntrinsics = std::move(provedJSONIntrinsics);
@@ -856,13 +910,22 @@ bool DOMEntryAnalysis::isTokenList(mlir::Value value) const {
                         [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
 }
 
+bool DOMEntryAnalysis::isDataset(mlir::Value value) const {
+    return llvm::any_of(datasets,
+                        [&](ctjs::GetPropertyOp read) { return read.getResult() == value; });
+}
+
+bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
+    return llvm::is_contained(datasetElements, value);
+}
+
 bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
     return llvm::is_contained(numberIntrinsics, load);
 }
 
 bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
     return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load) ||
-           llvm::is_contained(jsonIntrinsics, load);
+           llvm::is_contained(jsonIntrinsics, load) || llvm::is_contained(objectIntrinsics, load);
 }
 
 bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {

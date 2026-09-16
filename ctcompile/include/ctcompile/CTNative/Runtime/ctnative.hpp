@@ -50,6 +50,7 @@
 #include <ctbrowser/core/json.hpp>
 #include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/core/uri.hpp>
+#include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/element.hpp>
 #include <ctbrowser/dom/token_list.hpp>
 #include <ctbrowser/style/css/parser.hpp>
@@ -712,6 +713,21 @@ inline void copy_json_properties(ctbrowser::json_value & target,
 
 inline void require_element(ctbrowser::element_ref element) {
     ctbrowser::validate_element(element).value();
+}
+inline void require_dataset_element(ctbrowser::element_ref element) {
+    require_element(element);
+    // The host contract supplies only HTML/SVG elements. Other namespace URIs
+    // still live in Shell and cannot be recovered from a public node_id.
+    if (element.owner->read().element_ns(element.id) == ctbrowser::node_ns::other) {
+        throw std::invalid_argument("DOM dataset requires a contracted HTML or SVG element");
+    }
+}
+inline std::vector<std::string> dataset_keys(ctbrowser::element_ref element) {
+    std::vector<std::string> keys;
+    for (auto & [key, value] : ctbrowser::dataset_entries(*element.owner, element.id)) {
+        keys.push_back(std::move(key));
+    }
+    return keys;
 }
 inline bool toggle_class(ctbrowser::element_ref element, std::string_view token,
                          std::optional<bool> force = std::nullopt) {

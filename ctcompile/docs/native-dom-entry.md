@@ -49,6 +49,35 @@ translation. The existing host-contract and prefix analyses for
 `closed-source-v1` remain separate. The DOM provider uses the native lowering
 entry and a fresh live source proof, never printed proof attributes.
 
+## Dataset key snapshots
+
+`Object.keys(element.dataset)` returns an owning `std::vector<std::string>`.
+The manifest must declare `"initial_intrinsics": ["Object"]` and an ordered,
+distinct `"dataset_parameters": [0]` subset of `element_parameters`. These are
+HTML/SVG inputs; every declared input is checked before source effects. MathML
+and other namespace URIs remain in Shell and are not covered by this public
+node-handle contract.
+
+The generated helper projects keys from public `ctbrowser::dataset_entries`.
+Keys preserve attribute order, including numeric names, and exclude namespaced
+attributes and unsupported uppercase names. An empty dataset returns an empty
+vector. The result owns its bytes after attribute mutation and document destruction.
+No DOMStringMap object, VM value or collector is created.
+
+The complete source proof requires the original Object/keys identity and receiver.
+A saved dataset alias is accepted only when no DOM mutation intervenes before
+its enumeration. Returning a saved key vector after a mutation and rereading
+`element.dataset` for a fresh snapshot are supported. Dataset/value writes,
+vector mutation or identity, dynamic value reads, callback filtering and loops
+remain refused. Missing dataset values need an Undefined/prototype proof separate
+from getAttribute's String-or-null result.
+
+The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
+Proxy. Chromium independently confirms attribute order and live saved-dataset
+keys. Shell's current binding instead refills an ordinary proxy target on dataset
+lookup; its numeric sorting and stale saved enumeration are a separate runtime
+boundary, not evidence from those source-double comparisons.
+
 The emitted translation unit exports the selected function without a launcher.
 Local helpers with structured `if`/`else` bodies may be expanded at their original
 call sites. Their exact closure identities, direct-call targets, unused implicit

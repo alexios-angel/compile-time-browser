@@ -196,9 +196,12 @@ void lowering::lower(ctjs::FuncOp fn) {
             if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
             if (domParameters.contains(arg)) {
-                callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
-                                           at.getStringAttr("ctnative::require_element"),
-                                           mlir::ValueRange{arg});
+                callWithConstValueOperands(
+                    at, made.getLoc(), mlir::TypeRange{},
+                    at.getStringAttr(domDatasetParameters.contains(arg)
+                                         ? "ctnative::require_dataset_element"
+                                         : "ctnative::require_element"),
+                    mlir::ValueRange{arg});
             }
             auto suppression = callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
                                                           at.getStringAttr("static_cast<void>"),
