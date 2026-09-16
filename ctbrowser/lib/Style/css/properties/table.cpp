@@ -315,12 +315,12 @@ constexpr property_syntax table[] = {
     {"transform", k::freeform, "", "none", false, false},
     {"transform-origin", k::freeform, "", "50% 50%", false, false},
     {"transition", k::freeform, "", "all 0s ease 0s", false, false, true},
-    {"transition-duration", k::time, "", "0s", false, false},
+    {"transition-duration", k::time, "", "0s", false, true},
     {"transition-delay", k::time, "", "0s", false, false},
     {"transition-property", k::freeform, "", "all", false, false},
     {"transition-timing-function", k::freeform, "", "ease", false, false},
     {"animation", k::freeform, "", "none", false, false, true},
-    {"animation-duration", k::time, "", "0s", false, false},
+    {"animation-duration", k::time, "auto", "auto", false, true},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
     // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
@@ -328,7 +328,7 @@ constexpr property_syntax table[] = {
     // reads an `ident()` back through, and as an UNKNOWN one getComputedStyle
     // did not publish it at all.
     {"view-transition-name", k::freeform, "", "none", false, false},
-    {"animation-iteration-count", k::freeform, "", "1", false, false},
+    {"animation-iteration-count", k::number, "infinite", "1", false, true},
     {"filter", k::freeform, "", "none", false, false},
     {"content", k::freeform, "", "normal", false, false},
     // PROPERTIES WITH NO CONSUMER YET, carried so a page can set and read

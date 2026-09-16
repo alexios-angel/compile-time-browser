@@ -235,6 +235,31 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
+    // A `#` LIST IS THE PROPERTY'S OWN GRAMMAR, ONCE PER ITEM. Every longhand
+    // of CSS Animations 1 and CSS Transitions 1 is a comma-separated list - one
+    // value per animation, one per transitioned property - and this table has a
+    // row per PROPERTY, not per item, so `animation-duration: 1s, 2s, 3s` was
+    // refused by the very grammar that makes `1s` valid. The items are asked the
+    // same question the whole value would have been, which keeps the two
+    // answers one definition; only the `#` itself lives here.
+    //
+    // A CSS-WIDE KEYWORD IS NOT AN ITEM (CSS Values 4 §common-keywords): it is a
+    // value for the WHOLE declaration or for nothing, which is what
+    // `animation-duration: 1s, initial` asserts.
+    if (p->kind != k::freeform && (ascii_istarts_with(property, "animation-") ||
+                                   ascii_istarts_with(property, "transition-"))) {
+        const std::vector<std::string_view> items = split_top_level(text, ",");
+        if (items.size() > 1) {
+            std::string list;
+            for (const std::string_view item : items) {
+                const value_check one = check_declaration(property, item, false);
+                if (!one.valid || is_wide_keyword(one.serialized)) { return {}; }
+                list += (list.empty() ? "" : ", ") + one.serialized;
+            }
+            return yes(std::move(list));
+        }
+    }
+
     // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
     // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
     // method and `radial-gradient(at bottom right, ...)` writes `at right

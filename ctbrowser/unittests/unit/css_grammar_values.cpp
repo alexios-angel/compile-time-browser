@@ -420,6 +420,15 @@ void test_module_longhands() {
     ok("background-position", "calc(6px + 21%) calc(7em + 22%)", "calc(21% + 6px) calc(22% + 7em)");
     bad("background-blend-mode", "normal luminosity");
 
+    ok("animation-duration", "1s, 2s, 3s", "1s, 2s, 3s");
+    ok("animation-direction", "normal, reverse", "normal, reverse");
+    ok("animation-iteration-count", "0, infinite, 3", "0, infinite, 3");
+    bad("animation-duration", "1s, initial");
+    bad("animation-duration", "-3s");
+    bad("animation-duration", "0");
+    bad("transition-duration", "-500ms");
+    bad("animation-iteration-count", "auto");
+    bad("animation-iteration-count", "3 4");
     ok("animation-range-start", "exit 1%, cover 2%, contain 0%", "exit 1%, cover 2%, contain");
     ok("animation-range-end", "cover 100%", "cover");
     bad("animation-range-start", "50% contain");
