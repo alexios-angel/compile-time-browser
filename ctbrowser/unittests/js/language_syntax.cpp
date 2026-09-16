@@ -270,6 +270,13 @@ int main() {
     answers("var called = false; class C { set x(v) { called = true; } }"
             " class D extends C { x = 1; } var d = new D(); return called + ':' + d.x;",
             "false:1");
+    // The derived fields run after a super() reached through an arrow too:
+    // the arrow inherits the constructor's home object, which is what names
+    // the class to __ctbrowser_init_fields.
+    answers("class B { constructor() { this.b = 1; } } class D extends B { y = 2;"
+            " constructor() { const f = () => super(); f(); } } var d = new D();"
+            " return d.b + ':' + d.y;",
+            "1:2");
     answers("class C { #p = 1; static has(o) { return #p in o; } } return C.has(new C()) + ':' +"
             " C.has({});",
             "true:false");

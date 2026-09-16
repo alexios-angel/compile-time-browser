@@ -1066,11 +1066,16 @@ void compiler_impl::emit_init_fields_after_super() {
         instruction::with_bx(op::get_global, callee, intern_name(std::string{init_fields_name})));
     const std::uint16_t self = alloc_reg();
     proto().emit(instruction{op::load_this, self});
-    // The class: the constructor's home object is C.prototype, whose
-    // `constructor` is C. Through an arrow too, which inherits the home.
-    const std::uint16_t klass = alloc_reg();
-    proto().emit(instruction{op::load_home, klass});
-    proto().emit(instruction{op::get_prop, klass, klass, name_operand("constructor")});
+    // The class, by way of its HOME: the constructor's home object is
+    // C.prototype, whose `constructor` is C - through an arrow too, which
+    // inherits the home. The native reads `constructor` off it rather than
+    // this emitting `get_prop "constructor"`, because a `.constructor` read
+    // whose receiver is not provably a non-function is, to ctcompile's
+    // resolve-globals pass, a value that may be `Function` escaping into a
+    // call it cannot name - which refused every global of every program with
+    // a derived class in it.
+    const std::uint16_t home = alloc_reg();
+    proto().emit(instruction{op::load_home, home});
     proto().emit(instruction{op::call, callee, 2});
     release_to(mark);
 }

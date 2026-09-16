@@ -345,8 +345,17 @@ void install_dynamic_function(context & cx) {
     });
     // See init_fields_name.
     cx.define_native(std::string{init_fields_name}, [](context & c, std::span<value> a) {
-        if (a.size() < 2 || !a[1].is_kind(heap_kind::function)) { return value::undefined(); }
-        auto * klass = static_cast<closure_object *>(a[1].as_heap());
+        if (a.size() < 2) { return value::undefined(); }
+        // The class itself (at a base constructor's entry), or its home
+        // object - C.prototype, whose own `constructor` is C (after super()).
+        value klass_value = a[1];
+        if (klass_value.is_object() && !klass_value.is_kind(heap_kind::function)) {
+            const value * owner =
+                static_cast<object_object *>(klass_value.as_heap())->find("constructor");
+            klass_value = owner == nullptr ? value::undefined() : *owner;
+        }
+        if (!klass_value.is_kind(heap_kind::function)) { return value::undefined(); }
+        auto * klass = static_cast<closure_object *>(klass_value.as_heap());
         if (value * fields = klass->find("__fields"); fields != nullptr && fields->is_callable()) {
             (void)c.call(*fields, {}, a[0]);
         }

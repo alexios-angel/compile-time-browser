@@ -367,7 +367,8 @@ inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
 // ReferenceError for `delete super.x` (`super` true; the key is still
 // evaluated first).
 inline constexpr std::string_view delete_ref_name = "__ctbrowser_delete";
-// InitializeInstanceElements (7.3.34) for a DERIVED class, `(this, C)`: run C's
+// InitializeInstanceElements (7.3.34) for a DERIVED class, `(this, C)` - or
+// `(this, C.prototype)`, the home object, whose own `constructor` is C: run C's
 // `__fields` on the object `super()` just bound as `this` - which is where
 // 10.2.1.3 / 13.3.7.1's super call runs them, and why a base constructor's
 // `Object.preventExtensions(this)` or a returned object is what the derived
