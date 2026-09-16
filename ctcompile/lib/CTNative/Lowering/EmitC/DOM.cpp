@@ -34,45 +34,52 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         domParameters.insert(parameter);
         if (entry.isDatasetElement(parameter)) { domDatasetParameters.insert(parameter); }
     }
-    entry.entry().walk([&](ctjs::ConstantOp constant) {
-        if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
-    });
-    entry.entry().walk([&](ctjs::GetPropertyOp read) {
-        if (entry.method(read) || entry.isTokenList(read.getResult()) ||
-            entry.isDataset(read.getResult())) {
-            domReads.insert(read);
-        }
-    });
-    entry.entry().walk([&](ctjs::LoadGlobalOp load) {
-        if (entry.isInitialIntrinsic(load)) { domReads.insert(load); }
-    });
-    entry.entry().walk([&](ctjs::InvokeOp invocation) {
-        if (!entry.invocation(invocation)) { return; }
-        domInvocations.insert(invocation);
-        domUnusedPayloads.insert(invocation.getUnwindBody().front().getArgument(0));
-    });
-    entry.entry().walk([&](ctjs::CallOp call) {
-        if (const auto * edge = entry.call(call)) {
-            domCalls[call] = *edge;
-            if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {
-                auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
-                if (receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
-                    llvm::all_of(receiver.getResult().getUses(), [&](mlir::OpOperand & use) {
-                        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
-                        auto user = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                        const auto * number = user ? entry.call(user) : nullptr;
-                        return number &&
-                               (number->returnsNumber() ||
-                                number->kind == HostDOMMethod::decodeURIComponent) &&
-                               use.getOperandNumber() == 1;
-                    })) {
-                    // The proved builtin does not observe its undefined receiver.
-                    // Keep its source identity until calls and roots are erased.
-                    domReads.insert(receiver);
+    llvm::SmallVector<ctjs::FuncOp> functions{entry.entry()};
+    llvm::append_range(functions, entry.callbacks());
+    for (ctjs::FuncOp function : functions) {
+        function.walk([&](ctjs::CreateClosureOp closure) {
+            if (entry.callback(closure)) { domReads.insert(closure); }
+        });
+        function.walk([&](ctjs::ConstantOp constant) {
+            if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
+        });
+        function.walk([&](ctjs::GetPropertyOp read) {
+            if (entry.method(read) || entry.isTokenList(read.getResult()) ||
+                entry.isDataset(read.getResult())) {
+                domReads.insert(read);
+            }
+        });
+        function.walk([&](ctjs::LoadGlobalOp load) {
+            if (entry.isInitialIntrinsic(load)) { domReads.insert(load); }
+        });
+        function.walk([&](ctjs::InvokeOp invocation) {
+            if (!entry.invocation(invocation)) { return; }
+            domInvocations.insert(invocation);
+            domUnusedPayloads.insert(invocation.getUnwindBody().front().getArgument(0));
+        });
+        function.walk([&](ctjs::CallOp call) {
+            if (const auto * edge = entry.call(call)) {
+                domCalls[call] = *edge;
+                if (edge->returnsNumber() || edge->kind == HostDOMMethod::decodeURIComponent) {
+                    auto receiver = call.getReceiver().getDefiningOp<ctjs::ConstantOp>();
+                    if (receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                        llvm::all_of(receiver.getResult().getUses(), [&](mlir::OpOperand & use) {
+                            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
+                            auto user = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                            const auto * number = user ? entry.call(user) : nullptr;
+                            return number &&
+                                   (number->returnsNumber() ||
+                                    number->kind == HostDOMMethod::decodeURIComponent) &&
+                                   use.getOperandNumber() == 1;
+                        })) {
+                        // The proved builtin does not observe its undefined receiver.
+                        // Keep its source identity until calls and roots are erased.
+                        domReads.insert(receiver);
+                    }
                 }
             }
-        }
-    });
+        });
+    }
     for (mlir::BlockArgument parameter : entry.parameters()) {
         if (llvm::any_of(domCalls, [&](const auto & item) {
                 return item.second.usesStyle() && item.second.element == parameter;
@@ -318,6 +325,23 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (edge.kind == HostDOMMethod::decodeURIComponent || edge.kind == HostDOMMethod::jsonParse) {
         return true;
     }
+    if (edge.kind == HostDOMMethod::startsWith) {
+        auto value = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{at.getI1Type()}, call.getReceiver(),
+            at.getStringAttr("starts_with"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, call.getArgs());
+        swap(value.getResult(0));
+        return true;
+    }
+    if (edge.kind == HostDOMMethod::filterStrings) {
+        auto callback = edge.callback;
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{ec::OpaqueType::get(context, kStringVectorType)},
+            at.getStringAttr("ctnative::filter_strings<" + names.lookup(callback.getSymName()) +
+                             ">"),
+            mlir::ValueRange{call.getReceiver()});
+        swap(value.getResult(0));
+        return true;
+    }
     llvm::SmallVector<mlir::Value> arguments;
     if (edge.kind == HostDOMMethod::number) {
         // Earlier replacements update the live call operands. The source
@@ -349,6 +373,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                                : "ctbrowser::string_to_number";
         break;
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
+    case HostDOMMethod::filterStrings:
+    case HostDOMMethod::startsWith: llvm_unreachable("String filter handled above");
     case HostDOMMethod::decodeURIComponent:
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");
     }

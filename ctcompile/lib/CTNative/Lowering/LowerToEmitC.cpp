@@ -277,6 +277,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         if (auto wrapper = source.wrapper()) {
                             prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
                         }
+                        // Make proved callback bodies reachable to sparse dataflow;
+                        // they still emit as ordinary internal C++ functions.
+                        for (ctjs::FuncOp callback : source.callbacks()) {
+                            prepared->lookupSymbol<ctjs::FuncOp>(callback.getSymName()).setPublic();
+                        }
                         // Only the initialized DOM provider and complete source
                         // proof authorize this binding. Normalize in the private
                         // clone, then reprove it; no VM lookup or C++ global
@@ -672,7 +677,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         llvm::erase_if(accepted,
                        [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
-        if (admittedDOM && !llvm::is_contained(accepted, admittedDOM->entry())) {
+        if (admittedDOM && (!llvm::is_contained(accepted, admittedDOM->entry()) ||
+                            llvm::any_of(admittedDOM->callbacks(), [&](ctjs::FuncOp callback) {
+                                return !llvm::is_contained(accepted, callback);
+                            }))) {
             module.emitError("native DOM entry did not pass complete native admission");
             return signalPassFailure();
         }

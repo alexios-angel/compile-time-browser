@@ -722,6 +722,13 @@ inline void require_dataset_element(ctbrowser::element_ref element) {
         throw std::invalid_argument("DOM dataset requires a contracted HTML or SVG element");
     }
 }
+template <auto Predicate>
+std::vector<std::string> filter_strings(const std::vector<std::string> & values) {
+    std::vector<std::string> selected;
+    std::copy_if(values.begin(), values.end(), std::back_inserter(selected), Predicate);
+    return selected;
+}
+
 inline std::vector<std::string> dataset_keys(ctbrowser::element_ref element) {
     std::vector<std::string> keys;
     for (auto & [key, value] : ctbrowser::dataset_entries(*element.owner, element.id)) {

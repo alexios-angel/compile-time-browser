@@ -30,7 +30,14 @@ bool admission::function(ctjs::FuncOp fn) {
     // native carrier and must be unused.
     for (unsigned i = carriesReceiver ? 1 : 0; i < 3 && i < entry.getNumArguments(); ++i) {
         for (mlir::Operation * user : entry.getArgument(i).getUsers()) {
-            if (domEntry && domEntry->entry() == fn && llvm::isa<ctjs::RootOp>(user)) { continue; }
+            if (domEntry &&
+                (domEntry->entry() == fn || llvm::is_contained(domEntry->callbacks(), fn))) {
+                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+                    closure && domEntry->callback(closure)) {
+                    continue;
+                }
+            }
             // A closure that lowers to nothing does not READ these: a
             // declaration's pair is erased with its store, and a LIFTED
             // one's `$enclosing_closure` and `$enclosing_this` operands go
@@ -131,6 +138,10 @@ bool admission::function(ctjs::FuncOp fn) {
         // neither has a carrier and neither needs one.
         if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
         if (isNativeMapBookkeeping(o)) { return; }
+        if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(o);
+            closure && domEntry && domEntry->callback(closure)) {
+            return;
+        }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
             load && domEntry && domEntry->isInitialIntrinsic(load)) {
             return;

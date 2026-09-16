@@ -648,6 +648,8 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     const mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
                                 ? mlir::Type(DOMElementType::get(value.getContext()))
+                            : domEntry_ && domEntry_->isCallbackParameter(value)
+                                ? mlir::Type(StrType::get(value.getContext(), StrEncoding::UTF8))
                                 : mlir::Type(BoxedType::get(value.getContext()));
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));
 }

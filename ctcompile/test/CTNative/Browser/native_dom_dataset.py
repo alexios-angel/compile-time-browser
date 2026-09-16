@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proved HTML/SVG dataset key snapshots, with no script dependency in C++."""
+"""Proved HTML/SVG dataset key snapshots and original Bootstrap filtering."""
 
 import argparse
 import json
@@ -22,6 +22,23 @@ BODIES = {
     "dataset_reread": "Object.keys(element.dataset); element.setAttribute('data-later', 'x'); "
     "element.removeAttribute('data-bs-z'); return Object.keys(element.dataset);",
 }
+BOOTSTRAP_FILTER = (
+    'Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))'
+)
+PREDICATE = 't => t.startsWith("bs") && !t.startsWith("bsConfig")'
+FILTER_BODIES = {
+    "dataset_filter": f"const t = element; return {BOOTSTRAP_FILTER};",
+    "dataset_filter_alias": f"const keys = Object.keys(element.dataset); "
+    f"const selected = keys.filter({PREDICATE}); return selected;",
+    "dataset_filter_snapshot": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
+    "element.setAttribute('data-later', 'x'); element.removeAttribute('data-bs-z'); return selected;",
+    "dataset_filter_saved_keys": "const keys = Object.keys(element.dataset); "
+    "element.setAttribute('data-later', 'x'); element.removeAttribute('data-bs-z'); "
+    f"return keys.filter({PREDICATE});",
+    "dataset_filter_prefix": "return Object.keys(element.dataset).filter(key => key.startsWith('bs'));",
+    "dataset_filter_helper": f"function select(keys) {{ return keys.filter({PREDICATE}); }} "
+    "return select(Object.keys(element.dataset));",
+}
 # Web IDL's named-property order is attribute order, including numeric names.
 # Chrome independently measures this order; an ordinary object is the wrong double.
 KEYS = ["bsZ", "10", "2", "01", "", "__proto__", "Foo", "foo-Bar"]
@@ -35,31 +52,118 @@ ATTRS = [
     "data--foo",
     "data-foo--bar",
 ]
-SOURCES = {name: f"function {name}(element) {{ {body} }}\n" for name, body in BODIES.items()}
+# (attribute names, exposed keys, keys retained by the original predicate).
+FILTER_CASES = [
+    (
+        [
+            "data-bs-z",
+            "data-10",
+            "data-bs-config",
+            "data-2",
+            "data-bs-toggle",
+            "data-bs-config-more",
+            "data-bsconfig",
+            "data-bs",
+            "data-b",
+            "data-__proto__",
+            "data-bsé",
+        ],
+        [
+            "bsZ",
+            "10",
+            "bsConfig",
+            "2",
+            "bsToggle",
+            "bsConfigMore",
+            "bsconfig",
+            "bs",
+            "b",
+            "__proto__",
+            "bsé",
+        ],
+        ["bsZ", "bsToggle", "bsconfig", "bs", "bsé"],
+    ),
+    ([], [], []),
+    (["data-bs-z", "data-bs", "data-bs-a"], ["bsZ", "bs", "bsA"], ["bsZ", "bs", "bsA"]),
+    (
+        ["data-bs-config", "data-bs-config-more", "data-2", "data-b"],
+        ["bsConfig", "bsConfigMore", "2", "b"],
+        [],
+    ),
+]
+SOURCES = {
+    name: f"function {name}(element) {{ {body} }}\n"
+    for name, body in (BODIES | FILTER_BODIES).items()
+}
+CASES = {name: FILTER_CASES if name in FILTER_BODIES else [(ATTRS, KEYS, KEYS)] for name in SOURCES}
 REFUSALS = {
     "missing_read": "return element.dataset.missing;",
     "dataset_escape": "return element.dataset;",
     "dataset_write": "element.dataset.bsZ = 'x'; return Object.keys(element.dataset);",
     "keys_mutation": "const keys = Object.keys(element.dataset); keys[0] = 'x'; return keys;",
     "keys_identity": "const keys = Object.keys(element.dataset); return keys === keys;",
-    "keys_filter": "return Object.keys(element.dataset).filter(key => key.startsWith('bs'));",
     "stale_alias": "const data = element.dataset; element.setAttribute('data-later', 'x'); return Object.keys(data);",
     "replaced_keys": "Object.keys = element; return Object.keys(element.dataset);",
     "wrong_receiver": "const keys = Object.keys; return keys(element.dataset);",
     "extra_argument": "return Object.keys(element.dataset, 1);",
     "ordinary_object": "return Object.keys({a: 1});",
+    "replaced_filter": f"Array.prototype.filter = element; const t = element; return {BOOTSTRAP_FILTER};",
+    "replaced_startswith": f"String.prototype.startsWith = element; const t = element; return {BOOTSTRAP_FILTER};",
+    "replaced_constructor": f"Array.prototype.constructor = element; const t = element; return {BOOTSTRAP_FILTER};",
+    "custom_species": "Object.defineProperty(Array, Symbol.species, {value: function() { return {}; }}); "
+    f"const t = element; return {BOOTSTRAP_FILTER};",
+    "own_constructor": "const keys = Object.keys(element.dataset); keys.constructor = element; "
+    f"return keys.filter({PREDICATE});",
+    "filter_wrong_receiver": "const keys = Object.keys(element.dataset); const filter = keys.filter; "
+    f"return filter({PREDICATE});",
+    "startswith_wrong_receiver": "return Object.keys(element.dataset).filter(key => "
+    "{ const starts = key.startsWith; return starts('bs'); });",
+    "filter_this_arg": f"return Object.keys(element.dataset).filter({PREDICATE}, element);",
+    "startswith_position": "return Object.keys(element.dataset).filter(key => key.startsWith('bs', 1));",
+    "startswith_nonstring": "return Object.keys(element.dataset).filter(key => key.startsWith(1));",
+    "startswith_unicode_prefix": "return Object.keys(element.dataset).filter(key => key.startsWith('é'));",
+    "filter_receiver_mutation": "const keys = Object.keys(element.dataset); const alias = keys; "
+    f"alias[0] = 'bsChanged'; return keys.filter({PREDICATE});",
+    "filter_result_mutation": f"const t = element; const selected = {BOOTSTRAP_FILTER}; "
+    "selected[0] = 'changed'; return selected;",
+    "filter_receiver_escape": "const keys = Object.keys(element.dataset); element.saved = keys; "
+    f"return keys.filter({PREDICATE});",
+    "filter_callback_escape": f"const callback = {PREDICATE}; "
+    "Object.keys(element.dataset).filter(callback); return callback;",
+    "filter_callback_mutation": f"let callback = {PREDICATE}; callback = element; "
+    "return Object.keys(element.dataset).filter(callback);",
+    "filter_callback_write": "return Object.keys(element.dataset).filter(key => "
+    "{ element.setAttribute('data-call', 'x'); return key.startsWith('bs'); });",
+    "filter_callback_capture": "const prefix = element.getAttribute('prefix'); "
+    "return Object.keys(element.dataset).filter(key => key.startsWith(prefix));",
+    "filter_callback_array_write": "return Object.keys(element.dataset).filter((key, index, keys) => "
+    "{ keys[0] = 'bsChanged'; return key.startsWith('bs'); });",
+    "filter_callback_index": "return Object.keys(element.dataset).filter((key, index) => index === 0);",
+    "filter_callback_this": "return Object.keys(element.dataset).filter(function(key) "
+    "{ return this === element; });",
 }
 
 
 def oracles(args):
     source = "".join(SOURCES.values())
-    names = []
+    names, wanted = [], {}
     for name in SOURCES:
-        label = f"datasetObservation{len(names)}"
-        names.append(label)
-        source += f"""
+        wanted[name] = []
+        for _, keys, selected in CASES[name]:
+            label = f"datasetObservation{len(names)}"
+            names.append(label)
+            if name == "dataset_filter_prefix":
+                selected = [key for key in keys if key.startswith("bs")]
+            elif name not in FILTER_BODIES:
+                selected = keys
+                if name == "dataset_after_write":
+                    selected = keys + ["later"]
+                elif name == "dataset_reread":
+                    selected = keys[1:] + ["later"]
+            wanted[name].append("|".join(selected))
+            source += f"""
 var {label} = (function() {{
-    const keys = {json.dumps(KEYS)};
+    const keys = {json.dumps(keys)};
     const target = {{}};
     for (const key of keys) Object.defineProperty(target, key, {{value: 'x', enumerable: true, configurable: true}});
     const dataset = new Proxy(target, {{ownKeys() {{ return keys.slice(); }} }});
@@ -70,7 +174,9 @@ var {label} = (function() {{
         }},
         removeAttribute(key) {{
             if (key !== 'data-bs-z') throw new Error('unexpected removal');
-            keys.splice(keys.indexOf('bsZ'), 1); delete target.bsZ;
+            const index = keys.indexOf('bsZ');
+            if (index >= 0) keys.splice(index, 1);
+            delete target.bsZ;
         }}
     }};
     return {name}(element).join('|');
@@ -79,35 +185,35 @@ var {label} = (function() {{
     node = args.work / "dataset-node.js"
     node.write_text(source + "".join(f"console.log({name});\n" for name in names))
     expected = run([args.node, node]).stdout.splitlines()
-    assert expected == ["|".join(KEYS)] * 3 + [
-        "|".join(KEYS + ["later"]),
-        "|".join(KEYS[1:] + ["later"]),
-    ]
+    assert expected == [value for values in wanted.values() for value in values], expected
     vm = args.work / "dataset-vm.js"
     vm.write_text(source)
     actual = run([args.reference, vm]).stdout
     assert actual == "".join(
-        f'{name}="{quote(value)}"\n' for name, value in zip(names, expected)
+        f'{name}="{quote(value)}"\n' for name, value in sorted(zip(names, expected))
     ), actual
-    return expected
+    return wanted
 
 
-def client(symbol, owned):
+def client(symbol, owned, name):
     setup = (
         f"{symbol}_session session; auto & doc = session.document();"
         if owned
         else "atom_table atoms; document doc{atoms};"
     )
     call = "session.invoke(element)" if owned else f"{symbol}(element)"
-    attributes = ",".join(json.dumps(key) for key in ATTRS)
+    fixtures = ",".join(
+        "{" + ",".join(json.dumps(key) for key in attrs) + "}" for attrs, _, _ in CASES[name]
+    )
     return f"""
+    for (const auto & names : std::vector<std::vector<const char *>>{{{fixtures}}}) {{
     for (node_ns ns : {{node_ns::html, node_ns::svg}}) {{
         std::vector<std::string> saved;
         {{
             {setup}
             const auto node = doc.create_element(doc.atoms().intern("test"), ns);
             element_ref element{{&doc, node}};
-            for (const char * name : {{{attributes}}}) {{
+            for (const char * name : names) {{
                 assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern(name), "x"));
             }}
             assert(doc.set_attribute_ns(node, doc.atoms().intern("urn:ignored"), doc.atoms().intern("data-hidden"), "x"));
@@ -127,6 +233,7 @@ def client(symbol, owned):
         }}
         std::cout << '\\n';
     }}
+    }}
 """
 
 
@@ -139,18 +246,21 @@ def main():
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
-    assert "Object.keys(t.dataset)" in vendor.read_text(), "Bootstrap dataset source pin changed"
+    assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
     expected = oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
-    prepared = [(name, *dom.prepare(args, name, source, 1)) for name, source in SOURCES.items()]
+    prepared = [
+        (name, *dom.prepare(args, name, source, 1, entry_name=name))
+        for name, source in SOURCES.items()
+    ]
     for optimize in (False, True):
         for layout in ("explicit", "deduced"):
             headers, bodies, clients, wanted = set(), [], [], []
             for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
                 owned = "session" in provider
-                for index, (name, ir, contract) in enumerate(prepared):
+                for name, ir, contract in prepared:
                     label = f"{name}-{owned}-{optimize}-{layout}"
                     native = dom.lower(
                         args,
@@ -158,7 +268,11 @@ def main():
                         dict(
                             contract,
                             provider=provider,
-                            initial_intrinsics=["Object"],
+                            initial_intrinsics=(
+                                ["Object", "Array", "String"]
+                                if name in FILTER_BODIES
+                                else ["Object"]
+                            ),
                             dataset_parameters=[0],
                         ),
                         label,
@@ -169,20 +283,25 @@ def main():
                         run([args.opt, native, "--ctnative-print-deduced", "-o", deduced])
                         native = deduced
                     entries = dom.NATIVE.findall(native.read_text())
-                    assert len(entries) == 1 and not dom.FUNCTION.search(
-                        native.read_text()
-                    ), native.read_text()
+                    assert len(entries) == (
+                        2 if name in FILTER_BODIES else 1
+                    ) and not dom.FUNCTION.search(native.read_text()), native.read_text()
+                    entry = next(
+                        symbol
+                        for symbol in entries
+                        if re.fullmatch(re.escape(name) + r"_\d+", symbol)
+                    )
                     cpp = run([args.translate, "--mlir-to-cpp", native]).stdout
                     assert "ctnative::dataset_keys" in cpp and not dom.VM.search(cpp), cpp
                     assert not re.search(
-                        r"shared_ptr|weak_ptr|nullable_scalar|std::variant", cpp
+                        r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
                     ), cpp
                     headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
                     body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
                     namespace = name + ("_session" if owned else "_free")
                     bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
-                    clients.append(client(namespace + "::" + entries[0], owned))
-                    wanted += [expected[index]] * 2
+                    clients.append(client(namespace + "::" + entry, owned, name))
+                    wanted += [value for value in expected[name] for _ in range(2)]
             path = args.work / f"combined-{optimize}-{layout}.cpp"
             path.write_text(
                 "\n".join(sorted(headers))
@@ -237,7 +356,7 @@ def main():
                     dict(
                         contract,
                         provider=provider,
-                        initial_intrinsics=["Object"],
+                        initial_intrinsics=["Object", "Array", "String"],
                         dataset_parameters=[0],
                     ),
                     f"refuse-{name}-{provider}-{optimize}",
@@ -256,8 +375,31 @@ def main():
     ):
         dom.lower(args, ir, dict(contract, **changes), f"premise-{refusals}", success=False)
         refusals += 1
+    _, ir, contract = next(item for item in prepared if item[0] == "dataset_filter")
+    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for optimize in (False, True):
+            for intrinsics in (
+                ["Object"],
+                ["Object", "Array"],
+                ["Object", "String"],
+                ["Array", "String"],
+            ):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        initial_intrinsics=intrinsics,
+                        dataset_parameters=[0],
+                    ),
+                    f"filter-premise-{refusals}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
     print(
-        f"native DOM dataset: {len(SOURCES)} sources, {len(expected)} Node/VM source-double observations, 8 GCC/Clang binaries, HTML/SVG and lifetime sanitizer, {refusals} refusals"
+        f"native DOM dataset: {len(SOURCES)} sources, {sum(map(len, expected.values()))} Node/VM source-double observations, 8 GCC/Clang binaries, HTML/SVG and lifetime sanitizer, {refusals} refusals"
     )
 
 

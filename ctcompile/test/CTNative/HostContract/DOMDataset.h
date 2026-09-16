@@ -4,6 +4,223 @@
 
 namespace ctcompile::test::host_contract {
 
+inline void checkDOMDatasetFilter(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"MLIR(
+module {
+  ctjs.func @filter$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %Object = ctjs.load_global "Object"
+    %keysName = ctjs.constant #ctjs.string<"keys">
+    %keysMethod = ctjs.get_property %Object[%keysName]
+    %datasetName = ctjs.constant #ctjs.string<"dataset">
+    %dataset = ctjs.get_property %element[%datasetName]
+    %keys = ctjs.call %keysMethod(%Object, %dataset)
+    %filterName = ctjs.constant #ctjs.string<"filter">
+    %filter = ctjs.get_property %keys[%filterName]
+    %callback = ctjs.create_closure %callee[1] this %u
+    %answer = ctjs.call %filter(%keys, %callback)
+    ctjs.return %answer
+  }
+  ctjs.func private @predicate$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %key: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %startsName = ctjs.constant #ctjs.string<"startsWith">
+    %starts = ctjs.get_property %key[%startsName]
+    %prefix = ctjs.constant #ctjs.string<"bs">
+    %first = ctjs.call %starts(%key, %prefix)
+    %condition = ctjs.truthy %first
+    %selected = scf.if %condition -> (!ctjs.value) {
+      %again = ctjs.get_property %key[%startsName]
+      %excluded = ctjs.constant #ctjs.string<"bsConfig">
+      %second = ctjs.call %again(%key, %excluded)
+      %not = ctjs.unary not %second
+      scf.yield %not : !ctjs.value
+    } else {
+      scf.yield %first : !ctjs.value
+    }
+    ctjs.return %selected
+  }
+}
+)MLIR";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    check(static_cast<bool>(module), "original dataset filter proof fixture parses");
+    if (!module) { return; }
+    HostContract contract;
+    contract.entry = "filter$0";
+    contract.elementParameters = {0};
+    contract.datasetParameters = {0};
+    contract.initialIntrinsics = {"Object", "Array", "String"};
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    const auto noEvidence = [](mlir::ModuleOp input, const DOMEntryAnalysis & proof) {
+        bool empty = !proof.proved() && !proof.entry() && !proof.wrapper() &&
+                     proof.parameters().empty() && proof.callbacks().empty() &&
+                     proof.stringResults().empty() && proof.optionalStringJoins().empty() &&
+                     proof.stringRefinements().empty();
+        input.walk([&](ctjs::FuncOp function) {
+            for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
+                empty &= !proof.isCallbackParameter(argument) && !proof.isElement(argument) &&
+                         !proof.isDatasetElement(argument);
+            }
+        });
+        input.walk([&](ctjs::CreateClosureOp closure) { empty &= !proof.callback(closure); });
+        input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
+        input.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
+        input.walk([&](ctjs::GetPropertyOp read) {
+            empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
+                     !proof.isTokenList(read.getResult());
+        });
+        return empty;
+    };
+    auto callback = module->lookupSymbol<ctjs::FuncOp>("predicate$1");
+    const auto key = callback.getBody().front().getArgument(ctjs::implicit_arguments);
+    ctjs::CreateClosureOp closure;
+    ctjs::CallOp filter;
+    module->walk([&](ctjs::CreateClosureOp op) { closure = op; });
+    module->walk([&](ctjs::CallOp op) {
+        if (op.getArgs().size() == 1 && op.getArgs()[0] == closure.getResult()) { filter = op; }
+    });
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        contract.provider = provider;
+        DOMEntryAnalysis proof(*module, contract);
+        check(proof.proved(), "original pure filter callback proves under both DOM providers");
+        if (!proof.proved()) {
+            std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+            continue;
+        }
+        const auto * edge = proof.call(filter);
+        check(proof.callbacks().size() == 1 && proof.callbacks().front() == callback &&
+                  proof.callback(closure) == callback && proof.isCallbackParameter(key) &&
+                  !proof.isElement(key) && edge && edge->kind == HostDOMMethod::filterStrings &&
+                  edge->callback == callback && edge->element == filter.getReceiver() &&
+                  edge->returnsStringVector() && !edge->returnsBoolean(),
+              "filter evidence preserves callback identity and owning vector result");
+        unsigned prefixes = 0, snapshots = 0;
+        module->walk([&](ctjs::CallOp call) {
+            const auto * callEdge = proof.call(call);
+            check(callEdge != nullptr, "every original callback and entry call has evidence");
+            if (!callEdge) { return; }
+            if (callEdge->kind == HostDOMMethod::startsWith) {
+                ++prefixes;
+                check(callEdge->returnsBoolean() && callEdge->element == key &&
+                          proof.method(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()) ==
+                              HostDOMMethod::startsWith,
+                      "both short-circuit prefix calls preserve the exact String receiver");
+            }
+            snapshots += callEdge->kind == HostDOMMethod::datasetKeys;
+        });
+        check(prefixes == 2 && snapshots == 1,
+              "original filter proof includes both callback arms and the dataset snapshot");
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "filter analysis preserves the original complete source");
+        check(DOMEntryAnalysis(*module, contract, proof.steps()).proved(),
+              "filter proof reproduces its exact completion budget");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*module, contract, budget);
+            check(limited.exhausted() && noEvidence(*module, limited),
+                  "every incomplete filter proof withholds callback and entry evidence");
+        }
+    }
+    for (const auto & names :
+         {std::vector<std::string>{"Object"}, std::vector<std::string>{"Object", "Array"},
+          std::vector<std::string>{"Object", "String"}, std::vector<std::string>{"Array", "String"},
+          std::vector<std::string>{"Object", "Array", "String", "Array"}}) {
+        auto request = contract;
+        request.initialIntrinsics = names;
+        check(noEvidence(*module, DOMEntryAnalysis(*module, request)),
+              "filter authority requires unique Object, Array and String premises");
+    }
+    const auto refused = [&](llvm::StringRef from, llvm::StringRef to) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(replaced(source, from, to), &context);
+        check(static_cast<bool>(input), "filter source mutation fixture parses");
+        if (!input) { return; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        const bool empty = noEvidence(*input, proof);
+        check(empty, "unsupported filter source withholds every callback and entry capability");
+        if (!empty) {
+            std::fprintf(stderr, "%s => %s: %s\n", from.str().c_str(), to.str().c_str(),
+                         proof.reason().str().c_str());
+        }
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "refused filter proof preserves its complete source");
+    };
+    for (llvm::StringRef call :
+         {"%filter(%element, %callback)", "%filter(%keys, %callback, %u)", "%filter(%keys, %u)"}) {
+        refused("%filter(%keys, %callback)", call);
+    }
+    for (llvm::StringRef call : {"%starts(%prefix, %prefix)", "%starts(%key)",
+                                 "%starts(%key, %prefix, %prefix)", "%starts(%key, %key)"}) {
+        refused("%starts(%key, %prefix)", call);
+    }
+    refused("ctjs.return %answer", "ctjs.return %callback");
+    refused("ctjs.return %selected", "ctjs.return %key");
+    refused("ctjs.return %selected",
+            "ctjs.store_global \"saved\", %key\n    ctjs.return %selected");
+    refused("%answer =", "ctjs.store_global \"saved\", %callback\n    %answer =");
+    refused("%callback =", "ctjs.store_global \"Array\", %element\n    %callback =");
+    refused("%callback =", "ctjs.store_global \"String\", %element\n    %callback =");
+    refused("%callback =", "ctjs.set_property %keys[%filterName], %element\n    %callback =");
+    refused("#ctjs.string<\"bs\">", "#ctjs.string<\"é\">");
+    refused("%callee[1] this %u", "%callee[2] this %u");
+    refused("%callee[1] this %u", "%element[1] this %u");
+    refused("%callee[1] this %u", "%callee[1] this %element");
+    refused("%callee[1] this %u", "%callee[1] this %u captures %element");
+
+    auto negativeIndex = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(replaced(source, "predicate$1", "predicate$4294967295"), "%callee[1]",
+                 "%callee[-1]"),
+        &context);
+    check(static_cast<bool>(negativeIndex), "negative callback index fixture parses");
+    if (negativeIndex) {
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*negativeIndex);
+        check(noEvidence(*negativeIndex, DOMEntryAnalysis(*negativeIndex, request)),
+              "a negative callback index cannot alias an unsigned function identity");
+    }
+
+    const std::string prefix(32, 'b');
+    auto longInput = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(source, "#ctjs.string<\"bs\">", "#ctjs.string<\"" + prefix + "\">"), &context);
+    check(static_cast<bool>(longInput), "long ASCII prefix fixture parses");
+    if (longInput) {
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*longInput);
+        DOMEntryAnalysis proof(*longInput, request);
+        check(proof.proved() && DOMEntryAnalysis(*longInput, request, proof.steps()).proved(),
+              "long ASCII prefix reproduces its exact charged proof budget");
+        for (unsigned budget = 0; proof.proved() && budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*longInput, request, budget);
+            check(limited.exhausted() && noEvidence(*longInput, limited),
+                  "prefix scan budget cutoffs publish no callback evidence");
+        }
+        longInput->walk([&](ctjs::ConstantOp constant) {
+            if (ctjs::constantKey(constant.getResult()) == prefix) {
+                constant.setValueAttr(ctjs::StringAttr::get(&context, prefix + "b"));
+            }
+        });
+        request.moduleSha256 = hostContractFingerprint(*longInput);
+        DOMEntryAnalysis extra(*longInput, request, proof.steps());
+        check(extra.exhausted() && noEvidence(*longInput, extra),
+              "one more ASCII prefix character needs one more proof step");
+    }
+
+    mlir::Builder builder(&context);
+    (*module)->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+    callback->setAttr("ctnative.host_callback", builder.getBoolAttr(true));
+    closure->setAttr("ctnative.host_callback", builder.getStringAttr("predicate$1"));
+    filter->setAttr("ctnative.host_method", builder.getStringAttr("filterStrings"));
+    check(DOMEntryAnalysis(*module, contract).proved(),
+          "printed filter reports do not replace original source discovery");
+    filter->setOperand(1, closure.getResult());
+    DOMEntryAnalysis stale(*module, contract);
+    check(noEvidence(*module, stale) && stale.reason().contains("fingerprint"),
+          "receiver mutation invalidates the original callback fingerprint");
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    check(noEvidence(*module, DOMEntryAnalysis(*module, contract)),
+          "fresh fingerprint and spoofed callback reports cannot forge a filter receiver");
+}
+
 inline void checkDOMDataset(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     constexpr llvm::StringLiteral source = R"MLIR(
@@ -90,6 +307,7 @@ module {
     method->setAttr("ctnative.host_intrinsic", builder.getStringAttr("Object.keys"));
     check(noEvidence(DOMEntryAnalysis(*module, contract)),
           "forged Object.keys reports cannot replace the complete proof");
+    checkDOMDatasetFilter(context);
 }
 
 } // namespace ctcompile::test::host_contract

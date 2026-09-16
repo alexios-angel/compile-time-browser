@@ -22,7 +22,7 @@ struct DOMSource {
     std::string reason;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::DenseMap<unsigned, unsigned> creations;
-    llvm::DenseSet<mlir::Operation *> active, expanded;
+    llvm::DenseSet<mlir::Operation *> active, expanded, retainedCallbacks;
     struct Capture {
         ctjs::CreateCellOp cell;
         ctjs::CellSetOp write;
@@ -55,6 +55,30 @@ struct DOMSource {
     static bool undefined(mlir::Value value) {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+    }
+
+    bool confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
+        if (!closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
+            creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
+            target.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1) {
+            return false;
+        }
+        bool invoked = false;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!call || use.getOperandNumber() != 2 || call.getArgs().size() != 1 || !read ||
+                read.getObject() != call.getReceiver() ||
+                ctjs::constantKey(read.getKey()) != "filter" ||
+                call->getBlock() != closure->getBlock() || !closure->isBeforeInBlock(call)) {
+                return false;
+            }
+            invoked = true;
+        }
+        return invoked;
     }
 
     bool bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
@@ -1039,6 +1063,16 @@ struct DOMSource {
                 if (held) { continue; }
                 auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
                 if (!target) { return refuse("DOM helper closure target is missing"); }
+                if (confinedFilterCallback(closure, target)) {
+                    if (!expand(target, depth + 1)) { return false; }
+                    // Preserve both source identities. Complete DOM reproof must
+                    // establish the Array method, callback body and every use.
+                    retainedCallbacks.insert(target);
+                    closure = {};
+                    progress = true;
+                    continue;
+                }
+                if (!reason.empty()) { return false; }
                 if (closure.getUpvalues().size() != target.getUpvalueCount()) {
                     return refuse("DOM helper capture count disagrees with its source target");
                 }
@@ -1112,6 +1146,12 @@ struct DOMSource {
                 for (const Call & call : calls) {
                     mlir::IRMapping mapping;
                     auto & body = target.getBody().front();
+                    // Only retained uncaptured callback creators observe these
+                    // operands; their own bodies cannot observe implicit values.
+                    mapping.map(body.getArgument(ctjs::arg_callee),
+                                block.getArgument(ctjs::arg_callee));
+                    mapping.map(body.getArgument(ctjs::arg_receiver),
+                                block.getArgument(ctjs::arg_receiver));
                     for (auto [formal, actual] :
                          llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments),
                                    call.arguments)) {
@@ -1279,7 +1319,10 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
     }
     for (auto [index, function] : source.functions) {
         (void)index;
-        if (function != target && function != wrapper) { function.erase(); }
+        if (function != target && function != wrapper &&
+            !source.retainedCallbacks.contains(function)) {
+            function.erase();
+        }
     }
     return llvm::Error::success();
 }

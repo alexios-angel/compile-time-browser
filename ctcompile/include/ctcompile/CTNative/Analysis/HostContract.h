@@ -64,9 +64,10 @@ struct HostContract {
     std::vector<std::string> undefinedBindings;
     // Explicit identities supplied by the embedding, not effect summaries.
     // Closed-source providers accept Map/Array and the class helper. DOM entry
-    // providers accept Object, Number, decodeURIComponent and JSON as standard own global
-    // data bindings, including the unmodified Number.prototype.toString and
-    // Object.keys and JSON.parse own data properties. Source
+    // providers accept Object, Number, decodeURIComponent, JSON, Array and String
+    // as standard own global data bindings, including Number.prototype.toString,
+    // Object.keys, JSON.parse, Array.prototype.filter, String.prototype.startsWith
+    // and the default Array constructor/species chain. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
@@ -104,7 +105,9 @@ enum class HostDOMMethod {
     numberToString,
     decodeURIComponent,
     jsonParse,
-    datasetKeys
+    datasetKeys,
+    filterStrings,
+    startsWith
 };
 
 struct HostDOMCall {
@@ -112,9 +115,12 @@ struct HostDOMCall {
     HostDOMMethod kind;
     // Browser receiver, or the original scalar input for number/numberToString.
     mlir::Value element;
+    ctjs::FuncOp callback{};
     [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
     [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
-    [[nodiscard]] bool returnsStringVector() const { return kind == HostDOMMethod::datasetKeys; }
+    [[nodiscard]] bool returnsStringVector() const {
+        return kind == HostDOMMethod::datasetKeys || kind == HostDOMMethod::filterStrings;
+    }
     [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
     // An owning ctbrowser::json_value tree, from the shared public Core parser.
     [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
@@ -158,6 +164,9 @@ public:
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
     [[nodiscard]] ctjs::FuncOp entry() const { return checkedEntry; }
     [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
+    [[nodiscard]] llvm::ArrayRef<ctjs::FuncOp> callbacks() const { return checkedCallbacks; }
+    [[nodiscard]] ctjs::FuncOp callback(ctjs::CreateClosureOp closure) const;
+    [[nodiscard]] bool isCallbackParameter(mlir::Value value) const;
     [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return elements; }
     [[nodiscard]] bool isElement(mlir::Value value) const;
     // Validated parameters or nullable closest results, for equality only.
@@ -191,6 +200,8 @@ private:
     std::string refusal;
     ctjs::FuncOp checkedEntry;
     ctjs::FuncOp checkedWrapper;
+    std::vector<ctjs::FuncOp> checkedCallbacks;
+    std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> callbackClosures;
     std::vector<mlir::BlockArgument> elements;
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<mlir::BlockArgument> datasetElements;

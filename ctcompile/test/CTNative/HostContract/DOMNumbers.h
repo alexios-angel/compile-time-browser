@@ -66,11 +66,16 @@ module {
                   DOMEntryAnalysis(*module, *parsed).proved(),
               "both DOM providers accept the explicit initial Number identity");
         if (!parsed) { llvm::consumeError(parsed.takeError()); }
+        auto extended =
+            parseHostContract(replaced(json, "[\"Number\"]", "[\"Number\",\"Array\",\"String\"]"));
+        check(extended && DOMEntryAnalysis(*module, *extended).proved(),
+              "Number proof accepts additional supported intrinsic identities");
+        if (!extended) { llvm::consumeError(extended.takeError()); }
         for (llvm::StringRef invalid :
              {"[\"Map\"]", "[\"Number.prototype.toString\"]", "[\"Number\",\"Number\"]",
-              "[\"Number\",\"Array\"]", "[false]", "null"}) {
+              "[\"Number\",\"Map\"]", "[false]", "null"}) {
             auto rejected = parseHostContract(replaced(json, "[\"Number\"]", invalid));
-            check(!rejected, "DOM Number identity cannot import ambiguous or extra intrinsics");
+            check(!rejected, "DOM Number identity cannot import ambiguous or unknown intrinsics");
             if (!rejected) { llvm::consumeError(rejected.takeError()); }
         }
         DOMEntryAnalysis proof(*module, contract);

@@ -49,11 +49,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 4 ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 6 ||
         llvm::any_of(contract.initialIntrinsics,
                      [&](const auto & name) {
                          return (name != "Object" && name != "Number" &&
-                                 name != "decodeURIComponent" && name != "JSON") ||
+                                 name != "decodeURIComponent" && name != "JSON" &&
+                                 name != "Array" && name != "String") ||
                                 !intrinsicNames.insert(name).second;
                      }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
@@ -77,16 +78,29 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         return;
     }
     ctjs::FuncOp declaration;
+    std::vector<ctjs::FuncOp> callbackFunctions;
+    llvm::DenseMap<unsigned, ctjs::FuncOp> indexedCallbacks;
+    llvm::DenseSet<unsigned> functionIndices;
     for (mlir::Operation & operation : module.getBody()->getOperations()) {
         if (!spend()) { return; }
         auto function = llvm::dyn_cast<ctjs::FuncOp>(operation);
-        if (!function || !llvm::hasSingleElement(function.getBody()) ||
-            function.getUpvalueCount() != 0 || function->hasAttr("ctjs.skipped") ||
+        if (!function || !functionIndex(function) ||
+            !functionIndices.insert(*functionIndex(function)).second ||
+            !llvm::hasSingleElement(function.getBody()) || function.getUpvalueCount() != 0 ||
+            function->hasAttr("ctjs.skipped") ||
             function.getBody().front().getNumArguments() < ctjs::implicit_arguments) {
             refusal = "DOM entry requires complete single-block functions without captures";
             return;
         }
-        if (function != target) {
+        if (function != target && functionIndex(function) != 0) {
+            auto index = functionIndex(function);
+            if (!index || !indexedCallbacks.try_emplace(*index, function).second ||
+                function.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1) {
+                refusal = "DOM filter callback requires one String parameter and unique identity";
+                return;
+            }
+            callbackFunctions.push_back(function);
+        } else if (function != target) {
             if (declaration || functionIndex(function) != 0 ||
                 function.getBody().front().getNumArguments() != ctjs::implicit_arguments) {
                 refusal = "DOM entry permits only its own source declaration wrapper";
@@ -136,6 +150,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         objectIntrinsic,
         objectKeys,
         stringVector,
+        filterStrings,
+        callback,
+        startsWith,
         toggle,
         attribute,
         getAttribute,
@@ -170,7 +187,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<mlir::Value> provedOptionalStrings;
     std::vector<HostDOMStringRefinement> provedRefinements;
     std::vector<mlir::Value> provedStrings;
-    mlir::DominanceInfo dominance(target);
+    mlir::DominanceInfo dominance(module);
+    std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> provedClosures;
+    llvm::DenseSet<mlir::Operation *> usedCallbacks;
     if (declaration && !host_detail::isInertEntryDeclaration(declaration, target, spend)) {
         if (refusal.empty()) {
             refusal = "DOM entry wrapper contains observable source operations";
@@ -181,6 +200,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     const bool suppliedURI = llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent");
     const bool suppliedObject = llvm::is_contained(contract.initialIntrinsics, "Object");
     const bool suppliedJSON = llvm::is_contained(contract.initialIntrinsics, "JSON");
+    const bool suppliedArray = llvm::is_contained(contract.initialIntrinsics, "Array");
+    const bool suppliedString = llvm::is_contained(contract.initialIntrinsics, "String");
     if (declaration) {
         for (ctjs::StoreGlobalOp store :
              declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
@@ -191,8 +212,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
         }
     }
-    {
-        auto & block = target.getBody().front();
+    auto functions = callbackFunctions;
+    functions.push_back(target);
+    for (ctjs::FuncOp function : functions) {
+        const bool callbackBody = function != target;
+        auto & block = function.getBody().front();
         llvm::DenseMap<mlir::Value, Kind> values;
         unsigned mutationEpoch = 0;
         llvm::DenseMap<mlir::Value, unsigned> datasetEpochs;
@@ -209,8 +233,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 refusal = "DOM entry requires original JavaScript parameter types";
                 return;
             }
-            values[argument] =
-                argument.getArgNumber() < ctjs::implicit_arguments ? Kind::implicit : Kind::element;
+            values[argument] = argument.getArgNumber() < ctjs::implicit_arguments ? Kind::implicit
+                               : callbackBody                                     ? Kind::string
+                                                                                  : Kind::element;
         }
         const auto hasKind = [&](mlir::Value value, Kind kind) {
             const auto found = values.find(value);
@@ -228,6 +253,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             bool entered = false, returned = false;
             for (mlir::Operation & operation : body) {
                 if (!spend()) { return false; }
+                // Pure callbacks observe only their String argument. No implicit
+                // receiver, allocation, global, capture, callback or browser effect.
+                if (callbackBody &&
+                    !llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
+                               ctjs::RootOp, ctjs::ReturnOp, ctjs::GetPropertyOp, ctjs::CallOp,
+                               ctjs::TruthyOp, ctjs::UnaryOp, mlir::scf::IfOp, mlir::scf::YieldOp>(
+                        operation)) {
+                    refusal = "DOM filter callback contains an unsupported source effect";
+                    return false;
+                }
                 if ((operation.getNumRegions() != 0 &&
                      !llvm::isa<mlir::scf::IfOp, ctjs::InvokeOp>(operation)) ||
                     operation.getNumSuccessors() != 0 || returned) {
@@ -493,6 +528,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     continue;
                 }
                 if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                    if (callbackBody && !hasKind(result.getValue(), Kind::boolean)) {
+                        refusal = "DOM filter callback must return a proved Boolean";
+                        return false;
+                    }
                     if (depth || frame ||
                         (!hasKind(result.getValue(), Kind::undefined) &&
                          !hasKind(result.getValue(), Kind::boolean) &&
@@ -507,6 +546,40 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         return false;
                     }
                     returned = true;
+                    continue;
+                }
+                if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
+                    auto callback =
+                        indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
+                    if (closure.getFunctionAttr().getInt() < 0 || !suppliedArray ||
+                        !suppliedString || !callback || !closure.getUpvalues().empty() ||
+                        closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
+                        (closure.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
+                         !hasKind(closure.getEnclosingThis(), Kind::undefined))) {
+                        refusal = "DOM filter callback lacks original intrinsics or a capture-free "
+                                  "target";
+                        return false;
+                    }
+                    unsigned calls = 0;
+                    for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                        if (!spend()) { return false; }
+                        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                        if (!call || use.getOperandNumber() != 2 || call.getArgs().size() != 1 ||
+                            !dominance.properlyDominates(closure.getOperation(),
+                                                         call.getOperation())) {
+                            refusal = "DOM filter callback escapes its exact local invocation";
+                            return false;
+                        }
+                        ++calls;
+                    }
+                    if (!calls) {
+                        refusal = "DOM filter callback has no source invocation";
+                        return false;
+                    }
+                    values[closure.getResult()] = Kind::callback;
+                    provedClosures.emplace_back(closure, callback);
+                    usedCallbacks.insert(callback);
                     continue;
                 }
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
@@ -539,6 +612,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     const auto key = ctjs::constantKey(read.getKey());
+                    if (suppliedArray && hasKind(read.getObject(), Kind::stringVector) &&
+                        key == "filter") {
+                        values[read.getResult()] = Kind::filterStrings;
+                        provedMethods.emplace_back(read, HostDOMMethod::filterStrings);
+                        continue;
+                    }
+                    if (suppliedString && hasKind(read.getObject(), Kind::string) &&
+                        key == "startsWith") {
+                        values[read.getResult()] = Kind::startsWith;
+                        provedMethods.emplace_back(read, HostDOMMethod::startsWith);
+                        continue;
+                    }
                     if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
                         llvm::is_contained(provedDatasetElements, read.getObject())) {
                         values[read.getResult()] = Kind::dataset;
@@ -656,6 +741,38 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     if (!method || method.getObject() != invoke.getReceiver()) {
                         refusal = "DOM call does not preserve its proved method receiver";
                         return false;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::filterStrings) && arguments.size() == 1 &&
+                        hasKind(arguments[0], Kind::callback)) {
+                        auto closure = arguments[0].getDefiningOp<ctjs::CreateClosureOp>();
+                        provedCalls.push_back({invoke, HostDOMMethod::filterStrings,
+                                               invoke.getReceiver(),
+                                               indexedCallbacks.lookup(
+                                                   static_cast<unsigned>(closure.getFunction()))});
+                        values[invoke.getResult()] = Kind::stringVector;
+                        continue;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::startsWith) && arguments.size() == 1) {
+                        auto prefix = arguments[0].getDefiningOp<ctjs::ConstantOp>();
+                        auto text = prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue())
+                                           : ctjs::StringAttr{};
+                        // ponytail: ASCII prefixes make byte and UTF-16 prefix tests
+                        // equivalent. General prefixes need code-unit String proof.
+                        if (!text) {
+                            refusal = "DOM startsWith requires one constant ASCII prefix";
+                            return false;
+                        }
+                        for (unsigned char c : text.getValue()) {
+                            if (!spend()) { return false; }
+                            if (c > 127) {
+                                refusal = "DOM startsWith requires one constant ASCII prefix";
+                                return false;
+                            }
+                        }
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::boolean;
+                        continue;
                     }
                     if (hasKind(invoke.getCallee(), Kind::objectKeys) && arguments.size() == 1 &&
                         hasKind(arguments[0], Kind::dataset)) {
@@ -855,6 +972,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         };
         if (!visit(visit, block, 0, {})) { return; }
     }
+    if (usedCallbacks.size() != callbackFunctions.size()) {
+        refusal = "DOM entry contains an uninvoked callback function";
+        return;
+    }
     // Joins and source spreads copy trees by value. A mutable target must
     // finish every write before any such observation can snapshot it. No
     // member/identity observation or descendant mutation passed the census,
@@ -878,6 +999,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     optionalStrings = std::move(provedOptionalStrings);
     refinements = std::move(provedRefinements);
     strings = std::move(provedStrings);
+    checkedCallbacks = std::move(callbackFunctions);
+    callbackClosures = std::move(provedClosures);
     checkedEntry = target;
     checkedWrapper = declaration;
     elements = std::move(provedElements);
@@ -893,6 +1016,19 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     calls = std::move(provedCalls);
     jsonObjects = std::move(provedJSONObjects);
     jsonCopies = std::move(provedJSONCopies);
+}
+
+ctjs::FuncOp DOMEntryAnalysis::callback(ctjs::CreateClosureOp closure) const {
+    for (const auto & [made, target] : callbackClosures) {
+        if (made == closure) { return target; }
+    }
+    return {};
+}
+
+bool DOMEntryAnalysis::isCallbackParameter(mlir::Value value) const {
+    return llvm::any_of(checkedCallbacks, [&](ctjs::FuncOp callback) {
+        return callback.getBody().front().getArgument(ctjs::implicit_arguments) == value;
+    });
 }
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {

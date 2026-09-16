@@ -24,6 +24,10 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);
+            closure && domEntry->callback(closure)) {
+            return true;
+        }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o);
             object && domEntry->jsonObject(object)) {
             return true;
