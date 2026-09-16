@@ -152,3 +152,72 @@ an empty string as the label and never read `<option>` at all. Now: the
 `selected` option, else the first, else whatever the user picked, plus a
 drop-down arrow. The popup itself is still missing.
 
+
+## ANIMATIONS: CSS Animations and CSS Transitions on the Web Animations model (2026-09-16)
+
+There is ONE animation model, `lib/Shell/bindings/animations.cpp`: an
+`animation_record` over a `keyframe_effect_record`, sampled by
+`animated_values` as an OVERLAY on the cascade's text when getComputedStyle
+asks. Nothing paints it. `element.animate()` makes one record; the cascade now
+makes the other two kinds, in `lib/Shell/bindings/animations/css.cpp`, and
+composite order is transitions, then animations, then script (Web Animations
+§5.4.2) - `getAnimations()` returns them in that order and the overlay stacks
+them in it.
+
+**`@keyframes` is captured, not skipped.** `lib/Style/css/parser.cpp` records
+each rule as a `css::keyframes_block` (`style/css/keyframes.hpp`): the name,
+and per keyframe block its `from`/`to`/percentage offsets and a declaration
+range, like a `@font-face`. `engine::add_sheet` files them
+(`lib/Style/css/keyframes.cpp`) as `style::keyframes_rule`: shorthands
+expanded, values through `check_declaration` - the same grammar a rule's
+declaration goes through - two blocks at one offset merged, sorted by offset,
+`animation-timing-function` and `animation-composition` pulled out per
+keyframe. `engine::keyframes_of(name)` answers the LAST rule of that name
+whose `@media` holds; `clear_origin` drops a sheet's with its rules.
+
+**The style change event is `browser::resolve_styles`.** It keeps the previous
+map for the length of the resolution and hands both to
+`dom_bindings::update_css_animations`, which walks the document once and looks
+only at elements whose interned `computed_style` pointer moved. For each:
+CSS Transitions 1 §3 first - the before-change value is the previous text with
+the element's running animations sampled on top (that is what makes a reversal
+start from where it is), the after-change value the new text; a difference
+that is numeric of one type or two colours, and whose `transition-property`
+item matches, starts a `CSSTransition` with `fill: backwards`, the item's
+duration, delay and timing function; `allow-discrete` lets any difference flip
+at 50%; a running transition whose end moved is cancelled and replaced, with
+§3.1's reversing shortening when the new end is the old start. Then CSS
+Animations 1 §5: each `animation-name` index that names a rule gets a
+`CSSAnimation` whose effect is rebuilt from the rule and the longhands on every
+restyle while the name stays at that index - the record, its start time and
+the object the page holds survive - and a name that leaves is cancelled.
+Because the record is made at the flush, `animation-delay: -50s` on `100s` reads
+as the midpoint on the same getComputedStyle call, which is what
+css/support/interpolation-testcommon.js does for every `*-interpolation.html`.
+
+**Events fire from `browser::tick`**, after the timers: `tick_animations`
+compares each CSS-owned record's phase with the one it last reported and
+fires the crossings - `animationstart`/`animationiteration`/`animationend`/
+`animationcancel`, `transitionrun`/`transitionstart`/`transitionend`/
+`transitioncancel` - with the elapsed times CSS Animations 2 §4.2 and CSS
+Transitions 2 §5 give, as `AnimationEvent`/`TransitionEvent`. Never from the
+flush, which runs inside a script's own getComputedStyle. `next_wakeup_ms`
+asks `next_animation_event_ms` for the next boundary, so a page with a
+running animation wakes for its events and one with none goes idle again; a
+finished page settles.
+
+**What the property table decides.** `animation-timing-function`,
+`animation-direction`, `animation-fill-mode`, `animation-play-state`,
+`animation-composition` and `transition-behavior` are not rows of
+`lib/Style/css/properties/table.cpp` yet, so a page's `el.style` write of one
+is an expando and the initial value applies; the model reads them by name and
+needs nothing else once the rows exist. The `transition` and `animation`
+shorthands are filed whole by the cascade (`shape::whole`), so
+`animations/css.cpp` reads a shorthand's items itself when the longhands are
+empty - Bootstrap's `.fade` is `transition: opacity .15s linear`.
+
+Colours interpolate in premultiplied sRGB (`interpolate_value`, beside
+`style::interpolate_text`'s numbers); everything else still flips at the
+midpoint. Pseudo-elements do not animate, and `var()` inside a keyframe is not
+substituted. `unittests/unit/css_animations.cpp` pins the harness's shapes,
+the reversal, the events and the idle wakeup.

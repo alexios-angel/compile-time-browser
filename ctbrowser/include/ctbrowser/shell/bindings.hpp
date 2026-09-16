@@ -789,9 +789,33 @@ private:
     // on the interpolated text exactly as it would on a declared one.
     //
     // Nothing RENDERS an animation: the overlay exists for getComputedStyle and
-    // paint never sees it. Lengths, percentages, calc() and numbers
+    // paint never sees it. Lengths, percentages, calc(), numbers and colours
     // interpolate; everything else is discrete.
+    //
+    // CSS ANIMATIONS AND CSS TRANSITIONS ARE THE SAME MODEL DRIVEN FROM THE
+    // CASCADE (bindings/animations/css.cpp): after every style resolution the
+    // browser hands over the previous and the new style maps, and
+    // `update_css_animations` makes a CSSAnimation for every `animation-name`
+    // that names a `@keyframes` rule (CSS Animations 1 §5, updated in place
+    // while the name stays at its index) and a CSSTransition for every
+    // property whose before-change and after-change values differ and match
+    // `transition-property` (CSS Transitions 1 §3, reversing included). Both
+    // are `animation_record`s beside the script-made ones, sampled by the
+    // same overlay in composite order: transitions, then animations, then
+    // script (Web Animations 1 §5.4.2). Their events fire from `tick_animations`.
 public:
+    // The cascade changed: start, update and cancel the CSS-owned animations
+    // of every element in `txn`. `before` is the previous resolution's map
+    // (the before-change style) and `after` the new one; a running animation's
+    // current value is what the before-change style carries for its property.
+    void update_css_animations(const read_txn & txn, const style::style_map & before,
+                               const style::style_map & after);
+    // Fire the animation and transition events due since the last call, at the
+    // clock's current time (CSS Animations 2 §4.2, CSS Transitions 2 §5).
+    void tick_animations();
+    // How long until an animation next crosses a phase or iteration boundary
+    // and has an event to fire; infinity when none will. The browser's wakeup.
+    [[nodiscard]] double next_animation_event_ms() const noexcept;
     // The animated properties of one element as (css name, text) pairs, at the
     // element's animations' CURRENT time. `underlying` answers the cascade's
     // text for a property, which is the missing endpoint of a one-keyframe
@@ -830,6 +854,17 @@ private:
         effect_timing timing;
         std::vector<animation_keyframe> keyframes;
     };
+    enum class animation_kind : std::uint8_t {
+        css_transition, // the composite order: transitions, then animations,
+        css_animation,  // then what a script made (Web Animations §5.4.2)
+        script
+    };
+    enum class effect_phase : std::uint8_t {
+        idle, // no current time: cancelled, or never started
+        before,
+        active,
+        after
+    };
     struct animation_record {
         value self;
         std::size_t effect = static_cast<std::size_t>(-1);            // into effects_
@@ -838,8 +873,56 @@ private:
         double playback_rate = 1;
         value finished; // the `finished` promise
         bool finished_settled = false;
+        // --- the CSS-owned half (bindings/animations/css.cpp) ----------------
+        animation_kind kind = animation_kind::script;
+        std::string name;           // animationName, or transitionProperty
+        node_id owner;              // the owning element
+        std::size_t position = 0;   // index in `animation-name`; a transition's start order
+        std::size_t tree_order = 0; // the owner's place in the last update's walk
+        bool css_paused = false;    // `animation-play-state: paused` is in force
+        bool seen = false;          // marked by the update that kept it
+        // A transition's end value and CSS Transitions §3.1's two reversing
+        // facts, as text the cascade would produce.
+        std::string end_value;
+        std::string reversing_start;
+        double reversing_factor = 1;
+        // What the events last reported, so a tick fires only the crossings;
+        // and the active time a cancel found, which is its event's elapsedTime.
+        effect_phase reported_phase = effect_phase::idle;
+        double reported_iteration = 0;
+        double cancelled_at = 0;
     };
     static constexpr std::size_t no_record = static_cast<std::size_t>(-1);
+    // §4.8.3-4.8.7 for one animation: the phase and, when the effect is in
+    // effect, the transformed progress and the current iteration.
+    struct timing_sample {
+        effect_phase phase = effect_phase::idle;
+        double active_time = std::numeric_limits<double>::quiet_NaN();
+        double iteration = 0;
+        double progress = std::numeric_limits<double>::quiet_NaN(); // NaN: not in effect
+    };
+    [[nodiscard]] timing_sample sample_timing(const animation_record & a) const noexcept;
+    // `interpolate_text` plus a colour lerp: sRGB, premultiplied (CSS Color 4 §17).
+    [[nodiscard]] static std::string interpolate_value(std::string_view property,
+                                                       std::string_view from, std::string_view to,
+                                                       double progress,
+                                                       const style::css::length_context & ctx);
+    // Whether a transition may run between two values (CSS Transitions §3:
+    // numeric of one type, or two colours).
+    [[nodiscard]] static bool transitionable(std::string_view from, std::string_view to);
+    // Composite order (Web Animations §5.4.2) over record indices.
+    [[nodiscard]] bool composites_before(std::size_t a, std::size_t b) const noexcept;
+    // "Cancel an animation" (§4.4.12): idle, the finished promise rejected.
+    // Its event, if it is a CSS-owned one, fires from the next tick.
+    void cancel_record(std::size_t index);
+    // The element's `animation-*` / `transition-*` lists, and the records it owns.
+    void update_css_transitions(node_id element, std::size_t tree_order,
+                                const style::computed_style & before,
+                                const style::computed_style & after,
+                                const std::vector<std::pair<std::string, std::string>> & current);
+    void update_css_animation_list(node_id element, std::size_t tree_order,
+                                   const style::computed_style & after);
+    void fire_animation_event(std::size_t index, std::string_view type, double elapsed_ms);
 
     // `Animation`, `KeyframeEffect`, `DocumentTimeline`, `document.timeline`,
     // `document.getAnimations`, and `animate`/`getAnimations` on
@@ -853,6 +936,9 @@ private:
     [[nodiscard]] value make_keyframe_effect(context & cx, node_id target, value keyframes,
                                              value options);
     [[nodiscard]] value make_animation(context & cx, std::size_t effect);
+    // A record made by C++ - a transition's, a CSS animation's - given its
+    // KeyframeEffect object and filed; returns its index in effects_.
+    [[nodiscard]] std::size_t push_effect(context & cx, keyframe_effect_record made);
     // The two dictionaries. Both throw a TypeError HAVING RETURNED false.
     [[nodiscard]] bool read_timing(context & cx, value options, effect_timing & into);
     [[nodiscard]] bool read_keyframes(context & cx, value keyframes,
@@ -875,6 +961,8 @@ private:
     std::vector<animation_record> animations_;
     value animation_prototype_;
     value keyframe_effect_prototype_;
+    value css_animation_prototype_;  // CSSAnimation: `animationName`
+    value css_transition_prototype_; // CSSTransition: `transitionProperty`
     value timeline_;
     script::native_object * animation_interface_ = nullptr;
     std::uint64_t animation_generation_ = 0;
