@@ -190,6 +190,14 @@ void checker::check_module_items(std::int32_t root, const std::vector<binding> &
                 declared.push_back(binding{at(spec).text, binding_kind::const_, spec});
             }
         }
+        // `export default function f() {}` BINDS f as well as exporting
+        // `default` (16.2.3.7: the HoistableDeclaration's BoundNames). The
+        // parser reads the declaration in expression position, so the name
+        // is on a func_expr or a class node and lexical_names cannot see it.
+        if (item.kind == nk::export_decl && item.c == 1 && item.a >= 0 &&
+            !at(item.a).text.empty()) {
+            declared.push_back(binding{at(item.a).text, binding_kind::const_, item.a});
+        }
     }
     const auto is_declared = [&](std::string_view name) {
         for (const binding & b : declared) {
