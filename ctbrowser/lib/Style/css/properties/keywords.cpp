@@ -69,6 +69,11 @@ constexpr or_grammar or_grammars[] = {
     {"text-underline-position", "auto", {"from-font under", "left right"}, true},
     {"hanging-punctuation", "none", {"first", "force-end allow-end", "last"}, false},
     {"text-emphasis-position", "auto", {"over under", "right left"}, true},
+    {"ruby-position", "inter-character", {"alternate", "over under"}, true},
+    {"text-autospace",
+     "normal auto no-autospace",
+     {"ideograph-alpha", "ideograph-numeric", "punctuation", "insert replace"},
+     true},
 };
 
 [[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,

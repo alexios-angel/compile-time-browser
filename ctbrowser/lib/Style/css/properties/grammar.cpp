@@ -647,6 +647,11 @@ namespace detail {
                               p.kind == k::number_percentage || p.kind == k::number_length ||
                               p.kind == k::number_length_percentage;
     if (p.nonnegative && t.number < 0) { return false; }
+    // A NONNEGATIVE `<integer>` IS `<integer [1,inf]>`: every row in this table that
+    // marks an integer nonnegative - column-count, orphans, widows, max-lines,
+    // -webkit-line-clamp - is spelled `<integer [1,inf]>` by its specification,
+    // and `column-count: 0` is the assertion four of those parsing files make.
+    if (p.nonnegative && p.kind == k::integer && t.number == 0) { return false; }
 
     switch (t.type) {
     case token_type::number:
