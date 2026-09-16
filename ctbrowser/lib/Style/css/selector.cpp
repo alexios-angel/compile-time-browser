@@ -27,6 +27,8 @@ namespace {
     // `:target` is UI state of the same shape: one element at a time, set by the
     // shell (from the URL fragment rather than the pointer), no document fact.
     if (ascii_iequals(name, "target")) { return state_target; }
+    if (ascii_iequals(name, "focus-within")) { return state_focus_within; }
+    if (ascii_iequals(name, "focus-visible")) { return state_focus_visible; }
     return 0;
 }
 

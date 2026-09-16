@@ -239,7 +239,10 @@ void append_compound(std::string & out, const style::compound & part, const atom
                                                {style::state_active, "active"},
                                                {style::state_focus, "focus"},
                                                {style::state_checked, "checked"},
-                                               {style::state_disabled, "disabled"}};
+                                               {style::state_disabled, "disabled"},
+                                               {style::state_target, "target"},
+                                               {style::state_focus_within, "focus-within"},
+                                               {style::state_focus_visible, "focus-visible"}};
     static constexpr named_bit structural_bits[] = {
         {style::structural_root, "root"},
         {style::structural_empty, "empty"},
