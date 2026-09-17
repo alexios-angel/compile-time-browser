@@ -492,10 +492,6 @@ private:
     [[nodiscard]] node_id scrolling_element();
     // The border box in VIEWPORT coordinates - locate(id, true).
     [[nodiscard]] rect client_rect_of(node_id id) const;
-    // A `scroll` event at `target` (the document when empty) on the next
-    // tick, once however many times it is asked for before then (§13.1's
-    // pending scroll event targets).
-    void queue_scroll_event(node_id target);
     void install_element_scrolling(context & cx);
     void install_element_geometry(context & cx);
     void install_window_scrolling(context & cx, script::object_object & window);
@@ -2195,6 +2191,11 @@ public:
         viewport_scroll_get_ = std::move(get);
         viewport_scroll_set_ = std::move(set);
     }
+    // A `scroll` event at `target` (the document when empty) on the next
+    // tick, once however many times it is asked for before then (§13.1's
+    // pending scroll event targets). The browser calls it for a scroll the
+    // user made; the bindings call it for their own.
+    void queue_scroll_event(node_id target);
     void flush_layout() {
         if (flush_layout_) { flush_layout_(); }
     }

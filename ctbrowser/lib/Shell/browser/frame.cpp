@@ -140,6 +140,9 @@ void browser::scroll_to(float x, float y) {
     scroll_y_ = clamped;
     scroll_x_ = clamped_x;
     layers_.scroll_to(scroll_x_, scroll_y_);
+    // The page hears about it on the next tick, whoever moved the view - the
+    // wheel, a key, the scrollbar or window.scrollTo (CSSOM View §13.1).
+    if (bindings_) { bindings_->queue_scroll_event(node_id{}); }
     // The page's tiles survive - they are in CONTENT space, which is the
     // point of the whole design - but the scrollbar's thumb is a function
     // of where we now are, so its two rectangles are redrawn AND its tile
