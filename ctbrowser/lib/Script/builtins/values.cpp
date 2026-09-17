@@ -372,7 +372,7 @@ void install_math(context & cx, std::uint64_t seed) {
         return value::number(best);
     });
     // xorshift64*, held in the closure so each context has its own stream.
-    auto state = std::make_shared<std::uint64_t>(seed == 0 ? 1 : seed);
+    const auto state = std::make_shared<std::uint64_t>(seed == 0 ? 1 : seed);
     method(cx, math, "random", 0, [state](context &, std::span<value>) {
         std::uint64_t x = *state;
         x ^= x >> 12;
@@ -566,7 +566,7 @@ void install_number(context & cx) {
         }
         if (radix == 10 || std::isnan(v) || std::isinf(v)) { return c.string(number_to_string(v)); }
         const bool negative = v < 0;
-        double magnitude = std::fabs(v);
+        const double magnitude = std::fabs(v);
         constexpr std::string_view digits = "0123456789abcdefghijklmnopqrstuvwxyz";
         double whole = std::floor(magnitude);
         std::string out;
