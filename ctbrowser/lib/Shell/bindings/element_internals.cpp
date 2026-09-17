@@ -26,6 +26,8 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 
+#include "events/internal.hpp"
+
 #include <cstddef>
 #include <iterator>
 #include <span>
@@ -256,6 +258,11 @@ void dom_bindings::install_element_internals(context & cx,
         }
         if (!validates || !is_invalid(*at.internals)) { return value::boolean(true); }
         const value event = at.owner->make_event_object(c, "invalid", false, true);
+        // An engine event: trusted, and initialised - dispatch refuses one
+        // that is not, as it refuses a createEvent() nobody initEvent()ed.
+        auto * object = static_cast<script::object_object *>(event.as_heap());
+        object->set(std::string{detail::trusted_property}, value::boolean(true));
+        object->set(std::string{detail::initialised_property}, value::boolean(true));
         (void)at.owner->dispatch_event("invalid", at.id, event);
         return value::boolean(false);
     };
