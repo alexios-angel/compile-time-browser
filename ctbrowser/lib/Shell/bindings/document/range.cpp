@@ -872,38 +872,69 @@ void dom_bindings::install_range(context & cx) {
     // document or fragment - handed back as a DocumentFragment.
     // ponytail: the parse is innerHTML's, in body context; a `<tr>` in a
     // table context loses its row the way innerHTML on a <div> would.
-    method("createContextualFragment",
-           [start_of, type_of, parent_of, call_on](context & c, std::span<value> a) {
-               script::object_object * self = self_object(c);
-               if (self == nullptr) { return value::undefined(); }
-               const std::string markup = arg_string(c, a, 0);
-               spot node = start_of(c, self).node;
-               while (!node.none() && !node.is_attr() && type_of(node) != type_element &&
-                      type_of(node) != type_document && type_of(node) != type_fragment) {
-                   node = parent_of(node);
-               }
-               if (node.none() || node.is_attr()) { return value::null(); }
-               const spot document_node{node.owner, node.owner->doc_->document_node()};
-               std::string tag = "body";
-               if (type_of(node) == type_element) {
-                   const auto txn = node.owner->doc_->read();
-                   tag = std::string{txn.local_name(node.id)};
-                   if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
-               }
-               const value scratch = call_on(c, document_node, "createElement", {c.string(tag)});
-               if (!scratch.is_object_like()) { return value::null(); }
-               c.store_property(scratch, "innerHTML", c.string(markup));
-               const value fragment = call_on(c, document_node, "createDocumentFragment", {});
-               while (true) {
-                   const value first = c.lookup_property(scratch, "firstChild");
-                   if (!first.is_object_like()) { break; }
-                   const value append = c.lookup_property(fragment, "appendChild");
-                   if (!append.is_callable()) { break; }
-                   (void)c.call(append, std::span<const value>{&first, 1}, fragment);
-                   if (c.throw_pending()) { break; }
-               }
-               return fragment;
-           });
+    method("createContextualFragment", [start_of, type_of, parent_of, call_on](context & c,
+                                                                               std::span<value> a) {
+        script::object_object * self = self_object(c);
+        if (self == nullptr) { return value::undefined(); }
+        const std::string markup = arg_string(c, a, 0);
+        spot node = start_of(c, self).node;
+        while (!node.none() && !node.is_attr() && type_of(node) != type_element &&
+               type_of(node) != type_document && type_of(node) != type_fragment) {
+            node = parent_of(node);
+        }
+        if (node.none() || node.is_attr()) { return value::null(); }
+        const spot document_node{node.owner, node.owner->doc_->document_node()};
+        std::string tag = "body";
+        if (type_of(node) == type_element) {
+            const auto txn = node.owner->doc_->read();
+            tag = std::string{txn.local_name(node.id)};
+            if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
+        }
+        const value scratch = call_on(c, document_node, "createElement", {c.string(tag)});
+        if (!scratch.is_object_like()) { return value::null(); }
+        c.store_property(scratch, "innerHTML", c.string(markup));
+        const value fragment = call_on(c, document_node, "createDocumentFragment", {});
+        while (true) {
+            const value first = c.lookup_property(scratch, "firstChild");
+            if (!first.is_object_like()) { break; }
+            const value append = c.lookup_property(fragment, "appendChild");
+            if (!append.is_callable()) { break; }
+            (void)c.call(append, std::span<const value>{&first, 1}, fragment);
+            if (c.throw_pending()) { break; }
+        }
+        // IN AN XML DOCUMENT the fragment is the XML parser's, and the
+        // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
+        // in are unwrapped - their children stand in their place
+        // (createContextualFragment-xhtml.xhtml, what every browser does).
+        if (node.owner->doc_->xml()) {
+            const value query = c.lookup_property(fragment, "querySelectorAll");
+            const value selector = c.string("html, head, body");
+            const value wrappers =
+                query.is_callable() ? c.call(query, std::span<const value>{&selector, 1}, fragment)
+                                    : value::undefined();
+            const double count = wrappers.is_object_like()
+                                     ? context::to_number(c.lookup_property(wrappers, "length"))
+                                     : 0;
+            for (double i = count; i-- > 0;) {
+                const value wrapper =
+                    c.lookup_property(wrappers, std::to_string(static_cast<std::size_t>(i)));
+                if (!wrapper.is_object_like()) { continue; }
+                const value parent = c.lookup_property(wrapper, "parentNode");
+                const value insert = c.lookup_property(parent, "insertBefore");
+                if (!insert.is_callable()) { continue; }
+                while (true) {
+                    const value child = c.lookup_property(wrapper, "firstChild");
+                    if (!child.is_object_like()) { break; }
+                    const value args[2] = {child, wrapper};
+                    (void)c.call(insert, args, parent);
+                    if (c.throw_pending()) { break; }
+                }
+                const value remove = c.lookup_property(wrapper, "remove");
+                if (remove.is_callable()) { (void)c.call(remove, {}, wrapper); }
+            }
+        }
+        return fragment;
+    });
     proto->define("@@toStringTag", cx.string("Range"), script::attr_configurable);
 
     // `new Range()`: collapsed at (document, 0) of the realm's document.
