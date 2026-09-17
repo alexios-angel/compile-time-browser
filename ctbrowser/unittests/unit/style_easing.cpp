@@ -216,6 +216,15 @@ void test_composition() {
                            context) == "translate(12.25px, 75%)");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
           "rotate(30deg) scale(2)");
+    CHECK(composite_text("transform", "matrix(0, 1, -1, 0, 100, 0)", "matrix(1, 0, 0, 1, 50, 0)",
+                         composite_op::accumulate, context) == "matrix(0, 1, -1, 0, 150, 0)");
+    CHECK(composite_text("transform", "matrix(1, 1, 0, 0, 0, 100)", "matrix(1, 0, 0, 1, 50, 0)",
+                         composite_op::accumulate, context) == "matrix(1, 0, 0, 1, 50, 0)");
+    CHECK(composite_text("transform", "translate(10px) scale(2)", "translate(5px) scale(3)",
+                         composite_op::accumulate, context) == "translate(15px, 0px) scale(4, 4)");
+    CHECK(interpolate_text("transform", "matrix(1, 0, 0, 1, 0, -6)", "matrix(0, 7, -1, 0, 6, 0)",
+                           0.5, context)
+              .starts_with("matrix(2.828427, 2.828427, -0.707107, 0.707107, 3, -3)"));
 }
 
 } // namespace

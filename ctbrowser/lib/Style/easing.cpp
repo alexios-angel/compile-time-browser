@@ -752,7 +752,10 @@ struct decomposed2d {
     const std::size_t shorter = std::min(a->size(), b->size());
     bool matched = true;
     for (std::size_t i = 0; i < shorter && matched; ++i) {
-        matched = primitive_of((*a)[i].name) == primitive_of((*b)[i].name);
+        // Two matrix() functions interpolate by decomposition (§12.1), not
+        // term by term: they send the whole lists down the matrix path.
+        matched = primitive_of((*a)[i].name) == primitive_of((*b)[i].name) &&
+                  ((*a)[i].name != "matrix" || (*a)[i].args == (*b)[i].args);
     }
     if (matched) {
         for (std::size_t i = a->size(); i < b->size(); ++i) {
@@ -883,6 +886,51 @@ struct filter_fn {
         if (!ok) { return std::nullopt; }
         if (i != 0) { out += ' '; }
         out += name + '(' + piece + ')';
+    }
+    return out;
+}
+
+// CSS Transforms 2 §14, accumulation of two transform lists: function by
+// function when the lists match in length and primitive - a translate sums,
+// a scale sums its excess over 1, a rotate or skew sums its angles, a matrix
+// pair is decomposed, summed the same way and recomposed - and otherwise the
+// keyframe's list is appended to the underlying one. A matrix that cannot
+// be decomposed (singular) leaves the keyframe's value alone.
+[[nodiscard]] std::optional<std::string> accumulate_transform(std::string_view underlying,
+                                                              std::string_view value) {
+    const std::optional<std::vector<transform_fn>> a = parse_transforms(underlying);
+    const std::optional<std::vector<transform_fn>> b = parse_transforms(value);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty()) { return std::string{value}; }
+    if (b->empty()) { return std::string{underlying}; }
+    if (a->size() != b->size()) { return std::nullopt; }
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        if (primitive_of((*a)[i].name) != primitive_of((*b)[i].name)) { return std::nullopt; }
+    }
+    std::string out;
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        const transform_fn & x = (*a)[i];
+        const transform_fn & y = (*b)[i];
+        transform_fn fn = x;
+        if (fn.name == "matrix") {
+            const matrix2d mx = matrix_of(x), my = matrix_of(y);
+            if (mx[0] * mx[3] - mx[1] * mx[2] == 0 || my[0] * my[3] - my[1] * my[2] == 0) {
+                return std::string{value};
+            }
+            const decomposed2d dx = decompose(mx), dy = decompose(my);
+            const decomposed2d sum{dx.tx + dy.tx,     dx.ty + dy.ty,       dx.sx + dy.sx - 1,
+                                   dx.sy + dy.sy - 1, dx.angle + dy.angle, dx.m11 + dy.m11 - 1,
+                                   dx.m12 + dy.m12,   dx.m21 + dy.m21,     dx.m22 + dy.m22 - 1};
+            if (i != 0) { out += ' '; }
+            out += matrix_text(recompose(sum));
+            continue;
+        }
+        for (std::size_t k = 0; k < fn.args.size(); ++k) {
+            fn.args[k] = fn.name == "scale" ? x.args[k] + y.args[k] - 1 : x.args[k] + y.args[k];
+            fn.pct[k] = x.pct[k] + y.pct[k];
+        }
+        if (i != 0) { out += ' '; }
+        out += function_text(fn);
     }
     return out;
 }
@@ -1221,6 +1269,11 @@ struct rotation {
     if (op == composite_op::replace) { return std::string{value}; }
     const std::string base = computed_shape(property, trim(underlying, html_whitespace), ctx);
     const std::string added = computed_shape(property, trim(value, html_whitespace), ctx);
+    if (property == "transform" && op == composite_op::accumulate) {
+        if (const std::optional<std::string> sum = accumulate_transform(base, added)) {
+            return *sum;
+        }
+    }
     if (appends(property)) {
         // The underlying list first, then the keyframe's; `none` on either
         // side is the empty list and contributes nothing.
