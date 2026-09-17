@@ -365,6 +365,24 @@ struct premultiplied {
         const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
         if (parts.size() == 1) { return std::string{parts[0]} + ' ' + std::string{parts[0]}; }
     }
+    // THE INDIVIDUAL TRANSFORM PROPERTIES (CSS Transforms 2 §7): `scale` is
+    // three numbers, `none` is `1 1 1` and one value is both axes; `translate`
+    // is three lengths, `none` is zero; `rotate: none` is `0deg`. The computed
+    // serialiser drops the defaults again on the way out.
+    if (property == "scale" || property == "translate") {
+        const bool is_scale = property == "scale";
+        std::vector<std::string> parts;
+        if (!ascii_iequals(text, "none")) {
+            for (const std::string_view part : split_top_level(text, html_whitespace)) {
+                if (!part.empty()) { parts.emplace_back(part); }
+            }
+        }
+        if (parts.size() > 3) { return std::string{text}; }
+        if (is_scale && parts.size() == 1) { parts.push_back(parts[0]); }
+        while (parts.size() < 3) { parts.emplace_back(is_scale ? "1" : "0px"); }
+        return parts[0] + ' ' + parts[1] + ' ' + parts[2];
+    }
+    if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
     return std::string{text};
 }
 
@@ -504,6 +522,11 @@ struct premultiplied {
 [[nodiscard]] std::string interpolate_text(std::string_view property, std::string_view from,
                                            std::string_view to, double p,
                                            const css::length_context & ctx) {
+    // Identical endpoints are that value at every progress - `none` to
+    // `none` stays `none` rather than becoming its expanded shape.
+    if (trim(from, html_whitespace) == trim(to, html_whitespace)) {
+        return std::string{trim(from, html_whitespace)};
+    }
     bool interpolable = true;
     return interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
                             p, ctx, interpolable);
@@ -532,6 +555,22 @@ struct premultiplied {
         if (base_none) { return added; }
         if (added_none) { return base; }
         return base + ", " + added;
+    }
+    if (property == "scale") {
+        // CSS Transforms 2 §7: scales add by multiplying component by
+        // component, and accumulate by summing each one's excess over 1.
+        const std::vector<std::string_view> a = split_top_level(base, html_whitespace);
+        const std::vector<std::string_view> b = split_top_level(added, html_whitespace);
+        if (a.size() != 3 || b.size() != 3) { return added; }
+        std::string out;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const std::optional<numeric_pair> n = numeric_of(a[i], b[i], ctx);
+            if (!n || !n->a.is_number) { return added; }
+            css::calc_result product = n->a;
+            product.px = op == composite_op::add ? n->a.px * n->b.px : n->a.px + n->b.px - 1;
+            out += (i == 0 ? "" : " ") + css::serialize_calc(product);
+        }
+        return out;
     }
     return add_pair(property, base, added, ctx);
 }

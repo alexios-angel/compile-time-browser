@@ -142,6 +142,14 @@ void test_composition() {
                          context) == "rgb(4, 5, 6) 3px 4px 0px 0px");
     CHECK(composite_text("border-width", "1px 2px", "10px 20px", composite_op::add, context) ==
           "11px 22px");
+    // The individual transform properties: a scale multiplies, `none` is 1 1 1.
+    CHECK(composite_text("scale", "1 2 3", "4 5 6", composite_op::add, context) == "4 10 18");
+    CHECK(composite_text("scale", "none", "4 5 6", composite_op::accumulate, context) == "4 5 6");
+    CHECK(composite_text("scale", "2", "2", composite_op::accumulate, context) == "3 3 1");
+    CHECK(interpolate_text("scale", "none", "4 3 2", 0.125, context) == "1.375 1.25 1.125");
+    CHECK(interpolate_text("scale", "none", "none", 0.5, context) == "none");
+    CHECK(interpolate_text("translate", "10px", "none", 0.5, context) == "5px 0px 0px");
+    CHECK(interpolate_text("rotate", "none", "100deg", 0.5, context) == "50deg");
 }
 
 } // namespace
