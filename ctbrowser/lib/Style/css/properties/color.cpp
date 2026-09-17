@@ -677,10 +677,10 @@ constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585}
 // - or an hwb whose white and black fill the whole colour.
 [[nodiscard]] bool hue_powerless(const resolved & r) noexcept {
     switch (r.cs) {
-    case space::hsl: return !r.none[1] && r.c[1] <= 100.0 * 1e-5;
+    case space::hsl: return r.none[1] || r.c[1] <= 100.0 * 1e-5;
     case space::hwb: return (r.none[1] ? 0.0 : r.c[1]) + (r.none[2] ? 0.0 : r.c[2]) >= 100.0 - 1e-3;
-    case space::lch: return !r.none[1] && r.c[1] <= 150.0 * 1e-5;
-    case space::oklch: return !r.none[1] && r.c[1] <= 0.4 * 1e-5;
+    case space::lch: return r.none[1] || r.c[1] <= 150.0 * 1e-5;
+    case space::oklch: return r.none[1] || r.c[1] <= 0.4 * 1e-5;
     default: return false;
     }
 }
@@ -1998,11 +1998,17 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
 
 [[nodiscard]] std::string serialize_computed(const resolved & r) {
     if (r.legacy && !r.any_none()) { return legacy_text(convert(r, space::srgb)); }
-    // A computed hsl or hwb with nothing missing is the sRGB colour it names.
-    if ((r.cs == space::hsl || r.cs == space::hwb) && !r.any_none()) {
-        return modern_text(convert(r, space::srgb));
+    // §4.4: A powerless hue becomes missing in the computed value.
+    // Make a copy and mark powerless hue as none before serializing.
+    resolved copy = r;
+    if (hue_slot(r.cs) >= 0 && hue_powerless(r)) {
+        copy.none[static_cast<std::size_t>(hue_slot(r.cs))] = true;
     }
-    return modern_text(r);
+    // A computed hsl or hwb with nothing missing is the sRGB colour it names.
+    if ((copy.cs == space::hsl || copy.cs == space::hwb) && !copy.any_none()) {
+        return modern_text(convert(copy, space::srgb));
+    }
+    return modern_text(copy);
 }
 
 [[nodiscard]] std::unique_ptr<parsed> parse_text(std::string_view text) {
