@@ -167,6 +167,7 @@ void dom_bindings::install(context & cx) {
     install_dom_exception(cx);
     // AFTER both: a signal is an EventTarget and aborts with a DOMException.
     install_abort(cx);
+    install_xhr(cx);
     install_css_interface(cx);
     install_mutation_observer(cx);
     install_range(cx);

@@ -445,6 +445,48 @@ void test_request_animation_frame() {
 
 } // namespace
 
+// XMLHttpRequest over the same resource loading as fetch: the state walk
+// with its events on a later turn for an async send, in one call for a sync
+// one, the response types, a 404 as a status and abort() as an event.
+void test_xhr() {
+    browser page{browser_options{300, 200}};
+    page.assets().add("data.json", bytes_of(R"({"n":3})"));
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        var x = new XMLHttpRequest();
+        log += (x instanceof XMLHttpRequest) + ',' + (x instanceof EventTarget) + ',' +
+               x.readyState + ',' + XMLHttpRequest.DONE + ';';
+        var states = [];
+        x.onreadystatechange = function () { states.push(x.readyState); };
+        x.addEventListener('load', function (e) {
+          log += 'load:' + x.status + ':' + x.responseText + ':' + e.lengthComputable + ';';
+        });
+        x.onloadend = function () { log += 'end:' + states.join('') + ';'; };
+        x.open('get', 'data.json');
+        log += 'opened:' + x.readyState + ':' + x.responseText.length + ';';
+        x.send();
+        log += 'sent:' + x.readyState + ';';
+        var s = new XMLHttpRequest(); s.open('GET', 'data.json', false);
+        s.responseType = 'json'; s.send();
+        log += 'sync:' + s.readyState + ':' + s.response.n + ':' + s.getResponseHeader('Content-Type') + ';';
+        var m = new XMLHttpRequest(); m.open('GET', 'missing.json', false); m.send();
+        log += 'missing:' + m.status + ':' + m.statusText + ';';
+        var a = new XMLHttpRequest(); a.open('GET', 'data.json');
+        a.onabort = function () { log += 'abort:' + a.readyState + ';'; };
+        a.send(); a.abort(); log += 'after:' + a.readyState + ';';
+        var bad = ''; try { new XMLHttpRequest().send(); } catch (e) { bad = e.name; }
+        log += bad + ';';
+        function report() { console.log(log); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() ==
+              "true,true,0,4;opened:1:0;sent:1;sync:4:3:application/json;missing:404:Not Found;"
+              "abort:4;after:0;InvalidStateError;load:200:{\"n\":3}:true;end:1234;",
+          "XMLHttpRequest walks its states and answers its response: " + log_of(page).back());
+}
+
 int main() {
     test_collection_keeps_what_the_page_still_uses();
     test_collection_happens_on_its_own();
@@ -454,6 +496,7 @@ int main() {
     test_fetch_is_async();
     test_fetch_await_and_bytes();
     test_fetch_abort();
+    test_xhr();
     test_await_suspends_and_resumes();
     test_a_promise_made_during_a_resumption_survives();
     test_a_suspended_frame_survives_collection();

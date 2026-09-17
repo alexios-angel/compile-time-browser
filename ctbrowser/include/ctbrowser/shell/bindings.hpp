@@ -1559,6 +1559,20 @@ private:
     void settle_fetch(context & cx, const pending_fetch & waiting);
 
     [[nodiscard]] value fetch_now(context & cx, const std::string & url);
+    // WHERE A URL'S BYTES COME FROM - the asset registry, a file beside the
+    // page, the network when allowed - one answer for fetch() and
+    // XMLHttpRequest. `failure` is set when nothing was fetched at all (a
+    // network error); a 404 is a status.
+    struct loaded_resource {
+        int status = 200;
+        std::string type;
+        std::vector<std::byte> body;
+        std::string failure;
+    };
+    [[nodiscard]] loaded_resource load_resource(const std::string & url);
+    // `XMLHttpRequest`, XHR Standard §4 - bindings/xhr.cpp. AFTER the event
+    // interfaces (it is an EventTarget) and install_dom_exception.
+    void install_xhr(context & cx);
 
     [[nodiscard]] static value make_rejection(context & cx, const std::string & message);
 
