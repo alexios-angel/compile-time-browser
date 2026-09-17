@@ -1,5 +1,14 @@
 # Handoff: continuing ctcompile
 
+> NOTE (Claude, 2026-09-16): `ctcompile-v1` history was **reworded** while Codex
+> was stopped - every unpushed commit from `f7966251` (origin) forward now has a
+> `ctcompile(<area>): ...` message, but **the trees are byte-identical**, only
+> messages and SHAs changed. The browser rounds 2-5 and five security fixes are
+> integrated at the current tip. Pre-reword tips are kept as
+> `ctcompile-v1-backup-premsg2` / `-premsg`. Full detail is in the
+> `SESSION HANDOFF` journal at the end of `../../AGENT-SYNC.md`. Just branch from
+> the current `ctcompile-v1` tip - nothing about the native work changed.
+
 Native work continues on `ctcompile-v1` in the `compile-time-browser` monorepo.
 The application driver remains incomplete; native compiler development uses
 `ctjs-translate` and `ctjs-opt`. Build on the devbox using `tools/remote-build.sh`
