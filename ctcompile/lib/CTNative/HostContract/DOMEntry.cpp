@@ -232,6 +232,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
         }
     }
+    llvm::DenseSet<mlir::Operation *> prefixCallbacks;
     auto functions = callbackFunctions;
     functions.push_back(target);
     for (ctjs::FuncOp function : functions) {
@@ -246,6 +247,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             unsigned epoch;
         };
         llvm::DenseMap<mlir::Value, DatasetOrigin> snapshotOrigins, keyOrigins;
+        // Boolean truth requires the callback input to start with "bs". This
+        // implication proves filtered-key uniqueness after removing that prefix.
+        llvm::DenseSet<mlir::Value> prefixRequired, prefixSnapshots;
+        llvm::DenseMap<mlir::Value, ctjs::GetPropertyOp> strippedAssignmentKeys;
         struct Predicate {
             mlir::Value optional;
             bool stringOnTrue;
@@ -544,6 +549,21 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             provedStrings.push_back(value);
                         }
                     }
+                    if (callbackBody && branch.getNumResults()) {
+                        auto yes = llvm::cast<mlir::scf::YieldOp>(
+                            branch.getThenRegion().front().getTerminator());
+                        auto no = llvm::cast<mlir::scf::YieldOp>(
+                            branch.getElseRegion().front().getTerminator());
+                        for (auto [result, first, second] :
+                             llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
+                            if (!spend() || !spend() || !spend()) { return false; }
+                            if (prefixRequired.contains(second) &&
+                                (prefixRequired.contains(branch.getCondition()) ||
+                                 prefixRequired.contains(first))) {
+                                prefixRequired.insert(result);
+                            }
+                        }
+                    }
                     continue;
                 }
                 if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
@@ -628,6 +648,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         values[constant.getResult()] = Kind::string;
                     } else if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
                         values[constant.getResult()] = Kind::boolean;
+                        if (callbackBody &&
+                            !llvm::cast<ctjs::BooleanAttr>(constant.getValue()).getValue()) {
+                            prefixRequired.insert(constant.getResult());
+                        }
                     } else if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) {
                         values[constant.getResult()] = Kind::number;
                     } else if (llvm::isa<ctjs::NullAttr>(constant.getValue())) {
@@ -680,6 +704,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         // data contract. Repeated/transformed keys need a separate
                         // proof; ordinary assignment must never silently skip them.
                         auto key = write.getKey().getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!key) {
+                            if (!spend()) { return false; }
+                            key = strippedAssignmentKeys.lookup(write.getKey());
+                        }
                         auto index = key ? llvm::dyn_cast<mlir::BlockArgument>(key.getKey())
                                          : mlir::BlockArgument{};
                         auto loop = index ? llvm::dyn_cast<mlir::scf::WhileOp>(
@@ -1065,6 +1093,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedCalls.push_back(
                             {invoke, HostDOMMethod::removeStringPrefix, invoke.getReceiver()});
                         values[invoke.getResult()] = Kind::string;
+                        auto key = invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!spend() || !spend()) { return false; }
+                        if (key && keyOrigins.contains(key.getResult()) &&
+                            prefixSnapshots.contains(key.getObject())) {
+                            // Removing a guaranteed prefix is injective. Keep this
+                            // authority separate from dataset membership: the new
+                            // key does not name the original dataset property.
+                            strippedAssignmentKeys[invoke.getResult()] = key;
+                        }
                         continue;
                     }
                     if (hasKind(invoke.getCallee(), Kind::filterStrings) && arguments.size() == 1 &&
@@ -1077,10 +1114,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             snapshotOrigins.try_emplace(invoke.getResult(), origin);
                         }
                         auto closure = arguments[0].getDefiningOp<ctjs::CreateClosureOp>();
-                        provedCalls.push_back({invoke, HostDOMMethod::filterStrings,
-                                               invoke.getReceiver(),
-                                               indexedCallbacks.lookup(
-                                                   static_cast<unsigned>(closure.getFunction()))});
+                        auto callback =
+                            indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
+                        if (!spend() || !spend()) { return false; }
+                        if (prefixCallbacks.contains(callback) ||
+                            prefixSnapshots.contains(invoke.getReceiver())) {
+                            prefixSnapshots.insert(invoke.getResult());
+                        }
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::filterStrings, invoke.getReceiver(), callback});
                         values[invoke.getResult()] = Kind::stringVector;
                         continue;
                     }
@@ -1104,6 +1146,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedCalls.push_back(
                             {invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
                         values[invoke.getResult()] = Kind::boolean;
+                        if (callbackBody &&
+                            invoke.getReceiver() == block.getArgument(ctjs::implicit_arguments) &&
+                            text.getValue().starts_with("bs")) {
+                            prefixRequired.insert(invoke.getResult());
+                        }
                         continue;
                     }
                     if (hasKind(invoke.getCallee(), Kind::objectKeys) && arguments.size() == 1 &&
@@ -1296,6 +1343,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         const Predicate predicate = found->second;
                         predicates[truth.getResult()] = predicate;
                     }
+                    if (callbackBody) {
+                        if (!spend()) { return false; }
+                        if (prefixRequired.contains(truth.getValue())) {
+                            prefixRequired.insert(truth.getResult());
+                        }
+                    }
                     continue;
                 }
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
@@ -1327,6 +1380,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             return true;
         };
         if (!visit(visit, block, 0, {})) { return; }
+        if (callbackBody) {
+            if (!spend()) { return; }
+            auto returned = llvm::cast<ctjs::ReturnOp>(block.getTerminator());
+            if (prefixRequired.contains(returned.getValue())) { prefixCallbacks.insert(function); }
+        }
     }
     if (usedCallbacks.size() != callbackFunctions.size()) {
         refusal = "DOM entry contains an uninvoked callback function";
