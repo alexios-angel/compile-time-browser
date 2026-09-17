@@ -133,11 +133,13 @@ bool browser::media_environment_changed() {
     return styles_->set_environment(env);
 }
 
-void browser::scroll_to(float y) {
+void browser::scroll_to(float x, float y) {
+    const float clamped_x = std::clamp(x, 0.0f, max_scroll_x());
     const float clamped = std::clamp(y, 0.0f, max_scroll());
-    if (clamped == scroll_y_) { return; }
+    if (clamped == scroll_y_ && clamped_x == scroll_x_) { return; }
     scroll_y_ = clamped;
-    layers_.scroll_to(0, scroll_y_);
+    scroll_x_ = clamped_x;
+    layers_.scroll_to(scroll_x_, scroll_y_);
     // The page's tiles survive - they are in CONTENT space, which is the
     // point of the whole design - but the scrollbar's thumb is a function
     // of where we now are, so its two rectangles are redrawn AND its tile
@@ -158,6 +160,10 @@ bool browser::on_scrollbar(float x) const noexcept {
 
 float browser::max_scroll() const noexcept {
     return std::max(0.0f, content_height_ - static_cast<float>(options_.height));
+}
+
+float browser::max_scroll_x() const noexcept {
+    return std::max(0.0f, content_width_ - layout_width_);
 }
 
 rect browser::viewport() const noexcept {
@@ -268,7 +274,11 @@ void browser::run_layout() {
         fragments_ = eng.run(boxes_, layout_width_, static_cast<float>(options_.height));
         content_height_ = fragments_.bounds.height;
     }
+    content_width_ = ctbrowser::layout::viewport_scrolling_area(fragments_, layout_width_,
+                                                                static_cast<float>(options_.height))
+                         .width;
     scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
+    scroll_x_ = std::clamp(scroll_x_, 0.0f, max_scroll_x());
     // offsetWidth and friends read the fragment tree, so they answer with
     // THIS layout rather than the one before it.
     if (bindings_) {
@@ -321,7 +331,7 @@ void browser::record() {
         paint_replaced(id, box, content, style, into);
     };
     layers_ = recorder_.record_layers(fragments_);
-    layers_.scroll_to(0, scroll_y_);
+    layers_.scroll_to(scroll_x_, scroll_y_);
     page_layers_ = layers_.layers.size(); // everything after this is chrome
     record_chrome();
     svg_.end_frame();

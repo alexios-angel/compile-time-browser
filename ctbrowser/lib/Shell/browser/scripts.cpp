@@ -150,6 +150,8 @@ void browser::run_scripts() {
     }
     // AND THE SAME FLUSH FOR EVERY BOX A SCRIPT READS - see set_layout_hook.
     bindings_->set_layout_hook([this] { flush_for_read(); });
+    bindings_->set_viewport_scroll_hooks([this] { return scroll_position(); },
+                                         [this](point p) { scroll_to(p.x, p.y); });
     install_embedder_natives();
     script_error_.clear();
 

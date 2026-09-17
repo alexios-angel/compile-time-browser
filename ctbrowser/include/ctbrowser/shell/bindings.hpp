@@ -439,7 +439,11 @@ private:
         const layout::fragment * f = nullptr;
         rect abs;
     };
-    [[nodiscard]] located locate(node_id id) const;
+    // `scrolled` subtracts every scroll offset above the box - the viewport's
+    // (unless a fixed box is on the way) and each scrolled container's - which
+    // is what getBoundingClientRect answers in; offsetTop and its kin read
+    // the layout position and leave it false.
+    [[nodiscard]] located locate(node_id id, bool scrolled = false) const;
     // Whether `id` is the element whose client rectangle and scrolling area
     // are the VIEWPORT's (CSSOM View §7): the root element in a no-quirks
     // document, the body in a quirks one - and, for the scrolling area, only
@@ -450,6 +454,55 @@ private:
     [[nodiscard]] bool potentially_scrollable(node_id body) const;
     // `offsetParent`, §8 - empty where the specification says null.
     [[nodiscard]] node_id offset_parent_of(node_id id);
+
+    // --- SCROLLING (bindings/element/views.cpp, bindings/window/scrolling.cpp)
+    //
+    // THE SCROLL STATE LIVES HERE. A scroll container's offset is a fact about
+    // the element the page reads and writes through this object model, and a
+    // frame's document has no browser behind it at all - so the offsets are
+    // the bindings', keyed by node, and every geometry read subtracts them
+    // (locate). The VIEWPORT's offset is the browser's for the page - the
+    // wheel and `window.scrollTo` must agree - reached through the two hooks
+    // below, and this object's own for a frame, where nothing else scrolls.
+    // A scroll queues a `scroll` event for the next tick, as "run the scroll
+    // steps" does. What is NOT here is paint: a scrolled container's content
+    // is drawn where layout put it (the recorder does not read these offsets).
+    [[nodiscard]] point viewport_scroll() const;
+    // "Perform a scroll of the viewport" (§3.1): clamped to the viewport's
+    // scrolling area, a `scroll` event at the document when it moved.
+    void scroll_viewport_to(double x, double y);
+    // The offset of a scroll container a script has scrolled; (0, 0) otherwise.
+    [[nodiscard]] point scroll_offset_of(node_id id) const;
+    // "Scroll an element to x, y" (§6): nothing for a box that is not a scroll
+    // container, else clamped to its scrolling area, with a `scroll` event at
+    // the element when it moved.
+    void scroll_element_to(node_id id, double x, double y);
+    // The scrollTop/scrollLeft setters' whole algorithm, root and quirks-body
+    // delegation to the window included; `axis` is 'x' or 'y'.
+    void set_scroll_position(node_id id, char axis, double v);
+    [[nodiscard]] double scroll_position(node_id id, char axis);
+    // "Scroll a target into view" (§6.1) over every scroll container above
+    // the element and then the viewport. `block` and `inline_` are "start",
+    // "center", "end" or "nearest"; `nearest_container` stops at the first
+    // scrolling box (the `container` option).
+    void scroll_into_view(node_id id, std::string_view block, std::string_view inline_,
+                          bool nearest_container);
+    // §5's scrollingElement: the body in quirks mode when it is not
+    // potentially scrollable, the root otherwise, empty for null.
+    [[nodiscard]] node_id scrolling_element();
+    // The border box in VIEWPORT coordinates - locate(id, true).
+    [[nodiscard]] rect client_rect_of(node_id id) const;
+    // A `scroll` event at `target` (the document when empty) on the next
+    // tick, once however many times it is asked for before then (§13.1's
+    // pending scroll event targets).
+    void queue_scroll_event(node_id target);
+    void install_element_scrolling(context & cx);
+    void install_window_scrolling(context & cx, script::object_object & window);
+    void install_document_geometry(context & cx, script::object_object & doc);
+    // §5's hit test over the fragment tree, topmost first: every element
+    // whose border box is under the viewport point, painted-last first, the
+    // root last. `all` false stops at the first.
+    [[nodiscard]] std::vector<node_id> elements_from_point(double x, double y, bool all);
 
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
@@ -1913,6 +1966,13 @@ private:
     const layout::box_node * boxes_ = nullptr;
     int viewport_width_ = 0;
     int viewport_height_ = 0;
+    // The scroll state: see set_viewport_scroll_hooks.
+    flat_map<std::uint64_t, point> element_scrolls_;
+    point viewport_scroll_;
+    std::function<point()> viewport_scroll_get_;
+    std::function<void(point)> viewport_scroll_set_;
+    std::vector<node_id> pending_scroll_targets_;
+    bool scroll_events_queued_ = false;
     // A POSITIVE TIME ORIGIN, not zero. `performance.now()` and every event's
     // `timeStamp` read this, and `dom/events/Event-constructors.any.js` asserts
     // `timeStamp > 0` twice - which is the only thing between that file and a
@@ -2117,6 +2177,13 @@ public:
     // installs the same flush its getComputedStyle wrapper does; anything
     // reading `box_of` calls this first. Only what is stale runs.
     void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
+    // WHERE THE VIEWPORT'S SCROLL POSITION LIVES for this document: the
+    // browser's, for the page. Unset, the bindings keep one of their own (a
+    // frame's document). See the SCROLLING section above.
+    void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set) {
+        viewport_scroll_get_ = std::move(get);
+        viewport_scroll_set_ = std::move(set);
+    }
     void flush_layout() {
         if (flush_layout_) { flush_layout_(); }
     }
