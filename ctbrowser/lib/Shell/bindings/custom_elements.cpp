@@ -527,6 +527,34 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         custom_reactions_.push_back(std::move(reaction));
     };
     using kind = custom_element_reaction::kind;
+    // HTML 4.13.7.2: a form-associated element's form owner and disabledness,
+    // diffed - formAssociatedCallback(form) when the owner changes (the
+    // "reset the form owner" steps), formDisabledCallback(disabled) when
+    // the `disabled` attribute or a <fieldset> ancestor changes it.
+    const auto diff_form = [&](const custom_element_definition & def, custom_element_state & state,
+                               node_id at) {
+        if (!def.form_associated) { return; }
+        const node_id form = form_owner_of(txn, at);
+        if (form != state.form) {
+            custom_element_reaction reaction;
+            reaction.target = at;
+            reaction.definition = state.definition;
+            reaction.what = kind::form_associated;
+            reaction.form = form;
+            custom_reactions_.push_back(std::move(reaction));
+            state.form = form;
+        }
+        const bool disabled = form_control_disabled(txn, at);
+        if (disabled != state.disabled) {
+            custom_element_reaction reaction;
+            reaction.target = at;
+            reaction.definition = state.definition;
+            reaction.what = kind::form_disabled;
+            reaction.flag = disabled;
+            custom_reactions_.push_back(std::move(reaction));
+            state.disabled = disabled;
+        }
+    };
 
     std::vector<frame> pending{frame{start, false}};
     while (!pending.empty()) {
@@ -555,6 +583,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                     enqueue(here.at, index, kind::upgrade);
                     diff_attributes(def, state, here.at);
                     if (connected) { enqueue(here.at, index, kind::connected); }
+                    diff_form(def, state, here.at);
                     custom_elements_.emplace(key, std::move(state));
                 }
             } else if (found != custom_elements_.end()) {
@@ -579,6 +608,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                         }
                     }
                     diff_attributes(def, state, here.at);
+                    diff_form(def, state, here.at);
                     state.connected = connected;
                     state.parent = parent;
                 }
@@ -656,9 +686,8 @@ void dom_bindings::scan_custom_elements() {
     // steps (HTML 4.13.6) enqueue adoptedCallback there, after the
     // disconnectedCallback the walk above queued here.
     for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
-        const node_id old = unpack(it->first);
         const auto away = adopted_away_.find(it->first);
-        if (away == adopted_away_.end() || it->second.visited) {
+        if (away == adopted_away_.end()) {
             ++it;
             continue;
         }
@@ -680,7 +709,6 @@ void dom_bindings::scan_custom_elements() {
                 now->custom_elements_.insert_or_assign(fresh.key(), std::move(state));
             }
         }
-        (void)old;
         it = custom_elements_.erase(it);
     }
     // A node that is GONE, rather than merely detached, is forgotten.
@@ -783,6 +811,14 @@ void dom_bindings::flush_custom_element_reactions() {
             args.push_back(reaction.has_new ? cx.string(reaction.new_value) : value::null());
             args.push_back(reaction.ns.empty() ? value::null() : cx.string(reaction.ns));
             break;
+        case kind::form_associated:
+            callback = def.form_associated_callback;
+            args.push_back(reaction.form ? wrap(cx, reaction.form) : value::null());
+            break;
+        case kind::form_disabled:
+            callback = def.form_disabled;
+            args.push_back(value::boolean(reaction.flag));
+            break;
         }
         if (!callback.is_callable()) { continue; }
         // FENCED, so one callback's throw is reported and the next still
@@ -822,6 +858,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     html_element_proto->define("constructor", value::object(html_element_ctor),
                                script::attr_builtin);
     cx.define_global("HTMLElement", value::object(html_element_ctor));
+    install_element_internals(cx, *html_element_proto);
 
     // --- CustomElementRegistry.prototype -----------------------------------
     auto * registry_proto = cx.allocate<script::object_object>();

@@ -1049,7 +1049,12 @@ private:
         status state = status::custom;
         bool connected = false;
         bool visited = false; // scratch for one scan
+        // A FORM-ASSOCIATED element's form owner and disabledness as they
+        // were, which formAssociatedCallback and formDisabledCallback are a
+        // difference from (HTML 4.13.7.2).
+        bool disabled = false;
         node_id parent;
+        node_id form;
         std::vector<attribute> attributes; // observed only
     };
     struct custom_element_reaction {
@@ -1059,11 +1064,15 @@ private:
             disconnected,
             adopted,
             connected_move,
-            attribute_changed
+            attribute_changed,
+            form_associated,
+            form_disabled
         };
         node_id target;
         std::size_t definition = 0;
         kind what = kind::upgrade;
+        node_id form;      // formAssociatedCallback's form, or none
+        bool flag = false; // formDisabledCallback's disabled
         // Strings rather than `value`s: a reaction waits in this queue while
         // the ones before it run script, and nothing would root a heap string.
         std::string name; // the attribute's LOCAL name
@@ -1163,6 +1172,22 @@ private:
     // arrangement install_mutation_observer uses, for the same reason.
     script::native_object * custom_elements_interface_ = nullptr;
     // END custom elements
+    // BEGIN element internals (bindings/element_internals.cpp)
+    // `HTMLElement.prototype.attachInternals` and the ElementInternals it
+    // answers with (HTML 4.13.7): the shadow root, the form-associated
+    // members, the ARIA mixin, the CustomStateSet. Installed by
+    // install_custom_elements, which owns HTMLElement.prototype.
+    void install_element_internals(context & cx, script::object_object & html_element_proto);
+    // HTML 4.10.17.3, the form owner of a form-associated element: the form
+    // its `form` attribute names in the same tree, else the nearest <form>
+    // ancestor.
+    [[nodiscard]] node_id form_owner_of(const read_txn & txn, node_id id) const;
+    // HTML 4.10.18.5: a `disabled` attribute, or a disabled <fieldset>
+    // ancestor the element is not inside the first <legend> of.
+    [[nodiscard]] bool form_control_disabled(const read_txn & txn, node_id id) const;
+    value element_internals_prototype_;
+    value custom_state_set_prototype_;
+    // END element internals
 
     // BEGIN style sheets (bindings/stylesheets/)
 public:
