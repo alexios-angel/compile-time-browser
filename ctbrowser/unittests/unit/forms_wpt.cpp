@@ -283,6 +283,26 @@ void test_output_and_textarea() {
 
 } // namespace
 
+// --- the autocomplete IDL attribute, HTML 4.10.18.7.1 --------------------------------
+
+void test_autocomplete_tokens() {
+    // form-autocomplete.html.
+    is("(function () { var i = document.createElement('input'); var o = [i.autocomplete];"
+       " i.setAttribute('autocomplete', ' ON\\t'); o.push(i.autocomplete);"
+       " i.setAttribute('autocomplete', 'foo off'); o.push(i.autocomplete === '');"
+       " i.type = 'hidden'; i.setAttribute('autocomplete', 'off'); o.push(i.autocomplete === '');"
+       " var t = document.createElement('textarea');"
+       " t.setAttribute('autocomplete', ' HOME\\ntel'); o.push(t.autocomplete);"
+       " t.setAttribute('autocomplete', '  section-FOO  billing work email webauthn');"
+       " o.push(t.autocomplete);"
+       " t.setAttribute('autocomplete', 'foo section-foo billing name'); o.push(t.autocomplete === "
+       "'');"
+       " t.setAttribute('autocomplete', 'call-sign'); o.push(t.autocomplete === '');"
+       " t.autocomplete = 'given-name'; o.push(t.getAttribute('autocomplete'));"
+       " return o.join('|'); })()",
+       "|on|true|true|home tel|section-foo billing work email webauthn|true|true|given-name");
+}
+
 // --- the value sanitization algorithm and the value modes, HTML 4.10.5.1 ----------
 
 void test_value_sanitization_and_type_change() {
@@ -322,6 +342,7 @@ int main() {
     test_validity();
     test_input_numbers_and_dates();
     test_value_sanitization_and_type_change();
+    test_autocomplete_tokens();
     test_selection_api();
     test_form_data_and_submission();
     test_output_and_textarea();

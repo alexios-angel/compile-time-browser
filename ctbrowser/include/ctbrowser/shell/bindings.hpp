@@ -570,6 +570,9 @@ private:
     // with it, fires `abort`, and reaches the signals `AbortSignal.any` made
     // from it. AFTER install_event_interfaces and install_dom_exception.
     void install_abort(context & cx);
+    // The `autocomplete` IDL attribute of input/select/textarea, HTML
+    // 4.10.18.7.1 - element/autocomplete.cpp. AFTER the interface table.
+    void install_autocomplete(context & cx);
     [[nodiscard]] value make_abort_signal(context & cx);
     [[nodiscard]] bool is_abort_signal(value v) const;
     void signal_abort(context & cx, value signal, value reason);

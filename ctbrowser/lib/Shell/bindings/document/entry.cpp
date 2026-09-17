@@ -197,6 +197,7 @@ void dom_bindings::install(context & cx) {
     // Element.prototype and ShadowRoot.prototype are where slots and
     // setHTMLUnsafe go.
     install_shadow_dom(cx);
+    install_autocomplete(cx);
     install_xml_serializer(cx);
 }
 

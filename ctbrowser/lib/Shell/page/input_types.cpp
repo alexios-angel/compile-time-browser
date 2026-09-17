@@ -10,6 +10,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ctbrowser::shell::input_types {
 
@@ -465,6 +467,81 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
         return type == "datetime-local" ? type_number_to_text(type, *number) : value;
     }
     return value;
+}
+
+std::string autocomplete_idl_value(std::string_view attribute, bool has_attribute,
+                                   bool anchor_mantle) {
+    if (!has_attribute) { return {}; }
+    std::vector<std::string> tokens;
+    for (const std::string_view word : split_top_level(attribute, html_whitespace)) {
+        if (!word.empty()) { tokens.push_back(ascii_lower_copy(word)); }
+    }
+    if (tokens.empty()) { return {}; }
+    constexpr std::string_view normal_fields =
+        "name honorific-prefix given-name additional-name family-name honorific-suffix nickname "
+        "username new-password current-password one-time-code organization-title organization "
+        "street-address address-line1 address-line2 address-line3 address-level4 address-level3 "
+        "address-level2 address-level1 country country-name postal-code cc-name cc-given-name "
+        "cc-additional-name cc-family-name cc-number cc-exp cc-exp-month cc-exp-year cc-csc "
+        "cc-type transaction-currency transaction-amount language bday bday-day bday-month "
+        "bday-year sex url photo";
+    constexpr std::string_view contact_fields =
+        "tel tel-country-code tel-national tel-area-code tel-local tel-local-prefix "
+        "tel-local-suffix tel-extension email impp";
+    const auto listed = [](std::string_view list, std::string_view word) {
+        for (const std::string_view each : split_top_level(list, " ")) {
+            if (each == word) { return true; }
+        }
+        return false;
+    };
+    // The field's category and the maximum number of tokens it allows.
+    enum class category : std::uint8_t {
+        none,
+        off,
+        automatic,
+        normal,
+        contact,
+        credential
+    };
+    const auto category_of = [&](std::string_view field) {
+        if (field == "off") { return std::pair{category::off, std::size_t{1}}; }
+        if (field == "on") { return std::pair{category::automatic, std::size_t{1}}; }
+        if (listed(normal_fields, field)) { return std::pair{category::normal, std::size_t{3}}; }
+        if (listed(contact_fields, field)) { return std::pair{category::contact, std::size_t{4}}; }
+        if (field == "webauthn") { return std::pair{category::credential, std::size_t{5}}; }
+        return std::pair{category::none, std::size_t{0}};
+    };
+    std::size_t index = tokens.size() - 1;
+    std::string field = tokens[index];
+    auto [kind, maximum] = category_of(field);
+    if (kind == category::none || tokens.size() > maximum) { return {}; }
+    if ((kind == category::off || kind == category::automatic) && anchor_mantle) { return {}; }
+    if (kind == category::off || kind == category::automatic) { return field; }
+    std::string out = field;
+    if (kind == category::credential) {
+        // `webauthn` names a credential type after a field of the other two
+        // categories, which then sets the remaining shape.
+        if (index == 0) { return {}; }
+        --index;
+        const auto inner = category_of(tokens[index]);
+        if (inner.first != category::normal && inner.first != category::contact) { return {}; }
+        kind = inner.first;
+        out = tokens[index] + " " + out;
+    }
+    if (kind == category::contact && index > 0 &&
+        listed("home work mobile fax pager", tokens[index - 1])) {
+        --index;
+        out = tokens[index] + " " + out;
+    }
+    if (index > 0 && (tokens[index - 1] == "shipping" || tokens[index - 1] == "billing")) {
+        --index;
+        out = tokens[index] + " " + out;
+    }
+    if (index > 0 && tokens[index - 1].starts_with("section-")) {
+        --index;
+        out = tokens[index] + " " + out;
+    }
+    return index == 0 ? out : std::string{};
 }
 
 } // namespace ctbrowser::shell::input_types

@@ -46,6 +46,15 @@ namespace ctbrowser::shell::input_types {
 [[nodiscard]] double step_scale_of(std::string_view type);
 [[nodiscard]] double default_step_of(std::string_view type);
 
+// The IDL-exposed autofill value of an `autocomplete` attribute (HTML
+// 4.10.18.7.1 "autofill detail tokens"): the recognised tokens, lowercased
+// and in canonical order - `section-*`, `shipping`/`billing`, a contact
+// type, the field, `webauthn` - or "" for anything the algorithm sends to
+// its "default" step. `anchor_mantle` is a hidden input, on which `on` and
+// `off` are not accepted. `has_attribute` false is the missing attribute.
+[[nodiscard]] std::string autocomplete_idl_value(std::string_view attribute, bool has_attribute,
+                                                 bool anchor_mantle);
+
 // A "valid e-mail address" (HTML 4.10.5.1.5) and a "valid URL potentially
 // surrounded by spaces" that is absolute.
 [[nodiscard]] bool is_valid_email(std::string_view text);
