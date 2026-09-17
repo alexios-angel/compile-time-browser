@@ -12,6 +12,17 @@ using namespace detail;
 
 namespace {
 
+// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
+// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
+// onload="init()">` and `document.body.onresize = f` both address the window.
+[[nodiscard]] bool forwards_to_window(std::string_view name) {
+    for (const std::string_view each :
+         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
+        if (name == each) { return true; }
+    }
+    return false;
+}
+
 // WHAT A THROWN VALUE IS CALLED, for the text side of a report.
 //
 // `window.onerror` takes a STRING first - twenty years of shipped code reads it
@@ -1132,8 +1143,16 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
         // write log never saw, a name whose event type is not its lowercase
         // spelling - still runs, after the listeners, as it always did.
+        // ...but NOT a body's or frameset's forwarded handler (`<body onerror>`,
+        // `onload`...): that one is the WINDOW's, registered at the window step,
+        // and running it here too would call it twice - and without the five
+        // arguments an ErrorEvent at the window is owed
+        // (body-element-synthetic-errorevent.html).
+        const bool forwarded = step.on == listen_on::node &&
+                               forwards_to_window("on" + ascii_lower_copy(type)) &&
+                               body_or_frameset_of(object_of_step(*cx_, step));
         if (!capturing && !flag_of(*cx_, event, stop_immediate_property) &&
-            !has_handler_listener(step, type)) {
+            !has_handler_listener(step, type) && !forwarded) {
             value thrown = value::undefined();
             const bool threw =
                 fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
@@ -1359,17 +1378,6 @@ constexpr std::string_view window_event_handlers[] = {
 // A HANDLER THAT WILL NOT COMPILE IS NULL, which HTML says in as many words:
 // the uncompiled handler is discarded and the attribute reads null, rather than
 // the page taking a SyntaxError from a read.
-//
-// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
-// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
-// onload="init()">` and `document.body.onresize = f` both address the window.
-[[nodiscard]] bool forwards_to_window(std::string_view name) {
-    for (const std::string_view each :
-         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
-        if (name == each) { return true; }
-    }
-    return false;
-}
 
 value dom_bindings::compile_handler_attribute(context & cx, value self, const std::string & name) {
     const node_id id = handle_of(self);
