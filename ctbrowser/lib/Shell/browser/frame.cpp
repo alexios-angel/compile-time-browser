@@ -152,7 +152,11 @@ void browser::resize(int width, int height) {
     // frame and hundreds of `dirty::layout` ones, which is what Chrome does too - and a
     // page with no `@media` at all never re-resolves, which is the invariant
     // browser.hpp states about a resize.
-    mark(media_environment_changed() ? dirty::styles : dirty::layout);
+    const bool flipped = media_environment_changed();
+    // AND REPORT IT TO THE PAGE'S MediaQueryLists (CSSOM View §13): the
+    // `change` events go out on the next tick.
+    if (flipped && bindings_) { bindings_->report_media_query_changes(); }
+    mark(flipped ? dirty::styles : dirty::layout);
 }
 
 // Push the window's size and the user's preferences into the style engine. Returns

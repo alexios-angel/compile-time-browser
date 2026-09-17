@@ -671,6 +671,20 @@ private:
     [[nodiscard]] value make_abort_signal(context & cx);
     [[nodiscard]] bool is_abort_signal(value v) const;
     void signal_abort(context & cx, value signal, value reason);
+    // `matchMedia` and `MediaQueryList`, CSSOM View §4.2 - bindings/
+    // media_queries.cpp. A list is an EventTarget whose `matches` is live
+    // against ITS document's environment (a frame's list reads the frame's);
+    // `report_media_query_changes` is §13's "evaluate media queries and
+    // report changes", run by whoever changed the environment - the browser
+    // on a resize, the frame layout when a frame's box moved - and it fires
+    // `change` one tick later, as the scroll steps do. AFTER install_abort.
+    void install_media_queries(context & cx);
+    [[nodiscard]] value match_media(context & cx, std::string_view text);
+    [[nodiscard]] bool is_media_query_list(value v) const;
+    // Which bindings' document a list names - the page's, or a frame's - and
+    // the list's media text evaluated against that document's environment.
+    [[nodiscard]] dom_bindings & owner_of_media_query_list(value list);
+    [[nodiscard]] bool media_query_matches(std::string_view media);
     // A DOMException instance with the right `name`, `code` and `message`, on
     // `DOMException.prototype` - which is what `assert_throws_dom` checks and
     // what `context::throw_error` cannot build, because an engine-raised error
@@ -2153,6 +2167,7 @@ private:
     value event_target_prototype_;
     // AbortSignal.prototype, marked as a root like the two above.
     value abort_signal_prototype_;
+    value media_query_list_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
     // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not
@@ -2179,6 +2194,10 @@ private:
     std::function<void(point)> viewport_scroll_set_;
     std::vector<node_id> pending_scroll_targets_;
     bool scroll_events_queued_ = false;
+    // The lists whose `matches` flipped since the last report, GC roots
+    // until their `change` events go out.
+    std::vector<value> pending_media_changes_;
+    bool media_changes_queued_ = false;
     // A POSITIVE TIME ORIGIN, not zero. `performance.now()` and every event's
     // `timeStamp` read this, and `dom/events/Event-constructors.any.js` asserts
     // `timeStamp > 0` twice - which is the only thing between that file and a
@@ -2413,6 +2432,10 @@ public:
     // pending scroll event targets). The browser calls it for a scroll the
     // user made; the bindings call it for their own.
     void queue_scroll_event(node_id target);
+    // "Evaluate media queries and report changes" (§13) for THIS document's
+    // MediaQueryLists, after whoever changed its environment: a `change` at
+    // each list whose answer flipped, one tick later. bindings/media_queries.cpp.
+    void report_media_query_changes();
     // A FRAME'S DOCUMENT FLUSHES THROUGH THE PAGE'S HOOK: only the primary
     // bindings are given one, and the browser's flush lays out every frame
     // whose document moved (frames_stale) - so a frame's `scrollWidth` read

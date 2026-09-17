@@ -141,6 +141,9 @@ void browser::layout_frames() {
                 // did. Without it `100vw` in a frame resized from 200px to
                 // 400px kept answering 200px (viewport-units-invalidation).
                 each.bindings->update_css_animations(txn, before, layout->resolved);
+                // AND ITS MediaQueryLists: a frame resized across a query's
+                // breakpoint reports the change (CSSOM View §13), next tick.
+                each.bindings->report_media_query_changes();
                 ctbrowser::layout::box_builder builder{atoms_, layout->resolved, measure()};
                 layout->boxes = builder.build(txn, txn.root());
                 const ctbrowser::layout::engine eng{measure()};

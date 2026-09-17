@@ -370,6 +370,11 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     frame_window->set("customElements", made.custom_elements_registry(cx)); // custom_elements.cpp
     made.install_window_scrolling(cx,
                                   *frame_window); // scrollX/scrollY, scrollTo on a frame's window
+    // The frame's own `matchMedia`: a list that reads the frame's viewport.
+    frame_window->set("matchMedia",
+                      native(cx, "matchMedia", [&made](context & c, std::span<value> a) {
+                          return made.match_media(c, a.empty() ? std::string{} : c.to_string(a[0]));
+                      }));
     frame_window->set("frameElement", element);
     // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
     // .Text()` is a node OF THE FRAME'S document (Text-constructor.html's

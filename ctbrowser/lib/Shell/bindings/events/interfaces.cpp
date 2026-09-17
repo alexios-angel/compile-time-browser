@@ -719,6 +719,14 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
                  });
 
+    // `MediaQueryListEvent` (CSSOM View §4.2): the list's media and whether it
+    // matches now. Dispatched by media_queries.cpp's report.
+    interface_of("MediaQueryListEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("media", c.string(dict_string(c, init, "media")));
+                     e.set("matches", value::boolean(dict_flag(c, init, "matches")));
+                 });
+
     // `HashChangeEvent` (HTML 7.4.6.2): two USVStrings defaulting to "".
     interface_of("HashChangeEvent", event_prototype_,
                  [](context & c, script::object_object & e, value init) {
