@@ -160,6 +160,17 @@ struct value_check {
                                             std::string_view writing_mode,
                                             std::string_view direction);
 
+// THE PHYSICAL LONGHAND A LOGICAL ONE MAPS TO under a writing mode and
+// direction, CSS Logical 1 §2-4: `margin-block-start` is `margin-top` in
+// horizontal-tb and `margin-right` in vertical-rl, `inline-size` is `width`
+// or `height`, `border-start-end-radius` is a corner. Empty for a property
+// that is not logical. The cascade maps every logical declaration through it
+// at computed-value time, and getComputedStyle reads a logical property back
+// as the physical one it mapped to.
+[[nodiscard]] std::string physical_property_of(std::string_view logical,
+                                               std::string_view writing_mode,
+                                               std::string_view direction);
+
 // A `font-family` LIST WRITTEN AS CSSOM WRITES ONE: a family name that is a
 // valid identifier sequence loses its quotes (`'Times New Roman'` is `Times
 // New Roman`), one that is not keeps them as DOUBLE quotes (`'34J'` is

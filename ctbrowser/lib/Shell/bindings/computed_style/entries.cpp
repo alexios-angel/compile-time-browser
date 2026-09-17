@@ -320,10 +320,32 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // containing block, an inset's used value - runs on the interpolated text
     // exactly as it runs on a declared one. The underlying value it may need
     // is the cascade's own answer for the same element.
-    const std::vector<std::pair<std::string, std::string>> animated =
+    std::vector<std::pair<std::string, std::string>> animated =
         animated_values(id, at.font_size, [&](std::string_view property) {
             return declared_on(at.chain.front(), property);
         });
+    // ...FILED UNDER THE PHYSICAL LONGHANDS the cascade stores, so an
+    // animation on `margin-block` or `margin-block-start` is read where the
+    // rules below look for it: a shorthand split by the declaration block, a
+    // logical name mapped on this element's writing mode and direction.
+    if (!animated.empty() && !at.chain.empty()) {
+        const std::string writing_mode{declared_on(at.chain.front(), "writing-mode")};
+        const std::string direction{declared_on(at.chain.front(), "direction")};
+        std::vector<std::pair<std::string, std::string>> physical;
+        for (auto & [name, text] : animated) {
+            style::css::declaration_block block;
+            if (style::css::longhands_of(name).empty() ||
+                !style::css::set_declaration(block, name, text, false)) {
+                block.push_back({name, text, false});
+            }
+            for (const style::css::declaration & one : block) {
+                std::string mapped =
+                    style::css::physical_property_of(one.name, writing_mode, direction);
+                physical.emplace_back(mapped.empty() ? one.name : std::move(mapped), one.value);
+            }
+        }
+        animated = std::move(physical);
+    }
     const auto declared = [declared_on, at, atoms,
                            &animated](std::string_view property) -> std::string_view {
         if (at.chain.empty()) { return {}; }
@@ -839,8 +861,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             const layout::length len = layout::parse_length(text);
             // A sizing keyword on a min/max property is its own computed value
-            // (min-width: min-content); the used size it clamps to is layout's.
-            if (len.is_intrinsic()) { return std::string{text}; }
+            // (min-width: min-content, max-width: none); the used size it
+            // clamps to is layout's. `none` is a max's initial value and not
+            // the `auto` parse_length reads it as (max-block-size-computed).
+            if (len.is_intrinsic() ||
+                (is_min_or_max_property(property) && ascii_iequals(text, "none"))) {
+                return std::string{text};
+            }
             if (len.is_auto()) {
                 // A MARGIN'S USED VALUE IS A NUMBER, and `auto` is a value only
                 // for a box no flow has placed: a centred block's `margin: 0
@@ -1084,29 +1111,18 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // `border-left` are shorthands there and were missing from the list, so all
     // four were enumerated as longhands - which is the exact assertion
     // getComputedStyle-getter-v-properties makes about each of them by name.
-    // A LOGICAL BORDER LONGHAND IS ITS PHYSICAL ONE in horizontal-tb, which is
-    // the only writing mode this engine lays out: `border-block-start-color`
-    // answers as `border-top-color` (getComputedStyle-resolved-colors).
-    const auto physical_of = [](std::string_view property) -> std::string_view {
-        constexpr std::string_view block = "border-block-";
-        constexpr std::string_view inline_ = "border-inline-";
-        const bool is_block = property.starts_with(block);
-        if (!is_block && !property.starts_with(inline_)) { return {}; }
-        const std::string_view rest = property.substr(is_block ? block.size() : inline_.size());
-        const bool start = rest.starts_with("start-");
-        if (!start && !rest.starts_with("end-")) { return {}; }
-        const std::string_view suffix = rest.substr(start ? 6 : 4);
-        static constexpr std::string_view sides[2][2][3] = {
-            {{"border-bottom-width", "border-bottom-style", "border-bottom-color"},
-             {"border-top-width", "border-top-style", "border-top-color"}},
-            {{"border-right-width", "border-right-style", "border-right-color"},
-             {"border-left-width", "border-left-style", "border-left-color"}}};
-        const std::size_t kind = suffix == "width" ? 0 : (suffix == "style" ? 1 : 2);
-        return sides[is_block ? 0 : 1][start ? 1 : 0][kind];
+    // A LOGICAL LONGHAND IS THE PHYSICAL ONE IT MAPS TO on this element (CSS
+    // Logical 1 §4): the cascade stored `margin-block-start` as `margin-top`
+    // under horizontal-tb, so that is where its value - used or computed,
+    // by the physical property's own rule - is read from.
+    const std::string writing_mode{declared("writing-mode")};
+    const std::string direction{declared("direction")};
+    const auto physical_of = [&](std::string_view property) -> std::string {
+        return style::css::physical_property_of(property, writing_mode, direction);
     };
     for (const style::css::property_syntax & p : style::css::known_properties()) {
         if (p.shorthand) { continue; }
-        const std::string_view physical = physical_of(p.name);
+        const std::string physical = physical_of(p.name);
         std::string text = value_of(physical.empty() ? p.name : physical);
         if (text.empty()) { text = std::string{p.initial}; }
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
@@ -1136,12 +1152,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // rule drops a trailing value that repeats the one two places before it, so
     // an ordinary <div>'s `margin` is `0px` rather than `0px 0px 0px 0px`.
     //
-    // EMPTY FOR THE REST, deliberately. `font`, `background`, `outline`,
-    // `list-style`, `transition`, `animation` and `text-decoration` are
-    // grammars rather than lists; engines disagree about how to rebuild them -
-    // Chrome disagrees with itself across versions - and CSSOM already says a
-    // shorthand that cannot be represented serialises to the empty string. That
-    // is the same answer, and the same reason, as `cssText` below.
+    // THE REST FOLD THE WAY `el.style` DOES: the longhands' computed values
+    // into a declaration block, read back as the shorthand through
+    // shorthands.cpp's one fold - `font` in CSS Fonts 4 §3.1's canonical form
+    // (font-computed), `animation` in CSS Animations 1 §5.9's, `white-space`
+    // as CSS Text 4's keyword when its longhands spell one. A shape that
+    // table keeps whole - `background`, `transition`, `text-decoration` - is
+    // "", which CSSOM says of a shorthand that cannot be represented.
     const auto longhand = [&answers, longhand_count](std::string_view name) -> std::string {
         for (std::size_t i = 0; i < longhand_count; ++i) {
             if (std::string_view{answers[i].first} == name) { return answers[i].second; }
@@ -1233,6 +1250,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (!grow.empty() && !shrink.empty() && !basis.empty()) {
                 text = grow + " " + shrink + " " + basis;
             }
+        } else if (p.name != "all") {
+            style::css::declaration_block block;
+            for (const std::string_view longhand_name : style::css::longhands_of(p.name)) {
+                std::string held = longhand(longhand_name);
+                if (held.empty()) {
+                    block.clear();
+                    break;
+                }
+                block.push_back({std::string{longhand_name}, std::move(held), false});
+            }
+            if (!block.empty()) { text = style::css::declaration_value(block, p.name); }
         }
         shorthands.emplace_back(std::string{p.name}, std::move(text));
     }
