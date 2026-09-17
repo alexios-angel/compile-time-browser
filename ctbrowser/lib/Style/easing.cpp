@@ -1141,8 +1141,15 @@ struct rotation {
         return std::string{trim(from, html_whitespace)};
     }
     bool interpolable = true;
-    return interpolate_pair(property, computed_shape(property, from, ctx),
-                            computed_shape(property, to, ctx), p, ctx, interpolable);
+    std::string out = interpolate_pair(property, computed_shape(property, from, ctx),
+                                       computed_shape(property, to, ctx), p, ctx, interpolable);
+    // A corner radius whose two halves came out equal is written once, as
+    // the computed serialiser writes a declared one.
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const std::vector<std::string_view> halves = split_top_level(out, html_whitespace);
+        if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
+    }
+    return out;
 }
 
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,

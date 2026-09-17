@@ -116,6 +116,9 @@ void test_interpolation() {
     CHECK(interpolate_text("perspective-origin", "50% 50%", "20px 20px", 1, context) ==
           "20px 20px");
     CHECK(interpolate_text("border-left-width", "medium", "23px", -0.3, context) == "0px");
+    CHECK(interpolate_text("border-top-left-radius", "10px", "20px", 0.3, context) == "13px");
+    CHECK(interpolate_text("border-top-left-radius", "10px", "20px 40px", 0.5, context) ==
+          "15px 25px");
     CHECK(interpolate_text("rotate", "3 6 9 360deg", "none", 0.75, context) ==
           "0.267261 0.534522 0.801784 90deg");
     CHECK(interpolate_text("rotate", "x 90deg", "y 90deg", 0.5, context) == "y 90deg");

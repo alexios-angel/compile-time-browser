@@ -576,7 +576,20 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
             frame.values.emplace_back(property, std::move(text));
             return;
         }
-        if (style::css::find_property(property) == nullptr) { return; }
+        const style::css::property_syntax * known = style::css::find_property(property);
+        if (known == nullptr) { return; }
+        // A SHORTHAND IS ITS LONGHANDS (§5.4.5 "process a keyframe-like
+        // object"), as a `@keyframes` block already stores it: `borderWidth:
+        // '20px 40px'` animates border-top-width and the rest.
+        if (known->shorthand) {
+            for (const auto & [longhand, value] :
+                 style::css::expand_cascaded_shorthand(property, text)) {
+                const style::css::value_check checked =
+                    style::css::check_declaration(longhand, value);
+                if (checked.valid) { frame.values.emplace_back(longhand, checked.serialized); }
+            }
+            return;
+        }
         const style::css::value_check checked = style::css::check_declaration(property, text);
         if (!checked.valid) { return; }
         frame.values.emplace_back(property, checked.serialized);
