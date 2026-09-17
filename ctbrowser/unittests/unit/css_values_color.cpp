@@ -314,12 +314,13 @@ void test_the_color_well() {
     CHECK_EQ(sanitize_color("currentColor", false, false), std::string{"#000000"});
     CHECK_EQ(sanitize_color("inherit", false, false), std::string{"#000000"});
     CHECK_EQ(sanitize_color("#ffffff08", false, false), std::string{"#ffffff"});
-    CHECK_EQ(sanitize_color("#ffffff08", false, true), std::string{"color(srgb 1 1 1 / 0.031373)"});
+    CHECK_EQ(sanitize_color("#ffffff08", false, true),
+             std::string{"color(srgb 1 1 1 / 0.0313725)"});
     CHECK_EQ(sanitize_color("transparent", false, true), std::string{"color(srgb 0 0 0 / 0)"});
     CHECK_EQ(sanitize_color("rgb(1,1,1,0.5)", false, true),
-             std::string{"color(srgb 0.003922 0.003922 0.003922 / 0.501961)"});
+             std::string{"color(srgb 0.00392157 0.00392157 0.00392157 / 0.501961)"});
     CHECK_EQ(sanitize_color("rgb(1,1,1,0.5)", true, false),
-             std::string{"color(display-p3 0.003922 0.003922 0.003922)"});
+             std::string{"color(display-p3 0.00392157 0.00392157 0.00392157)"});
     CHECK_EQ(sanitize_color("color(display-p3 3 none .2 / .6)", true, true),
              std::string{"color(display-p3 3 0 0.2 / 0.6)"});
     computed_near(sanitize_color("crimson", true, false),
