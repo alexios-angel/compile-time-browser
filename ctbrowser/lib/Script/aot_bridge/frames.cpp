@@ -240,7 +240,7 @@ std::uint64_t aot_bridge::gather_rest(aot::ct_aot_frame * f, const std::uint64_t
 // many - neither of which this frame's own slots can answer, because
 // ct_aot_enter puts them above the caller's window.
 std::uint64_t * aot_bridge::args(aot::ct_aot_frame * f) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     // THE SAME BOUND TEST ct_aot_slots MAKES, against base + count rather
     // than base alone: an unwound frame truncates registers_ to exactly the
@@ -255,7 +255,7 @@ std::uint32_t aot_bridge::argc(aot::ct_aot_frame * f) {
 }
 
 std::uint64_t * aot_bridge::slots(aot::ct_aot_frame * f) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     // THE WHOLE SPAN IS STILL THERE, checked rather than assumed - and the
     // test is against base + count, not against base alone. An unwound
@@ -316,7 +316,7 @@ void aot_bridge::leave(aot::ct_aot_frame * f, value result, bool observe_return)
 // same four steps that resume the interpreter at a catch block. No change
 // to the unwinder.
 void aot_bridge::handler_push(aot::ct_aot_frame * f, std::uint32_t pad, std::uint32_t slot) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     cx.handlers_.push_back(
         context::handler{held.frame_index, static_cast<std::size_t>(pad) | CT_AOT_PAD_BIT,
@@ -328,7 +328,7 @@ void aot_bridge::handler_push(aot::ct_aot_frame * f, std::uint32_t pad, std::uin
 // mis-balanced emission drops a CALLER's catch and nothing reports it.
 // Balance is a compiler invariant; `fr` is carried so this can say so.
 void aot_bridge::handler_pop(aot::ct_aot_frame * f) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     if (cx.handlers_.empty()) { return; }
     // NOT AN ASSERT, because this is also reachable from an image: a body
@@ -342,7 +342,7 @@ void aot_bridge::handler_pop(aot::ct_aot_frame * f) {
 // and then ct_aot_check for the status, so this classifies identically to
 // every other throwing helper. It never returns OK.
 std::int32_t aot_bridge::throw_value(aot::ct_aot_frame * f, std::uint64_t thrown) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     cx.thrown_ = value::from_bits(thrown);
     if (!cx.unwind_to_handler()) {
@@ -357,7 +357,7 @@ std::int32_t aot_bridge::throw_value(aot::ct_aot_frame * f, std::uint64_t thrown
 // ct_aot_catch_land. A pure READ of what unwind_to_handler deposited: the
 // pad id from `ip`, and the value from the slot the frame recorded.
 std::uint32_t aot_bridge::catch_land(aot::ct_aot_frame * f, std::uint64_t * out_thrown) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     if (held.frame_index >= cx.frames_.size()) {
         *out_thrown = value::undefined().bits();
@@ -390,7 +390,7 @@ std::int32_t aot_bridge::call(aot::ct_aot_frame * f, std::uint64_t callee, std::
                               const aot::ct_aot_site * site, std::uint64_t * out) {
     (void)key;
     (void)site;
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
 
     // NO SAFEPOINT HERE, and that is a deliberate deletion rather than an
