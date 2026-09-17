@@ -169,6 +169,8 @@ void test_composition() {
     CHECK(interpolate_text("transform", "rotate(90deg)", "scale(2)", 0.5, context)
               .starts_with("matrix(1.06066"));
     CHECK(interpolate_text("transform", "none", "none", 0.5, context) == "none");
+    CHECK(interpolate_text("transform", "translate(12px, 70%)", "translate(13px, 90%)", 0.25,
+                           context) == "translate(12.25px, 75%)");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
           "rotate(30deg) scale(2)");
 }

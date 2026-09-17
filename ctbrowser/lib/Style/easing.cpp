@@ -438,6 +438,10 @@ template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & 
 struct transform_fn {
     std::string name;
     std::vector<double> args;
+    // A translate's percentage part per argument, kept in step with `args`
+    // (the px part): `translate(12px, 70%)` keeps its percentages and reads
+    // back as written, which is how the computed serialiser prints it.
+    std::vector<double> pct;
 };
 
 [[nodiscard]] std::string_view primitive_of(std::string_view name) {
@@ -472,9 +476,14 @@ struct transform_fn {
             ++at;
             if (t.type == token_type::close_paren) { break; }
             if (t.type == token_type::comma) { continue; }
+            fn.pct.push_back(0);
             if (t.type == token_type::number) {
                 fn.args.push_back(t.number);
                 is_length.push_back(false);
+            } else if (t.type == token_type::percentage) {
+                fn.args.push_back(0);
+                fn.pct.back() = t.number;
+                is_length.push_back(true);
             } else if (t.type == token_type::dimension) {
                 const std::string unit = ascii_lower_copy(ts.unit_of(t));
                 if (unit == "px") {
@@ -505,22 +514,27 @@ struct transform_fn {
             if (is_length[i] != translate && !(translate && fn.args[i] == 0.0)) {
                 return std::nullopt;
             }
+            if (!translate && fn.pct[i] != 0) { return std::nullopt; }
         }
         // Canonical two-argument forms, so the same primitive always pairs.
+        const auto append = [&fn](double v) { fn.args.push_back(v), fn.pct.push_back(0); };
+        const auto prepend = [&fn](double v) {
+            fn.args.insert(fn.args.begin(), v), fn.pct.insert(fn.pct.begin(), 0);
+        };
         if (fn.name == "translatex" && n == 1) {
-            fn.name = "translate", fn.args.push_back(0);
+            fn.name = "translate", append(0);
         } else if (fn.name == "translatey" && n == 1) {
-            fn.name = "translate", fn.args.insert(fn.args.begin(), 0);
+            fn.name = "translate", prepend(0);
         } else if (fn.name == "translate" && n == 1) {
-            fn.args.push_back(0);
+            append(0);
         } else if (fn.name == "scalex" && n == 1) {
-            fn.name = "scale", fn.args.push_back(1);
+            fn.name = "scale", append(1);
         } else if (fn.name == "scaley" && n == 1) {
-            fn.name = "scale", fn.args.insert(fn.args.begin(), 1);
+            fn.name = "scale", prepend(1);
         } else if (fn.name == "scale" && n == 1) {
-            fn.args.push_back(fn.args[0]);
+            append(fn.args[0]);
         } else if (fn.name == "skew" && n == 1) {
-            fn.args.push_back(0);
+            append(0);
         }
         const std::size_t count = fn.args.size();
         const bool shaped =
@@ -617,15 +631,22 @@ struct decomposed2d {
     const bool angles = fn.name == "rotate" || fn.name.starts_with("skew");
     for (std::size_t i = 0; i < fn.args.size(); ++i) {
         if (i != 0) { out += ", "; }
+        if (translate) {
+            css::calc_result length;
+            length.px = fn.args[i];
+            length.percent = fn.pct[i];
+            length.has_percent = fn.pct[i] != 0;
+            out += css::serialize_calc(length);
+            continue;
+        }
         out += css::serialize_number(fn.args[i]);
-        if (translate) { out += "px"; }
         if (angles) { out += "deg"; }
     }
     return out + ')';
 }
 
 [[nodiscard]] transform_fn identity_like(const transform_fn & fn) {
-    transform_fn out{fn.name, {}};
+    transform_fn out{fn.name, {}, {}};
     if (fn.name == "matrix") {
         out.args = {1, 0, 0, 1, 0, 0};
     } else if (fn.name == "scale") {
@@ -633,6 +654,7 @@ struct decomposed2d {
     } else {
         out.args.assign(fn.args.size(), 0.0);
     }
+    out.pct.assign(out.args.size(), 0.0);
     return out;
 }
 
@@ -663,11 +685,21 @@ struct decomposed2d {
             transform_fn fn = (*a)[i];
             for (std::size_t k = 0; k < fn.args.size(); ++k) {
                 fn.args[k] = lerp((*a)[i].args[k], (*b)[i].args[k]);
+                fn.pct[k] = lerp((*a)[i].pct[k], (*b)[i].pct[k]);
             }
             if (i != 0) { out += ' '; }
             out += function_text(fn);
         }
         return out;
+    }
+    // A percentage has no matrix until the box exists: such a pair that does
+    // not match function by function stays discrete.
+    for (const std::vector<transform_fn> * list : {&*a, &*b}) {
+        for (const transform_fn & fn : *list) {
+            if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
+                return std::nullopt;
+            }
+        }
     }
     decomposed2d x = decompose(matrix_of(*a));
     const decomposed2d y = decompose(matrix_of(*b));
