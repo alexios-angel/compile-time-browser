@@ -323,11 +323,17 @@ bool context::instance_of(value target, value ctor) {
     }
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
-    // ...and an array's own, when it has one (array_object::prototype).
+    // ...and an array's own, when it has one (array_object::prototype), and a
+    // function's proto_link - `class B extends A` for B itself, and a dynamic
+    // function made under `class F extends Function` (`f instanceof F`).
     value link = subject.is_object()  ? static_cast<object_object *>(subject.as_heap())->prototype
                  : subject.is_array() ? static_cast<array_object *>(subject.as_heap())->prototype
-                                      : value::null();
-    const bool explicit_chain = subject.is_object() || (subject.is_array() && !link.is_null());
+                 : subject.is_kind(heap_kind::function)
+                     ? static_cast<closure_object *>(subject.as_heap())->proto_link
+                 : subject.is_kind(heap_kind::native)
+                     ? static_cast<native_object *>(subject.as_heap())->proto_link
+                     : value::null();
+    const bool explicit_chain = subject.is_object() || !link.is_null();
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
@@ -342,7 +348,7 @@ bool context::instance_of(value target, value ctor) {
     // An array's explicit chain ended at the implicit Object.prototype: the
     // kind's tables are not behind it (Object.setPrototypeOf(arr, o) took
     // Array.prototype out of the chain).
-    if (subject.is_array() && explicit_chain) {
+    if (!subject.is_object() && explicit_chain) {
         return prototype(proto_kind::object) == wanted.as_heap();
     }
     // Then the IMPLICIT one. An array, a function, a string and a plain object
