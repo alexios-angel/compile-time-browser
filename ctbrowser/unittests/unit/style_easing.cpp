@@ -106,6 +106,7 @@ void test_interpolation() {
     CHECK(interpolate_text("text-align", "left", "right", 0.49, context) == "left");
     CHECK(interpolate_text("text-align", "left", "right", 0.5, context) == "right");
     CHECK(interpolate_text("left", "10px", "2s", 0.5, context) == "2s");
+    CHECK(interpolate_text("left", "0", "400px", 0.5, context) == "200px");
     // Colours premultiplied in sRGB, clamped to the gamut when extrapolated.
     CHECK(interpolate_text("color", "rgb(0, 0, 255)", "rgba(255, 0, 0, 0)", 0.5, context) ==
           "rgba(0.0000, 0.0000, 255.0000, 0.5000)");

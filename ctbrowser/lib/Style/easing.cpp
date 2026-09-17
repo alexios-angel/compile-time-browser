@@ -199,11 +199,23 @@ struct numeric_pair {
                                                      const css::length_context & ctx) {
     const css::math_answer a = css::evaluate_math(from, ctx);
     const css::math_answer b = css::evaluate_math(to, ctx);
-    if (a.outcome != css::math_outcome::resolved || b.outcome != css::math_outcome::resolved ||
-        a.value.type != b.value.type || a.value.is_number != b.value.is_number) {
+    if (a.outcome != css::math_outcome::resolved || b.outcome != css::math_outcome::resolved) {
         return std::nullopt;
     }
-    return numeric_pair{a.value, b.value};
+    numeric_pair out{a.value, b.value};
+    // A unitless `0` is a <length> where one is wanted (CSS Values 4 §6.1):
+    // `left: 0` transitions to `400px`.
+    const auto zero_as_length = [](css::calc_result & zero, const css::calc_result & other) {
+        if (zero.is_number && zero.px == 0 && !other.is_number &&
+            other.type == css::numeric_type::length) {
+            zero.is_number = false;
+            zero.type = css::numeric_type::length;
+        }
+    };
+    zero_as_length(out.a, out.b);
+    zero_as_length(out.b, out.a);
+    if (out.a.type != out.b.type || out.a.is_number != out.b.is_number) { return std::nullopt; }
+    return out;
 }
 
 // (1 - p) * a + p * b, the specification's own formula, which is also the one
