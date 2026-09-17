@@ -959,6 +959,28 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
     return false;
 }
 
+// DOM "invoke" step 6's table: the prefixed spelling a trusted event of the
+// unprefixed type reaches when nothing listened for the unprefixed one.
+[[nodiscard]] std::string_view legacy_event_type_of(std::string_view type) {
+    if (type == "animationend") { return "webkitAnimationEnd"; }
+    if (type == "animationiteration") { return "webkitAnimationIteration"; }
+    if (type == "animationstart") { return "webkitAnimationStart"; }
+    if (type == "transitionend") { return "webkitTransitionEnd"; }
+    return {};
+}
+
+// The event type an `on<name>` handler is for: the name without `on`, in the
+// four prefixed families' camelCase spelling (`onwebkitanimationend` is for
+// `webkitAnimationEnd`).
+[[nodiscard]] std::string event_type_of_handler(std::string_view name) {
+    const std::string_view bare = name.substr(2);
+    for (const std::string_view legacy : {"webkitAnimationEnd", "webkitAnimationIteration",
+                                          "webkitAnimationStart", "webkitTransitionEnd"}) {
+        if (ascii_iequals(bare, legacy)) { return std::string{legacy}; }
+    }
+    return ascii_lower_copy(bare);
+}
+
 void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
     // THE EVENT IS ROOTED FOR THE CALL. An event the ENGINE made - a sheet's
     // load from browser::tick, an image's from the registry - lives only in
@@ -1042,71 +1064,93 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // happened mid-dispatch could be swept while this loop still held it. The
     // re-find below reads the callback back out of `listeners_`, which IS
     // traced, and finding nothing is exactly the `removed` check.
-    std::vector<std::uint64_t> queued;
-    const auto belongs = [&](const listener & l) {
-        if (l.on != step.on || l.type != type || l.capture != capturing) { return false; }
-        if (l.on == listen_on::node && l.target != step.node) { return false; }
-        if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { return false; }
-        return true;
-    };
-    for (const listener & l : listeners_) {
-        if (!l.spent && belongs(l)) { queued.push_back(l.callback.bits()); }
-    }
-    for (const std::uint64_t identity : queued) {
-        // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
-        // stopping the listeners that would have run next at this very step, so
-        // a check hoisted out of the loop implements the other method.
-        if (flag_of(*cx_, event, stop_immediate_property)) { return; }
-        const auto found = std::ranges::find_if(listeners_, [&](const listener & l) {
-            return !l.spent && l.callback.bits() == identity && belongs(l);
-        });
-        // Gone since the copy was taken - removed by a listener that ran
-        // earlier at this step, or by its AbortSignal.
-        if (found == listeners_.end()) { continue; }
-        if (found->handler) {
-            // The event handler's listener: the handler property AS IT IS NOW,
-            // at the place the handler was first set (HTML 8.1.8.1).
+    // THE INNER INVOKE (DOM 2.10 "inner invoke"), once for the event's type
+    // and - when nothing at all was found for it and the event is trusted -
+    // once more under the legacy type of the table in "invoke" step 6:
+    // `animationend` reaches a `webkitAnimationEnd` listener on an element
+    // that has no listener for the unprefixed name (EventListener-invoke-
+    // legacy, the four webkit-*-event files). Answers whether anything ran.
+    const auto inner_invoke = [&](std::string_view type) -> bool {
+        bool found = false;
+        std::vector<std::uint64_t> queued;
+        const auto belongs = [&](const listener & l) {
+            if (l.on != step.on || l.type != type || l.capture != capturing) { return false; }
+            if (l.on == listen_on::node && l.target != step.node) { return false; }
+            if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { return false; }
+            return true;
+        };
+        for (const listener & l : listeners_) {
+            if (!l.spent && belongs(l)) { queued.push_back(l.callback.bits()); }
+        }
+        for (const std::uint64_t identity : queued) {
+            // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
+            // stopping the listeners that would have run next at this very step, so
+            // a check hoisted out of the loop implements the other method.
+            if (flag_of(*cx_, event, stop_immediate_property)) { return found; }
+            const auto entry = std::ranges::find_if(listeners_, [&](const listener & l) {
+                return !l.spent && l.callback.bits() == identity && belongs(l);
+            });
+            // Gone since the copy was taken - removed by a listener that ran
+            // earlier at this step, or by its AbortSignal.
+            if (entry == listeners_.end()) { continue; }
+            found = true;
+            if (entry->handler) {
+                // The event handler's listener: the handler property AS IT IS NOW,
+                // at the place the handler was first set (HTML 8.1.8.1).
+                value thrown = value::undefined();
+                const bool threw =
+                    fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+                report_fault(threw, thrown);
+                continue;
+            }
+            if (entry->once) { entry->spent = true; }
+            // COPIED OUT BEFORE THE CALL. `entry` is an iterator into a vector a
+            // listener can grow (addEventListener) or shrink (an AbortSignal), so
+            // nothing may touch it once script is running.
+            const value callback = entry->callback;
+            const bool passive = entry->passive;
+            // SET AND CLEARED rather than saved and restored: an event that is
+            // already being dispatched is refused, so one can never be inside two
+            // of these at once. It stays set across a NESTED dispatch on purpose -
+            // the flag belongs to the event, so a listener of some other event that
+            // reaches back for this one and cancels it is refused too, which is
+            // what concept-event-listener-inner-invoke steps 10 and 15 say.
+            auto * carrier = static_cast<script::object_object *>(event.as_heap());
+            if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
+            value thrown = value::undefined();
+            value returned = value::undefined();
+            const bool threw = invoke_listener(*cx_, callback, object_of_step(*cx_, step), event,
+                                               thrown, returned);
+            if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
+            // PER LISTENER, not per dispatch. A throw from the first of three must
+            // not stop the other two - which it did twice over, first because every
+            // later `call` declines while the VM's failure flag is up and then
+            // because the throw left the dispatch entirely - and each one that
+            // throws is its own report.
+            report_fault(threw, thrown);
+        }
+        // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
+        // write log never saw, a name whose event type is not its lowercase
+        // spelling - still runs, after the listeners, as it always did.
+        if (!capturing && !flag_of(*cx_, event, stop_immediate_property) &&
+            !has_handler_listener(step, type)) {
             value thrown = value::undefined();
             const bool threw =
                 fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+            found = found || threw ||
+                    cx_->lookup_property(object_of_step(*cx_, step), "on" + ascii_lower_copy(type))
+                        .is_callable();
             report_fault(threw, thrown);
-            continue;
         }
-        if (found->once) { found->spent = true; }
-        // COPIED OUT BEFORE THE CALL. `found` is an iterator into a vector a
-        // listener can grow (addEventListener) or shrink (an AbortSignal), so
-        // nothing may touch it once script is running.
-        const value callback = found->callback;
-        const bool passive = found->passive;
-        // SET AND CLEARED rather than saved and restored: an event that is
-        // already being dispatched is refused, so one can never be inside two
-        // of these at once. It stays set across a NESTED dispatch on purpose -
-        // the flag belongs to the event, so a listener of some other event that
-        // reaches back for this one and cancels it is refused too, which is
-        // what concept-event-listener-inner-invoke steps 10 and 15 say.
-        auto * carrier = static_cast<script::object_object *>(event.as_heap());
-        if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
-        value thrown = value::undefined();
-        value returned = value::undefined();
-        const bool threw =
-            invoke_listener(*cx_, callback, object_of_step(*cx_, step), event, thrown, returned);
-        if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
-        // PER LISTENER, not per dispatch. A throw from the first of three must
-        // not stop the other two - which it did twice over, first because every
-        // later `call` declines while the VM's failure flag is up and then
-        // because the throw left the dispatch entirely - and each one that
-        // throws is its own report.
-        report_fault(threw, thrown);
-    }
-    // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
-    // write log never saw, a name whose event type is not its lowercase
-    // spelling - still runs, after the listeners, as it always did.
-    if (!capturing && !flag_of(*cx_, event, stop_immediate_property) &&
-        !has_handler_listener(step, type)) {
-        value thrown = value::undefined();
-        const bool threw = fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
-        report_fault(threw, thrown);
-    }
+        return found;
+    };
+    if (inner_invoke(type)) { return; }
+    const std::string_view legacy = legacy_event_type_of(type);
+    if (legacy.empty() || !flag_of(*cx_, event, trusted_property)) { return; }
+    auto * carrier = static_cast<script::object_object *>(event.as_heap());
+    carrier->set("type", cx_->string(std::string{legacy}));
+    (void)inner_invoke(legacy);
+    carrier->set("type", cx_->string(std::string{type}));
 }
 
 bool dom_bindings::has_handler_listener(path_step at, std::string_view type) const {
@@ -1538,7 +1582,7 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
     // (event-handler-spec-example.window.js).
     dom_bindings & owner = target_owner(self);
     const path_step at = owner.step_of(object == window_object() ? value::object(object) : self);
-    const std::string type = ascii_lower_copy(std::string_view{name}.substr(2));
+    const std::string type = event_type_of_handler(name);
     if (stored.is_null()) {
         owner.deactivate_event_handler(at, type);
     } else {
@@ -1573,7 +1617,7 @@ void dom_bindings::settle_attribute_writes(const std::vector<document::write_not
             at = path_step{node_id{}, listen_on::window};
             object = window_object();
         }
-        const std::string type = ascii_lower_copy(name.substr(2));
+        const std::string type = event_type_of_handler(name);
         if (present) {
             activate_event_handler(*cx_, at, type);
         } else if (const value * assigned = object->find(assigned_slot(std::string{name}));
