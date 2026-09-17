@@ -24,7 +24,7 @@ namespace ctbrowser::script {
 std::int32_t aot_bridge::binary_op_static(aot::ct_aot_frame * f, std::uint32_t op_kind,
                                           std::uint64_t lhs, std::uint64_t rhs,
                                           std::uint64_t * out) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     // AN OP KIND OUT OF AN IMAGE IS UNTRUSTED INPUT. The interpreter only
     // ever passes the seven; a compiled body's operand came from a file.
@@ -52,7 +52,7 @@ std::int32_t aot_bridge::binary_op_static(aot::ct_aot_frame * f, std::uint32_t o
 // reaches its non-ok arms.
 std::int32_t aot_bridge::binary_op(aot::ct_aot_frame * f, std::uint32_t op_kind, std::uint64_t lhs,
                                    std::uint64_t rhs, std::uint64_t * out) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     if (op_kind >= opcode_count) {
         *out = value::undefined().bits();

@@ -36,7 +36,7 @@ void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped) {
     if (frames_.size() <= 1 && !block_scoped) { return; }
     std::vector<std::string> names;
     pattern_names(pat, names);
-    for (std::string & name : names) {
+    for (const std::string & name : names) {
         // ONLY the current scope decides this. was_predeclared is
         // function-scoped - it is how `var` and function declarations
         // hoist - and asking it here made a `const {x}` inside a block

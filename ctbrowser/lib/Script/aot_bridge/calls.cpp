@@ -30,7 +30,7 @@ namespace ctbrowser::script {
 std::int32_t aot_bridge::construct(aot::ct_aot_frame * f, std::uint64_t callee,
                                    const std::uint64_t * argv, std::uint32_t argc,
                                    const aot::ct_aot_site * site, std::uint64_t * out) {
-    aot_frame_storage & held = frame_of(f);
+    const aot_frame_storage & held = frame_of(f);
     context & cx = *held.ctx;
     // COPIED OUT BEFORE THE CALL, for ct_aot_call's reason: argv points
     // into registers_ for a compiled body, and the call resizes it.
