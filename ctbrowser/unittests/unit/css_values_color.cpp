@@ -13,6 +13,7 @@
 #include "check.hpp"
 
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -162,7 +163,11 @@ void test_relative_colours_and_mixing() {
     ok("rgb(from rgb(20%, 40%, 60%, 80%) r g b / alpha)",
        "rgb(from rgba(51, 102, 153, 0.8) r g b / alpha)");
     ok("rgb(from rebeccapurple b calc(r * .5) 10)", "rgb(from rebeccapurple b calc(0.5 * r) 10)");
-    ok("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(from rgba(128, 128, 128, 0.5) h s l)");
+    // An origin keeps the modern form when rgb() would lose a missing channel
+    // or a powerless hue - the computed value is computed from this text.
+    ok("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(from hsl(120 none 50 / 0.5) h s l)");
+    ok("hsl(from hsl(120 0% 50%) h s l)", "hsl(from hsl(120 0 50) h s l)");
+    ok("hsl(from hsl(120 50% 50%) h s l)", "hsl(from rgb(64, 191, 64) h s l)");
     ok("alpha(from hsl(120 50% 50%) / 0.5)", "alpha(from rgb(64, 191, 64) / 0.5)");
     ok("alpha(from currentcolor / calc(alpha + 0.1))",
        "alpha(from currentcolor / calc(0.1 + alpha))");
@@ -172,6 +177,18 @@ void test_relative_colours_and_mixing() {
        "color-mix(oklab(0.1 0.2 0.3) 75%, oklab(0.5 0.6 0.7) 25%)");
     ok("color-mix(in lch shorter hue, lch(100 0 20deg), lch(100 0 320deg))",
        "color-mix(in lch, lch(100 0 20), lch(100 0 320))");
+    // Three or more colours (CSS Color 5 §3): the omitted weights share the
+    // remainder, an even share is left unwritten, a calc() keeps everything.
+    ok("color-mix(in srgb, red 100%)", "color-mix(in srgb, red)");
+    ok("color-mix(in srgb, red 50%, green, blue)",
+       "color-mix(in srgb, red 50%, green 25%, blue 25%)");
+    ok("color-mix(in srgb, red, green, blue, white)",
+       "color-mix(in srgb, red, green, blue, white)");
+    ok("color-mix(in srgb, red calc(10%), blue 50%)",
+       "color-mix(in srgb, red calc(10%), blue 50%)");
+    ok("lab(calc(50%) 50% 0.5)", "lab(calc(50%) 62.5 0.5)");
+    ok("color(srgb calc(50% * 3) calc(-150% / 3) calc(50%) / calc(-50% * 3))",
+       "color(srgb calc(150%) calc(-50%) calc(50%) / calc(-150%))");
     ok("light-dark(black, white)", "light-dark(black, white)");
     ok("color-layers(normal, red, blue)", "color-layers(red, blue)");
     bad("hsl(from rebeccapurple calc(h + 1deg) s l)");
@@ -199,6 +216,19 @@ void test_the_computed_value() {
     computed("hsl(from rebeccapurple h s none)", "hsl(270 50% none)");
     computed("alpha(from red / 0.5)", "color(srgb 1 0 0 / 0.5)");
     computed("light-dark(black, white)", "rgb(0, 0, 0)");
+    computed("Canvas", "rgb(255, 255, 255)");
+    {
+        // `color-scheme: dark`: light-dark() takes its second colour and the
+        // scheme-aware system colours their dark values.
+        color_context dark;
+        dark.dark = true;
+        CHECK_EQ(computed_color("light-dark(black, white)", dark),
+                 std::string{"rgb(255, 255, 255)"});
+        CHECK_EQ(computed_color("light-dark(light-dark(white, red), red)", dark),
+                 std::string{"rgb(255, 0, 0)"});
+        CHECK_EQ(computed_color("Canvas", dark), std::string{"rgb(18, 18, 18)"});
+        CHECK_EQ(computed_color("Mark", dark), std::string{"rgb(255, 255, 0)"});
+    }
     // color-mix, to a hundredth: the interpolation and the hue methods.
     computed_near("color-mix(in hsl, hsl(120deg 10% 20% / .4), hsl(30deg 30% 40% / .8))",
                   "color(srgb 0.372222 0.411111 0.255556 / 0.6)");
@@ -215,6 +245,29 @@ void test_the_computed_value() {
     computed_near("lch(from hsl(180 0.001% 50%) l c h)", "lch(53.389 0 none)");
     computed_near("color-mix(in hsl, lch(none 20 180), hsl(11 33 44))",
                   "color(srgb 1.09909 -0.21909 -0.11806)");
+    // §12.2's analogous sets: hwb's white and black carry to hsl's saturation
+    // and lightness when both are missing, x carries to r, a missing
+    // saturation makes the hue powerless, and lab's b at nought is hue 0.
+    computed("hsl(from hwb(180 none none) h s l)", "hsl(180 none none)");
+    computed_near("lch(from hwb(180 none none) l c h)", "lch(none none 196.455)");
+    computed_near("hsl(from lch(20 none 180) h s l)", "hsl(none none 18.9376%)");
+    computed_near("rgb(from color(xyz none 0.5 1) r g b)", "color(srgb none 0.990951 0.979945)");
+    computed_near("color-mix(in lch, hsl(180 none none), lch(11 33 44))", "lch(11 33 44)");
+    computed("color-mix(in lch, lab(50 10 none))", "lch(50 10 0)");
+    computed_near("hsl(from hwb(180 49.999% 50%) h calc(s * 1000) l)", "hsl(none 0% 49.999%)");
+    // A relative colour's omitted alpha is the origin's (CSS Color 5 §4.2).
+    computed("rgb(from rgb(20%, 40%, 60%, 80%) g b r)", "color(srgb 0.4 0.6 0.2 / 0.8)");
+    computed("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(120 none 50% / 0.5)");
+    // Three colours mix pairwise in order; weights short of 100% thin the alpha.
+    computed_near("color-mix(in srgb, red, green, blue)", "color(srgb 0.333333 0.16732 0.333333)");
+    computed_near("color-mix(in srgb, red 0%, green 0%, blue 50%)", "color(srgb 0 0 1 / 0.5)");
+    computed_near("color-mix(in srgb, red calc(10%), blue 50%)",
+                  "color(srgb 0.166667 0 0.833333 / 0.6)");
+    // rec2020 is a pure 2.4 gamma; hwb keeps its hue unrotated out of gamut.
+    computed_near("color(from color(rec2020 0.25 0.5 0.75) srgb r g b)",
+                  "color(srgb -0.328686 0.491201 0.76185)", 0.001);
+    computed_near("hwb(from lab(100 104.3 -50.9) h w b)", "color(srgb 1.5935 0.58776 1.40555)",
+                  0.0001);
     // Out of gamut, to a ten-thousandth: the matrices.
     computed_near("rgb(from color(display-p3 0 1 0) r g b / alpha)",
                   "color(srgb -0.5116 1.01827 -0.31067)", 0.0001);
@@ -229,6 +282,71 @@ void test_the_computed_value() {
     CHECK_EQ(serialize_color("12px"), std::string{});
 }
 
+// The cascade's fold leaves a colour's math to the colour code: a relative
+// colour's channel keywords are its symbols, and an infinite chroma is its
+// own to clamp, not a length's 2^25.
+void test_the_cascade_leaves_colour_math_alone() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::math_context;
+    const length_context ctx;
+    CHECK_EQ(fold_math("rgb(from red calc(r * 2) g b)", ctx, math_context::any).text,
+             std::string{"rgb(from red calc(r * 2) g b)"});
+    CHECK_EQ(fold_math("lch(50 calc(infinity) 0)", ctx, math_context::any).text,
+             std::string{"lch(50 calc(infinity) 0)"});
+    // ...but an absolute rgb() is folded, because paint reads that text.
+    CHECK_EQ(fold_math("calc(1 + 1) rgb(calc(1 + 1) 0 0)", ctx, math_context::any).text,
+             std::string{"2 rgb(2 0 0)"});
+    CHECK_EQ(fold_math("oklch(0.5 calc(infinity) 0)", ctx, math_context::any).text,
+             std::string{"oklch(0.5 calc(infinity) 0)"});
+    computed("lch(50 calc(infinity) 0)", "lch(50 calc(infinity) 0)");
+    computed("lch(50 10 calc(infinity))", "lch(50 10 0)");
+}
+
+// The interpolation API: a colour in a named space, missing components
+// carried, and its serialisation back.
+void test_a_colour_in_a_space() {
+    using ctbrowser::style::css::color_from_space;
+    using ctbrowser::style::css::color_in_space;
+    using ctbrowser::style::css::space_color;
+    const std::optional<space_color> white = color_in_space("white", "oklch", {});
+    CHECK(white.has_value());
+    CHECK(std::fabs(white->c[0] - 1.0) < 0.001);
+    CHECK(white->none[2]); // an achromatic colour has no hue
+    const std::optional<space_color> gray = color_in_space("lab(50 none none)", "lch", {});
+    CHECK(gray.has_value());
+    CHECK(gray->none[1] && gray->none[2]);
+    CHECK_EQ(color_from_space(*gray, "lch"), std::string{"lch(50 none none)"});
+    CHECK_EQ(color_from_space(space_color{{1.0, 0.0, 0.0}, {}, 0.5, false}, "srgb"),
+             std::string{"color(srgb 1 0 0 / 0.5)"});
+    CHECK(!color_in_space("red", "cmyk", {}).has_value());
+    CHECK(!color_in_space("12px", "srgb", {}).has_value());
+}
+
+// HTML's colour well serialisation (html/semantics/forms/the-input-element/
+// color.window.js): eight bits per channel in sRGB, `#rrggbb` when opaque.
+void test_the_color_well() {
+    using ctbrowser::style::css::sanitize_color;
+    CHECK_EQ(sanitize_color("", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color(" #FFFFFF ", false, false), std::string{"#ffffff"});
+    CHECK_EQ(sanitize_color("#fff", false, false), std::string{"#ffffff"});
+    CHECK_EQ(sanitize_color("#ffffff;", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color("crimson", false, false), std::string{"#dc143c"});
+    CHECK_EQ(sanitize_color("currentColor", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color("inherit", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color("#ffffff08", false, false), std::string{"#ffffff"});
+    CHECK_EQ(sanitize_color("#ffffff08", false, true),
+             std::string{"color(srgb 1 1 1 / 0.0313725)"});
+    CHECK_EQ(sanitize_color("transparent", false, true), std::string{"color(srgb 0 0 0 / 0)"});
+    CHECK_EQ(sanitize_color("rgb(1,1,1,0.5)", false, true),
+             std::string{"color(srgb 0.00392157 0.00392157 0.00392157 / 0.501961)"});
+    CHECK_EQ(sanitize_color("rgb(1,1,1,0.5)", true, false),
+             std::string{"color(display-p3 0.00392157 0.00392157 0.00392157)"});
+    CHECK_EQ(sanitize_color("color(display-p3 3 none .2 / .6)", true, true),
+             std::string{"color(display-p3 3 0 0.2 / 0.6)"});
+    computed_near(sanitize_color("crimson", true, false),
+                  "color(display-p3 0.791711 0.191507 0.257367)", 0.0001);
+}
+
 } // namespace
 
 int main() {
@@ -236,5 +354,8 @@ int main() {
     test_lab_lch_and_color();
     test_relative_colours_and_mixing();
     test_the_computed_value();
+    test_the_cascade_leaves_colour_math_alone();
+    test_a_colour_in_a_space();
+    test_the_color_well();
     REPORT("css_values_color");
 }

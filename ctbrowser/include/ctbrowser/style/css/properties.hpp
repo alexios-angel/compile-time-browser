@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -184,6 +185,9 @@ struct color_context {
     // The bases for a `calc()` in a channel (`sign(1em - 10px)`); null is the
     // defaults.
     const length_context * lengths = nullptr;
+    // The element's used colour scheme is dark: `light-dark()` takes its
+    // second colour and the system colours their dark values.
+    bool dark = false;
 };
 // THE SPECIFIED SERIALISATION of a `<color>` on its own - what a colour
 // inside a gradient or a shadow reads back as - or empty for text that is
@@ -226,6 +230,33 @@ struct srgb_color {
 };
 [[nodiscard]] std::optional<srgb_color> resolve_color(std::string_view specified,
                                                       const color_context & ctx);
+// A COLOUR IN AN INTERPOLATION SPACE (CSS Color 4 §12), for whoever
+// interpolates - transitions, animations, gradients: the three channels in
+// the space's own units (a hue in degrees), which of them are missing after
+// §12.2's carrying forward and §4.4.1's powerless rule, and the alpha.
+// `space` is one of `srgb`, `srgb-linear`, `display-p3`, `a98-rgb`,
+// `prophoto-rgb`, `rec2020`, `xyz`, `xyz-d50`, `xyz-d65`, `hsl`, `hwb`,
+// `lab`, `lch`, `oklab`, `oklch`. nullopt when the text is not a colour, or
+// the space not one.
+struct space_color {
+    std::array<double, 3> c{};
+    std::array<bool, 3> none{};
+    double alpha = 1.0;
+    bool alpha_none = false;
+};
+[[nodiscard]] std::optional<space_color> color_in_space(std::string_view specified,
+                                                        std::string_view space,
+                                                        const color_context & ctx);
+// ...AND BACK: the computed-value serialisation of one, `color(srgb r g b)`
+// or `oklab(l a b)`, `none` kept. Empty when `space` is not one.
+[[nodiscard]] std::string color_from_space(const space_color & c, std::string_view space);
+// HTML's "serialize a color well control color" over a parsed `value`, for
+// `<input type=color>`: text that is not a `<color>` (or needs a context,
+// like `currentcolor`) is opaque black; without `alpha` the colour is made
+// opaque; `display_p3` gives `color(display-p3 r g b / a)`, otherwise the
+// colour is sRGB at eight bits per channel - `#rrggbb` without `alpha`,
+// `color(srgb r g b / a)` with it.
+[[nodiscard]] std::string sanitize_color(std::string_view value, bool display_p3, bool alpha);
 
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.

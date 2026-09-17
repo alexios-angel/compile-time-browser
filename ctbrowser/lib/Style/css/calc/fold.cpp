@@ -101,6 +101,39 @@ namespace detail {
     return value.substr(from, span.end - from - (span.closed ? 1 : 0));
 }
 
+// ONE PAST A COLOUR FUNCTION WHOSE MATH IS NOT THIS FILE'S, or `at` itself.
+// A relative colour's calc() binds `r` to the origin's channel - `rgb(from
+// red calc(r * 2) g b)` - which only the colour code (properties/color.cpp)
+// can do: folded here, every keyword was nought and every relative colour
+// computed black. A CSS Color 4 function's channel has its own clamp -
+// `lch(50 calc(infinity) 0)` keeps its infinite chroma where this file's 2^25
+// bound is a length's. Both evaluate their calc() against the same length
+// context when the computed value is asked for. An ABSOLUTE rgb()/hsl()/hwb()
+// is still folded: paint reads the cascade's text for it, and a calc() the
+// grammar could answer at parse time is a number by then anyway.
+constexpr std::string_view legacy_color_names[] = {"rgba(", "rgb(", "hsla(", "hsl(", "hwb("};
+constexpr std::string_view modern_color_names[] = {
+    "lab(",   "lch(",       "oklab(",      "oklch(",          "color(",
+    "alpha(", "color-mix(", "light-dark(", "contrast-color(", "color-layers("};
+
+[[nodiscard]] std::size_t color_function_end(std::string_view value, std::size_t at) noexcept {
+    if (const std::string_view name = name_at(value, at, modern_color_names); !name.empty()) {
+        return span_of(value, at, name).end;
+    }
+    const std::string_view name = name_at(value, at, legacy_color_names);
+    if (name.empty()) { return at; }
+    std::size_t scan = at + name.size();
+    while (scan < value.size() && html_whitespace.find(value[scan]) != std::string_view::npos) {
+        ++scan;
+    }
+    const std::string_view rest = value.substr(scan);
+    if (!ascii_istarts_with(rest, "from") || rest.size() < 5 ||
+        html_whitespace.find(rest[4]) == std::string_view::npos) {
+        return at;
+    }
+    return span_of(value, at, name).end;
+}
+
 [[nodiscard]] bool has_percentage(std::string_view text) {
     const token_stream ts = tokenize(text);
     for (const css_token & t : ts.tokens) {
@@ -334,6 +367,11 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
             out.append(value.substr(at, quoted - at));
             at = quoted;
+            continue;
+        }
+        if (const std::size_t past = color_function_end(value, at); past != at) {
+            out.append(value.substr(at, past - at));
+            at = past;
             continue;
         }
         const std::string_view name = math_name_at(value, at);
