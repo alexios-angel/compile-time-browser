@@ -2189,6 +2189,31 @@ std::optional<srgb_color> resolve_color(std::string_view specified, const color_
                       static_cast<float>(srgb.alpha_none ? 0.0 : srgb.alpha)};
 }
 
+std::optional<space_color> color_in_space(std::string_view specified, std::string_view space_name,
+                                          const color_context & ctx) {
+    const std::optional<space> target = interpolation_space(space_name);
+    if (!target) { return std::nullopt; }
+    const std::unique_ptr<parsed> tree = parse_text(trim(specified, html_whitespace));
+    if (!tree) { return std::nullopt; }
+    const resolve_context rc{ctx.current_color, ctx.lengths, ctx.dark};
+    const std::optional<resolved> r = resolve(*tree, rc, 0);
+    if (!r) { return std::nullopt; }
+    const resolved in = convert(*r, *target);
+    return space_color{in.c, in.none, in.alpha, in.alpha_none};
+}
+
+std::string color_from_space(const space_color & c, std::string_view space_name) {
+    const std::optional<space> s = interpolation_space(space_name);
+    if (!s) { return {}; }
+    resolved r;
+    r.cs = *s;
+    r.c = c.c;
+    r.none = c.none;
+    r.alpha = c.alpha;
+    r.alpha_none = c.alpha_none;
+    return serialize_computed(r);
+}
+
 std::string sanitize_color(std::string_view value, bool display_p3, bool alpha) {
     // "Parsing value": a CSS <color> with no context, so `currentcolor` and
     // `inherit` are failures and opaque black. A missing component is nought.

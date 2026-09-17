@@ -13,6 +13,7 @@
 #include "check.hpp"
 
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -281,6 +282,26 @@ void test_the_computed_value() {
     CHECK_EQ(serialize_color("12px"), std::string{});
 }
 
+// The interpolation API: a colour in a named space, missing components
+// carried, and its serialisation back.
+void test_a_colour_in_a_space() {
+    using ctbrowser::style::css::color_from_space;
+    using ctbrowser::style::css::color_in_space;
+    using ctbrowser::style::css::space_color;
+    const std::optional<space_color> white = color_in_space("white", "oklch", {});
+    CHECK(white.has_value());
+    CHECK(std::fabs(white->c[0] - 1.0) < 0.001);
+    CHECK(white->none[2]); // an achromatic colour has no hue
+    const std::optional<space_color> gray = color_in_space("lab(50 none none)", "lch", {});
+    CHECK(gray.has_value());
+    CHECK(gray->none[1] && gray->none[2]);
+    CHECK_EQ(color_from_space(*gray, "lch"), std::string{"lch(50 none none)"});
+    CHECK_EQ(color_from_space(space_color{{1.0, 0.0, 0.0}, {}, 0.5, false}, "srgb"),
+             std::string{"color(srgb 1 0 0 / 0.5)"});
+    CHECK(!color_in_space("red", "cmyk", {}).has_value());
+    CHECK(!color_in_space("12px", "srgb", {}).has_value());
+}
+
 // HTML's colour well serialisation (html/semantics/forms/the-input-element/
 // color.window.js): eight bits per channel in sRGB, `#rrggbb` when opaque.
 void test_the_color_well() {
@@ -312,6 +333,7 @@ int main() {
     test_lab_lch_and_color();
     test_relative_colours_and_mixing();
     test_the_computed_value();
+    test_a_colour_in_a_space();
     test_the_color_well();
     REPORT("css_values_color");
 }
