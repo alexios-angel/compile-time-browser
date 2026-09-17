@@ -763,6 +763,25 @@ void test_arguments() {
                   "3");
     // A parameter of that name shadows it, which is what makes this safe to add.
     expect_result("function shadow(arguments) { return arguments; } return shadow(7);", "7");
+    // A DEFAULT may mention it (10.2.11 step 15-22), body or no body.
+    expect_result("function d(x = arguments[2], y = arguments.length, z) { return x + ':' + y; }"
+                  "return d(undefined, undefined, 'third');",
+                  "third:3");
+}
+
+// A CLOSURE MADE BY ITS OWN INITIALISER, in a block: `let y = () => y` boxes
+// `y`, and the cell has to exist before the arrow is made or the arrow holds
+// the register's undefined and never the cell. At a function's top level the
+// name is hoisted and boxed at entry, so only the block form was wrong.
+void test_self_referencing_block_closure() {
+    expect_result("function f() { { let y = () => y; return typeof y(); } } return f();",
+                  "function");
+    expect_result("function f() { let y = () => y; return typeof y(); } return f();", "function");
+    expect_result(
+        "function f() { if (true) { const g = function () { return g; }; return g() === g; } }"
+        "return f();",
+        "true");
+    expect_result("{ let y = () => y; var out = typeof y(); } return out;", "function");
 }
 
 // A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME.
@@ -995,6 +1014,7 @@ int main() {
     test_template_holes_capture();
     test_computed_calls_pass_their_arguments();
     test_arguments();
+    test_self_referencing_block_closure();
     test_named_function_expressions();
     test_anonymous_functions_take_the_binding_name();
     test_array_patterns_iterate();

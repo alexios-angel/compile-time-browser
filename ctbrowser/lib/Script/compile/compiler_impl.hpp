@@ -464,6 +464,11 @@ public:
     // literal's method needs its home object wired at all. `root` is the
     // function node itself, whose own parameters and body are walked.
     [[nodiscard]] bool mentions_super(std::int32_t idx, bool root) const;
+    // IS THERE A FUNCTION, ARROW OR CLASS ANYWHERE UNDER `idx`? A boxed
+    // lexical binding whose initialiser makes a closure needs its cell BEFORE
+    // the initialiser runs (`let y = () => y`); one whose initialiser cannot
+    // keeps the shorter sequence. See compile_stmt's var_decl.
+    [[nodiscard]] bool contains_closure(std::int32_t idx) const;
     [[nodiscard]] bool is_captured(std::string_view name) const;
 
     // Read up to `count` hex digits after position `at`, leaving `at` on the

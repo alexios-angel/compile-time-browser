@@ -217,6 +217,24 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // decides the ReferenceError from this offset (as
             // predeclare_locals records it for a function body's own).
             if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
+            if (fn().locals.back().boxed && decl.a >= 0 && contains_closure(decl.a)) {
+                // THE CELL FIRST when the initialiser makes a closure: `{ let
+                // y = () => y; }` has the arrow capture `y` while it is being
+                // initialised, and op::closure takes what is in the register
+                // at that moment - boxing afterwards made a second cell the
+                // arrow never saw, so `y()` read undefined (at a function's
+                // top level the name is hoisted and boxed at entry, which is
+                // this same order). The value goes in through the cell.
+                proto().emit(instruction{op::load_undef, r});
+                proto().emit(instruction{op::new_cell, r});
+                const std::uint32_t mark = reg_mark();
+                const std::uint16_t tmp = alloc_reg();
+                compile_named_expr(decl.a, tmp, decl.text);
+                if (is_using_decl(n)) { emit_using_add(tmp, n.text == "await using"); }
+                proto().emit(instruction{op::cell_set, r, tmp});
+                release_to(mark);
+                continue;
+            }
             if (decl.a >= 0) {
                 compile_named_expr(decl.a, r, decl.text);
             } else {

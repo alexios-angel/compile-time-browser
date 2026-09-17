@@ -268,8 +268,14 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     // function makes one they can capture.
     std::uint16_t arguments_slot = 0;
     bool arguments_boxed = false;
-    const bool wants_arguments = !out_.functions[index].is_arrow && mentions_arguments(n.a) &&
-                                 find_local_in_current_scope("arguments") == nullptr;
+    // A DEFAULT MAY MENTION IT TOO (10.2.11 step 15-22: `arguments` is
+    // needed when the parameters or the body say it): `function f(x =
+    // arguments[2])` read an unresolvable name.
+    const bool wants_arguments =
+        !out_.functions[index].is_arrow &&
+        (mentions_arguments(n.a) ||
+         std::ranges::any_of(params, [&](std::int32_t p) { return mentions_arguments(p); })) &&
+        find_local_in_current_scope("arguments") == nullptr;
     if (wants_arguments) {
         arguments_slot = declare_local("arguments");
         proto().emit(instruction{op::make_arguments, arguments_slot});
