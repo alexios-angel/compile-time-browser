@@ -182,11 +182,32 @@ void test_wellformedness_is_fatal() {
         const xml_parse_result out = parse_xml(doc, "<a><input checked/></a>");
         CHECK(!out.error.empty());
     }
+    // Namespace well-formedness: a name is a QName, one colon at most and
+    // neither half empty.
+    for (const std::string_view bad :
+         {"<a :x=\"1\"/>", "<a ::=\"1\"/>", "<a xmlns:=\"urn:x\"/>", "<:a/>", "<a:b:c/>"}) {
+        atom_table atoms;
+        document doc{atoms};
+        const xml_parse_result out = parse_xml(doc, bad);
+        CHECK(!out.error.empty());
+    }
     {
         atom_table atoms;
         document doc{atoms};
         const xml_parse_result out = parse_xml(doc, "<a>x</a>");
         CHECK(out.error.empty());
+    }
+    // A lone surrogate in character data is U+FFFD, not a fatal error.
+    {
+        atom_table atoms;
+        document doc{atoms};
+        const xml_parse_result out =
+            parse_xml(doc, "<a>x\xED\xA0\xBCy<![CDATA[\xED\xB0\x80]]></a>");
+        CHECK(out.error.empty());
+        const auto r = doc.read();
+        const auto kids = r.children(r.root());
+        CHECK_EQ(std::string{r.text(kids[0])}, std::string{"x\xEF\xBF\xBDy"});
+        CHECK_EQ(std::string{r.text(kids[1])}, std::string{"\xEF\xBF\xBD"});
     }
 }
 

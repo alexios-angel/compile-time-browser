@@ -67,9 +67,13 @@
 namespace ctbrowser {
 
 // The XHTML and SVG namespace URIs, which decide an element's `node_ns` - the
-// distinction that gates script execution, <style> collection and page text.
+// distinction that gates script execution, <style> collection and page text -
+// and MathML's, which is `node_ns::other` with the URI recorded on the
+// document (document::element_namespace): the HTML parser's second foreign
+// vocabulary, and the one `<math>` puts an element in.
 inline constexpr std::string_view xhtml_namespace = "http://www.w3.org/1999/xhtml";
 inline constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
+inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Math/MathML";
 inline constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
 inline constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 

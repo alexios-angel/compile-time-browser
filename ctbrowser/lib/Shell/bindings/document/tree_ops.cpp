@@ -27,12 +27,25 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
     case node_kind::element:
         made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node),
                                     from.prefixed(node));
+        // The document-side namespace of an `other` element (MathML), and
         // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
+        if (const atom uri = from.element_namespace(node)) {
+            doc_->set_element_namespace(made, uri);
+        }
         for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
         break;
     }
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
+    // A <template>'s CONTENTS travel with it (HTML 4.12.3): the parser put
+    // them in a fragment beside the element, not under it, and a
+    // `div.innerHTML = "<template>..."` that left them behind gave the page
+    // a template with an empty `.content`.
+    if (const node_id contents = from.template_content(node)) {
+        const node_id copied = doc_->create_fragment();
+        doc_->set_template_content(made, copied);
+        for (const node_id child : from.children(contents)) { copy_subtree(from, child, copied); }
+    }
     return made;
 }
 
@@ -69,6 +82,9 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         // it off `element_ns` alone would answer for the wrong one.
         if (const auto it = src.namespaces_.find(source.key()); it != src.namespaces_.end()) {
             namespaces_.emplace(made.key(), it->second);
+        }
+        if (const atom uri = from.element_namespace(source)) {
+            doc_->set_element_namespace(made, uri);
         }
         // THE WHOLE ATTRIBUTE, namespace and all. Copying `(name, value)` put
         // a cloned `xlink:href` in no namespace, and `Node-cloneNode-svg.html`
@@ -226,18 +242,91 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
 // builds content. `tree_builder::parse` replaces the document's root, so it
 // runs against a SCRATCH document; that document shares this one's atom table,
 // so copying across needs no name remapping.
+//
+// IN THE ELEMENT'S OWN CONTEXT (HTML 13.2.9): `table.innerHTML = "<tr>"` is a
+// row inside a tbody and `svg.innerHTML = "<circle/>"` an SVG circle. Parsed
+// as a <body>'s children, the first was nothing at all - "in body" ignores a
+// <tr> - and the second an HTML unknown element.
+//
+// IN AN XML DOCUMENT it is the XML fragment parsing algorithm (HTML 13.4):
+// the markup wrapped in an element that declares every namespace in scope at
+// the context element - nearest declaration wins, the context's own namespace
+// as the default when nothing declares one - and parsed as XML. `context_ns`
+// is that namespace URI. An ill-formed fragment is the empty handle, and the
+// caller leaves the element as it was (the specification throws SyntaxError).
+namespace {
+[[nodiscard]] node_id parse_fragment_for(const document & doc, document & scratch, node_id context,
+                                         std::string_view markup, std::string_view context_ns) {
+    const auto txn = doc.read();
+    const bool element = txn.kind(context).value_or(node_kind::element) == node_kind::element;
+    if (!doc.xml()) {
+        return parse_html_fragment(
+            scratch, markup, element ? txn.local_name(context) : std::string_view{"body"},
+            element ? txn.element_ns(context) : node_ns::html, doc.scripting());
+    }
+    const atom_table & atoms = doc.atoms();
+    const auto quoted = [](std::string_view value) {
+        std::string out;
+        for (const char c : value) {
+            out += c == '&' ? "&amp;" : c == '"' ? "&quot;" : c == '<' ? "&lt;" : std::string{c};
+        }
+        return out;
+    };
+    std::string wrapper = "<x";
+    std::vector<std::string_view> declared;
+    bool has_default = false;
+    for (node_id at = element ? context : node_id{}; at; at = txn.parent(at)) {
+        for (const attribute & a : txn.attributes(at)) {
+            // By NAME: the XML parser keeps an `xmlns` declaration as the
+            // attribute it was written as, in no namespace.
+            const std::string_view name = atoms.text(a.name);
+            if (name != "xmlns" && !name.starts_with("xmlns:")) { continue; }
+            if (std::ranges::find(declared, name) != declared.end()) { continue; }
+            declared.push_back(name);
+            has_default = has_default || name == "xmlns";
+            wrapper += " " + std::string{name} + "=\"" + quoted(a.value) + "\"";
+        }
+    }
+    if (!has_default && !context_ns.empty()) { wrapper += " xmlns=\"" + quoted(context_ns) + "\""; }
+    wrapper += ">";
+    wrapper += markup;
+    wrapper += "</x>";
+    const xml_parse_result read = parse_xml(scratch, wrapper);
+    return read.error.empty() ? read.tree.root : node_id{};
+}
+} // namespace
+
+namespace {
+[[nodiscard]] bool is_html_template(const document & doc, node_id id) {
+    const auto txn = doc.read();
+    return txn.kind(id).value_or(node_kind::text) == node_kind::element &&
+           txn.element_ns(id) == node_ns::html && txn.local_name(id) == "template";
+}
+} // namespace
+
 void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
     if (!target || atoms_ == nullptr) { return; }
+    // `template.innerHTML = markup` replaces the template's CONTENTS, not its
+    // (always empty) child list - HTML 4.12.3, DOM Parsing's innerHTML setter.
+    node_id into = target;
+    if (is_html_template(*doc_, target)) {
+        into = doc_->template_content(target);
+        if (!into) {
+            into = doc_->create_fragment();
+            doc_->set_template_content(target, into);
+        }
+    }
+    document scratch{*atoms_};
+    const node_id body = parse_fragment_for(*doc_, scratch, target, markup, namespace_of(target));
+    if (!body) { return; }
     {
         const auto txn = doc_->read();
-        const std::span<const node_id> kids = txn.children(target);
+        const std::span<const node_id> kids = txn.children(into);
         const std::vector<node_id> existing{kids.begin(), kids.end()};
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
-    document scratch{*atoms_};
-    const node_id body = parse_html_body_fragment(scratch, markup);
     const auto from = scratch.read();
-    for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
+    for (const node_id child : from.children(body)) { copy_subtree(from, child, into); }
     mutated();
 }
 
@@ -271,12 +360,36 @@ namespace {
     }
     return out;
 }
-[[nodiscard]] bool serializes_raw(std::string_view tag) {
+// Whose children are written unescaped - `<noscript>`'s only while
+// scripting is enabled, since only then did the parser read them as text.
+[[nodiscard]] bool serializes_raw(std::string_view tag, bool scripting) {
     for (const std::string_view raw :
-         {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript"}) {
+         {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext"}) {
         if (tag == raw) { return true; }
     }
-    return false;
+    return tag == "noscript" && scripting;
+}
+// "Serializes as void": the void elements and four obsolete ones that never
+// had children either. Their children are not written, and innerHTML on one
+// is the empty string.
+[[nodiscard]] bool serializes_as_void(std::string_view tag) {
+    return ctbrowser::html::is_void_element(tag) || tag == "basefont" || tag == "bgsound" ||
+           tag == "frame" || tag == "keygen";
+}
+// An attribute's serialised name, HTML 13.3: by NAMESPACE, not by the prefix
+// it was set with. `setAttributeNS(XML, "abc:foo")` comes out as `xml:foo`,
+// an `xmlns`-namespace attribute as `xmlns` or `xmlns:local`, an XLink one as
+// `xlink:local`, and anything else by its qualified name.
+[[nodiscard]] std::string attribute_serialized_name(const atom_table & atoms, const attribute & a) {
+    const std::string_view ns = atoms.text(a.ns);
+    const std::string_view local = attribute_local_name(atoms, a);
+    if (ns.empty()) { return std::string{local}; }
+    if (ns == xml_namespace) { return "xml:" + std::string{local}; }
+    if (ns == xmlns_namespace) {
+        return local == "xmlns" ? std::string{"xmlns"} : "xmlns:" + std::string{local};
+    }
+    if (ns == "http://www.w3.org/1999/xlink") { return "xlink:" + std::string{local}; }
+    return std::string{atoms.text(a.name)};
 }
 } // namespace
 
@@ -307,7 +420,8 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
         }
     }
     document scratch{*atoms_};
-    const node_id body = parse_html_body_fragment(scratch, markup);
+    const node_id body = parse_fragment_for(*doc_, scratch, parent, markup, namespace_of(parent));
+    if (!body) { return; }
     const auto from = scratch.read();
     const node_id fragment = doc_->create_fragment();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }
@@ -321,12 +435,19 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
     mutated();
 }
 
-// HTML 13.2, "serializing HTML fragments": the children of `target`, or with
-// `outer` the node itself, as markup.
+// HTML 13.3, "serializing HTML fragments": the children of `target`, or with
+// `outer` the node itself, as markup. IN AN XML DOCUMENT it is the XML
+// serialisation instead (DOM Parsing 2.4, the innerHTML/outerHTML getters):
+// `<a xmlns="http://www.w3.org/1999/xhtml"></a>`, empty elements self-closed.
 std::string dom_bindings::serialize_html(node_id target, bool outer, bool serializable_shadow_roots,
                                          const std::vector<node_id> & shadow_roots) const {
     const auto txn = doc_->read();
     std::string out;
+    if (doc_->xml()) {
+        if (outer) { return serialize_xml(target, ""); }
+        for (const node_id child : txn.children(target)) { out += serialize_xml(child, ""); }
+        return out;
+    }
     // Skip the per-element shadow-root lookup entirely when nothing asked for
     // one, so `innerHTML`/`outerHTML` stay byte identical and pay nothing.
     const bool want_shadow = serializable_shadow_roots || !shadow_roots.empty();
@@ -357,9 +478,20 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         for (const node_id child : txn.children(root)) { wr(child); }
         out += "</template>";
     };
+    // The children an element serialises: a <template>'s are its CONTENTS.
+    const auto children_of = [&](node_id node) {
+        if (const node_id contents = doc_->template_content(node)) {
+            return txn.children(contents);
+        }
+        return txn.children(node);
+    };
     const auto write = [&](auto && self, node_id node, bool raw) -> void {
         switch (txn.kind(node).value_or(node_kind::element)) {
+        // A CDATA section in an HTML document is written as the Text node it
+        // is by inheritance - escaped - since the `<![CDATA[` form would not
+        // parse back as text here (serializing-cdata-in-html-document.html).
         case node_kind::text:
+        case node_kind::cdata_section:
             out += raw ? std::string{txn.text(node)} : escape_html(txn.text(node), false);
             return;
         case node_kind::comment:
@@ -367,26 +499,20 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
             out += txn.text(node);
             out += "-->";
             return;
-        // HTML 13.3, the fragment serialisation algorithm's three remaining
-        // rows: a PI is its target, a space and its data; a doctype is
-        // `<!DOCTYPE name>` and nothing else - the identifiers are not written;
-        // a CDATA section is its data between the brackets, unescaped.
+        // HTML 13.3, the fragment serialisation algorithm's two remaining
+        // rows: a PI is `<?target data?>`, a doctype is `<!DOCTYPE name>` and
+        // nothing else - the identifiers are not written.
         case node_kind::processing_instruction:
             out += "<?";
             out += atoms_->text(txn.name(node));
             out += " ";
             out += txn.text(node);
-            out += ">";
+            out += "?>";
             return;
         case node_kind::document_type:
             out += "<!DOCTYPE ";
             out += atoms_->text(txn.name(node));
             out += ">";
-            return;
-        case node_kind::cdata_section:
-            out += "<![CDATA[";
-            out += txn.text(node);
-            out += "]]>";
             return;
         case node_kind::document:
         case node_kind::document_fragment:
@@ -395,20 +521,21 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         case node_kind::element: break;
         }
         const std::string_view tag = atoms_->text(txn.tag(node).value_or(atom{}));
+        const bool html = txn.element_ns(node) == node_ns::html;
         out += "<";
         out += tag;
         for (const attribute & a : txn.attributes(node)) {
             out += " ";
-            out += atoms_->text(a.name);
+            out += attribute_serialized_name(*atoms_, a);
             out += "=\"";
             out += escape_html(a.value, true);
             out += "\"";
         }
         out += ">";
-        if (ctbrowser::html::is_void_element(tag)) { return; }
+        if (html && serializes_as_void(tag)) { return; }
         emit_shadow(node, [&](node_id c) { self(self, c, false); });
-        const bool raw_below = txn.element_ns(node) == node_ns::html && serializes_raw(tag);
-        for (const node_id child : txn.children(node)) { self(self, child, raw_below); }
+        const bool raw_below = html && serializes_raw(tag, doc_->scripting());
+        for (const node_id child : children_of(node)) { self(self, child, raw_below); }
         out += "</";
         out += tag;
         out += ">";
@@ -417,10 +544,17 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         write(write, target, false);
         return out;
     }
-    // `innerHTML`/`getHTML` on the target: its own shadow root comes before its
-    // children, exactly as a descendant host's would inside `write`.
+    // `innerHTML`/`getHTML` on the target: nothing for an element that
+    // serialises as void, raw text under a raw-text one, and its own shadow
+    // root before its children, exactly as a descendant host's would inside
+    // `write`.
+    const bool target_html = txn.kind(target).value_or(node_kind::text) == node_kind::element &&
+                             txn.element_ns(target) == node_ns::html;
+    const std::string_view target_tag = atoms_->text(txn.tag(target).value_or(atom{}));
+    if (target_html && serializes_as_void(target_tag)) { return out; }
+    const bool raw = target_html && serializes_raw(target_tag, doc_->scripting());
     emit_shadow(target, [&](node_id c) { write(write, c, false); });
-    for (const node_id child : txn.children(target)) { write(write, child, false); }
+    for (const node_id child : children_of(target)) { write(write, child, raw); }
     return out;
 }
 

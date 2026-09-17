@@ -83,7 +83,7 @@ dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fres
 value dom_bindings::make_html_document(context & cx, const std::string * title) {
     document & fresh = *(primary_ == nullptr ? *this : *primary_)
                             .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
+    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>", false);
     dom_bindings & made = adopt_second_document(cx, fresh);
     if (title != nullptr) {
         const node_id head = made.first_html_element("head");

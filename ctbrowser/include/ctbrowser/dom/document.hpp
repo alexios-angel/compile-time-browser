@@ -104,6 +104,10 @@ public:
                                                       std::string_view local) const noexcept;
     [[nodiscard]] bool has_attribute_ns(node_id, std::string_view ns,
                                         std::string_view local) const noexcept;
+    // An `other` element's recorded namespace URI - see document::element_namespace.
+    [[nodiscard]] atom element_namespace(node_id) const noexcept;
+    // A <template>'s contents fragment - see document::template_content.
+    [[nodiscard]] node_id template_content(node_id) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] node_id document_node() const noexcept;
@@ -221,6 +225,16 @@ public:
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
 
+    // THE NAMESPACE URI OF AN ELEMENT `node_ns` DOES NOT NAME - an `other`
+    // element's. `node` has no room for a URI (node_ns says why), and a page
+    // holds a handful of these: the HTML parser's MathML, an XML document's
+    // own vocabulary. Kept beside the template contents, by element, so the
+    // parsers can record what they know and `namespaceURI` can answer it.
+    // The empty atom for an element nothing recorded; an HTML or SVG
+    // element's URI follows from its `element_ns` and is not kept here.
+    [[nodiscard]] atom element_namespace(node_id element) const;
+    void set_element_namespace(node_id element, atom uri);
+
     // Shadow roots are detached fragments with sparse host/mode metadata.
     // Closed mode affects exposure to script, not these native tree queries.
     struct shadow_tree {
@@ -319,6 +333,15 @@ public:
     [[nodiscard]] bool xml() const noexcept { return xml_; }
     void set_xml(bool on) noexcept { xml_ = on; }
 
+    // THE SCRIPTING FLAG (HTML 13.2.6.4.4), which is the document's: on for a
+    // document with a browsing context, off for one nothing will ever run a
+    // script in - DOMParser's, createHTMLDocument's. The parser reads it for
+    // `<noscript>` (raw text when on, elements when off), and so must every
+    // fragment parse on the document afterwards, which is why it is kept
+    // rather than passed. `parse_html` records the flag it was given.
+    [[nodiscard]] bool scripting() const noexcept { return scripting_; }
+    void set_scripting(bool on) noexcept { scripting_ = on; }
+
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
     // that is what a page observes anyway); the loader that has the bytes sets
@@ -335,6 +358,7 @@ private:
     // FALSE by default: every document this engine has ever built came from the
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
     bool xml_ = false;
+    bool scripting_ = true;
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
@@ -355,11 +379,10 @@ private:
     // unprefixed and unnamespaced, and `dom/nodes/Attr-prefix.html` asserts
     // both halves against each other.
     //
-    // The specification lists ten names; this matches the three PREFIXES those
-    // ten use, which differs only for something like `xlink:actuate`'s
-    // unlisted neighbours - and putting `xlink:anything` in the XLink namespace
-    // is what an author writing it means. Costs one enum compare on every
-    // attribute of an HTML document, which is where it returns.
+    // The specification's ten names, exactly - `xml:base` is not one of them
+    // and stays an attribute in no namespace, as webkit02.dat asserts. Costs
+    // one enum compare on every attribute of an HTML document, which is where
+    // it returns.
     [[nodiscard]] atom foreign_namespace_of(node_ns element_ns, atom name) const;
 
     // --- the write log, for the MutationObserver diff ---------------------
@@ -390,6 +413,7 @@ private:
     // because a page holds a few and a lookup happens once per `.content`
     // read.
     std::vector<std::pair<node_id, node_id>> template_contents_;
+    flat_map<std::uint64_t, atom> element_namespaces_;
     flat_map<std::uint64_t, node_id> shadow_roots_;
     flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
     node_id root_{};

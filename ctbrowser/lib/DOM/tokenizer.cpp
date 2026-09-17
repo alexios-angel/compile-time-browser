@@ -240,6 +240,8 @@ token tokenizer::rcdata_or_rawtext_state(bool decode_references) {
 // or `>`. `after` is where that byte is. Starves when the view ends inside
 // what could still become the end tag.
 bool tokenizer::appropriate_end_tag_ahead(std::size_t & after) const {
+    // No start tag emitted (a fragment parse): no end tag is appropriate.
+    if (close_tag_.empty()) { return false; }
     const std::size_t end = at_ + 2 + close_tag_.size();
     if (end > input_.size()) {
         // Not enough bytes: could the rest of the view be its prefix?
@@ -448,7 +450,7 @@ token tokenizer::tag_name_state(token & out) {
             ++at_;
             continue;
         }
-        out.name += preserve_case_ ? c : ascii_lower(c);
+        out.name += ascii_lower(c);
         ++at_;
     }
     if (eof()) {
@@ -457,18 +459,12 @@ token tokenizer::tag_name_state(token & out) {
         end.kind = token_kind::end_of_file;
         return end;
     }
-    // THE ROOT <svg> IS THE AWKWARD ONE. Its start tag is read while the tree
-    // builder is still in HTML - foreign content does not begin until the
-    // element is on the stack - so `preserve_case_` is false here and the
-    // element that actually carries `viewBox` would be the one element whose
-    // attributes get folded. The name has just been read, so the decision can
-    // be made from it: `<svg`, whatever the tree builder currently thinks.
-    return attributes(out, preserve_case_ || ascii_iequals(out.name, "svg"));
+    return attributes(out);
 }
 
 // 13.2.5.32-40: before attribute name through after attribute value, and
 // the self-closing start tag state.
-token tokenizer::attributes(token & out, bool preserve_case) {
+token tokenizer::attributes(token & out) {
     while (true) {
         while (!eof() && is_space(input_[at_])) { ++at_; }
         if (eof()) { break; }
@@ -500,7 +496,7 @@ token tokenizer::attributes(token & out, bool preserve_case) {
             if (c == '\0') {
                 attribute.name += replacement;
             } else {
-                attribute.name += preserve_case ? c : ascii_lower(c);
+                attribute.name += ascii_lower(c);
             }
             ++at_;
         }
