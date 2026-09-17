@@ -38,7 +38,7 @@ std::expected<bool, dom_error> update_tokens(document & doc, node_id element, at
         if (!text.empty()) { text += ' '; }
         text += token;
     }
-    auto written = doc.set_attribute(element, attribute, text);
+    const auto written = doc.set_attribute(element, attribute, text);
     if (!written) { return std::unexpected{written.error()}; }
     return true;
 }
