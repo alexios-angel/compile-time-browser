@@ -179,11 +179,14 @@ public:
     // Replace the whole value - what `input.value = "x"` does. The caret goes
     // to the end, which is where a browser puts it, and the control counts as
     // edited so the `value` attribute stops being the answer.
-    static void set_value(control_state & control, std::string text);
+    // Answers whether the value CHANGED: HTML 4.10.5.3 moves the caret to the
+    // end (and resets the selection direction) only when the new value
+    // differs from the old (selection-after-content-change.html).
+    static bool set_value(control_state & control, std::string text);
     // The same through the input's type state: the value sanitization
     // algorithm runs over `text` first (HTML 4.10.5.1 - `input.value = "a\nb"`
     // is "ab" on a text input and "" on a number one).
-    void assign_value(const read_txn & txn, atom_table & atoms, node_id id, std::string text);
+    bool assign_value(const read_txn & txn, atom_table & atoms, node_id id, std::string text);
 
     // Insert typed text at the caret, replacing any selection.
     void insert_text(control_state & control, std::string_view text);

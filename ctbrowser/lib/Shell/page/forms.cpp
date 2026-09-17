@@ -141,10 +141,10 @@ std::vector<std::pair<node_id, std::string>> form_store::settle_types(const read
     return writes;
 }
 
-void form_store::assign_value(const read_txn & txn, atom_table & atoms, node_id id,
+bool form_store::assign_value(const read_txn & txn, atom_table & atoms, node_id id,
                               std::string text) {
     control_state & control = state_of(txn, atoms, id);
-    set_value(control, sanitized(txn, atoms, id, control.type, std::move(text)));
+    return set_value(control, sanitized(txn, atoms, id, control.type, std::move(text)));
 }
 
 const control_state * form_store::find(node_id id) const {
@@ -152,11 +152,13 @@ const control_state * form_store::find(node_id id) const {
     return it == states_.end() ? nullptr : &it->second;
 }
 
-void form_store::set_value(control_state & control, std::string text) {
+bool form_store::set_value(control_state & control, std::string text) {
+    control.value_edited = true;
+    if (control.value == text) { return false; }
     control.value = std::move(text);
     control.caret = control.value.size();
     control.selection = control.caret;
-    control.value_edited = true;
+    return true;
 }
 
 void form_store::insert_text(control_state & control, std::string_view text) {

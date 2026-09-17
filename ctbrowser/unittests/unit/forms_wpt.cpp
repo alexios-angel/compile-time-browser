@@ -288,6 +288,20 @@ void test_output_and_textarea() {
 
 } // namespace
 
+// --- the selection across a value change, HTML 4.10.5.3 ------------------------------
+
+void test_selection_survives_the_same_value() {
+    // selection-after-content-change.html: the same value leaves the
+    // selection alone; a different one moves the caret to the end and resets
+    // the direction.
+    is("(function () { var i = document.createElement('input'); i.value = 'hello';"
+       " i.setSelectionRange(1, 3, 'backward'); i.value = 'hello';"
+       " var o = [i.selectionStart, i.selectionEnd, i.selectionDirection];"
+       " i.value = 'hello!'; o.push(i.selectionStart, i.selectionEnd, i.selectionDirection);"
+       " return o.join(); })()",
+       "1,3,backward,6,6,none");
+}
+
 // --- the list of options, HTML 4.10.7 -------------------------------------------------
 
 void test_list_of_options_nesting() {
@@ -366,6 +380,7 @@ int main() {
     test_value_sanitization_and_type_change();
     test_autocomplete_tokens();
     test_list_of_options_nesting();
+    test_selection_survives_the_same_value();
     test_selection_api();
     test_form_data_and_submission();
     test_output_and_textarea();

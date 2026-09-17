@@ -570,7 +570,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                         // attribute stops being the answer - otherwise setting
                         // it to "" would be undone by the next read - and the
                         // type's sanitization runs over what was assigned.
-                        forms_->assign_value(read, *atoms_, id, std::move(text));
+                        if (forms_->assign_value(read, *atoms_, id, std::move(text))) {
+                            // A changed value resets the selection direction
+                            // with the caret (the slot control_methods keeps).
+                            const value self = c.current_this();
+                            if (self.is_object()) {
+                                (void)static_cast<script::object_object *>(self.as_heap())
+                                    ->erase("__selectionDirection");
+                            }
+                        }
                         // The browser has to learn a control changed, or the
                         // paint is stale until something else marks it.
                         wrote_to_control_ = true;
