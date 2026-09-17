@@ -249,6 +249,199 @@ module {
               "a fresh fingerprint and forged member reports cannot supply presence");
     }
 
+    const std::string guarded =
+        replaced(replaced(valueSource, "    %Object =", R"MLIR(
+    %absent = ctjs.unary not %element
+    %testElement = ctjs.truthy %absent
+    %guarded = scf.if %testElement -> (!ctjs.value) {
+      %empty = ctjs.create_object
+      ctjs.store_global "unreachable", %empty
+      scf.yield %empty : !ctjs.value
+    } else {
+    %Object =)MLIR"),
+                 "    ctjs.return %loop#2",
+                 "      scf.yield %loop#2 : !ctjs.value\n    }\n    ctjs.return %guarded");
+    const std::string truthyGuard = replaced(replaced(valueSource, "    %Object =", R"MLIR(
+    %testElement = ctjs.truthy %element
+    %guarded = scf.if %testElement -> (!ctjs.value) {
+    %Object =)MLIR"),
+                                             "    ctjs.return %loop#2", R"MLIR(
+      scf.yield %loop#2 : !ctjs.value
+    } else {
+      %empty = ctjs.create_object
+      ctjs.store_global "unreachable", %empty
+      scf.yield %empty : !ctjs.value
+    }
+    ctjs.return %guarded)MLIR");
+    const std::string nestedDiscarded =
+        replaced(guarded, "      ctjs.store_global \"unreachable\", %empty", R"MLIR(
+      %innerAbsent = ctjs.unary not %element
+      %innerTest = ctjs.truthy %innerAbsent
+      scf.if %innerTest {
+        ctjs.store_global "unreachableThen", %empty
+      } else {
+        ctjs.store_global "unreachableElse", %empty
+      })MLIR");
+    const std::string nestedSelected = replaced(replaced(guarded, "    %Object =", R"MLIR(
+    %innerTest = ctjs.truthy %element
+    %inner = scf.if %innerTest -> (!ctjs.value) {
+    %Object =)MLIR"),
+                                                "      scf.yield %loop#2 : !ctjs.value", R"MLIR(
+      scf.yield %loop#2 : !ctjs.value
+    } else {
+      %innerEmpty = ctjs.create_object
+      ctjs.store_global "unreachableInner", %innerEmpty
+      scf.yield %innerEmpty : !ctjs.value
+    }
+      scf.yield %inner : !ctjs.value)MLIR");
+    for (const auto & admitted : {guarded, truthyGuard, nestedDiscarded, nestedSelected,
+                                  replaced(truthyGuard, "    %testElement = ctjs.truthy %element",
+                                           "    %once = ctjs.unary not %element\n"
+                                           "    %twice = ctjs.unary not %once\n"
+                                           "    %testElement = ctjs.truthy %twice")}) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(admitted, &context);
+            check(static_cast<bool>(input), "guarded dataset value loop fixture parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto error = normalizeDOMElementGuards(*input, request, 100000);
+            check(!error, "exact nonnullable inputs select either guard polarity");
+            if (error) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "selected guard arm preserves the complete value-loop proof");
+            unsigned members = 0, loops = 0, writes = 0, negations = 0, branches = 0;
+            input->walk([&](ctjs::GetPropertyOp read) {
+                members += static_cast<bool>(proof.datasetValueElement(read));
+            });
+            input->walk([&](mlir::scf::WhileOp) { ++loops; });
+            input->walk([&](ctjs::StoreGlobalOp) { ++writes; });
+            input->walk([&](ctjs::UnaryOp) { ++negations; });
+            input->walk([&](mlir::scf::IfOp) { ++branches; });
+            check(members == 1 && loops == 1 && writes == 0 && negations == 0 && branches == 1,
+                  "only the impossible entry arm disappears; the guarded member loop remains");
+        }
+    }
+    bool completedGuardBudget = false;
+    for (unsigned budget = 0; budget < 4096; ++budget) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
+        check(static_cast<bool>(input), "guard budget fixture parses");
+        if (!input) { break; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto error = normalizeDOMElementGuards(*input, request, budget);
+        if (!error) {
+            completedGuardBudget = true;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(DOMEntryAnalysis(*input, request).proved(),
+                  "the first complete guard budget preserves the live loop proof");
+            break;
+        }
+        const auto reason = llvm::toString(std::move(error));
+        check(reason.find("budget") != std::string::npos &&
+                  request.moduleSha256 == hostContractFingerprint(*input),
+              "every incomplete guard budget preserves all original source operations");
+    }
+    check(completedGuardBudget, "the guarded loop completes within the test work limit");
+    for (const auto & unproved :
+         {replaced(guarded, "ctjs.unary not %element", "ctjs.unary not %this"),
+          replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %cell = ctjs.create_cell %element
+    %saved = ctjs.cell_get %cell
+    %absent = ctjs.unary not %saved)MLIR"),
+          replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %choose = ctjs.truthy %this
+    %joined = scf.if %choose -> (!ctjs.value) {
+      scf.yield %element : !ctjs.value
+    } else {
+      scf.yield %element : !ctjs.value
+    }
+    %absent = ctjs.unary not %joined)MLIR"),
+          replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %closestName = ctjs.constant #ctjs.string<"closest">
+    %closest = ctjs.get_property %element[%closestName]
+    %selector = ctjs.constant #ctjs.string<".missing">
+    %nullable = ctjs.call %closest(%element, %selector)
+    %absent = ctjs.unary not %nullable)MLIR"),
+          replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %attributeName = ctjs.constant #ctjs.string<"getAttribute">
+    %attribute = ctjs.get_property %element[%attributeName]
+    %name = ctjs.constant #ctjs.string<"data-any">
+    %optional = ctjs.call %attribute(%element, %name)
+    %absent = ctjs.unary not %optional)MLIR"),
+          replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %ordinary = ctjs.create_object
+    %absent = ctjs.unary not %ordinary)MLIR")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(unproved, &context);
+        check(static_cast<bool>(input), "unproved element guard fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        mlir::Builder builder(&context);
+        input->walk([&](ctjs::UnaryOp unary) {
+            unary->setAttr("ctnative.host_element", builder.getBoolAttr(true));
+        });
+        auto error = normalizeDOMElementGuards(*input, request, 100000);
+        check(!error, "unproved truthiness remains for complete entry analysis");
+        if (error) { llvm::consumeError(std::move(error)); }
+        check(request.moduleSha256 == hostContractFingerprint(*input),
+              "implicit, cell, joined, nullable and ordinary values receive no guard report fact");
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "unproved guards publish no entry, host or dataset membership evidence");
+    }
+    for (const auto & parameters :
+         {std::vector<unsigned>{}, std::vector<unsigned>{1}, std::vector<unsigned>{0, 0}}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
+        check(static_cast<bool>(input), "invalid guard declaration fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.elementParameters = parameters;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto error = normalizeDOMElementGuards(*input, request, 100000);
+        check(static_cast<bool>(error), "incomplete and invalid element declarations refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+        check(request.moduleSha256 == hostContractFingerprint(*input),
+              "invalid element declarations preserve the complete guarded source");
+    }
+    auto staleGuard = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
+    check(static_cast<bool>(staleGuard), "guard fingerprint fixture parses");
+    if (staleGuard) {
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*staleGuard);
+        auto entry = staleGuard->lookupSymbol<ctjs::FuncOp>(request.entry);
+        entry.walk([&](ctjs::UnaryOp unary) {
+            unary->setOperand(0, entry.getBody().front().getArgument(0));
+        });
+        const auto fingerprint = hostContractFingerprint(*staleGuard);
+        auto error = normalizeDOMElementGuards(*staleGuard, request, 100000);
+        const bool refused = static_cast<bool>(error);
+        const auto reason = refused ? llvm::toString(std::move(error)) : std::string{};
+        check(refused && reason.find("fingerprint") != std::string::npos &&
+                  fingerprint == hostContractFingerprint(*staleGuard),
+              "changed guard operands refuse without changing the source");
+    }
+    auto liveGuard = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(guarded,
+                 "    %Object =", "    ctjs.store_global \"live\", %element\n    %Object ="),
+        &context);
+    check(static_cast<bool>(liveGuard), "live guard effect fixture parses");
+    if (liveGuard) {
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*liveGuard);
+        auto error = normalizeDOMElementGuards(*liveGuard, request, 100000);
+        check(!error, "an exact guard can normalize before live effects are checked");
+        if (error) { llvm::consumeError(std::move(error)); }
+        request.moduleSha256 = hostContractFingerprint(*liveGuard);
+        check(noEvidence(*liveGuard, DOMEntryAnalysis(*liveGuard, request)),
+              "complete entry proof still rejects writes in the selected guard arm");
+    }
+
     const std::string completion = prefix + R"MLIR(
     %poison = ub.poison : !ctjs.value
     %i0 = arith.constant 0 : i32

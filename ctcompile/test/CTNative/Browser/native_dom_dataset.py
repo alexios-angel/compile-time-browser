@@ -26,6 +26,7 @@ BOOTSTRAP_FILTER = (
     'Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))'
 )
 PREDICATE = 't => t.startsWith("bs") && !t.startsWith("bsConfig")'
+BOOTSTRAP_GUARD = "if (!t) return {};"
 FILTER_BODIES = {
     "dataset_filter": f"const t = element; return {BOOTSTRAP_FILTER};",
     "dataset_filter_length": f"const t = element; return ({BOOTSTRAP_FILTER}).length;",
@@ -81,7 +82,18 @@ VALUE_SOURCES = {
     "dataset_values_all": "function dataset_values_all(t) { let joined = ''; "
     "for (const n of Object.keys(t.dataset)) { joined = joined + t.dataset[n] + '|'; } return joined; }\n",
 }
+VALUE_SOURCES["dataset_guarded_values"] = (
+    f"function dataset_guarded_values(t) {{ {BOOTSTRAP_GUARD} let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + t.dataset[n] + '|'; }} return joined; }}\n"
+)
 LOOP_SOURCES.update(VALUE_SOURCES)
+LOOP_SOURCES.update(
+    {
+        "dataset_guarded_count": f"function dataset_guarded_count(t) {{ {BOOTSTRAP_GUARD} {LOOP_COUNT} }}\n",
+        "dataset_truthy_count": f"function dataset_truthy_count(t) {{ if (t) {{ {LOOP_COUNT} }} else {{ return {{}}; }} }}\n",
+        "dataset_guard_alias_count": f"function dataset_guard_alias_count(element) {{ const t = element; {BOOTSTRAP_GUARD} {LOOP_COUNT} }}\n",
+    }
+)
 VALUE_TEXT = {
     "bsZ": "first",
     "bsEmpty": "",
@@ -250,6 +262,11 @@ REFUSALS = {
     "{ saved = n; count = count + 1; } return count;",
     "loop_callback": f"const t = element; let count = 0; for (const n of {BOOTSTRAP_FILTER}) "
     "{ element(n); count = count + 1; } return count;",
+    "guard_live_write": f"const t = element; {BOOTSTRAP_GUARD} saved = 1; {LOOP_COUNT}",
+    "guard_unknown": f"const t = element; if (!unknown) return {{}}; {LOOP_COUNT}",
+    "guard_nullable_element": f"const t = element.closest('.missing'); {BOOTSTRAP_GUARD} {LOOP_COUNT}",
+    "guard_optional_string": f"const t = element.getAttribute('data-any'); {BOOTSTRAP_GUARD} {LOOP_COUNT}",
+    "guard_ordinary_object": f"const t = {{}}; {BOOTSTRAP_GUARD} {LOOP_COUNT}",
 }
 
 PREFIX_LOOP = f"const t = element; let joined = ''; for (const n of {BOOTSTRAP_FILTER}) {{ {PREFIX} joined = joined + i; }} return joined;"
@@ -349,7 +366,13 @@ def oracles(args):
                     selected = keys
                 selected = [key.removeprefix("bs") for key in selected]
             values = [VALUE_TEXT.get(key, "x") if name in VALUE_SOURCES else "x" for key in keys]
-            number = name in ("dataset_filter_length", "dataset_loop")
+            number = name in (
+                "dataset_filter_length",
+                "dataset_loop",
+                "dataset_guarded_count",
+                "dataset_truthy_count",
+                "dataset_guard_alias_count",
+            )
             if name in VALUE_SOURCES:
                 if name == "dataset_values_all":
                     selected = keys
@@ -436,7 +459,13 @@ def client(symbol, owned, name):
         + "}"
         for attrs, keys, _ in CASES[name]
     )
-    number = name in ("dataset_filter_length", "dataset_loop")
+    number = name in (
+        "dataset_filter_length",
+        "dataset_loop",
+        "dataset_guarded_count",
+        "dataset_truthy_count",
+        "dataset_guard_alias_count",
+    )
     saved_type = (
         "double"
         if number
@@ -498,6 +527,10 @@ def client(symbol, owned, name):
             bool rejected = false;
             try {{ (void){call}; }} catch (const std::invalid_argument &) {{ rejected = true; }}
             assert(rejected && doc.version() == version);
+            element = {{}};
+            rejected = false;
+            try {{ (void){call}; }} catch (const std::exception &) {{ rejected = true; }}
+            assert(rejected && doc.version() == version);
         }}
         {observe}
         std::cout << '\\n';
@@ -518,6 +551,7 @@ def main():
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
     assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
     assert "t.dataset[n]" in vendor.read_text(), "Bootstrap live-value source pin changed"
+    assert BOOTSTRAP_GUARD in vendor.read_text(), "Bootstrap element-guard source pin changed"
     expected = oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -660,6 +694,41 @@ def main():
                     ),
                     f"refuse-{name}-{provider}-{optimize}",
                     optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+    _, ir, contract = next(item for item in prepared if item[0] == "dataset_guarded_values")
+    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for optimize in (False, True):
+            for changes in ({"element_parameters": []}, {"dataset_parameters": []}):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        initial_intrinsics=ITERATION_INTRINSICS,
+                        dataset_parameters=[0],
+                    )
+                    | changes,
+                    f"guard-premise-{refusals}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+            for budget in (0, 64, 256):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        initial_intrinsics=ITERATION_INTRINSICS,
+                        dataset_parameters=[0],
+                    ),
+                    f"guard-budget-{refusals}",
+                    optimize=optimize,
+                    max_steps=budget,
                     success=False,
                 )
                 refusals += 1

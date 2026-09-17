@@ -94,6 +94,8 @@ void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 // Only on a private, fingerprint-checked clone. The caller must reprove its
 // complete DOM entry after this bounded local-call normalization.
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps);
+llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
+                                      unsigned maxSteps);
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
 
