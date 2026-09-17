@@ -270,6 +270,28 @@ void test_geometry_utils() {
     CHECK_EQ(logged(page, "scrollParent="), std::string{"scrollParent=scroller,true,null,0,0"});
 }
 
+// scrollintoview.html: a viewport whose propagated overflow is hidden keeps
+// no scrollbar - clientWidth is innerWidth - and still scrolls
+// programmatically; scrollIntoView(null) is the dictionary arm.
+void test_hidden_viewport_overflow_keeps_no_scrollbar() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><html><head><style>
+        body { margin: 0; padding: 1000px; overflow: hidden } #t { width: 50px; height: 50px }
+        </style></head><body><div id=t></div><script>
+        console.log('width=' + document.documentElement.clientWidth + ',' + innerWidth);
+        document.getElementById('t').scrollIntoView(null);
+        console.log('null=' + scrollX + ',' + scrollY);
+        document.getElementById('t').scrollIntoView(false);
+        console.log('false=' + scrollX + ',' + scrollY);
+        </script></body></html>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "width="), std::string{"width=400,400"});
+    CHECK_EQ(logged(page, "null="), std::string{"null=1000,1000"});
+    // end: the box's far edges against the viewport's: 1050 - 400, 1050 - 300.
+    CHECK_EQ(logged(page, "false="), std::string{"false=650,750"});
+    CHECK(!page.has_scrollbar());
+}
+
 } // namespace
 
 int main() {
@@ -279,5 +301,6 @@ int main() {
     test_viewport_scrolling_and_hit_testing();
     test_quirks_mode_scrolling_element();
     test_geometry_utils();
+    test_hidden_viewport_overflow_keeps_no_scrollbar();
     REPORT("cssom_view");
 }
