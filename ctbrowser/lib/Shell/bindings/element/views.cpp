@@ -234,43 +234,75 @@ struct scroll_arguments {
 
 } // namespace
 
+// §7 "getClientRects()": every fragment of the element, in viewport
+// coordinates and tree order - an inline split over lines has one per line.
+std::vector<rect> dom_bindings::client_rects_of(node_id self) {
+    flush_layout();
+    std::vector<rect> out;
+    if (fragments_ == nullptr || !self) { return out; }
+    const point viewport = viewport_scroll();
+    const auto walk = [&](auto && walk_, const layout::fragment & at, float dx, float dy,
+                          bool fixed) -> void {
+        const rect box = at.absolute_bounds(dx, dy);
+        const bool is_fixed =
+            fixed || (at.box != nullptr && at.box->position == layout::position_kind::fixed);
+        if (at.source == self) {
+            rect r = box;
+            if (!is_fixed) {
+                r.x -= viewport.x;
+                r.y -= viewport.y;
+            }
+            out.push_back(r);
+        }
+        point inner{box.x, box.y};
+        if (at.box != nullptr && at.box->scroll_container && at.source) {
+            const point offset = scroll_offset_of(at.source);
+            inner.x -= offset.x;
+            inner.y -= offset.y;
+        }
+        for (const layout::fragment & child : at.children) {
+            walk_(walk_, child, inner.x, inner.y, is_fixed);
+        }
+    };
+    walk(walk, *fragments_, 0, 0, false);
+    return out;
+}
+
 // getClientRects() (§7), GeometryUtils (§10) and checkVisibility (HTML) on
 // Element.prototype.
 void dom_bindings::install_element_geometry(context & cx) {
+    // §7 "getBoundingClientRect()": the smallest rectangle round every
+    // client rect that has a size - an inline over three lines answers the
+    // union, not its first line - the first rect when all are empty, and a
+    // zero DOMRect for an element with no box.
+    define_operation(
+        cx, {"Element"}, "getBoundingClientRect", 0, [this](context & c, std::span<value>) {
+            const std::vector<rect> rects = client_rects_of(receiver(c));
+            if (rects.empty()) { return make_dom_rect(c, rect{}); }
+            std::optional<rect> bound;
+            for (const rect & r : rects) {
+                if (r.width == 0 || r.height == 0) { continue; }
+                if (!bound) {
+                    bound = r;
+                    continue;
+                }
+                const float right = std::max(bound->x + bound->width, r.x + r.width);
+                const float bottom = std::max(bound->y + bound->height, r.y + r.height);
+                bound->x = std::min(bound->x, r.x);
+                bound->y = std::min(bound->y, r.y);
+                bound->width = right - bound->x;
+                bound->height = bottom - bound->y;
+            }
+            return make_dom_rect(c, bound.value_or(rects.front()));
+        });
     // Every fragment of the element, in viewport coordinates and tree order -
     // an inline split over lines has one per line - as a DOMRectList: an
     // array carrying `item`, which is what a page indexes and measures.
     define_operation(cx, {"Element"}, "getClientRects", 0, [this](context & c, std::span<value>) {
-        const node_id self = receiver(c);
-        flush_layout();
         const value out = c.make_array();
         auto * items = static_cast<script::array_object *>(out.as_heap());
-        if (fragments_ != nullptr && self) {
-            const point viewport = viewport_scroll();
-            const auto walk = [&](auto && walk_, const layout::fragment & at, float dx, float dy,
-                                  bool fixed) -> void {
-                const rect box = at.absolute_bounds(dx, dy);
-                const bool is_fixed = fixed || (at.box != nullptr &&
-                                                at.box->position == layout::position_kind::fixed);
-                if (at.source == self) {
-                    rect r = box;
-                    if (!is_fixed) {
-                        r.x -= viewport.x;
-                        r.y -= viewport.y;
-                    }
-                    items->items.push_back(make_dom_rect(c, r));
-                }
-                point inner{box.x, box.y};
-                if (at.box != nullptr && at.box->scroll_container && at.source) {
-                    const point offset = scroll_offset_of(at.source);
-                    inner.x -= offset.x;
-                    inner.y -= offset.y;
-                }
-                for (const layout::fragment & child : at.children) {
-                    walk_(walk_, child, inner.x, inner.y, is_fixed);
-                }
-            };
-            walk(walk, *fragments_, 0, 0, false);
+        for (const rect & r : client_rects_of(receiver(c))) {
+            items->items.push_back(make_dom_rect(c, r));
         }
         c.store_property(out, "item", native(c, "item", [out](context &, std::span<value> args) {
                              const auto * list =

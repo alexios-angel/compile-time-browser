@@ -915,24 +915,6 @@ void dom_bindings::install_node_methods(context & cx) {
         if (!self || !other) { return value::boolean(false); }
         return value::boolean(doc_->read().is_ancestor_of(self, other));
     });
-    method(element, "getBoundingClientRect", 0, [this](context & c, std::span<value>) {
-        const rect box = box_of(receiver(c));
-        auto * out = c.allocate<script::object_object>();
-        const auto set = [&](const char * name, float v) {
-            out->set(name, value::number(static_cast<double>(v)));
-        };
-        set("x", box.x);
-        set("y", box.y);
-        set("left", box.x);
-        set("top", box.y);
-        set("width", box.width);
-        set("height", box.height);
-        // right and bottom are DERIVED, and pages read them directly rather
-        // than adding the width themselves.
-        set("right", box.x + box.width);
-        set("bottom", box.y + box.height);
-        return value::object(out);
-    });
     method(node, "appendChild", 1, [this, insertable](context & c, std::span<value> args) {
         // THROUGH insert_node, which is where a DocumentFragment is flattened:
         // appending one must move its children and leave the fragment behind.

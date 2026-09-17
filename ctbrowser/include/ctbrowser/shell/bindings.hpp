@@ -509,6 +509,8 @@ private:
     [[nodiscard]] static value scroll_settled(context & cx);
     void install_element_scrolling(context & cx);
     void install_element_geometry(context & cx);
+    // §7's client rects: one per fragment, viewport coordinates, tree order.
+    [[nodiscard]] std::vector<rect> client_rects_of(node_id self);
     void install_window_scrolling(context & cx, script::object_object & window);
     void install_document_geometry(context & cx, script::object_object & doc);
     // §5's hit test over the fragment tree, topmost first: every element
