@@ -397,8 +397,26 @@ writes inside proved branches and dataset loops. Values must be owning JSON tree
 Strings, optional Strings, null, Boolean or Number. Empty keys, embedded NULs,
 `constructor` and numeric-looking names retain their String identity. A shared
 member-update helper preserves first position/last value for ordinary keys and
-numeric index order for assignment and spread. Assignment to `__proto__` refuses;
-spread's own-data definition does not prove the inherited setter's behavior.
+numeric index order for assignment and spread. A constant `__proto__` assignment
+refuses; spread's own-data definition does not prove the inherited setter's behavior.
+
+Direct keys from one immutable dataset snapshot may also index assignments to a
+fresh result. The snapshot and target must be outside the traversal, the original
+zero/+1 index visits each source key at most once, and this is the target's sole
+writer. Under final-own-data observations, the one possible inherited `__proto__`
+setter changes no own member. Its value is still evaluated, including original M's
+URI/JSON failure paths, before the owning assignment helper omits that update.
+Other keys retain ordinary ordered last-write behavior.
+
+The exact `n.replace(/^bs/, '')` key is supported when a proved pure filter
+admits only keys beginning with `bs`, including the original Bootstrap filter.
+The callback's Boolean/branch proof establishes that implication; later filters
+preserve it. Removing this guaranteed prefix is injective, so only `bs__proto__`
+can invoke the prototype setter. The stripped key acquires assignment authority
+only: it does not prove `element.dataset[stripped]` exists. Unfiltered replacement,
+weaker filters admitting both `__proto__` and `bs__proto__`, repeat stripping,
+additional writers, nested traversals and intermediate observations refuse.
+Unicode first-code-unit lowercase/slicing and its collision proof remain separate.
 
 Every mutable target must be a direct fresh local allocation. A spread stays in
 its allocation block. Every write must finish before any branch yield, source
@@ -414,7 +432,8 @@ keys; a JSON observation applies JavaScript enumeration to those keys.
 Immutable saved cells may be read inside structured branches only when their
 initialization precedes the whole branch; conditional and late cell assignments
 refuse. Generic JSON/String spreads, parsed/branch-result targets, Undefined and
-borrowed assignment values, and dataset/config dynamic writes remain unsupported.
+borrowed assignment values, and mutation of browser dataset/config objects remain
+unsupported.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness

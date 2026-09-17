@@ -15,6 +15,94 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Filtered prefix assignments and Number cancellation, 2026-09-17 UTC
+
+Resumed unmerged **`codex-dynamic-20260917`** from the **16:17:07 AGENT-SYNC
+handoff** at `1d363a7b`; shared main started clean at `d2cc2b8c`. September 7 WIP
+was absent. Locked merge **`08a812a6`** lands `73ae525d` (direct unique snapshot
+assignments), `88e9f626` (callback census after frontend cell ordering), and
+`1d363a7b` (fixture detach write boundaries). This completed the interrupted thread
+before new implementation. Browser `0337cd15` is included in the tested oracle.
+
+The predecessor's **377-target build, host-contract CTest 1/1 (0.45s), and focused
+native-dom/native-dom-assignment/callback-startup lit 3/3 (249.23s)** passed.
+All **1,818 input hashes** were reverified locally/remotely before landing.
+Its inherited full CTest replay was deliberately stopped under the new user policy;
+workflow exit **255** records cancellation, not a full-suite pass. No duplicate
+full replay was started. Assignment recovery retained the 120-second sanitizer
+compile timeout and all lifetime checks. The callback graph is **64 targets / 225
+calls**: the added `D$8 -> fn$9` edge follows the frontend's cell-before-closure
+order; six startup-reachable functions are unchanged. DOM fixture setup detaches
+now drain their own logged writes, preserving entry no-mutation assertions.
+
+**`58cb0b3a`** proves `n.replace(/^bs/, '')` as a fresh-result assignment key
+when the original pure filter's true result implies an input beginning with `bs`.
+The callback proof handles Boolean truth and structured joins; subsequent filters
+preserve the subset. Removing the guaranteed prefix is injective. Existing single
+traversal, sole writer, allocation placement and final-own-data observation checks
+still govern the possible `__proto__` setter. Generated C++ reuses the existing
+String replacement and ordered owning JSON assignment helpers. This capability is
+separate from dataset membership: `t.dataset[n]` is proved, while
+`t.dataset[n.replace(/^bs/, '')]` remains refused. Unfiltered two-preimage keys,
+weaker predicates, repeated replacement/writes and incomplete budgets refuse.
+
+**`08d849c2`** extends the existing bounded Number Add transfer to cancellation
+of one negative and one nonnegative exact operand, in either order, when the
+result is nonnegative. Original producer identity, read-time snapshots, latch
+invariance and final-update bounds remain. Zero can initialize an index but cannot
+prove loop progress. String/BigInt coercion, unknown values and out-of-domain
+operands do not gain Number facts.
+
+The eight requested build targets passed: `ctjs-opt`, `ctjs-translate`,
+`ctcompile-tool`, `ctcompile-test-native-reference`, `ctcompile-test-host-contract`,
+`ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`, and
+`ctcompile-test-type-oracle` (nine incremental Ninja actions). Exact CTests
+`ctcompile_host_contract` and `ctcompile_escape_analysis_arrays` pass **2/2 (1.34s)**.
+Lit `Analysis/Escape/escape-claims/{add-cancellation,sub-snapshot,signed-unary}.test`
+passes **3/3**. The new oracle measures **20 sites / eight sound / zero violations /
+eight of 12 precision (66.7%)**. Array checks cover **567 dense / 276 induction /
+188 structured rows**, with **21,943 / 19,149 / 11,148** respective budget cutoffs.
+
+The initial four-case lit selection was **three passes / one failure (249.77s)**:
+the assignment driver's combined sanitizer compilation exceeded its existing
+120-second timeout after six ordinary binaries had passed. Adding only
+`-fno-inline-functions` compiled the exact 444 KB fixture in **14.29s**; all
+sanitized assertions and output matched ordinary Clang. The test retains `-O1`,
+all ASan/UBSan and lifetime options, every fixture, and the 120-second timeout.
+The focused replay `CTNative/Browser/native-dom-assignment.test` then passes
+**1/1 (181.34s): nine sources / 210 Node-VM observations plus 210 Node accessor
+traces / eight GCC-Clang binaries / 196 refusals**, both providers/policies/layouts
+and lifetime checks. The incremental build before this replay had no work.
+
+The final workflow exits **0**, and all **1,819 input hashes** match locally and
+on the devbox before documentation edits. Stable formatting passes **912 C++ /
+108 Python / 105 web files**. Required `tools/format.sh --check` still reports
+**26 pinned-formatter diagnostics in nine unchanged files**; that is a recorded
+baseline, not a pinned-format pass. Black and `git diff --check` pass.
+
+The existing whole-Bootstrap **19/574 native / 0 of 47 globals**, Button **4/86 /
+22 lifecycle observations**, and Data session **7/7** are historical measurements,
+not rerun results. Full CTest, full compiler lit, broad native/corpus matrices,
+WPT and test262 were skipped per the focused validation policy. No browser source
+or runtime semantics changed. Independent agents reviewed both proof paths and
+extended execution tests; root recovered the escape draft after its agent hit a
+service limit.
+
+**Exact next:** one original full-H admission probe (`ctbrowser-dom-v1`, optimization
+off) still refuses **DOM property read lacks a proved receiver and supported
+member**. The prefix-result execution above admits two functions, including its
+filter, in every tested provider/policy mode. No full-Bootstrap gain is claimed.
+Full H still needs the browser-owned public UTF-16 indexing/slicing and Unicode
+case seam for `charAt(0).toLowerCase() + slice(1)`. No suffix ASCII premise follows
+from the filter. Lowercasing can collide ordinary result keys; the existing ordered
+helper handles collisions, but any admission must preserve the source proof for
+the sole possible prototype-key write. Coordinate through AGENT-SYNC while Claude
+owns ctbrowser. Do not replace Unicode with the runtime's current byte/ASCII String
+operations. Config/inheritance/defaults, retained callbacks and the application
+driver remain open; signed multiplication snapshots are an independent future
+escape step. Evidence: `/tmp/ctcompile-native-recovery/` and
+`/tmp/ctcompile-prefix-focused/`. Older checkpoints below are historical.
+
 ## Ordered native result assignments and negative Sub snapshots, 2026-09-17 UTC
 
 Continued clean **`1bbaff44`** and the **12:40:58 AGENT-SYNC handoff** after
