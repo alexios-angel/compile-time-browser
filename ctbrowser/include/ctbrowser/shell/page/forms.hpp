@@ -93,13 +93,17 @@ public:
     [[nodiscard]] const control_state * find(node_id id) const;
 
     // HTML 4.10.5 / 4.10.11's cloning steps: the copy takes the source's
-    // value, dirty value flag, checkedness and dirty checkedness. A source
-    // nobody has touched has no state and the copy seeds from its attributes,
-    // which is the same answer.
+    // value, dirty value flag, checkedness and dirty checkedness - and NOT
+    // its selection, which is a fresh control's, collapsed at 0
+    // (select-event.html reads the clone's selectionEnd as 0 and expects a
+    // `select()` on it to be a change). A source nobody has touched has no
+    // state and the copy seeds from its attributes, which is the same answer.
     void clone_state(node_id source, node_id made) {
         if (const auto it = states_.find(source.key()); it != states_.end()) {
             control_state copy = it->second;
             copy.pending_attribute.reset();
+            copy.caret = 0;
+            copy.selection = 0;
             states_.insert_or_assign(made.key(), std::move(copy));
         }
     }

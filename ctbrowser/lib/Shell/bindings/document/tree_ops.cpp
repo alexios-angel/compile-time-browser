@@ -105,7 +105,10 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
                 forms_->clone_state(source, made);
             } else if (const control_state * held = src.forms_->find(source)) {
                 const auto txn = doc_->read();
-                forms_->state_of(txn, *atoms_, made) = *held;
+                control_state & copy = forms_->state_of(txn, *atoms_, made);
+                copy = *held;
+                copy.caret = 0;
+                copy.selection = 0;
             }
         }
         break;
