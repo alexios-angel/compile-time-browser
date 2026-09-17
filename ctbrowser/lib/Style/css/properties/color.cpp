@@ -1292,6 +1292,9 @@ private:
             out.text = simplify_math(out.raw_calc);
             if (!relative && parse_time_answerable(ts_, open, after)) {
                 const math_answer answer = evaluate_math(out.raw_calc, length_context{});
+                // `calc(0.56turn * -0.43turn)` is an angle squared: the
+                // symbolic pass cannot type it and the evaluator refuses it.
+                if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
                 if (answer.outcome == math_outcome::resolved) {
                     out.resolvable = true;
                     if (answer.value.has_percent && answer.value.px == 0.0) {
