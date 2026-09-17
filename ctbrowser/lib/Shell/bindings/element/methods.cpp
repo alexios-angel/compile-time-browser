@@ -74,6 +74,7 @@ void dom_bindings::install_operations(context & cx) {
     install_node_methods(cx);
     install_attribute_methods(cx);
     install_control_methods(cx);
+    install_element_scrolling(cx); // scroll/scrollTo/scrollBy/scrollIntoView (views.cpp)
 }
 
 } // namespace ctbrowser::shell

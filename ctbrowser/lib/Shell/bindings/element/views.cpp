@@ -24,23 +24,285 @@ using style::css::css_name_of;
 
 } // namespace
 
-dom_bindings::located dom_bindings::locate(node_id id) const {
+dom_bindings::located dom_bindings::locate(node_id id, bool scrolled) const {
     located out;
     if (fragments_ == nullptr || !id) { return out; }
-    const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy) -> bool {
+    const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy,
+                          bool under_fixed) -> bool {
         const rect box = at.absolute_bounds(dx, dy);
+        const bool fixed =
+            under_fixed || (at.box != nullptr && at.box->position == layout::position_kind::fixed);
         if (at.source == id) {
             out.f = &at;
             out.abs = box;
+            if (scrolled && !fixed) {
+                const point viewport = viewport_scroll();
+                out.abs.x -= viewport.x;
+                out.abs.y -= viewport.y;
+            }
             return true;
         }
+        // A scrolled container's content sits `offset` further up and left
+        // than layout put it.
+        point inner{box.x, box.y};
+        if (scrolled && at.box != nullptr && at.box->scroll_container && at.source) {
+            const point offset = scroll_offset_of(at.source);
+            inner.x -= offset.x;
+            inner.y -= offset.y;
+        }
         for (const layout::fragment & child : at.children) {
-            if (self(self, child, box.x, box.y)) { return true; }
+            if (self(self, child, inner.x, inner.y, fixed)) { return true; }
         }
         return false;
     };
-    (void)walk(walk, *fragments_, 0, 0);
+    (void)walk(walk, *fragments_, 0, 0, false);
     return out;
+}
+
+rect dom_bindings::client_rect_of(node_id id) const {
+    return locate(id, true).abs;
+}
+
+point dom_bindings::scroll_offset_of(node_id id) const {
+    const auto it = element_scrolls_.find(id.key());
+    return it == element_scrolls_.end() ? point{} : it->second;
+}
+
+// "Scroll an element to x, y" - CSSOM View §6, with the clamp of §2's
+// rightward-and-downward overflow directions. A box with nothing to scroll -
+// `overflow: visible`, or no box at all - ignores the write, as the setters'
+// "no associated scrolling box" step says.
+void dom_bindings::scroll_element_to(node_id id, double x, double y) {
+    flush_layout();
+    const located at = locate(id);
+    if (at.f == nullptr || at.f->box == nullptr || !at.f->box->scroll_container) { return; }
+    const rect area = layout::scrolling_area_of(*at.f);
+    const rect padding = layout::padding_box_of(*at.f);
+    const auto clamp = [](double v, float most) {
+        return static_cast<float>(std::max(0.0, std::min(v, static_cast<double>(most))));
+    };
+    const point wanted{clamp(x, area.width - padding.width),
+                       clamp(y, area.height - padding.height)};
+    if (wanted == scroll_offset_of(id)) { return; }
+    element_scrolls_[id.key()] = wanted;
+    queue_scroll_event(id);
+}
+
+// The scrollTop/scrollLeft getters, §6: zero for the root in quirks mode and
+// for a box-less element; the window's position for the root, and for a
+// quirks-mode body that is not potentially scrollable; else the offset.
+double dom_bindings::scroll_position(node_id id, char axis) {
+    flush_layout();
+    const bool quirks = doc_->quirks();
+    const bool root = id == doc_->read().root();
+    if (root && quirks) { return 0; }
+    if (root || (quirks && id == body_element() && !potentially_scrollable(id))) {
+        const point viewport = viewport_scroll();
+        return axis == 'x' ? viewport.x : viewport.y;
+    }
+    const point offset = scroll_offset_of(id);
+    return axis == 'x' ? offset.x : offset.y;
+}
+
+void dom_bindings::set_scroll_position(node_id id, char axis, double v) {
+    if (!std::isfinite(v)) { v = 0; } // "normalize non-finite values"
+    flush_layout();
+    const bool quirks = doc_->quirks();
+    const bool root = id == doc_->read().root();
+    if (root && quirks) { return; }
+    if (root || (quirks && id == body_element() && !potentially_scrollable(id))) {
+        const point viewport = viewport_scroll();
+        scroll_viewport_to(axis == 'x' ? v : viewport.x, axis == 'x' ? viewport.y : v);
+        return;
+    }
+    const point offset = scroll_offset_of(id);
+    scroll_element_to(id, axis == 'x' ? v : offset.x, axis == 'x' ? offset.y : v);
+}
+
+node_id dom_bindings::scrolling_element() {
+    if (!doc_->quirks()) { return doc_->read().root(); }
+    flush_layout(); // potentially_scrollable reads the boxes
+    // Quirks mode: the body when it is not potentially scrollable in either
+    // axis, else null - with the root's `overflow: clip` read as `hidden`,
+    // which is what potentially_scrollable already does (clip is not
+    // visible).
+    const node_id body = body_element();
+    if (!body) { return node_id{}; }
+    return potentially_scrollable(body) ? node_id{} : body;
+}
+
+// "Determine the scroll-into-view position" (§6.1) for one scrolling box,
+// given the target's rectangle and the box's, both in viewport coordinates,
+// and the box's current position: where the box would have to scroll to.
+namespace {
+
+[[nodiscard]] float align_edge(std::string_view how, float current, float target_a, float target_b,
+                               float box_a, float box_b) {
+    const float element = target_b - target_a;
+    const float box = box_b - box_a;
+    if (how == "start") { return current + (target_a - box_a); }
+    if (how == "end") { return current + (target_b - box_b); }
+    if (how == "center") { return current + ((target_a + target_b) / 2 - (box_a + box_b) / 2); }
+    // "nearest"
+    const bool a_out = target_a < box_a;
+    const bool b_out = target_b > box_b;
+    if (a_out && b_out) { return current; }
+    if ((a_out && element < box) || (b_out && element > box)) {
+        return current + (target_a - box_a);
+    }
+    if ((a_out && element > box) || (b_out && element < box)) {
+        return current + (target_b - box_b);
+    }
+    return current;
+}
+
+} // namespace
+
+void dom_bindings::scroll_into_view(node_id id, std::string_view block, std::string_view inline_,
+                                    bool nearest_container) {
+    flush_layout();
+    if (locate(id).f == nullptr) { return; }
+    // Innermost scroll container to outermost, then the viewport. Each step
+    // re-reads the target's viewport rectangle, because the scroll it just
+    // performed moved it.
+    std::vector<node_id> containers;
+    {
+        const auto txn = doc_->read();
+        for (node_id up = txn.parent(id); up; up = txn.parent(up)) {
+            const located at = locate(up);
+            if (at.f != nullptr && at.f->box != nullptr && at.f->box->scroll_container) {
+                containers.push_back(up);
+            }
+        }
+    }
+    for (const node_id container : containers) {
+        const rect target = client_rect_of(id);
+        const located at = locate(container, true);
+        const rect pad = layout::padding_box_of(*at.f);
+        const rect box{at.abs.x + pad.x, at.abs.y + pad.y, pad.width, pad.height};
+        const point current = scroll_offset_of(container);
+        scroll_element_to(container,
+                          align_edge(inline_, current.x, target.x, target.x + target.width, box.x,
+                                     box.x + box.width),
+                          align_edge(block, current.y, target.y, target.y + target.height, box.y,
+                                     box.y + box.height));
+        if (nearest_container) { return; }
+    }
+    const rect target = client_rect_of(id);
+    const point current = viewport_scroll();
+    scroll_viewport_to(align_edge(inline_, current.x, target.x, target.x + target.width, 0,
+                                  static_cast<float>(viewport_width_)),
+                       align_edge(block, current.y, target.y, target.y + target.height, 0,
+                                  static_cast<float>(viewport_height_)));
+}
+
+namespace {
+
+// ScrollToOptions, read the way the methods' overloads resolve: two numbers,
+// or one dictionary - whose `behavior` must be one of the three keywords -
+// or nothing. `bad` is the TypeError the IDL conversion would raise.
+struct scroll_arguments {
+    std::optional<double> x, y;
+    bool bad = false;
+};
+
+[[nodiscard]] scroll_arguments read_scroll_arguments(context & c, std::span<value> args) {
+    scroll_arguments out;
+    const auto finite = [](double v) { return std::isfinite(v) ? v : 0.0; };
+    if (args.size() >= 2) {
+        out.x = finite(context::to_number(args[0]));
+        out.y = finite(context::to_number(args[1]));
+        return out;
+    }
+    if (args.empty() || args[0].is_nullish()) { return out; }
+    if (!args[0].is_object_like()) {
+        out.bad = true;
+        return out;
+    }
+    if (const value left = dict_member(c, args[0], "left"); !left.is_undefined()) {
+        out.x = finite(context::to_number(left));
+    }
+    if (const value top = dict_member(c, args[0], "top"); !top.is_undefined()) {
+        out.y = finite(context::to_number(top));
+    }
+    if (const value behavior = dict_member(c, args[0], "behavior"); !behavior.is_undefined()) {
+        const std::string how = c.to_string(behavior);
+        if (how != "auto" && how != "instant" && how != "smooth") { out.bad = true; }
+    }
+    return out;
+}
+
+} // namespace
+
+// scroll(), scrollTo(), scrollBy() and scrollIntoView() on Element.prototype
+// (§6). The three scroll methods return the Promise the specification gives
+// them - a rejected one for an argument the IDL refuses, a resolved one
+// once the (instant) scroll is done; `smooth` completes at once, which the
+// suite accepts because it reads the end position.
+void dom_bindings::install_element_scrolling(context & cx) {
+    const auto rejected = [](context & c, std::string_view what) {
+        const value error = c.make_error("TypeError", std::string{what});
+        return c.make_promise(error, true);
+    };
+    const auto scroll = [this, rejected](bool relative) {
+        return [this, rejected, relative](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            const scroll_arguments read = read_scroll_arguments(c, args);
+            if (read.bad) { return rejected(c, "scroll: the argument is not a ScrollToOptions"); }
+            if (!self) { return c.make_promise(value::undefined(), false); }
+            flush_layout();
+            const bool quirks = doc_->quirks();
+            const bool root = self == doc_->read().root();
+            const bool viewport_element =
+                root || (quirks && self == body_element() && !potentially_scrollable(self));
+            const point current = viewport_element ? viewport_scroll() : scroll_offset_of(self);
+            double x = read.x.value_or(relative ? 0.0 : current.x);
+            double y = read.y.value_or(relative ? 0.0 : current.y);
+            if (relative) {
+                x += current.x;
+                y += current.y;
+            }
+            if (root && quirks) { return c.make_promise(value::undefined(), false); }
+            if (viewport_element) {
+                scroll_viewport_to(x, y);
+            } else {
+                scroll_element_to(self, x, y);
+            }
+            return c.make_promise(value::undefined(), false);
+        };
+    };
+    define_operation(cx, {"Element"}, "scroll", 0, scroll(false));
+    define_operation(cx, {"Element"}, "scrollTo", 0, scroll(false));
+    define_operation(cx, {"Element"}, "scrollBy", 0, scroll(true));
+    define_operation(
+        cx, {"Element"}, "scrollIntoView", 0, [this](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            // `true` and an omitted argument are block "start"; `false` is block
+            // "end"; a dictionary names both axes and the container.
+            std::string block = "start";
+            std::string inline_ = "nearest";
+            bool nearest_container = false;
+            if (!args.empty() && args[0].is_object_like()) {
+                if (const value b = dict_member(c, args[0], "block"); !b.is_undefined()) {
+                    block = c.to_string(b);
+                }
+                if (const value i = dict_member(c, args[0], "inline"); !i.is_undefined()) {
+                    inline_ = c.to_string(i);
+                }
+                nearest_container = dict_string(c, args[0], "container") == "nearest";
+                for (const std::string * how : {&block, &inline_}) {
+                    if (*how != "start" && *how != "center" && *how != "end" && *how != "nearest") {
+                        c.throw_error("TypeError",
+                                      "scrollIntoView: " + *how + " is not a position");
+                        return value::undefined();
+                    }
+                }
+            } else if (!args.empty() && !args[0].is_undefined() && !context::truthy(args[0])) {
+                block = "end";
+            }
+            if (self) { scroll_into_view(self, block, inline_, nearest_container); }
+            return value::undefined();
+        });
 }
 
 bool dom_bindings::potentially_scrollable(node_id body) const {
@@ -243,6 +505,20 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                     return value::number(std::round(v));
                 });
             obj.define_accessor(name, value::object(getter), value::undefined());
+        }
+        // scrollTop/scrollLeft, §6: doubles, read and written through the
+        // scroll state (scroll_position / set_scroll_position).
+        for (const auto & [name, axis] :
+             {std::pair{"scrollLeft", 'x'}, std::pair{"scrollTop", 'y'}}) {
+            define_getter(
+                cx, obj, name,
+                [this, id, axis](context &, std::span<value>) {
+                    return value::number(scroll_position(id, axis));
+                },
+                [this, id, axis](context &, std::span<value> args) {
+                    set_scroll_position(id, axis, args.empty() ? 0.0 : context::to_number(args[0]));
+                    return value::undefined();
+                });
         }
         // `offsetParent`, §8: null for the root, the body, a box-less element
         // and a fixed one; otherwise the nearest positioned ancestor, the body,
