@@ -126,6 +126,20 @@ void dom_bindings::install_window(context & cx) {
     // `AbortController` and `AbortSignal` are bindings/abort.cpp, installed
     // after the event interfaces they build on.
 
+    // `reportError(e)`, HTML 8.1.3.3: "report an exception" for a value the
+    // page hands over, as if it had been thrown uncaught - an `error` event
+    // at the window whose `error` is the value. The message is not read off
+    // the value (its getters must not run; reporterror.any.js asserts so), and
+    // the argument is required.
+    cx.define_native("reportError", [this](context & c, std::span<value> a) {
+        if (a.empty()) {
+            c.throw_error("TypeError", "reportError: 1 argument required, but only 0 present.");
+            return value::undefined();
+        }
+        (void)dispatch_error_value("Uncaught exception", a[0]);
+        return value::undefined();
+    });
+
     // `new Event(type)` and `window.dispatchEvent(event)`.
     //
     // p5.js finishes starting by announcing itself - `window.dispatchEvent(new
@@ -622,6 +636,33 @@ void dom_bindings::install_window(context & cx) {
         auto * languages = static_cast<script::array_object *>(cx.make_array().as_heap());
         languages->items.push_back(cx.string("en-US"));
         navigator->set("languages", value::object(languages));
+        // THE NavigatorID CONSTANTS, HTML 8.9.1.1: every browser answers these
+        // four fixed strings, because twenty years of sniffing reads them, and
+        // the specification now says so in as many words. `taintEnabled` is
+        // the legacy method that is always false, `pdfViewerEnabled` false
+        // here, and `plugins`/`mimeTypes` are the two always-empty lists.
+        navigator->set("appCodeName", cx.string("Mozilla"));
+        navigator->set("appName", cx.string("Netscape"));
+        navigator->set("product", cx.string("Gecko"));
+        navigator->set("productSub", cx.string("20100101"));
+        navigator->set("vendorSub", cx.string(""));
+        navigator->set("pdfViewerEnabled", value::boolean(false));
+        navigator->set("cookieEnabled", value::boolean(true));
+        set_method(cx, *navigator, "taintEnabled",
+                   [](context &, std::span<value>) { return value::boolean(false); });
+        set_method(cx, *navigator, "javaEnabled",
+                   [](context &, std::span<value>) { return value::boolean(false); });
+        for (const char * list : {"plugins", "mimeTypes"}) {
+            auto * empty = cx.allocate<script::object_object>();
+            empty->set("length", value::number(0));
+            set_method(cx, *empty, "item",
+                       [](context &, std::span<value>) { return value::null(); });
+            set_method(cx, *empty, "namedItem",
+                       [](context &, std::span<value>) { return value::null(); });
+            set_method(cx, *empty, "refresh",
+                       [](context &, std::span<value>) { return value::undefined(); });
+            navigator->set(list, value::object(empty));
+        }
         // mediaDevices and getUserMedia are ABSENT rather than stubbed: a page
         // feature-detects them, and a stub that exists but cannot deliver a
         // stream fails later and worse than one that was never there.
