@@ -670,6 +670,43 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                    "binary sub %zero, %magnitude"),
                            "binary add %one, %one", "constant #ctjs.number<4751297606873776128>"),
                    "%index = %zero", "%index = %one"));
+    for (const std::string opcode : {"binary", "binary_static"}) {
+        const std::string cancellation = "  %negative = ctjs.binary sub %zero, %one\n"
+                                         "  %positive = ctjs.binary add %one, %one\n"
+                                         "  %unit = ctjs." +
+                                         opcode + " add %positive, %negative\n";
+        const auto cancelled = replace(carriedUnit, makeUnit, cancellation);
+        rows.push_back({.what = "Add cancellation survives reordered structured transport",
+                        .body = cancelled,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "cancelled structured strides release unreturned children",
+                        .body = replace(cancelled, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        const auto zero = replace(cancelled, "add %positive, %negative", "add %one, %negative");
+        rows.push_back({.what = "structured cancellation to zero remains a valid start",
+                        .body = replace(replace(zero, "%index = %zero", "%index = %unit"),
+                                        "add %i, %d", "add %i, %one"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        reject("structured cancellation to zero cannot certify progress", zero);
+        reject("a cancelled structured stride must remain unchanged on the backedge",
+               replace(cancelled, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("structured cancellation cannot borrow a coercible String",
+               replace(cancelled, "binary sub %zero, %one", "constant #ctjs.string<\"-1\">"));
+        reject("structured cancellation cannot borrow another arm's Number",
+               replace(cancelled, "  %negative = ctjs.binary sub %zero, %one\n",
+                       "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                       "    %n = ctjs.binary sub %zero, %one\n"
+                       "    scf.yield %n : !ctjs.value\n"
+                       "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+               opcode == "binary" ? ArrayContentsFailure::UnsupportedOperation
+                                  : ArrayContentsFailure::UnknownValue);
+    }
     for (const std::string unary : {"plus", "neg"}) {
         const std::string operation = unary == "plus" ? "sub" : "add";
         const std::string makeSigned = "  %unit = ctjs.unary " + unary + " %negative\n";

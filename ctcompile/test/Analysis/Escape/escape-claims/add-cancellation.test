@@ -1,0 +1,103 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name add-cancellation
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-add-cancellation.claims
+
+// Exact Number cancellation supplies a nonnegative snapshot in either order.
+// A saved negative survives source mutation; String Add never supplies a Number.
+// IMPORT-LABEL: ctjs.func @snapshotReleased$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary add
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @snapshotReturned$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary add
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @zeroReleased$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @zeroReturned$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @coercibleRight$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @coercibleLeft$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary add
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function snapshotReleased() {
+    var child = {}, array = [child, child, child], seed = [1, 1, 1], saved = 0;
+    var negative = 1 - seed.length;
+    seed.length = 0;
+    var step = negative + 4;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function snapshotReturned() {
+    var child = {}, array = [child, child, child], seed = [1, 1, 1], saved = 0;
+    var negative = 1 - seed.length;
+    seed.length = 0;
+    var step = 4 + negative;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function zeroReleased() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 1 - 3, start = negative + 2;
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+function zeroReturned() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 1 - 3, start = 2 + negative;
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return saved;
+}
+function coercibleRight() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 1 - 3, step = negative + "4";
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function coercibleLeft() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 1 - 3, step = "4" + negative;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return 0;
+}
+snapshotReleased();
+var snapshotRetained = snapshotReturned();
+zeroReleased();
+var zeroRetained = zeroReturned();
+coercibleRight();
+coercibleLeft();

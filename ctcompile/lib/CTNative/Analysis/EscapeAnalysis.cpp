@@ -902,6 +902,13 @@ std::optional<std::size_t> boundedNumberSum(const ContentsValue & left,
     // Both original operands must be exact Numbers. Guard before adding so
     // neither dynamic nor static Add can borrow coercion, rounding or wrap.
     if (a && b && *a <= 4294967295ULL - *b) { return *a + *b; }
+    const auto negativeA = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                      : boundedNumber(left.origin(), true);
+    const auto negativeB = right.negativeIntegerNumber ? right.negativeIntegerNumber
+                                                       : boundedNumber(right.origin(), true);
+    // Cancellation stays exact and bounded; a negative result is not an index.
+    if (a && negativeB && *a >= *negativeB) { return *a - *negativeB; }
+    if (negativeA && b && *b >= *negativeA) { return *b - *negativeA; }
     return std::nullopt;
 }
 
