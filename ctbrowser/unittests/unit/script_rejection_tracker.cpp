@@ -57,7 +57,10 @@ void test_rejection_tracker() {
     // ...and the derived promise `then` makes with no rejection handler is a
     // fresh unhandled rejection of its own.
     expect_track("const p = Promise.reject(1); p.then(() => {});", "RHR");
-    expect_track("const p = Promise.reject(1); p.finally(() => {});", "RHR");
+    // `finally`'s thrower rejects the inner `then` promise a job before the
+    // thenable job hands it a reaction (27.2.5.3.1 catchFinally), so that one
+    // is a reject/handle pair of its own before the outer derived promise.
+    expect_track("const p = Promise.reject(1); p.finally(() => {});", "RHRHR");
     // An await is a PerformPromiseThen too.
     expect_track("const p = Promise.reject(1); (async () => { try { await p; } catch (e) {} })();",
                  "RH");

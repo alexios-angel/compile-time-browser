@@ -261,8 +261,15 @@ struct cloner {
     // the elements that are not holes and any named ones - as an object's.
     [[nodiscard]] value copy_array(value v, array_object * source) {
         const value made = c.make_array();
-        (void)static_cast<array_object *>(made.as_heap())
-            ->set_js_length(static_cast<double>(source->items.size()));
+        auto * out = static_cast<array_object *>(made.as_heap());
+        (void)out->set_js_length(static_cast<double>(source->items.size()));
+        // A hole stays a hole (the copy's length covers it, the walk below
+        // skips it as not enumerable; set_js_length padded with undefined).
+        for (const auto & [at, attrs] : source->element_attrs) {
+            if ((attrs & array_object::elem_hole) != 0) {
+                out->set_element_attrs(at, array_object::elem_hole);
+            }
+        }
         return copy_own_enumerable(v, remember(v, made));
     }
 

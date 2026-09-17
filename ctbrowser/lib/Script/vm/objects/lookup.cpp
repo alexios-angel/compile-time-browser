@@ -314,27 +314,10 @@ value context::lookup_property(value target, const std::string & name) {
         if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
             return lookup_index(target, value::number(static_cast<double>(at)));
         }
-        // WHAT A VIEW KNOWS ABOUT ITS BUFFER. `new Uint8Array(f32.buffer)` is
-        // how a page makes a second view of a different width over storage it
-        // already has - Phaser does exactly that - and it needs `buffer` to
-        // hand back something the constructor recognises as one.
-        if (arr->is_view()) {
-            const auto width = bytes_per_element(arr->elements);
-            if (name == "byteLength") {
-                return value::number(static_cast<double>(arr->view_length * width));
-            }
-            if (name == "byteOffset") { return value::number(arr->byte_offset); }
-            if (name == "BYTES_PER_ELEMENT") { return value::number(static_cast<double>(width)); }
-            if (name == "buffer") {
-                value made = make_object();
-                auto * buffer = static_cast<object_object *>(made.as_heap());
-                const auto * bytes = static_cast<const array_object *>(arr->viewed.as_heap());
-                buffer->set("byteLength", value::number(static_cast<double>(bytes->items.size())));
-                buffer->set("length", value::number(static_cast<double>(bytes->items.size())));
-                buffer->set("__bytes", arr->viewed);
-                return made;
-            }
-        }
+        // A VIEW'S `buffer`, `byteLength` AND `byteOffset` ARE %TypedArray%.
+        // prototype's getters (23.2.3.2-4), reached below: an inline answer
+        // here used to make a FRESH bare object per `buffer` read, so
+        // `ta.buffer === ta.buffer` was false and the answer was no ArrayBuffer.
         if (arr->is_match) { // an exec() result carries index/input/groups
             if (name == "index") { return arr->index; }
             if (name == "input") { return arr->input; }
