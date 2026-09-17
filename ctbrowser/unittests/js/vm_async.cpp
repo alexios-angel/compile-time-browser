@@ -428,7 +428,7 @@ void test_concurrent_awaits() {
                       "  static async b(v) { return await this.#a(v); } }"
                       "class D { static async b(v) { return await v; } }"
                       "C.b(1).then(x => { result += x; }); D.b(2).then(x => { result += x; });",
-                      "12");
+                      "21"); // D settles first: C.b awaits twice
 }
 
 // `async function*`: every request is a promise of the record, queued behind
