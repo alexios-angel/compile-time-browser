@@ -1099,12 +1099,21 @@ void dom_bindings::install_control_methods(context & cx) {
     // --- HTMLOptionElement --------------------------------------------------------
     accessor(
         "HTMLOptionElement", "selected",
-        [at, option_selected](context & c, std::span<value>) {
+        [at, option_selected, select_of, selected_flags](context & c, std::span<value>) {
             const auto where = at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
             if (!id) { return value::boolean(false); }
             const auto txn = b->doc_->read();
+            // THROUGH THE SELECT'S RECONCILIATION FIRST: `select.value = x`
+            // writes the store, and the option slots learn of it when the
+            // flags are next computed - which a read of ONE option's
+            // selectedness must do too, or `slt.value = "2"` left
+            // `slt.options[1].selected` false (reset-form.html).
+            if (const node_id select = select_of(txn, id)) {
+                std::vector<node_id> options;
+                (void)selected_flags(c, txn, b, select, options);
+            }
             return value::boolean(option_selected(c, txn, b, id));
         },
         [at, set_selected](context & c, std::span<value> a) {

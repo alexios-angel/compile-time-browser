@@ -54,6 +54,11 @@ void test_select_options_and_selectedness() {
        " s.value = 'b'; o.push(s.selectedIndex, s.options[1].selected);"
        " return o.join(); })()",
        "2,false,c,-1,true,a,1,a,1,true");
+    // reset-form.html's precondition: the FIRST read after `value =` is one
+    // option's selectedness, with nothing else having reconciled the store.
+    is("(function () { var s = document.getElementById('s'); s.value = 'c';"
+       " return [s.options[2].selected, s.options[1].selected].join(); })()",
+       "true,false");
     // add/remove, on the select and on its options collection; length as a
     // setter. Inserting a selected option beside a selected one keeps the
     // LAST selected - "ask for a reset" - so `b` stays.
