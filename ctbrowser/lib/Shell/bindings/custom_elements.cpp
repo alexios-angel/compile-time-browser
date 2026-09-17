@@ -39,6 +39,7 @@
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -644,6 +645,7 @@ void dom_bindings::upgrade_created_subtree(node_id root) {
         !has_browsing_context()) {
         return;
     }
+    const std::size_t from = custom_reactions_.size();
     {
         const auto txn = doc_->read();
         const node_id top = root_of_tree(txn, root, true);
@@ -652,7 +654,7 @@ void dom_bindings::upgrade_created_subtree(node_id root) {
         std::vector<node_id> roots_seen;
         walk_custom_elements(txn, root, connected, true, roots_seen);
     }
-    flush_custom_element_reactions();
+    flush_custom_element_reactions(from);
 }
 
 void dom_bindings::scan_custom_elements() {
@@ -778,21 +780,45 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
         // The element is `failed`, its queued reactions are dropped, and the
         // exception is reported (HTML 4.13.5 step 8's catch).
         again->second.state = custom_element_state::status::failed;
-        std::erase_if(custom_reactions_,
-                      [target](const custom_element_reaction & r) { return r.target == target; });
+        for (std::size_t i = custom_reactions_.size(); i-- > 0;) {
+            if (custom_reactions_[i].target != target) { continue; }
+            custom_reactions_.erase(custom_reactions_.begin() + static_cast<std::ptrdiff_t>(i));
+            for (std::size_t & floor : reaction_floors_) {
+                if (floor > i) { --floor; }
+            }
+        }
         report_custom_element_exception(cx, thrown, "custom element upgrade");
         return;
     }
     again->second.state = custom_element_state::status::custom;
 }
 
-void dom_bindings::flush_custom_element_reactions() {
+void dom_bindings::flush_custom_element_reactions(std::size_t from) {
     context & cx = *cx_;
-    // Drained from the front so a reaction that mutates - and so re-enters
-    // this through mutated() - drains what was queued before it, in order.
-    while (!custom_reactions_.empty()) {
-        const custom_element_reaction reaction = std::move(custom_reactions_.front());
-        custom_reactions_.erase(custom_reactions_.begin());
+    // HTML 4.13.6's "invoke custom element reactions" over an ELEMENT QUEUE:
+    // the elements enqueued by this [CEReactions] native - the reactions at
+    // `from` and after, in the order they were first enqueued - and for each
+    // of them EVERY reaction its own queue holds, wherever it sits in the
+    // vector. A native re-entered from a callback (a `define()` or a
+    // setAttribute inside a constructor) pushes its own element queue: it
+    // runs the pending reactions of what IT touched, pending ones included,
+    // and leaves the rest of the outer queue for the outer pop.
+    //
+    // THE FLOORS ARE A STACK: a nested pop that takes a pending reaction from
+    // below an outer floor shifts the outer's region down, and the floor
+    // moves with it, so nothing an outer native enqueued is skipped.
+    reaction_floors_.push_back(from);
+    const std::size_t level = reaction_floors_.size() - 1;
+    while (custom_reactions_.size() > reaction_floors_[level]) {
+        const node_id element = custom_reactions_[reaction_floors_[level]].target;
+        auto next = std::ranges::find_if(custom_reactions_,
+                                         [element](const auto & r) { return r.target == element; });
+        const std::size_t at = static_cast<std::size_t>(next - custom_reactions_.begin());
+        const custom_element_reaction reaction = std::move(*next);
+        custom_reactions_.erase(next);
+        for (std::size_t & floor : reaction_floors_) {
+            if (floor > at) { --floor; }
+        }
         if (reaction.definition >= primary().custom_definitions_.size()) { continue; }
         // A target that is gone (not merely detached, nor adopted away with
         // its wrapper) has nothing to run a callback on.
@@ -853,12 +879,14 @@ void dom_bindings::flush_custom_element_reactions() {
             note_callback_fault("custom element");
         }
     }
+    reaction_floors_.pop_back();
 }
 
 void dom_bindings::react_custom_elements() {
     if (primary().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
+    const std::size_t from = custom_reactions_.size();
     scan_custom_elements();
-    flush_custom_element_reactions();
+    flush_custom_element_reactions(from);
 }
 
 // --- the interfaces ---------------------------------------------------------------
@@ -1115,6 +1143,7 @@ void dom_bindings::install_custom_elements(context & cx) {
             if (custom_definitions_.empty() || !owner->has_browsing_context()) {
                 return value::undefined();
             }
+            const std::size_t from = owner->custom_reactions_.size();
             {
                 const auto txn = owner->doc_->read();
                 const node_id top = owner->root_of_tree(txn, root, true);
@@ -1126,7 +1155,7 @@ void dom_bindings::install_custom_elements(context & cx) {
                                                     node_kind::document,
                                             true, roots_seen);
             }
-            owner->flush_custom_element_reactions();
+            owner->flush_custom_element_reactions(from);
             return value::undefined();
         },
         script::attr_builtin);

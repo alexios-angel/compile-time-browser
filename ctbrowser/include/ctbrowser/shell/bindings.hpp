@@ -1146,7 +1146,9 @@ private:
     void walk_custom_elements(const read_txn & txn, node_id start, bool connected, bool upgrade,
                               std::vector<node_id> & roots_seen);
     void scan_custom_elements();
-    void flush_custom_element_reactions();
+    // Run the reactions enqueued at index `from` and after - one [CEReactions]
+    // native's element queue - see the definition.
+    void flush_custom_element_reactions(std::size_t from);
     // Run one upgrade reaction: HTML 4.13.5 "upgrade an element", with the
     // constructor fenced so an exception is reported and the element fails.
     void run_upgrade(context & cx, std::size_t definition, node_id target, value wrapper);
@@ -1166,6 +1168,7 @@ private:
     std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
     std::vector<custom_element_reaction> custom_reactions_;
+    std::vector<std::size_t> reaction_floors_; // the flushes in progress, outermost first
     value construct_fence_;                    // the primary's
     value custom_elements_registry_prototype_; // the primary's
     // THIS DOCUMENT'S GLOBAL REGISTRY - null for a document a page made,
