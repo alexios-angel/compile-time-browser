@@ -291,6 +291,35 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         mutated();
         return value::boolean(true);
     });
+    // `name in el.style`: every SUPPORTED property has an IDL attribute in
+    // both spellings (CSSOM 6.7.2), set or not, beside the methods, `length`,
+    // `cssText` and the indices - and nothing else does: a custom property
+    // has no attribute, an unknown name only the expando a page put there.
+    // CSS-supports-CSSStyleDeclaration.html holds `CSS.supports(p, "inherit")`
+    // against `p in style` for 700 names.
+    set_method(cx, *handler, "has", [reseed](context & c, std::span<value> args) {
+        if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
+        auto * store = static_cast<script::object_object *>(args[0].as_heap());
+        reseed(c, *store);
+        const std::string name = c.to_string(args[1]);
+        if (name == "length" || name == "cssText" || store->find(name) != nullptr) {
+            return value::boolean(true);
+        }
+        if (!name.empty() && name.find_first_not_of("0123456789") == std::string::npos) {
+            std::size_t count = 0;
+            for (const auto & [key, v] : store->props) {
+                if (is_declaration(v)) { ++count; }
+            }
+            return value::boolean(name.size() < 10 && std::stoul(name) < count);
+        }
+        const std::string css = css_name_of(name);
+        if (!css.starts_with("--") && style::css::find_property(css) != nullptr) {
+            return value::boolean(true);
+        }
+        return value::boolean(
+            expandos_of(*store, c).find(name) != nullptr ||
+            (store->prototype.is_object() && c.has_property(store->prototype, name)));
+    });
     const value style_view =
         value::object(cx.allocate<script::proxy_object>(target, value::object(handler)));
 

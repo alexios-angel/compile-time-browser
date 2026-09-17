@@ -118,6 +118,12 @@ void test_declaration_blocks() {
         const el = document.body.style;
         el.COLOR = 'red'; el.unknown = 'unknown'; el.color = 'red'; el.fontSize = '10pt';
         console.log('expando=' + el.cssText + '|' + el.unknown + '|' + el.COLOR + '|' + el.length);
+        // `in`: every supported property in both spellings, set or not (CSSOM
+        // 6.7.2), the indices below length, the expandos - and no custom
+        // property or unknown name.
+        console.log('in=' + [('zIndex' in el), ('z-index' in el), ('webkitTransform' in el),
+                    ('WebkitTransform' in el), ('unknown' in el), ('nothing' in el),
+                    ('--x' in el), (1 in el), (2 in el), ('setProperty' in el)].join());
     </script></body></html>)");
     CHECK_EQ(page.script_error(), std::string{});
     // `transform` is not a page-context property; `cssFloat` is not a page
@@ -133,6 +139,8 @@ void test_declaration_blocks() {
     CHECK_EQ(logged(page, "undef="), std::string{"undef=green|"});
     CHECK_EQ(logged(page, "expando="),
              std::string{"expando=color: red; font-size: 10pt;|unknown|red|2"});
+    CHECK_EQ(logged(page, "in="),
+             std::string{"in=true,true,true,true,true,false,false,true,false,true"});
 }
 
 // style-sheet-interfaces-001, stylesheet-same-origin: `sheet` on the
