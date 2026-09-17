@@ -54,13 +54,18 @@ void contribute(const fragment & child, const fragment & parent, bool icb, edges
                       border.width + child.margin_left + child.margin_right,
                       border.height + child.margin_top + child.margin_bottom};
     }
-    if (!border.empty()) { into.grow(border); }
+    // A box with no extent on EITHER axis is nothing; one with an extent on
+    // one axis still reaches - a 0x2000 child makes its parent 2000 tall to
+    // scroll, with `overflow: visible` as with `hidden`, which is what
+    // scrollWidthHeight-contain-layout pins and stricter reading of "zero
+    // area" would break.
+    if (border.width > 0 || border.height > 0) { into.grow(border); }
     // A box that clips its overflow shows nothing past its padding edge, so
     // its contribution ends at its border box.
     if (box != nullptr && box->clips_overflow) { return; }
     const bool positioned = box != nullptr && box->is_positioned();
     const rect inner = scrollable_overflow(child, icb && !positioned).as_rect();
-    if (inner.empty()) { return; }
+    if (inner.width <= 0 && inner.height <= 0) { return; }
     into.grow(rect{child.bounds.x + inner.x, child.bounds.y + inner.y, inner.width, inner.height});
 }
 
@@ -84,7 +89,7 @@ edges scrollable_overflow(const fragment & f, bool icb) noexcept {
                               child.bounds.width + child.margin_left + child.margin_right,
                               child.bounds.height + child.margin_top + child.margin_bottom};
         if (flex) {
-            if (!margin_box.empty()) { inflow.grow(margin_box); }
+            if (margin_box.width > 0 || margin_box.height > 0) { inflow.grow(margin_box); }
         } else {
             inflow.bottom = std::max(inflow.bottom, margin_box.y + margin_box.height);
         }

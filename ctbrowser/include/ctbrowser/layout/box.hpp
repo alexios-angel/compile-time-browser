@@ -550,6 +550,22 @@ private:
             b.clips_overflow = b.scroll_container ||
                                ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
                                ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
+            // THE BODY'S OVERFLOW PROPAGATES TO THE VIEWPORT when the root's
+            // is `visible` (CSS Overflow 3 §3.3), and the body's own used
+            // value is `visible` then: it is not a scroll container, clips
+            // nothing and keeps its margins collapsing. Without this
+            // `body { overflow: hidden }` made the body the box scrollIntoView
+            // scrolled instead of the page. The root box is the one with no
+            // tag (build()).
+            if (tag_text == "body" && into.tag.empty() && into.source) {
+                const auto visible = [&](atom name) {
+                    const std::string_view v = trimmed(prop(into.style, name));
+                    return v.empty() || ascii_iequals(v, "visible");
+                };
+                if (visible(overflow_x_) && visible(overflow_y_)) {
+                    b.scroll_container = b.clips_overflow = b.blocks_margin_collapse = false;
+                }
+            }
             b.inset = sides_of(style, inset_sides_);
             // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
             // `left` in a horizontal-tb, left-to-right document, which is the
