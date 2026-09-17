@@ -130,9 +130,15 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
                   "alert(!!safe.querySelector('template') + ',' "
                   "+ !!safe.firstChild.shadowRoot);"
                   "alert(safe.getHTML() === safe.innerHTML);"
+                  // Document.parseHTMLUnsafe: a new document, the same conversion.
+                  "var d = Document.parseHTMLUnsafe('<div id=p><template shadowrootmode=open>"
+                  "<b>s</b></template></div><script>alert(1)</scr' + 'ipt>');"
+                  "var p = d.getElementById('p');"
+                  "alert((d !== document) + ',' + !!p.shadowRoot + ',' + p.shadowRoot.innerHTML "
+                  "+ ',' + d.URL + ',' + d.querySelectorAll('script').length);"
                   "</script></body></html>"),
              "false;1,light;true,<slot></slot>;true;NotSupportedError;true,;NotSupportedError;"
-             "true,false;true");
+             "true,false;true;true,true,<b>s</b>,about:blank,1");
 }
 
 } // namespace

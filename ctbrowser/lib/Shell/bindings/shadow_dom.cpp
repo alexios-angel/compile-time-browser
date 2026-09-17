@@ -250,6 +250,24 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
 }
 
 void dom_bindings::install_shadow_dom(context & cx) {
+    // `Document.parseHTMLUnsafe(html)`, HTML 8.6.1: a new document, parsed
+    // with scripting off and the declarative shadow roots attached - the
+    // static twin of setHTMLUnsafe, on the Document interface object.
+    if (const value ctor = cx.global("Document"); ctor.is_object()) {
+        set_method(cx, *static_cast<script::object_object *>(ctor.as_heap()), "parseHTMLUnsafe",
+                   [this](context & c, std::span<value> a) {
+                       const std::string markup = arg_string(c, a, 0);
+                       const value made = parse_from_string(c, markup, "text/html");
+                       dom_bindings * top = primary_ == nullptr ? this : primary_;
+                       for (const auto & owner : top->secondary_documents_) {
+                           if (!owner->is_the_document(made)) { continue; }
+                           owner->attach_declarative_shadow_roots(*owner->doc_,
+                                                                  owner->doc_->root());
+                           owner->observe_location("about:blank", "");
+                       }
+                       return made;
+                   });
+    }
     // --- HTMLSlotElement ------------------------------------------------------
     if (const value slot_proto = interface_prototype("HTMLSlotElement"); slot_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(slot_proto.as_heap());
