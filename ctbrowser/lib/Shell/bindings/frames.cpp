@@ -222,6 +222,20 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // on exactly that load.
     bool ok = true;
     std::string type{mime_for_path(src)};
+    // THE SAME WAY createHTMLDocument MAKES ONE - in the primary's flat list,
+    // with `primary_` set (below); the primary is also where the object URL
+    // table lives.
+    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+    if (src.starts_with("blob:")) {
+        // An object URL's type is the Blob's (File API §10.3), not an
+        // extension's: `iframe.src = URL.createObjectURL(new Blob([html],
+        // {type: "text/html"}))` is how every html5lib_url.html variant loads
+        // its fixture, and with no type it was an octet-stream shown as an
+        // empty body - 60 files of the html/syntax corpus.
+        for (const auto & [name, stated] : top.object_url_types_) {
+            if (name == src) { type = stated; }
+        }
+    }
     if (!src.empty()) {
         // A data: URL CARRIES ITS OWN TYPE, and it is the only source here that
         // states one - RFC 2397 puts the media type in the URL, so this is the
@@ -248,13 +262,11 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         type = "text/html";
     }
 
-    // THE SAME WAY createHTMLDocument MAKES ONE - in the primary's flat list,
-    // with `primary_` set. Built by hand here before, without `primary_`, so
+    // Built by hand here before, without `primary_`, so
     // `owner_of` run from inside a frame document could see nothing but the
     // frame's own wrappers: `frame.contentDocument.body.appendChild(pageNode)`
     // was "the argument is not a Node" (Node-isConnected.html's iframe case,
     // the node-realm-* files), and a frame's own `<iframe>` never loaded.
-    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     document & fresh = *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     dom_bindings & made = adopt_second_document(cx, fresh);
     made.content_type_ = type;

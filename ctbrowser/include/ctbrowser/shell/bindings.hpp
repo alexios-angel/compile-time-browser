@@ -1842,6 +1842,12 @@ private:
     // than random for the same reason Math.random is seeded: a page that prints
     // one could not otherwise have a golden.
     std::uint32_t next_object_url_ = 0;
+    // The media type each object URL was made with (File API §10.3: a
+    // `blob:` response carries the Blob's `type`), because the asset
+    // registry stores bytes only and `mime_for_path` has no extension to go
+    // on. Both live on the PRIMARY: a frame's `URL.createObjectURL` hands out
+    // a name from the same series, and the frame loader asks the same table.
+    std::vector<std::pair<std::string, std::string>> object_url_types_;
     // Blob.prototype, kept so canvas.toBlob's Blob is one too - `x instanceof
     // Blob` has to be true whoever made it.
     value blob_prototype_;

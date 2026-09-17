@@ -390,8 +390,12 @@ void dom_bindings::install_window(context & cx) {
             // Counted rather than random: `Math.random` is seeded here so a
             // golden can exist, and a URL that changed between runs would defeat
             // that for any page that prints one.
-            const std::string name = "blob:ctbrowser/" + std::to_string(++next_object_url_);
+            dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+            const std::string name = "blob:ctbrowser/" + std::to_string(++top.next_object_url_);
             assets_->add(name, std::move(bytes));
+            const value type = c.lookup_property(a[0], "type");
+            top.object_url_types_.emplace_back(name, type.is_string() ? c.to_string(type)
+                                                                      : std::string{});
             return c.string(name);
         });
         set_method(cx, *url, "revokeObjectURL", [this](context & c, std::span<value> a) {
