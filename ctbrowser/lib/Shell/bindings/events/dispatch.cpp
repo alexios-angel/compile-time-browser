@@ -1643,6 +1643,13 @@ void dom_bindings::settle_attribute_writes(const std::vector<document::write_not
         }
         const std::string type = event_type_of_handler(name);
         if (present) {
+            // THE ATTRIBUTE'S VALUE IS THE HANDLER NOW (8.1.8.1's attribute
+            // change steps): an IDL assignment before it - `el.onclick = null`
+            // - no longer shadows the markup, and the same text set again
+            // compiles again (event-handler-removal.window.js).
+            (void)object->erase(assigned_slot(std::string{name}));
+            (void)object->erase(source_slot(std::string{name}));
+            (void)object->erase(compiled_slot(std::string{name}));
             activate_event_handler(*cx_, at, type);
         } else if (const value * assigned = object->find(assigned_slot(std::string{name}));
                    assigned == nullptr || assigned->is_null()) {
