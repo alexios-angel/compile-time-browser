@@ -161,9 +161,28 @@ public:
     // directive (11.2.1): a leading expression statement that is exactly
     // that string literal, before any other statement.
     [[nodiscard]] bool has_use_strict_directive(std::int32_t body) const;
-    // `eval`: a trailing expression statement is the program's return value.
-    // See compiler::compile_for_eval.
+    // `eval`: the program's COMPLETION VALUE is its return value. See
+    // compiler::compile_for_eval and note_completion below.
     bool completion_value_ = false;
+    // THE COMPLETION REGISTER of an eval program (-1 when not tracking): the
+    // value the last non-empty statement produced, as 14.2.2 StatementList and
+    // UpdateEmpty define it. An expression statement at the program's frame
+    // writes it; an `if`, a loop, a `switch`, a `try` or a `with` clears it on
+    // entry (their completion is UpdateEmpty(_, undefined)), and a `finally`
+    // block's statements do not touch it (a normal finally keeps the try's
+    // value, 14.15.3). Declarations and blocks are empty and leave it alone.
+    int completion_reg_ = -1;
+    int completion_suspended_ = 0; // > 0 inside a finally block
+    [[nodiscard]] bool tracking_completion() const {
+        return completion_reg_ >= 0 && frames_.size() == 1 && completion_suspended_ == 0;
+    }
+    // The statement about to be compiled starts a construct whose completion
+    // is UpdateEmpty(_, undefined): clear the register.
+    void clear_completion() {
+        if (tracking_completion()) {
+            proto().emit(instruction{op::load_undef, static_cast<std::uint16_t>(completion_reg_)});
+        }
+    }
 
     // THE BYTES THE AST WAS PARSED FROM, which is NOT `out_.source`.
     //

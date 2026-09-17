@@ -84,6 +84,10 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
     case vp::nk::expr_stmt: {
         const std::uint16_t r = alloc_reg();
         compile_expr(n.a, r);
+        // An eval's completion value: this statement's, until a later one.
+        if (tracking_completion()) {
+            proto().emit(instruction{op::move, static_cast<std::uint16_t>(completion_reg_), r});
+        }
         break;
     }
     case vp::nk::var_decl:
@@ -244,10 +248,25 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         compile_statement_list(kids(n), false);
         pop_scope();
         break;
-    case vp::nk::if_stmt: compile_if(n); break;
-    case vp::nk::while_stmt: compile_while(n); break;
-    case vp::nk::do_stmt: compile_do_while(n); break;
-    case vp::nk::forof_stmt: compile_for_of(n); break;
+    // UpdateEmpty(_, undefined) constructs (14.6.2, 14.7.1.1, 14.12.4,
+    // 14.15.3, 14.11.2): the completion is what their body produces, or
+    // undefined - never what came before.
+    case vp::nk::if_stmt:
+        clear_completion();
+        compile_if(n);
+        break;
+    case vp::nk::while_stmt:
+        clear_completion();
+        compile_while(n);
+        break;
+    case vp::nk::do_stmt:
+        clear_completion();
+        compile_do_while(n);
+        break;
+    case vp::nk::forof_stmt:
+        clear_completion();
+        compile_for_of(n);
+        break;
     case vp::nk::class_decl: {
         const std::uint16_t r = alloc_reg();
         // A DECLARATION, so its name is a binding of this scope - which is
@@ -261,14 +280,26 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         }
         break;
     }
-    case vp::nk::switch_stmt: compile_switch(n); break;
-    case vp::nk::for_stmt: compile_for(n); break;
+    case vp::nk::switch_stmt:
+        clear_completion();
+        compile_switch(n);
+        break;
+    case vp::nk::for_stmt:
+        clear_completion();
+        compile_for(n);
+        break;
     case vp::nk::break_stmt: compile_break(n); break;
     case vp::nk::continue_stmt: compile_continue(n); break;
     case vp::nk::labeled: compile_labeled(n); break;
-    case vp::nk::try_stmt: compile_try(n); break;
+    case vp::nk::try_stmt:
+        clear_completion();
+        compile_try(n);
+        break;
     case vp::nk::throw_stmt: compile_throw(n); break;
-    case vp::nk::with_stmt: compile_with(n); break;
+    case vp::nk::with_stmt:
+        clear_completion();
+        compile_with(n);
+        break;
     case vp::nk::return_stmt: {
         const std::uint16_t r = alloc_reg();
         if (n.a >= 0) {

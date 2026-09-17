@@ -729,6 +729,22 @@ void test_eval() {
     // prefix flag is 1, which the capture tour once followed as a child.
     expect_result("var x = 1; return eval('++x');", "2");
     expect_result("var x = 1; return eval('++x; x++; x');", "3");
+    // THE COMPLETION VALUE, 14.2.2 and UpdateEmpty: a declaration is empty
+    // and keeps the previous value; an `if`, a loop, a `switch`, a `try`
+    // start from undefined and take their body's; a finally keeps the try's.
+    expect_result("return eval('3; var y = 1;');", "3");
+    expect_result("return String(eval('3; if (true) {}'));", "undefined");
+    expect_result("return eval('3; if (true) { 4; }');", "4");
+    expect_result("return String(eval('3; while (false);'));", "undefined");
+    expect_result("return eval('3; do { 5; break; } while (false)');", "5");
+    expect_result("return eval('3; switch (1) { case 1: 6; break; case 2: 7; }');", "6");
+    expect_result("return String(eval('3; switch (1) { case 2: 7; }'));", "undefined");
+    expect_result("return eval('3; try { 8; } finally { 9; }');", "8");
+    expect_result("return eval('3; try { throw 1; } catch (e) { 10; }');", "10");
+    expect_result("return eval('3; L: { 11; break L; }');", "11");
+    expect_result("return eval('3; {}');", "3");
+    expect_result("return eval('3; function f() {}');", "3");
+    expect_result("return eval('for (var i = 0; i < 2; i++) { i; }');", "1");
 }
 
 int main() {
