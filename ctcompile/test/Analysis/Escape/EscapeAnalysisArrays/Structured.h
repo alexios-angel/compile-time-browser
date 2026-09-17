@@ -670,6 +670,93 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                    "binary sub %zero, %magnitude"),
                            "binary add %one, %one", "constant #ctjs.number<4751297606873776128>"),
                    "%index = %zero", "%index = %one"));
+    for (const std::string opcode : {"binary", "binary_static"}) {
+        const std::string cancellation = "  %negative = ctjs.binary sub %zero, %one\n"
+                                         "  %positive = ctjs.binary add %one, %one\n"
+                                         "  %unit = ctjs." +
+                                         opcode + " add %positive, %negative\n";
+        const auto cancelled = replace(carriedUnit, makeUnit, cancellation);
+        rows.push_back({.what = "Add cancellation survives reordered structured transport",
+                        .body = cancelled,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "cancelled structured strides release unreturned children",
+                        .body = replace(cancelled, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        const auto zero = replace(cancelled, "add %positive, %negative", "add %one, %negative");
+        rows.push_back({.what = "structured cancellation to zero remains a valid start",
+                        .body = replace(replace(zero, "%index = %zero", "%index = %unit"),
+                                        "add %i, %d", "add %i, %one"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        reject("structured cancellation to zero cannot certify progress", zero);
+        reject("a cancelled structured stride must remain unchanged on the backedge",
+               replace(cancelled, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("structured cancellation cannot borrow a coercible String",
+               replace(cancelled, "binary sub %zero, %one", "constant #ctjs.string<\"-1\">"));
+        reject("structured cancellation cannot borrow another arm's Number",
+               replace(cancelled, "  %negative = ctjs.binary sub %zero, %one\n",
+                       "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                       "    %n = ctjs.binary sub %zero, %one\n"
+                       "    scf.yield %n : !ctjs.value\n"
+                       "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+               opcode == "binary" ? ArrayContentsFailure::UnsupportedOperation
+                                  : ArrayContentsFailure::UnknownValue);
+    }
+    const std::string makeProduct = "  %negative = ctjs.unary neg %magnitude\n"
+                                    "  %unit = ctjs.binary mul %negative, %one\n";
+    const auto carriedProduct =
+        replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n", makeProduct);
+    rows.push_back({.what = "signed products survive reordered structured backedge transport",
+                    .body = carriedProduct,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "a signed product retains its exact final overshoot after growth",
+                    .body = replace(replace(carriedProduct, "  ctjs.append %y to %a\n",
+                                            "  ctjs.append %y to %a\n  ctjs.append %y to %a\n"),
+                                    "  ctjs.return %result",
+                                    "  ctjs.append %zero to %finalArray\n"
+                                    "  ctjs.append %zero to %finalArray\n"
+                                    "  %after = ctjs.get_property %finalArray[%finalIndex]\n"
+                                    "  ctjs.return %after"),
+                    .arrays = "a:[x,y,y,zero,zero]",
+                    .reads = "a[0]=x; a[2]=y; a[4]=zero",
+                    .exit = "zero -> {}"});
+    const auto savedProduct =
+        replace(replace(savedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                        "  %negative = ctjs.unary neg %magnitude\n"),
+                "  ctjs.set_property %seed[%name], %zero\n",
+                "  ctjs.set_property %seed[%name], %zero\n"
+                "  %unit = ctjs.binary mul %one, %negative\n");
+    rows.push_back({.what = "structured products keep the negative snapshot after source shrink",
+                    .body = savedProduct,
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "signed product snapshots discharge unreturned structured children",
+                    .body = replace(savedProduct, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    reject("a signed product stride must remain unchanged across structured yields",
+           replace(carriedProduct, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("a repeated structured product cannot borrow an earlier iteration",
+           replace(replace(savedProduct, "  %unit = ctjs.binary mul %one, %negative\n", ""),
+                   "    %step =", "    %unit = ctjs.binary mul %one, %negative\n    %step ="));
+    reject("structured products cannot borrow a coercible String",
+           replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-2\">"));
+    reject("structured multiplication must prove every predecessor's signed Number",
+           replace(carriedProduct, "  %negative = ctjs.unary neg %magnitude\n",
+                   "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                   "    %n = ctjs.unary neg %magnitude\n"
+                   "    scf.yield %n : !ctjs.value\n"
+                   "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+           ArrayContentsFailure::UnsupportedOperation);
     for (const std::string unary : {"plus", "neg"}) {
         const std::string operation = unary == "plus" ? "sub" : "add";
         const std::string makeSigned = "  %unit = ctjs.unary " + unary + " %negative\n";

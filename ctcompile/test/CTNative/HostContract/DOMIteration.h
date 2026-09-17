@@ -67,6 +67,9 @@ module {
                      proof.stringRefinements().empty();
         input.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
         input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
+        input.walk([&](ctjs::SetPropertyOp write) {
+            empty &= !proof.jsonAssignment(write) && !proof.jsonSnapshotAssignment(write);
+        });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
                      !proof.isStringVectorLength(read) && !proof.isStringVectorIndex(read) &&
@@ -125,6 +128,190 @@ module {
     const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";
     const std::string valueSource = replaced(
         source, "        %nextCount =", "        " + memberRead + "\n        %nextCount =");
+    const std::string assignment = "ctjs.set_property %target[%key], %value";
+    const std::string assigned = replaced(
+        replaced(replaced(valueSource,
+                          "    %loop:3 =", "    %target = ctjs.create_object\n    %loop:3 ="),
+                 memberRead, memberRead + "\n        " + assignment),
+        "ctjs.return %loop#2", "ctjs.return %target");
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(assigned, &context);
+        check(static_cast<bool>(input), "single snapshot assignment fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.provider = provider;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "one direct snapshot traversal proves each result key at most once");
+        if (!proof.proved()) {
+            std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+            continue;
+        }
+        unsigned writes = 0;
+        input->walk([&](ctjs::SetPropertyOp write) {
+            ++writes;
+            check(proof.jsonAssignment(write) && proof.jsonSnapshotAssignment(write),
+                  "only the sole direct-key write receives snapshot assignment evidence");
+        });
+        check(writes == 1 && DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+              "snapshot assignment reproduces its complete charged proof");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, request, budget);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "incomplete snapshot assignment publishes no partial writer evidence");
+        }
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "snapshot proof and budget cutoffs retain the original source");
+    }
+    for (const auto & invalid : {
+             replaced(assigned, assignment, assignment + "\n        " + assignment),
+             replaced(assigned, "    %loop:3 =",
+                      "    ctjs.set_property %target[%keysName], %keysName\n    %loop:3 ="),
+             replaced(assigned, "ctjs.return %target",
+                      "ctjs.set_property %target[%keysName], %keysName\n    ctjs.return %target"),
+             replaced(assigned, "    %loop:3 =",
+                      "    %seed = ctjs.create_object\n"
+                      "    ctjs.copy_props %seed into %target\n    %loop:3 ="),
+             replaced(assigned, assignment,
+                      "%changed = ctjs.binary add %key, %keysName\n"
+                      "        ctjs.set_property %target[%changed], %value"),
+             replaced(assigned, assignment,
+                      "%proto = ctjs.constant #ctjs.string<\"__proto__\">\n"
+                      "        ctjs.set_property %target[%proto], %value"),
+             replaced(assigned, assignment,
+                      assignment + "\n        %saved = ctjs.create_object\n"
+                                   "        ctjs.copy_props %target into %saved"),
+             replaced(replaced(replaced(assigned, "    %target = ctjs.create_object\n", ""),
+                               assignment, "%target = ctjs.create_object\n        " + assignment),
+                      "ctjs.return %target", "ctjs.return %loop#2"),
+             replaced(assigned, assignment, R"MLIR(
+        scf.while : () -> () {
+          ctjs.set_property %target[%key], %value
+          %stop = arith.constant false
+          scf.condition(%stop)
+        } do {
+          scf.yield
+        })MLIR"),
+             replaced(
+                 replaced(replaced(assigned,
+                                   "    %keys = ctjs.call %keysMethod(%Object, %dataset)\n", ""),
+                          "    %length = ctjs.get_property %keys[%lengthName]\n", ""),
+                 "      %less =",
+                 "      %keys = ctjs.call %keysMethod(%Object, %dataset)\n"
+                 "      %length = ctjs.get_property %keys[%lengthName]\n"
+                 "      %less ="),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved snapshot assignment fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(noEvidence(*input, proof),
+              "repeated, transformed, seeded or intermediately observed writes refuse");
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "refused snapshot assignment keeps the full source");
+    }
+    const std::string filteredKeys = R"MLIR(
+    %u = ctjs.constant #ctjs.undefined
+    %rawKeys = ctjs.call %keysMethod(%Object, %dataset)
+    %filterName = ctjs.constant #ctjs.string<"filter">
+    %filter = ctjs.get_property %rawKeys[%filterName]
+    %callback = ctjs.create_closure %callee[1] this %u
+    %keys = ctjs.call %filter(%rawKeys, %callback)
+)MLIR";
+    const std::string strippedKey = R"MLIR(
+        %factory = ctjs.load_global "__ctbrowser_regexp"
+        %pattern = ctjs.constant #ctjs.string<"^bs">
+        %empty = ctjs.constant #ctjs.string<"">
+        %regexp = ctjs.call %factory(%u, %pattern, %empty)
+        %replaceName = ctjs.constant #ctjs.string<"replace">
+        %replace = ctjs.get_property %key[%replaceName]
+        %stripped = ctjs.call %replace(%key, %regexp, %empty)
+        ctjs.set_property %target[%stripped], %value
+)MLIR";
+    const std::string predicate = R"MLIR(
+  ctjs.func private @predicate$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %key: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %startsName = ctjs.constant #ctjs.string<"startsWith">
+    %starts = ctjs.get_property %key[%startsName]
+    %prefix = ctjs.constant #ctjs.string<"bs">
+    %first = ctjs.call %starts(%key, %prefix)
+    %condition = ctjs.truthy %first
+    %selected = scf.if %condition -> (!ctjs.value) {
+      %again = ctjs.get_property %key[%startsName]
+      %excluded = ctjs.constant #ctjs.string<"bsConfig">
+      %second = ctjs.call %again(%key, %excluded)
+      %not = ctjs.unary not %second
+      scf.yield %not : !ctjs.value
+    } else {
+      scf.yield %first : !ctjs.value
+    }
+    ctjs.return %selected
+  }
+)MLIR";
+    const std::string stripped =
+        replaced(replaced(replaced(assigned, "%keys = ctjs.call %keysMethod(%Object, %dataset)",
+                                   filteredKeys),
+                          assignment, strippedKey),
+                 "\n}\n", predicate + "\n}\n");
+    const auto prefixRequest = [&](mlir::ModuleOp input) {
+        auto request = contract;
+        request.initialIntrinsics = {"Object", "Array", "String", "RegExp", "__ctbrowser_regexp"};
+        request.moduleSha256 = hostContractFingerprint(input);
+        return request;
+    };
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(stripped, &context);
+        check(static_cast<bool>(input), "filtered prefix assignment fixture parses");
+        if (!input) { continue; }
+        auto request = prefixRequest(*input);
+        request.provider = provider;
+        DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "original filter makes anchored prefix removal injective");
+        if (!proof.proved()) {
+            std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+            continue;
+        }
+        input->walk([&](ctjs::SetPropertyOp write) {
+            check(proof.jsonSnapshotAssignment(write),
+                  "prefix-stripped assignment retains the single prototype-write proof");
+        });
+        check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+              "prefix assignment reproduces its complete charged proof");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, request, budget);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "partial filter implications grant no snapshot assignment evidence");
+        }
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "prefix assignment proof preserves the original source");
+    }
+    for (const auto & invalid : {
+             replaced(stripped, "#ctjs.string<\"bs\">", "#ctjs.string<\"b\">"),
+             replaced(stripped, "scf.yield %first : !ctjs.value",
+                      "%yes = ctjs.constant #ctjs.boolean<true>\n"
+                      "      scf.yield %yes : !ctjs.value"),
+             replaced(stripped, "ctjs.return %selected",
+                      "%opposite = ctjs.unary not %first\n    ctjs.return %opposite"),
+             replaced(stripped, "ctjs.set_property %target[%stripped], %value",
+                      "%wrong = ctjs.get_property %dataset[%stripped]\n"
+                      "        ctjs.set_property %target[%stripped], %wrong"),
+             replaced(stripped, "ctjs.set_property %target[%stripped], %value",
+                      "ctjs.set_property %target[%stripped], %value\n"
+                      "        ctjs.set_property %target[%key], %value"),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved prefix assignment fixture parses");
+        if (!input) { continue; }
+        auto request = prefixRequest(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(noEvidence(*input, proof),
+              "weak filters, transformed dataset reads and multiple writers refuse");
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "refused prefix assignment retains the original source");
+    }
     const std::string mutation = R"MLIR(
     %removeName = ctjs.constant #ctjs.string<"removeAttribute">
     %remove = ctjs.get_property %element[%removeName]

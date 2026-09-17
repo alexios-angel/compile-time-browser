@@ -25,6 +25,34 @@ checked out because `ctbrowser/benchmarks/bench_style.cpp` measures against it a
 implementation; retiring it is a rung in `docs/plans/bootstrap.md`.
 
 ## Build & test
+
+### Codex ctcompile validation — user override, 2026-09-17
+
+Use focused validation for ctcompile work. Full suites run only when the user
+explicitly requests them. This supersedes older full-gate instructions in the
+plan, handoffs and `../AGENT-SYNC.md`, including interrupted work and refactors.
+Passing the relevant focused checks is sufficient to commit and land a change.
+
+- Build affected targets on the devbox with `tools/remote-build.sh <target>...`;
+  `tools/remote-build.sh all` builds without running tests when the target set is
+  unclear. Hold `/tmp/ctbrowser-devbox-build.lock` through build and test commands.
+- Select CTests by exact name with `ctest --test-dir build --output-on-failure
+  --no-tests=error -R '^test_name$'` on the devbox. For lit, select the relevant
+  cases using the generated `build/ctcompile/test` configuration; see
+  [ctcompile/test/README.md](ctcompile/test/README.md) for commands.
+- The no-argument `remote-build.sh`, unfiltered CTest, `check-ctcompile`, and
+  unfiltered `ctcompile_lit` run broad suites. Reserve these and full WPT/test262,
+  corpus or native matrix replays for an explicit user request.
+- For browser API extractions, run affected browser regressions plus the native
+  differential tests that call the API. Browser-only work needs no compiler suite.
+- Run `tools/format.sh --check` before committing. Documentation/prompt-only
+  changes need no build or CTest; use `bash -n` for changed shell scripts.
+- Stop after relevant checks pass. Expand coverage only to investigate a concrete
+  failure or affected dependency, keeping the selection focused. Record the exact
+  checks and skipped coverage; never describe a focused pass as a full-suite pass.
+
+### Build environment and full-suite reference
+
 **BUILD ON THE DEVBOX**, not here: `tools/remote-build.sh` syncs and builds on
 the shared box (`../infra/azure-build-server/server.sh start`, then `allow-ip`
 when the home IP has rotated). This WSL instance has ~7.5 GiB and a full build —
@@ -58,7 +86,8 @@ for every tracked `.py`, and js-beautify (`npm install -g js-beautify`,
 `.jsbeautifyrc`) for the hand-written JS/HTML/CSS, test data excluded -
 **run it yourself before committing**. There is NO CI: the GitHub
 workflow was deleted on 2026-08-08, so nothing checks formatting or runs the
-suite unless a person does. `tools/remote-build.sh` is the whole gate now.
+suite unless a person does. `tools/remote-build.sh` is the build/test entry point;
+Codex uses the focused policy above.
 
 ## Tooling
 

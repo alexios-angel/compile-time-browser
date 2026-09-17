@@ -1434,11 +1434,20 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
               "ctjs.binary mul %input, %zero", "ctjs.binary div %input, %input",
               "ctjs.binary mod %input, %input", "ctjs.binary_static ushr %input, %input",
               "ctjs.unary plus %input", "ctjs.unary neg %input"}) {
+            const auto body = values + "  %input = ctjs.constant " + literal +
+                              "\n  %wanted = " + producer +
+                              "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n";
+            if (literal == "#ctjs.number<13830554455654793216>" &&
+                producer == "ctjs.binary mul %input, %zero") {
+                run({.what = "a negative Number times zero clears length as signed zero",
+                     .body = body,
+                     .arrays = "a:[]",
+                     .exit = "a -> {a}"},
+                    "x");
+                continue;
+            }
             run({.what = "a computed shrink needs exact Number operands without coercion",
-                 .body = values + "  %input = ctjs.constant " + literal +
-                         "\n  %wanted = " + producer +
-                         "\n"
-                         "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+                 .body = body,
                  .failure = ArrayContentsFailure::UnknownIndex});
         }
     }

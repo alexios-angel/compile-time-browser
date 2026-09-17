@@ -11,7 +11,7 @@ import shutil
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_json as values
 from CTNative.Browser import native_dom_numbers as numbers
-from CTNative.Browser.native_dom_dataset import BOOTSTRAP_FILTER, ITERATION_INTRINSICS
+from CTNative.Browser.native_dom_dataset import BOOTSTRAP_FILTER, PREFIX_INTRINSICS
 from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
 
@@ -33,6 +33,14 @@ BODIES = {
     "e['2'] = 2; return e;",
     "assign_spread": f"const i = {GET}; const e = {{...('object' == typeof i ? i : {{}})}}; "
     f"e.saved = {LATER}; e['2'] = 'last index'; return e;",
+    # Preserve the former refusal body and its original dataset observations.
+    "loop_dynamic_key": "const e = {}; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ e[n] = M(t.dataset[n]); }} return e;",
+    "loop_dynamic_all": "const e = {}; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } return e;",
+    # Preserve the interrupted prefix_result probe's original body.
+    "prefix_result": "const result = {}; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ result[n.replace(/^bs/, '')] = M(t.dataset[n]); }} return result;",
 }
 SOURCES = {
     name: f"function {name}(t) {{ {values.BOOTSTRAP_M if 'M(' in body else ''} {body} }}\n"
@@ -69,11 +77,91 @@ FIXTURES["assign_loop"] = [
     [],
     [("data-bs-config", "ignored"), ("data-other", "ignored")],
 ] + [[("data-bs-z", "first"), ("data-bs-a", value)] for value in INPUTS if value is not None]
+DYNAMIC_INPUTS = tuple(value for value in INPUTS if value is not None) + (
+    "{}",
+    "[]",
+    '{"__proto__":{"safe":true},"collision":"inherited","constructor":"inherited",'
+    '"toString":"inherited","2":"inherited"}',
+    '[{"__proto__":{"safe":true}},null]',
+)
+FIXTURES["loop_dynamic_key"] = [
+    [],
+    [("data-bs-config", "ignored"), ("data-other", "ignored")],
+] + [[("data-bs-z", "first"), ("data-bs-a", value)] for value in DYNAMIC_INPUTS]
+FIXTURES["loop_dynamic_key"].append(
+    [
+        ("data-bs-z", "42"),
+        ("data-bs-config", "ignored"),
+        ("data-bs__proto__", DYNAMIC_INPUTS[-2]),
+        ("data-bs", "null"),
+        ("data-bsé", '["é",null]'),
+        ("data-other", "ignored"),
+    ]
+)
+FIXTURES["loop_dynamic_all"] = [[], [("other", "ignored")]] + [
+    [
+        ("data-before", '"before"'),
+        ("data-__proto__", value),
+        ("data-collision", "42"),
+        ("data-constructor", "false"),
+        ("data-to-string", "null"),
+        ("data-0", "false"),
+        ("data-2", "true"),
+        ("data-length", "9"),
+        ("data-saved", value),
+    ]
+    for value in DYNAMIC_INPUTS
+]
+# The same own properties must survive setting the prototype after those writes.
+FIXTURES["loop_dynamic_all"] += [
+    attrs[:1] + attrs[2:] + attrs[1:2] for attrs in FIXTURES["loop_dynamic_all"][2:]
+]
+FIXTURES["loop_dynamic_all"].append(
+    [
+        ("data-z", "0"),
+        ("data-10", "10"),
+        ("data-a", "1"),
+        ("data-2", "2"),
+        ("data-01", '"leading"'),
+        ("data-4294967295", '"ordinary"'),
+        ("data-4294967294", '"index"'),
+        ("data--0", '"negative"'),
+        ("data-0", '"zero"'),
+        ("data-", '"empty"'),
+        ("data-a\0b", '"nul"'),
+        ("data-é", '"unicode"'),
+        ("data-𐐀", "[true]"),
+        ("data-😀", "null"),
+    ]
+)
+FIXTURES["prefix_result"] = [
+    [],
+    [("data-__proto__", "null"), ("data-bs-config", "ignored")],
+] + [
+    [
+        ("data-bs__proto__", value),
+        ("data-bs", value),
+        ("data-bscollision", "42"),
+        ("data-bsconstructor", "false"),
+        ("data-bsto-string", "null"),
+        ("data-bs0", "false"),
+        ("data-bs2", "true"),
+        ("data-bslength", "9"),
+        ("data-bssaved", value),
+        ("data-__proto__", "null"),
+        ("data-bs-config", "ignored"),
+    ]
+    for value in DYNAMIC_INPUTS
+]
+# Prototype writes must preserve the same own data in either source position.
+FIXTURES["prefix_result"] += [attrs[1:] + attrs[:1] for attrs in FIXTURES["prefix_result"][2:]]
+FIXTURES["prefix_result"].append(
+    [("data-bs" + key[5:], value) for key, value in FIXTURES["loop_dynamic_all"][-1]]
+    + [("data-bsbs__proto__", "42"), ("data-__proto__", "null")]
+)
 
 REFUSALS = {
     "dynamic_key": f"const e = {{}}; e[t.getAttribute('key')] = {GET}; return e;",
-    "loop_dynamic_key": "const e = {}; "
-    f"for (const n of {BOOTSTRAP_FILTER}) {{ e[n] = M(t.dataset[n]); }} return e;",
     "prototype_key": f"const e = {{}}; e['__proto__'] = {GET}; return e;",
     "prototype_scalar": "const e = {}; e.__proto__ = 1; return e;",
     "prototype_after_spread": f"const i = {GET}; const e = {{...('object' == typeof i ? i : {{}})}}; "
@@ -96,6 +184,61 @@ REFUSALS = {
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e.saved = M(t.dataset[n]); "
     "const copied = {...e}; observed = typeof copied; } return observed;",
     "identity_before_write": f"const e = {{}}; const observed = e === e; e.saved = {GET}; return e;",
+    "dynamic_after_spread": f"const i = {GET}; const e = {{...('object' == typeof i ? i : {{}})}}; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } return e;",
+    "dynamic_prior_write": "const e = {}; e.__proto__ = null; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } return e;",
+    "dynamic_later_write": "const e = {}; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } e.saved = 1; return e;",
+    "dynamic_second_writer": "const e = {}; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); e[n] = null; } return e;",
+    "dynamic_repeated_loop": "const e = {}; const keys = Object.keys(t.dataset); "
+    "for (const n of keys) { e[n] = M(t.dataset[n]); } "
+    "for (const n of keys) { e[n] = M(t.dataset[n]); } return e;",
+    "dynamic_nested_loop": "const e = {}; for (const n of Object.keys(t.dataset)) { "
+    "for (let i = 0; i < 2; i = i + 1) { e[n] = M(t.dataset[n]); } } return e;",
+    "dynamic_repeated_index": "const e = {}; const keys = Object.keys(t.dataset); "
+    "for (let i = 0; i < keys.length; i = i + 1) { const n = keys[0]; "
+    "e[n] = M(t.dataset[n]); } return e;",
+    "dynamic_transformed_key": "const e = {}; "
+    "for (const n of Object.keys(t.dataset)) { e[n + ''] = M(t.dataset[n]); } return e;",
+    "dynamic_colliding_keys": "const e = {}; "
+    "for (const n of Object.keys(t.dataset)) { e[n.slice(2)] = M(t.dataset[n]); } return e;",
+    "dynamic_mutated_keys": "const e = {}; const keys = Object.keys(t.dataset); "
+    "keys[0] = '__proto__'; for (const n of keys) { e[n] = M(t.dataset[n]); } return e;",
+    "dynamic_stale_keys": "const e = {}; const keys = Object.keys(t.dataset); "
+    "t.setAttribute('data-later', 'new'); "
+    "for (const n of keys) { e[n] = M(t.dataset[n]); } return e;",
+    "dynamic_loop_snapshot": "const e = {}; let observed = ''; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); "
+    "const copied = {...e}; observed = typeof copied; } return observed;",
+    "dynamic_member_read": "const e = {}; let observed = null; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); observed = e[n]; } "
+    "return observed;",
+    "dynamic_prototype_read": "const e = {}; "
+    "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } "
+    "return Object.getPrototypeOf(e);",
+    "prefix_unfiltered": BODIES["prefix_result"].replace(
+        BOOTSTRAP_FILTER, "Object.keys(t.dataset)"
+    ),
+    "prefix_either_preimage": BODIES["prefix_result"].replace(
+        't.startsWith("bs") && !t.startsWith("bsConfig")',
+        't.startsWith("bs") || t.startsWith("__proto__")',
+    ),
+    "prefix_exclusion_only": BODIES["prefix_result"].replace(
+        't.startsWith("bs") && !t.startsWith("bsConfig")', '!t.startsWith("bsConfig")'
+    ),
+    "prefix_dataset_lookup": BODIES["prefix_result"].replace(
+        "t.dataset[n]", "t.dataset[n.replace(/^bs/, '')]"
+    ),
+    "prefix_twice": BODIES["prefix_result"].replace(
+        "result[n.replace(/^bs/, '')]", "result[n.replace(/^bs/, '').replace(/^bs/, '')]"
+    ),
+    "prefix_changed_pattern": BODIES["prefix_result"].replace("/^bs/", "/^b/"),
+    "prefix_changed_flags": BODIES["prefix_result"].replace("/^bs/", "/^bs/i"),
+    "prefix_second_writer": BODIES["prefix_result"].replace(
+        "M(t.dataset[n]);", "M(t.dataset[n]); result[n.replace(/^bs/, '')] = null;"
+    ),
 }
 
 
@@ -109,12 +252,17 @@ def oracle_source(accessors):
         for attrs in fixtures:
             label = f"assignmentObservation{len(labels):03}"
             labels.append(label)
-            if name == "assign_loop":
-                keys = [re.sub(r"-([a-z])", lambda m: m[1].upper(), attr[5:]) for attr, _ in attrs]
+            if name in ("assign_loop", "loop_dynamic_key", "loop_dynamic_all", "prefix_result"):
+                keys = [
+                    re.sub(r"-([a-z])", lambda m: m[1].upper(), attr[5:])
+                    for attr, _ in attrs
+                    if attr.startswith("data-")
+                ]
                 trace = ["dataset"] + [
                     item
                     for key in keys
-                    if key.startswith("bs") and not key.startswith("bsConfig")
+                    if name == "loop_dynamic_all"
+                    or (key.startswith("bs") and not key.startswith("bsConfig"))
                     for item in (("dataset", "dataset:" + key) if accessors else ("dataset",))
                 ]
             else:
@@ -137,13 +285,17 @@ def oracle_source(accessors):
 var {label} = (function() {{
     const attributes = {json.dumps(attrs)};
     const trace = [];
-    const data = {{}};
+    const target = {{}};
+    const keys = [];
     for (const pair of attributes) {{
         if (pair[0].startsWith('data-')) {{
             const key = pair[0].slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-            Object.defineProperty(data, key, {{enumerable: true, {descriptor}}});
+            keys.push(key);
+            Object.defineProperty(target, key, {{enumerable: true, {descriptor}}});
         }}
     }}
+    // DOM named properties preserve attribute order, including numeric names.
+    const data = new Proxy(target, {{ownKeys() {{ return keys.slice(); }} }});
     const result = {name}({{
         get dataset() {{ trace.push('dataset'); return data; }},
         hasAttribute(key) {{ trace.push('has:' + key); return attributes.some(pair => pair[0] === key); }},
@@ -190,9 +342,10 @@ def client(name, symbol, owned):
     fixtures = ",".join(
         "{"
         + ",".join(
-            "{"
+            "{std::string{"
             + numbers.cpp_string(key)
-            + ",std::string{"
+            + f", {len(key.encode())}"
+            + "},std::string{"
             + numbers.cpp_string(value)
             + f", {len(value.encode())}"
             + "}}"
@@ -267,7 +420,7 @@ def main():
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
-    intrinsics = ITERATION_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
+    intrinsics = PREFIX_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
     prepared = [
         (name, *dom.prepare(args, name, source, 1, entry_name=name))
         for name, source in SOURCES.items()
@@ -299,7 +452,7 @@ def main():
                 module = layouts[layout]
                 entries = dom.NATIVE.findall(module.read_text())
                 assert len(entries) == (
-                    2 if name == "assign_loop" else 1
+                    2 if name in ("assign_loop", "loop_dynamic_key", "prefix_result") else 1
                 ) and not dom.FUNCTION.search(module.read_text()), module.read_text()
                 symbol = next(
                     entry for entry in entries if re.fullmatch(re.escape(name) + r"_\d+", entry)
@@ -314,6 +467,10 @@ def main():
                     assert (
                         "ctbrowser::parse_json" in cpp and "ctbrowser::decode_uri_component" in cpp
                     ), cpp
+                if name in ("loop_dynamic_key", "loop_dynamic_all", "prefix_result"):
+                    assert "ctnative::dataset_value(" in cpp, cpp
+                    assert "ctnative::assign_json_snapshot_property(" in cpp, cpp
+                    assert "__proto__" not in cpp, cpp
                 headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
                 body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
                 namespace = name + ("_session" if owned else "_free")
@@ -342,6 +499,8 @@ def main():
                         "-fsanitize=address,undefined",
                         "-fsanitize-address-use-after-scope",
                         "-fno-omit-frame-pointer",
+                        # Avoid inlining every fixture into the combined lifetime check.
+                        "-fno-inline-functions",
                         *includes,
                         path,
                         *libraries,
@@ -384,25 +543,26 @@ def main():
                     success=False,
                 )
                 refusals += 1
-    _, ir, contract = next(row for row in prepared if row[0] == "assign_loop")
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-        for optimize in (False, True):
-            for budget in (0, 64, 256):
-                dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=intrinsics,
-                        dataset_parameters=[0],
-                    ),
-                    f"budget-{refusals}",
-                    optimize=optimize,
-                    max_steps=budget,
-                    success=False,
-                )
-                refusals += 1
+    for name in ("assign_loop", "loop_dynamic_key", "prefix_result"):
+        _, ir, contract = next(row for row in prepared if row[0] == name)
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for optimize in (False, True):
+                for budget in (0, 64, 256):
+                    dom.lower(
+                        args,
+                        ir,
+                        dict(
+                            contract,
+                            provider=provider,
+                            initial_intrinsics=intrinsics,
+                            dataset_parameters=[0],
+                        ),
+                        f"budget-{refusals}",
+                        optimize=optimize,
+                        max_steps=budget,
+                        success=False,
+                    )
+                    refusals += 1
     print(
         f"native DOM assignments: {len(SOURCES)} sources, {len(expected)} Node/VM source-double observations plus Node accessor traces, 8 GCC/Clang binaries, lifetime sanitizer, both providers/policies/layouts, {refusals} refusals"
     )

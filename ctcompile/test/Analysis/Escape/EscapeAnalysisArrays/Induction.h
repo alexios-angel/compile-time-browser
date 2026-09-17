@@ -806,6 +806,139 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(carriedSub, "ctjs.binary add %one, %one",
                            "ctjs.constant #ctjs.number<4751297606873776128>"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    for (const std::string opcode : {"binary", "binary_static"}) {
+        for (const std::string operands : {"%minus, %two", "%two, %minus"}) {
+            const std::string cancel = "  %cancelled = ctjs." + opcode + " add " + operands +
+                                       " {storage_test_id = \"cancelled\"}\n";
+            const auto cancelled =
+                replace(replace(savedSub, "  cf.br ^header", cancel + "  cf.br ^header"),
+                        "binary sub %i, %minus", "binary_static add %i, %cancelled");
+            run({.what = "Add cancellation preserves a held negative snapshot after source shrink",
+                 .body = cancelled,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "Add cancellation discharges only unreturned children",
+                 .body = replace(cancelled, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            run({.what = "a cancelled Number snapshot supplies an exact own index",
+                 .body = replace(cancelled, "%base[%i]", "%base[%cancelled]"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[1]=x; a[1]=x",
+                 .exit = "x -> {x}"});
+            reject("repeated Add cancellation needs independent invariance",
+                   replace(replace(cancelled, cancel, ""), "  %step =", cancel + "  %step ="));
+        }
+    }
+    const std::string cancel = "  %cancelled = ctjs.binary add %minus, %two "
+                               "{storage_test_id = \"cancelled\"}\n";
+    const auto cancelled = replace(replace(savedSub, "  cf.br ^header", cancel + "  cf.br ^header"),
+                                   "binary sub %i, %minus", "binary_static add %i, %cancelled");
+    const auto cancelledZero =
+        replace(replace(replace(cancelled, "binary add %minus, %two", "binary add %minus, %one"),
+                        "add %i, %cancelled", "add %i, %one"),
+                "^header(%a, %zero, %zero", "^header(%a, %cancelled, %zero");
+    run({.what = "exact cancellation to zero initializes induction",
+         .body = cancelledZero,
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "a cancelled zero retains its result origin",
+         .body = replace(cancelledZero, "ctjs.return %result", "ctjs.return %cancelled"),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "cancelled -> {}"},
+        "x");
+    run({.what = "a cancelled stride preserves the original zero-trip result",
+         .body = replace(cancelled, "^header(%a, %zero, %zero", "^header(%a, %magnitude, %x"),
+         .arrays = "a:[one,x]; seed:[]",
+         .exit = "x -> {x}"});
+    for (const std::string value : {"%one", "%zero", "%minus"}) {
+        reject("a zero or negative cancelled result cannot supply a positive stride",
+               replace(cancelled, "binary add %minus, %two", "binary add %minus, " + value));
+    }
+    for (const std::string constant :
+         {"#ctjs.string<\"2\">", "#ctjs.bigint<\"2\">", "#ctjs.number<4751297606875873280>"}) {
+        reject("cancellation requires both original operands inside the bounded Number domain",
+               replace(cancelled, "#ctjs.number<4611686018427387904>", constant));
+    }
+    reject("cancellation cannot borrow an unknown operand",
+           replace(cancelled, "binary add %minus, %two", "binary add %minus, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("a cancelled stride still bounds its final update",
+           replace(replace(replace(cancelled, "#ctjs.number<4611686018427387904>",
+                                   "#ctjs.number<4751297606873776128>"),
+                           "[%one, %x]", "[%one, %x, %one]"),
+                   "^header(%a, %zero, %zero", "^header(%a, %magnitude, %zero"));
+    const std::string factor = "  %factor = ctjs.unary plus %one\n";
+    const std::string product = "  %product = ctjs.binary mul %minus, %factor "
+                                "{storage_test_id = \"product\"}\n";
+    const auto productChild =
+        replace(replace(savedSub, "  cf.br ^header", factor + product + "  cf.br ^header"),
+                "sub %i, %minus", "sub %i, %product");
+    for (const auto & source :
+         {productChild, replace(productChild, "mul %minus, %factor", "mul %factor, %minus"),
+          replace(productChild, "binary sub %left, %magnitude",
+                  "constant #ctjs.number<13830554455654793216>")}) {
+        run({.what = "signed Number products retain the negative snapshot after source shrink",
+             .body = source,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "signed Number products discharge only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    const auto positiveProduct =
+        replace(replace(productChild, factor, "  %factor = ctjs.unary neg %one\n"),
+                "binary sub %i, %product", "binary_static add %i, %product");
+    run({.what = "two negative factors supply a positive stride and own index",
+         .body = replace(positiveProduct, "%base[%i]", "%base[%product]"),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[1]=x; a[1]=x",
+         .exit = "x -> {x}"});
+    for (const std::string zero : {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>"}) {
+        const auto zeroProduct = replace(
+            replace(replace(productChild, factor, "  %factor = ctjs.constant " + zero + "\n"),
+                    "binary sub %i, %product", "binary_static add %i, %one"),
+            "^header(%a, %zero, %zero", "^header(%a, %product, %zero");
+        run({.what = "signed zero products supply index zero while retaining their origin",
+             .body = replace(zeroProduct, "ctjs.return %result", "ctjs.return %product"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "product -> {}"},
+            "x");
+    }
+    run({.what = "a signed product preserves a zero-trip saved child",
+         .body = replace(productChild, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+         .arrays = "a:[one,x]; seed:[]",
+         .exit = "x -> {x}"});
+    reject("a negative product cannot supply an own array index",
+           replace(productChild, "%base[%i]", "%base[%product]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("a repeated product needs independent invariance",
+           replace(replace(productChild, product, ""), "  %step =", product + "  %step ="));
+    for (const std::string constant :
+         {"#ctjs.number<0>", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<4751297606875873280>", "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
+        reject("signed multiplication needs bounded Number operands and nonzero progress",
+               replace(productChild, factor, "  %factor = ctjs.constant " + constant + "\n"));
+    }
+    reject("a product cannot borrow an unknown operand",
+           replace(productChild, "mul %minus, %factor", "mul %minus, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    const auto maximumProduct = replace(
+        productChild, factor, "  %factor = ctjs.constant #ctjs.number<4751297606873776128>\n");
+    reject("a signed product must bound its final induction update",
+           replace(maximumProduct, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    reject("two bounded signed factors cannot certify an overflowing product",
+           replace(maximumProduct, "binary sub %left, %magnitude", "binary sub %zero, %magnitude"));
     for (const std::string unary : {"plus", "neg"}) {
         const std::string operation = unary == "plus" ? "sub" : "add";
         const std::string makeSigned = "  %signed = ctjs.unary " + unary + " %minus\n";

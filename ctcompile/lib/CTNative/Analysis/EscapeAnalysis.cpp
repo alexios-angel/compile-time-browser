@@ -902,6 +902,13 @@ std::optional<std::size_t> boundedNumberSum(const ContentsValue & left,
     // Both original operands must be exact Numbers. Guard before adding so
     // neither dynamic nor static Add can borrow coercion, rounding or wrap.
     if (a && b && *a <= 4294967295ULL - *b) { return *a + *b; }
+    const auto negativeA = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                      : boundedNumber(left.origin(), true);
+    const auto negativeB = right.negativeIntegerNumber ? right.negativeIntegerNumber
+                                                       : boundedNumber(right.origin(), true);
+    // Cancellation stays exact and bounded; a negative result is not an index.
+    if (a && negativeB && *a >= *negativeB) { return *a - *negativeB; }
+    if (negativeA && b && *b >= *negativeA) { return *b - *negativeA; }
     return std::nullopt;
 }
 
@@ -1677,13 +1684,27 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    const bool negative = a.has_value() != b.has_value();
+                    if (!a) {
+                        a = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                       : boundedNumber(lhs, true);
+                    }
+                    if (!b) {
+                        b = right.negativeIntegerNumber ? right.negativeIntegerNumber
+                                                        : boundedNumber(rhs, true);
+                    }
                     // Exact Number operands and a bounded product exclude rounding
                     // and wrap. Zero keeps its original signed value as the origin.
                     if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = *a * *b;
+                        const auto product = *a * *b;
+                        if (negative && product != 0) {
+                            result.negativeIntegerNumber = product;
+                        } else {
+                            result.integerNumber = product;
+                        }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Div ||

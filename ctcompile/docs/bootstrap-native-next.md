@@ -1,6 +1,47 @@
 # What native Bootstrap needs next
 
-## Current boundary: Unicode keys after ordered result writes, 2026-09-17
+## Current boundary: Unicode keys after filtered prefix assignments, 2026-09-17
+
+**`08a812a6`** finishes the interrupted dynamic-assignment branch: `73ae525d`,
+`88e9f626` and `1d363a7b` are integrated with browser `0337cd15`. Recovery used
+its passing **377-target build / 1 host CTest / 3 focused lit cases**, with all
+**1,818 input hashes** reverified. The inherited full CTest was deliberately
+cancelled under the new focused policy; it is not a full-suite pass.
+
+**`58cb0b3a`** now compiles the original filtered
+`result[n.replace(/^bs/, '')] = M(t.dataset[n])`. The callback proves that selected
+keys start with `bs`; removing that prefix preserves uniqueness. The existing
+single traversal, sole writer and final-own-data proof covers the possible
+`__proto__` setter. This is separate from dataset membership; transformed dataset
+lookups, weak/unfiltered predicates, repeated stripping/writes and incomplete
+budgets refuse. Existing native String/JSON helpers are reused; no browser or
+Script/VM/GC implementation was added.
+
+The targeted build and exact host-contract/array CTests pass **2/2 (1.34s)**.
+The assignment lit replay passes **1/1 (181.34s): nine sources / 210 Node-VM
+observations plus Node accessor traces / eight GCC-Clang binaries / 196 refusals**,
+with lifetime sanitizers. A preceding sanitizer compile timeout was resolved by
+turning off inlining for that combined test compilation; all source cases,
+`-O1`, sanitizer options and the 120-second timeout remain. Three focused escape
+lit cases also pass for **`08d849c2`** bounded Add cancellation: its new oracle
+measures **20 sites / eight sound / zero violations / eight of 12 precision**.
+All **1,819 hashes** match locally/remotely before docs. Stable formatting passes;
+pinned formatting retains **26 diagnostics in nine unchanged files**.
+
+**Next:** one original full-H probe (`ctbrowser-dom-v1`, optimization off) still
+refuses the unsupported DOM member read. The public UTF-16/Unicode-case seam for
+`charAt(0).toLowerCase() + slice(1)` and its result-key proof remain. Ordinary key
+collisions must retain ordered last-write values; prototype-key skipping still
+requires its source proof. Coordinate the browser-owned seam through AGENT-SYNC.
+Config/inheritance/defaults, retained callbacks and the application driver remain
+open. Full CTest/lit and broad native/corpus/WPT/test262 replays were skipped.
+Bootstrap **19/574 / 0 of 47 globals**, Button **4/86 / 22 observations**, and Data
+session **7/7** are historical, not refreshed measurements. See HANDOFF and
+`/tmp/ctcompile-prefix-focused/` for exact checks, failure/recovery evidence and
+source manifests. Older sections below are historical checkpoints.
+
+
+## Previous boundary: Unicode keys after ordered result writes, 2026-09-17
 
 **`e8d5aae0` / `1576568d`** complete the next documented fresh-object seam:
 receiver-only source writes survive structured branches/loops, and the complete
