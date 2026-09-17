@@ -469,7 +469,18 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
         state.definition = index;
         state.state = custom_element_state::status::failed;
         custom_elements_.emplace(made_instead.key(), std::move(state));
-        return wrap(cx, made_instead);
+        // "...a new element that implements the HTMLUnknownElement interface":
+        // a customized built-in keeps its own interface, an autonomous one
+        // whose name would otherwise be a plain HTMLElement is the unknown one.
+        const value instead = wrap(cx, made_instead);
+        if (index != npos && reg.custom_definitions_[index].name == lowered &&
+            instead.is_object()) {
+            const value unknown = interface_prototype("HTMLUnknownElement");
+            if (unknown.is_object()) {
+                static_cast<script::object_object *>(instead.as_heap())->prototype = unknown;
+            }
+        }
+        return instead;
     }
     // createElement notes a <script> it made as unstarted itself, and the
     // constructor already did: one entry, not two runs.
