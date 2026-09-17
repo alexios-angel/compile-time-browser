@@ -338,8 +338,9 @@ void install_proxy(context & cx) {
         if (!target_of(c, a, "preventExtensions")) { return value::undefined(); }
         if (a[0].is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(a[0].as_heap());
-            const value trap = c.proxy_trap(a[0], "preventExtensions");
-            if (c.throw_pending()) { return value::undefined(); }
+            bool failed = false;
+            const value trap = c.proxy_trap(a[0], "preventExtensions", &failed);
+            if (failed || c.throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[1] = {p->target};
                 const bool ok = context::truthy(c.call(trap, args, p->handler));

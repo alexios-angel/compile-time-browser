@@ -93,8 +93,9 @@ value context::get_with_receiver(value base, const std::string & name, value rec
     for (value at = base; at.is_object_like() && depth < 64; ++depth) {
         if (at.is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(at.as_heap());
-            const value trap = proxy_trap(at, "get");
-            if (throw_pending()) { return value::undefined(); }
+            bool failed = false;
+            const value trap = proxy_trap(at, "get", &failed);
+            if (failed || throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[3] = {p->target, key_value(name), receiver};
                 return call(trap, args, p->handler);
@@ -203,12 +204,14 @@ value context::lookup_property(value target, const std::string & name) {
     // else looks at the object underneath it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "get");
-        if (throw_pending()) { return value::undefined(); }
+        bool failed = false;
+        const value trap = proxy_trap(target, "get", &failed);
+        if (failed || throw_pending()) { return value::undefined(); }
         if (trap.is_callable()) {
             const value args[3] = {p->target, key_value(name), target};
+            const std::size_t before = unwinds();
             const value answered = call(trap, args, p->handler);
-            if (throw_pending()) { return value::undefined(); }
+            if (throw_pending() || unwinds() != before) { return value::undefined(); }
             // 10.5.8 steps 8-10, the invariants: over a non-configurable target
             // property the answer must be a non-writable data property's own
             // value, and undefined for an accessor with no getter.

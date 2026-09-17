@@ -174,18 +174,21 @@ void context::store_property(value target, const std::string & name, value v) {
     // write does not land on the target at all, which is the point of it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "set");
-        if (throw_pending()) { return; }
+        bool failed = false;
+        const value trap = proxy_trap(target, "set", &failed);
+        if (failed || throw_pending()) { return; }
         if (trap.is_callable()) {
             const value args[4] = {p->target, key_value(name), v, target};
             // 10.5.9 step 9: a trap answering false is a REJECTED write -
             // silent here, the TypeError in strict code (strict_store_check).
             // An HTMLCollection's index is the everyday case.
-            if (!truthy(call(trap, args, p->handler)) && !throw_pending()) {
+            const std::size_t before = unwinds();
+            const bool answered = truthy(call(trap, args, p->handler));
+            if (throw_pending() || unwinds() != before) { return; }
+            if (!answered) {
                 store_rejected_ = true;
                 return;
             }
-            if (throw_pending()) { return; }
             // Steps 10-12, the invariants: a true answer over a target property
             // that is non-configurable and either non-writable data holding a
             // different value, or an accessor with no setter, is the TypeError.

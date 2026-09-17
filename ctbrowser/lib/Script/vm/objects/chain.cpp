@@ -190,12 +190,14 @@ bool context::has_property(value target, value key) {
     // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "has");
-        if (throw_pending()) { return false; }
+        bool failed = false;
+        const value trap = proxy_trap(target, "has", &failed);
+        if (failed || throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[2] = {p->target, key};
+            const std::size_t before = unwinds();
             const bool answered = truthy(call(trap, args, p->handler));
-            if (throw_pending()) { return false; }
+            if (throw_pending() || unwinds() != before) { return false; }
             // 10.5.7 step 9, the invariant: `false` over a target property that
             // is non-configurable, or that a non-extensible target has at all,
             // is the TypeError.
@@ -217,7 +219,9 @@ bool context::has_property(value target, value key) {
             }
             return answered;
         }
-        return !lookup_property(p->target, to_string(key)).is_undefined();
+        // 10.5.7 step 7: target.[[HasProperty]] - not a [[Get]], so no
+        // getter on the target runs.
+        return has_property(p->target, to_string(key));
     }
     return has_property(target, to_string(key));
 }

@@ -130,14 +130,19 @@ value context::construct(value callee, std::span<const value> args, value new_ta
     // Proxy(Renderer2D, {construct(...) {...}})`.
     if (callee.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(callee.as_heap());
-        const value trap = proxy_trap(callee, "construct");
-        if (throw_pending()) { return value::undefined(); }
+        bool failed = false;
+        const value trap = proxy_trap(callee, "construct", &failed);
+        if (failed || throw_pending()) { return value::undefined(); }
         if (trap.is_callable()) {
             const value list = make_array();
             static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
             const value trap_args[3] = {p->target, list, new_target};
+            // A THROW OUT OF THE TRAP HAS LANDED by the time call returns when
+            // no native is above (context::unwinds says why throw_pending
+            // cannot see it), so both are asked.
+            const std::size_t before = unwinds();
             const value made = call(trap, trap_args, p->handler);
-            if (throw_pending()) { return value::undefined(); }
+            if (throw_pending() || unwinds() != before) { return value::undefined(); }
             if (!made.is_object_like()) {
                 throw_error("TypeError", "proxy [[Construct]] must return an object");
                 return value::undefined();
@@ -154,9 +159,21 @@ value context::construct(value callee, std::span<const value> args, value new_ta
         throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
         return value::undefined();
     }
-    // OrdinaryCreateFromConstructor off NEW.TARGET (10.1.13): the instance's
-    // prototype is new.target's, which is the callee's own for a plain `new`.
-    const value self = make_instance(new_target.is_object_like() ? new_target : callee);
+    // OrdinaryCreateFromConstructor off NEW.TARGET (10.1.13 / 10.1.14
+    // GetPrototypeFromConstructor): for a plain `new` that is the callee's own
+    // `prototype`; for another new.target - Reflect.construct's, a proxy's
+    // forwarding, a bound function's - its `prototype` is read through [[Get]]
+    // (an accessor runs and may throw, a proxy answers for its target), and
+    // one that is not an object falls back to the callee's intrinsic.
+    value self = make_instance(callee);
+    if (!new_target.strict_equals(callee)) {
+        const std::size_t before = unwinds();
+        const value proto = lookup_property(new_target, "prototype");
+        if (throw_pending() || unwinds() != before) { return value::undefined(); }
+        if (proto.is_object_like()) {
+            static_cast<object_object *>(self.as_heap())->prototype = proto;
+        }
+    }
     // THE INSTANCE IS IN A C++ LOCAL FOR THE REST OF THIS FUNCTION, across a
     // field-initialiser run and a constructor body - both of which run user
     // JavaScript and can collect. Nothing rooted it, and under gc_stress that

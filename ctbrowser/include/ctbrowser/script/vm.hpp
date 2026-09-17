@@ -967,7 +967,11 @@ public:
     // The handler's trap of this name, or undefined when it has none. Public
     // for the standard library: `hasOwnProperty` must ask a proxy's handler the
     // same question `in` asks it, and `window` is a proxy.
-    [[nodiscard]] value proxy_trap(value proxy, const std::string & name);
+    // GetMethod (7.3.10): null/undefined is "no trap" (undefined here); a
+    // revoked proxy or a non-callable trap is the TypeError, and `failed`,
+    // when given, is set for that and for a getter's throw - the caller must
+    // not forward to the target after either (see the definition).
+    [[nodiscard]] value proxy_trap(value proxy, const std::string & name, bool * failed = nullptr);
     // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
     // else truncates toward zero and wraps modulo 2^32.
     [[nodiscard]] static std::int32_t to_int32(value v) {

@@ -156,8 +156,9 @@ bool context::own_property(value target, const std::string & name, property_desc
     // checks against the target (steps 15-22) are not made.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "getOwnPropertyDescriptor");
-        if (throw_pending()) { return false; }
+        bool failed = false;
+        const value trap = proxy_trap(target, "getOwnPropertyDescriptor", &failed);
+        if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return own_property(p->target, name, out); }
         const value args[2] = {p->target, key_value(name)};
         const value answer = call(trap, args, p->handler);
@@ -394,8 +395,9 @@ bool context::delete_own_property(value target, const std::string & name) {
     // attribute, which no delete on its target could do.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "deleteProperty");
-        if (throw_pending()) { return false; }
+        bool failed = false;
+        const value trap = proxy_trap(target, "deleteProperty", &failed);
+        if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return delete_own_property(p->target, name); }
         const value args[2] = {p->target, key_value(name)};
         return truthy(call(trap, args, p->handler));
@@ -490,8 +492,9 @@ bool context::define_own_property(value target, const std::string & name,
     // (FromPropertyDescriptor, step 8), or the target defines it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "defineProperty");
-        if (throw_pending()) { return false; }
+        bool failed = false;
+        const value trap = proxy_trap(target, "defineProperty", &failed);
+        if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return define_own_property(p->target, name, wanted); }
         const value args[3] = {p->target, key_value(name), from_property_descriptor(wanted)};
         return truthy(call(trap, args, p->handler));

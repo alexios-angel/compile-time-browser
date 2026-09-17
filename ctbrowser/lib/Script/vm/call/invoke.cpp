@@ -294,18 +294,28 @@ std::string context::describe_thrown(value thrown) {
 // anything else that is not callable is the TypeError. THE CALLER CHECKS
 // throw_pending() before forwarding to the target: undefined here means
 // either "no trap" or "a throw is in flight".
-value context::proxy_trap(value proxy, const std::string & name) {
+value context::proxy_trap(value proxy, const std::string & name, bool * failed) {
+    // `failed` is how a caller learns of a throw THIS function raised: a
+    // throw_error here has landed on the page's handler by the time it
+    // returns, and throw_pending cannot see it (context::unwinds). A throw a
+    // getter raised across lookup_property's call is parked, and throw_pending
+    // does see that one; `failed` reports both.
+    const std::size_t before = unwinds();
+    const auto fail = [&] {
+        if (failed != nullptr) { *failed = true; }
+        return value::undefined();
+    };
     auto * p = static_cast<proxy_object *>(proxy.as_heap());
     if (!p->handler.is_object_like()) {
         throw_error("TypeError", "Cannot perform '" + name + "' on a proxy that has been revoked");
-        return value::undefined();
+        return fail();
     }
     const value trap = lookup_property(p->handler, name);
-    if (throw_pending()) { return value::undefined(); }
+    if (throw_pending() || unwinds() != before) { return fail(); }
     if (trap.is_nullish()) { return value::undefined(); }
     if (!trap.is_callable()) {
         throw_error("TypeError", "proxy trap '" + name + "' is not a function");
-        return value::undefined();
+        return fail();
     }
     return trap;
 }

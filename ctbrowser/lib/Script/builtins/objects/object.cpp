@@ -140,8 +140,9 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
 [[nodiscard]] bool prevent_extensions_or_throw(context & cx, value target, const char * called) {
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = cx.proxy_trap(target, "preventExtensions");
-        if (cx.throw_pending()) { return false; }
+        bool failed = false;
+        const value trap = cx.proxy_trap(target, "preventExtensions", &failed);
+        if (failed || cx.throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[1] = {p->target};
             const bool ok = context::truthy(cx.call(trap, args, p->handler));
@@ -277,14 +278,15 @@ void install_object(context & cx) {
             // asked only of a proxy with no descriptor trap, which is the
             // engine's own window and style proxies, whose globals and
             // declarations ARE own.
-            const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor");
-            if (c.throw_pending()) { return value::undefined(); }
+            bool failed = false;
+            const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor", &failed);
+            if (failed || c.throw_pending()) { return value::undefined(); }
             if (describe.is_callable()) {
                 const value args[2] = {p->target, c.string(key)};
                 return value::boolean(!c.call(describe, args, p->handler).is_undefined());
             }
-            const value trap = c.proxy_trap(self, "has");
-            if (c.throw_pending()) { return value::undefined(); }
+            const value trap = c.proxy_trap(self, "has", &failed);
+            if (failed || c.throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[2] = {p->target, c.string(key)};
                 return value::boolean(c.truthy(c.call(trap, args, p->handler)));

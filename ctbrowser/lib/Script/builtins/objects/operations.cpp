@@ -41,8 +41,9 @@ namespace {
     std::vector<std::string> out;
     if (of.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(of.as_heap());
-        const value trap = cx.proxy_trap(of, "ownKeys");
-        if (cx.throw_pending()) { return out; }
+        bool failed = false;
+        const value trap = cx.proxy_trap(of, "ownKeys", &failed);
+        if (failed || cx.throw_pending()) { return out; }
         if (!trap.is_callable()) { return own_property_names(cx, p->target, which); }
         // 10.5.11 [[OwnPropertyKeys]]: the trap's list, each a String or a
         // Symbol and none twice (steps 7-8), then the invariants against the
