@@ -236,19 +236,52 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
 // row inside a tbody and `svg.innerHTML = "<circle/>"` an SVG circle. Parsed
 // as a <body>'s children, the first was nothing at all - "in body" ignores a
 // <tr> - and the second an HTML unknown element.
+//
+// IN AN XML DOCUMENT it is the XML fragment parsing algorithm (HTML 13.4):
+// the markup wrapped in an element that declares every namespace in scope at
+// the context element - nearest declaration wins, the context's own namespace
+// as the default when nothing declares one - and parsed as XML. `context_ns`
+// is that namespace URI. An ill-formed fragment is the empty handle, and the
+// caller leaves the element as it was (the specification throws SyntaxError).
 namespace {
 [[nodiscard]] node_id parse_fragment_for(const document & doc, document & scratch, node_id context,
-                                         std::string_view markup) {
-    std::string tag{"body"};
-    node_ns ns = node_ns::html;
-    {
-        const auto txn = doc.read();
-        if (txn.kind(context).value_or(node_kind::element) == node_kind::element) {
-            tag = txn.local_name(context);
-            ns = txn.element_ns(context);
+                                         std::string_view markup, std::string_view context_ns) {
+    const auto txn = doc.read();
+    const bool element = txn.kind(context).value_or(node_kind::element) == node_kind::element;
+    if (!doc.xml()) {
+        return parse_html_fragment(
+            scratch, markup, element ? txn.local_name(context) : std::string_view{"body"},
+            element ? txn.element_ns(context) : node_ns::html, doc.scripting());
+    }
+    const atom_table & atoms = doc.atoms();
+    const auto quoted = [](std::string_view value) {
+        std::string out;
+        for (const char c : value) {
+            out += c == '&' ? "&amp;" : c == '"' ? "&quot;" : c == '<' ? "&lt;" : std::string{c};
+        }
+        return out;
+    };
+    std::string wrapper = "<x";
+    std::vector<std::string_view> declared;
+    bool has_default = false;
+    for (node_id at = element ? context : node_id{}; at; at = txn.parent(at)) {
+        for (const attribute & a : txn.attributes(at)) {
+            // By NAME: the XML parser keeps an `xmlns` declaration as the
+            // attribute it was written as, in no namespace.
+            const std::string_view name = atoms.text(a.name);
+            if (name != "xmlns" && !name.starts_with("xmlns:")) { continue; }
+            if (std::ranges::find(declared, name) != declared.end()) { continue; }
+            declared.push_back(name);
+            has_default = has_default || name == "xmlns";
+            wrapper += " " + std::string{name} + "=\"" + quoted(a.value) + "\"";
         }
     }
-    return parse_html_fragment(scratch, markup, tag, ns, doc.scripting());
+    if (!has_default && !context_ns.empty()) { wrapper += " xmlns=\"" + quoted(context_ns) + "\""; }
+    wrapper += ">";
+    wrapper += markup;
+    wrapper += "</x>";
+    const xml_parse_result read = parse_xml(scratch, wrapper);
+    return read.error.empty() ? read.tree.root : node_id{};
 }
 } // namespace
 
@@ -272,14 +305,15 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
             doc_->set_template_content(target, into);
         }
     }
+    document scratch{*atoms_};
+    const node_id body = parse_fragment_for(*doc_, scratch, target, markup, namespace_of(target));
+    if (!body) { return; }
     {
         const auto txn = doc_->read();
         const std::span<const node_id> kids = txn.children(into);
         const std::vector<node_id> existing{kids.begin(), kids.end()};
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
-    document scratch{*atoms_};
-    const node_id body = parse_fragment_for(*doc_, scratch, target, markup);
     const auto from = scratch.read();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, into); }
     mutated();
@@ -375,7 +409,8 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
         }
     }
     document scratch{*atoms_};
-    const node_id body = parse_fragment_for(*doc_, scratch, parent, markup);
+    const node_id body = parse_fragment_for(*doc_, scratch, parent, markup, namespace_of(parent));
+    if (!body) { return; }
     const auto from = scratch.read();
     const node_id fragment = doc_->create_fragment();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }
