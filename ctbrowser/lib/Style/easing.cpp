@@ -603,7 +603,12 @@ struct decomposed2d {
         row0x = -row0x, row0y = -row0y;
     }
     d.angle = std::atan2(row0y, row0x) * 180.0 / std::numbers::pi;
-    d.m11 = row0x, d.m12 = row0y, d.m21 = row1x, d.m22 = row1y;
+    // The residual is the matrix with its rotation taken back out, so that
+    // recomposing rotate(angle) * residual gives the rows back.
+    const double sn = -row0y, cs = row0x;
+    const double m11 = row0x, m12 = row0y, m21 = row1x, m22 = row1y;
+    d.m11 = cs * m11 + sn * m21, d.m12 = cs * m12 + sn * m22;
+    d.m21 = -sn * m11 + cs * m21, d.m22 = -sn * m12 + cs * m22;
     return d;
 }
 
