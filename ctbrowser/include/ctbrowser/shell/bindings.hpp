@@ -2511,6 +2511,9 @@ public:
     // was never started, so text appended later runs it. See document/entry.cpp.
     std::vector<node_id> unstarted_scripts_;
     void run_inserted_scripts();
+    // "Execute the script element" for a classic script's source text:
+    // currentScript set and restored, an uncaught throw reported.
+    void execute_script_element(context & cx, node_id id, const std::string & source);
 
 public:
     void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }

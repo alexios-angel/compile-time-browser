@@ -402,12 +402,42 @@ void dom_bindings::run_inserted_scripts() {
         }
         if (type == "module") { continue; }
         if (!src.empty()) {
-            const std::vector<std::byte> bytes =
-                assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
-            announce_load(id, !bytes.empty());
-            if (bytes.empty()) { continue; }
-            source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+            // AN EXTERNAL SCRIPT RUNS IN A LATER TASK (HTML 4.12.1.1 "prepare
+            // the script element" step 33: a script-inserted classic script
+            // with a src is fetched and executed "as soon as possible" - after
+            // the script that inserted it has finished, whether or not the
+            // element is still connected by then). Running it inside the
+            // insertion made `executeExternalScript()` in the fetched file see
+            // the null the page had not yet replaced (Document-prototype-
+            // currentScript.html). Its `load` fires after it ran.
+            (void)add_timer(
+                native(cx, "external script",
+                       [this, id, src](context & c, std::span<value>) {
+                           const std::vector<std::byte> bytes =
+                               assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+                           if (!bytes.empty()) {
+                               std::string text(reinterpret_cast<const char *>(bytes.data()),
+                                                bytes.size());
+                               execute_script_element(c, id, text);
+                           }
+                           announce_load(id, !bytes.empty());
+                           return value::undefined();
+                       }),
+                0, false);
+            continue;
         }
+        execute_script_element(cx, id, source);
+    }
+}
+
+// "Execute the script element" (HTML 4.12.1.2) for a classic script's source:
+// `document.currentScript` is the element while it runs - null for one in a
+// shadow tree, which is not in the document tree - and what it was before
+// afterwards; an uncaught throw is reported, and the caller carries on.
+void dom_bindings::execute_script_element(context & cx, node_id id, const std::string & source) {
+    if (doc_ == nullptr) { return; }
+    const atom src_name = atoms_->intern("src");
+    {
         // `document.currentScript` is this element while it runs - and while
         // its parse error is reported - and what it was, the outer script when
         // there is one, afterwards.
@@ -457,13 +487,18 @@ void dom_bindings::run_inserted_scripts() {
         }
         const bool frames_were_dirty = frames_dirty_;
         frames_dirty_ = false;
-        set_current_script(id);
+        // Null for a script whose root is a shadow root (HTML 4.12.1.2 step
+        // 5.2: only a node in the document tree is exposed).
+        {
+            const auto txn = doc_->read();
+            set_current_script(root_of_tree(txn, id, false) == txn.root() ? id : node_id{});
+        }
         script::program compiled = script::compiler::compile(source);
         if (!compiled.ok) {
             (void)dispatch_error(compiled.error);
             if (auto * doc = document_object()) { doc->set("currentScript", outer); }
             frames_dirty_ = frames_dirty_ || frames_were_dirty;
-            continue;
+            return;
         }
         const script::program & kept = cx.own_program(std::move(compiled));
         auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
