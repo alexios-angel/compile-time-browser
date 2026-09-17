@@ -1036,6 +1036,9 @@ void test_builtin_subclasses() {
     expect_result("class O extends Object { constructor() { super(); this.x = 1; } }"
                   "return new O().x + ',' + (new O() instanceof O);",
                   "1,true");
+    expect_result("class F extends Function {} const f = new F('return 7');"
+                  "return f() + ',' + (f instanceof F) + ',' + (f instanceof Function);",
+                  "7,true,true");
     // Object.setPrototypeOf on an array, and `in` through the chain.
     expect_result(
         "const a = [1]; Object.setPrototypeOf(a, { extra: 7 });"

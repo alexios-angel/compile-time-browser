@@ -296,7 +296,26 @@ value dynamic_function(context & c, std::span<value> a, const char * keyword) {
         return value::undefined();
     }
     const program & kept = c.own_program(std::move(compiled));
-    return c.run_nested(kept);
+    const value made = c.run_nested(kept);
+    // CreateDynamicFunction step 22-24 (OrdinaryFunctionCreate off
+    // GetPrototypeFromConstructor(newTarget)): under `new` from a subclass -
+    // `class F extends Function {}`, reached through super() - the closure's
+    // [[Prototype]] is the instance's, F.prototype, and not the intrinsic.
+    // The same shape as detail::adopt_subclass_prototype for an array.
+    if (made.is_kind(heap_kind::function)) {
+        const value self = c.current_this();
+        if (detail::constructing_this(self)) {
+            const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+            if (proto.is_object() &&
+                proto.as_heap() != c.prototype(context::proto_kind::function) &&
+                proto.as_heap() != c.prototype(context::proto_kind::generator_function) &&
+                proto.as_heap() != c.prototype(context::proto_kind::async_function) &&
+                proto.as_heap() != c.prototype(context::proto_kind::async_generator_function)) {
+                static_cast<closure_object *>(made.as_heap())->proto_link = proto;
+            }
+        }
+    }
+    return made;
 }
 } // namespace
 
