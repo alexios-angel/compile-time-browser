@@ -485,6 +485,14 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
 
 // IsArray, 7.2.2: a Proxy is asked through to its target, and a revoked one
 // (both slots null) is a TypeError - FALSE with the throw in flight.
+// An arguments object: an array_object on Object.prototype carrying the marker
+// context::make_arguments_object defines - not an Array exotic object (7.2.2),
+// and "[object Arguments]" to Object.prototype.toString.
+[[nodiscard]] inline bool is_arguments_object(value v) {
+    if (!v.is_array()) { return false; }
+    const auto * arr = static_cast<const array_object *>(v.as_heap());
+    return arr->named && arr->named->find("@#Arguments") != nullptr;
+}
 [[nodiscard]] inline bool is_array_value(context & cx, value v, bool & out) {
     for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
         auto * p = static_cast<proxy_object *>(v.as_heap());
@@ -501,7 +509,7 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     // spreading and ArraySpeciesCreate all say no to one.
     out = v.is_array() &&
           static_cast<const array_object *>(v.as_heap())->elements == element_kind::none &&
-          !static_cast<const array_object *>(v.as_heap())->is_view();
+          !static_cast<const array_object *>(v.as_heap())->is_view() && !is_arguments_object(v);
     return true;
 }
 

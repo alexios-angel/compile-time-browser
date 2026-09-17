@@ -1890,6 +1890,10 @@ public:
         value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
         return settled != nullptr && !truthy(*settled);
     }
+    // %ThrowTypeError% (10.2.4.1): ONE per realm, anonymous, arity 0, frozen -
+    // the getter and setter of Function.prototype's `caller` and `arguments`
+    // and of an unmapped arguments object's `callee`. Made on first use.
+    [[nodiscard]] value throw_type_error();
     // THE JOB THAT RESUMES AN AWAIT OF A SETTLED VALUE: (coroutine, value,
     // rejected) -> resume. One native per context, made on first use.
     [[nodiscard]] value await_job() {
@@ -2034,6 +2038,7 @@ private:
     // in, so after it runs the frame's copy is the one that still has them.
     [[nodiscard]] value make_arguments_object(call_frame & fr, const value * slots,
                                               std::uint32_t argc);
+
     [[nodiscard]] value gather_rest_values(const call_frame & fr, const value * slots,
                                            std::uint32_t argc, std::uint32_t from);
 
@@ -2212,6 +2217,7 @@ private:
             for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
         }
         visit(root_label::microtasks, await_job_); // the one native every settled await queues
+        visit(root_label::prototypes, throw_type_error_);
         // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
         // register once the module has finished evaluating, so without this a
         // collection between two modules frees the bindings the second one is
@@ -2454,7 +2460,8 @@ private:
     // bridge read it after a store from STRICT code and throw the TypeError
     // (10.1.9.2 / 13.15.2 PutValue step 6.b).
     bool store_rejected_ = false;
-    value await_job_ = value::undefined(); // see await_job(); a root in each_root
+    value await_job_ = value::undefined();        // see await_job(); a root in each_root
+    value throw_type_error_ = value::undefined(); // see throw_type_error(); a root too
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;

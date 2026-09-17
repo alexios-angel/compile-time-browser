@@ -247,12 +247,7 @@ void install_function(context & cx) {
     // %ThrowTypeError% - `f.caller` on a strict function (a class, an arrow, a
     // built-in) is a TypeError. A sloppy function answers null before the
     // chain gets here (lookup_property's closure arm), as every browser does.
-    const value thrower = detail::accessor_fn(cx, "", [](context & c, std::span<value>) {
-        c.throw_error("TypeError", "'caller', 'callee', and 'arguments' properties may not be "
-                                   "accessed on strict mode functions or the arguments objects "
-                                   "for calls to them");
-        return value::undefined();
-    });
+    const value thrower = cx.throw_type_error(); // one per realm, 10.2.4.1
     function_proto->define_accessor("caller", thrower, thrower, attr_configurable);
     function_proto->define_accessor("arguments", thrower, thrower, attr_configurable);
     cx.set_prototype(context::proto_kind::function, function_proto);

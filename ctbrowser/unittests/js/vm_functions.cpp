@@ -767,6 +767,23 @@ void test_arguments() {
     expect_result("function d(x = arguments[2], y = arguments.length, z) { return x + ':' + y; }"
                   "return d(undefined, undefined, 'third');",
                   "third:3");
+    // NOT AN ARRAY (10.4.4): on Object.prototype, "[object Arguments]", with
+    // Array.prototype.values as its iterator and `callee` - the function when
+    // mapped, the %ThrowTypeError% accessor when strict.
+    expect_result("function f() { return Array.isArray(arguments) + ',' + "
+                  "Object.prototype.toString.call(arguments) + ',' + typeof arguments.map + ',' +"
+                  "(arguments instanceof Array) + ',' + (arguments instanceof Object) + ',' +"
+                  "[...arguments].join('|') + ',' + (arguments.callee === f); } return f(1, 2);",
+                  "false,[object Arguments],undefined,false,true,1|2,true");
+    expect_result("function f() { 'use strict'; try { return arguments.callee; } catch (e) {"
+                  " return e.name; } } return f();",
+                  "TypeError");
+    expect_result("function f() { 'use strict'; return arguments; }"
+                  "const d = Object.getOwnPropertyDescriptor(f(), 'callee');"
+                  "const c = Object.getOwnPropertyDescriptor(Function.prototype, 'caller');"
+                  "return (d.get === d.set) + ',' + (d.get === c.get) + ',' + d.configurable + ','"
+                  " + Object.isFrozen(d.get) + ',' + d.get.length + ',' + d.get.name;",
+                  "true,true,false,true,0,");
 }
 
 // A CLOSURE MADE BY ITS OWN INITIALISER, in a block: `let y = () => y` boxes

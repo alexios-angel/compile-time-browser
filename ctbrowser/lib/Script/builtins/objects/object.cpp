@@ -319,6 +319,8 @@ void install_object(context & cx) {
         if (!detail::is_array_value(c, self, array)) { return value::undefined(); }
         if (array) {
             tag = "Array";
+        } else if (detail::is_arguments_object(self)) {
+            tag = "Arguments"; // 20.1.3.6 step 5: [[ParameterMap]]
         } else if (self.is_callable()) {
             tag = "Function";
         } else if (self.is_string()) {
