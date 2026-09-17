@@ -166,7 +166,7 @@ std::size_t dom_bindings::custom_definition_for(const read_txn & txn, node_id id
     const std::vector<custom_element_definition> & defs = primary().custom_definitions_;
     for (std::size_t i = 0; i < defs.size(); ++i) {
         const custom_element_definition & def = defs[i];
-        if (def.registry != this || def.local_name != tag) { continue; }
+        if (def.registry != registry_ || def.local_name != tag) { continue; }
         if (def.name == def.local_name) { return i; }
         // A customized built-in is named by its `is` attribute.
         if (txn.attribute_value(id, atoms_->intern("is")) == def.name) { return i; }
@@ -182,7 +182,8 @@ std::size_t dom_bindings::custom_definition_of(context & cx, value receiver) {
         // definition's construction stack.
         for (std::size_t i = 0; i < defs.size(); ++i) {
             const auto & stack = defs[i].construction_stack;
-            if (!stack.empty() && stack.back().element == held && defs[i].registry == owner) {
+            if (!stack.empty() && stack.back().element == held &&
+                defs[i].registry->document == owner) {
                 return i;
             }
         }
@@ -212,32 +213,39 @@ void dom_bindings::sync_custom_element_roots() {
             roots.push_back(held);
         }
     }
-    for (const auto & [bits, reg] : top.registries_) {
-        roots.push_back(reg->custom_elements_registry_);
-        for (const auto & [name, promise] : reg->when_defined_) { roots.push_back(promise); }
+    for (const auto & reg : top.registries_) {
+        roots.push_back(reg->object);
+        for (const auto & [name, promise] : reg->when_defined) { roots.push_back(promise); }
     }
     roots.push_back(top.construct_fence_);
     roots.push_back(top.custom_elements_registry_prototype_);
 }
 
-dom_bindings & dom_bindings::registry_of(value receiver) {
+dom_bindings::custom_element_registry & dom_bindings::registry_of(value receiver) {
     dom_bindings & top = primary();
-    const auto found = top.registries_.find(receiver.bits());
-    return found == top.registries_.end() ? top : *found->second;
+    const auto found = top.registry_objects_.find(receiver.bits());
+    return found == top.registry_objects_.end() ? *top.registry_ : *found->second;
+}
+
+dom_bindings::custom_element_registry & dom_bindings::make_registry(dom_bindings * document,
+                                                                    value object) {
+    dom_bindings & top = primary();
+    auto & made = *top.registries_.emplace_back(std::make_unique<custom_element_registry>());
+    made.document = document;
+    made.object = object;
+    top.registry_objects_.emplace(object.bits(), &made);
+    sync_custom_element_roots();
+    return made;
 }
 
 value dom_bindings::custom_elements_registry(context & cx) {
-    if (custom_elements_registry_.is_object()) { return custom_elements_registry_; }
-    dom_bindings & top = primary();
+    if (registry_ != nullptr) { return registry_->object; }
     auto * registry = cx.allocate<script::object_object>();
-    registry->prototype = top.custom_elements_registry_prototype_;
-    custom_elements_registry_ = value::object(registry);
-    top.registries_.emplace(custom_elements_registry_.bits(), this);
-    // Only a frame asks for one: a document a page made has no window to
-    // hang it on. Having a registry is having a browsing context.
-    if (secondary_) { frame_document_ = true; }
-    sync_custom_element_roots();
-    return custom_elements_registry_;
+    registry->prototype = primary().custom_elements_registry_prototype_;
+    // Only the page and a frame ask for one: a document a page made has no
+    // window to hang it on. Having a registry is having a browsing context.
+    registry_ = &make_registry(this, value::object(registry));
+    return registry_->object;
 }
 
 // --- the HTML element constructor ---------------------------------------------
@@ -295,7 +303,7 @@ value dom_bindings::construct_html_element(context & c, value self,
     // Steps 8-13: a NEW element, custom from the start, IN THE DOCUMENT WHOSE
     // REGISTRY HOLDS THE DEFINITION - a frame's, when the class was defined
     // through `frame.contentWindow.customElements`.
-    dom_bindings & owner = *def.registry;
+    dom_bindings & owner = def.registry->document == nullptr ? primary() : *def.registry->document;
     const node_id made = owner.doc_->create_element(atoms_->intern(def.local_name));
     if (def.local_name != def.name) {
         (void)owner.doc_->set_attribute(made, atoms_->intern("is"), def.name);
@@ -380,7 +388,7 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
     if (has_browsing_context()) {
         for (std::size_t i = 0; i < reg.custom_definitions_.size(); ++i) {
             const custom_element_definition & def = reg.custom_definitions_[i];
-            if (def.registry != this || def.local_name != lowered) { continue; }
+            if (def.registry != registry_ || def.local_name != lowered) { continue; }
             if (def.name == def.local_name || def.name == is) {
                 index = i;
                 break;
@@ -874,7 +882,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     auto * registry_proto = cx.allocate<script::object_object>();
     custom_elements_registry_prototype_ = value::object(registry_proto);
     // (registry, name) -> the definition's index in the primary's vector.
-    const auto defined = [this](const dom_bindings & reg, std::string_view name) {
+    const auto defined = [this](const custom_element_registry & reg, std::string_view name) {
         for (std::size_t i = 0; i < custom_definitions_.size(); ++i) {
             if (custom_definitions_[i].registry == &reg && custom_definitions_[i].name == name) {
                 return i;
@@ -886,7 +894,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     set_method(
         cx, *registry_proto, "define",
         [this, defined](context & c, std::span<value> args) -> value {
-            dom_bindings & reg = registry_of(c.current_this());
+            custom_element_registry & reg = registry_of(c.current_this());
             // HTML 4.13.4 "element definition", in the specification's order:
             // the constructor, the name, the name twice over, the `extends`,
             // the running flag, then the prototype and everything read off it.
@@ -938,12 +946,12 @@ void dom_bindings::install_custom_elements(context & cx) {
                     }
                 }
             }
-            if (reg.custom_definition_running_) {
+            if (reg.running) {
                 throw_dom_exception(c, "NotSupportedError",
                                     "customElements.define is already running");
                 return value::undefined();
             }
-            reg.custom_definition_running_ = true;
+            reg.running = true;
             // Steps 8-9: everything read off the constructor and its
             // prototype, with the flag cleared however it ends.
             custom_element_definition def;
@@ -1009,17 +1017,17 @@ void dom_bindings::install_custom_elements(context & cx) {
                 }
                 return true;
             }();
-            reg.custom_definition_running_ = false;
+            reg.running = false;
             if (!read) { return value::undefined(); }
             custom_definitions_.push_back(std::move(def));
             sync_custom_element_roots();
             // The candidates in the registry's document are upgraded, then
             // whenDefined settles.
-            reg.react_custom_elements();
-            if (const auto waiting = reg.when_defined_.find(name);
-                waiting != reg.when_defined_.end()) {
+            if (reg.document != nullptr) { reg.document->react_custom_elements(); }
+            if (const auto waiting = reg.when_defined.find(name);
+                waiting != reg.when_defined.end()) {
                 const value promise = waiting->second;
-                reg.when_defined_.erase(waiting);
+                reg.when_defined.erase(waiting);
                 c.settle_promise(promise, ctor, false);
             }
             sync_custom_element_roots();
@@ -1046,7 +1054,7 @@ void dom_bindings::install_custom_elements(context & cx) {
                                            "type 'Function'.");
                 return value::undefined();
             }
-            const dom_bindings & reg = registry_of(c.current_this());
+            const custom_element_registry & reg = registry_of(c.current_this());
             for (const custom_element_definition & def : custom_definitions_) {
                 if (def.registry == &reg && def.constructor.bits() == ctor.bits()) {
                     return cx_->string(def.name);
@@ -1059,7 +1067,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     set_method(
         cx, *registry_proto, "whenDefined",
         [this, defined](context & c, std::span<value> args) {
-            dom_bindings & reg = registry_of(c.current_this());
+            custom_element_registry & reg = registry_of(c.current_this());
             const std::string name = arg_string(c, args, 0);
             if (!is_valid_custom_element_name(name)) {
                 return c.make_promise(
@@ -1071,11 +1079,11 @@ void dom_bindings::install_custom_elements(context & cx) {
                 return c.make_promise(custom_definitions_[index].constructor, false);
             }
             // ONE promise per name, however often it is asked for.
-            if (const auto held = reg.when_defined_.find(name); held != reg.when_defined_.end()) {
+            if (const auto held = reg.when_defined.find(name); held != reg.when_defined.end()) {
                 return held->second;
             }
             const value promise = c.make_pending_promise();
-            reg.when_defined_.emplace(name, promise);
+            reg.when_defined.emplace(name, promise);
             sync_custom_element_roots();
             return promise;
         },
@@ -1123,10 +1131,23 @@ void dom_bindings::install_custom_elements(context & cx) {
         },
         script::attr_builtin);
 
+    // `new CustomElementRegistry()` - a SCOPED registry (HTML 4.13.3): its
+    // definitions belong to no document, so no parser, createElement or
+    // clone looks them up; `new C()` through a class it holds constructs in
+    // the page's document.
+    // ponytail: `initialize()`, `customElementRegistry` on elements, shadow
+    // roots and creation options are not here - an element cannot carry a
+    // scoped registry yet, so a scoped definition never upgrades anything.
     auto * registry_ctor = cx.allocate<script::native_object>(
-        "CustomElementRegistry", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
+        "CustomElementRegistry", [this](context & c, std::span<value>) {
+            const value self = c.current_this();
+            if (!self.is_object()) {
+                c.throw_error("TypeError", "Failed to construct 'CustomElementRegistry': please "
+                                           "use the 'new' operator.");
+                return value::undefined();
+            }
+            (void)make_registry(nullptr, self);
+            return self;
         });
     registry_ctor->set("prototype", value::object(registry_proto));
     registry_proto->define("constructor", value::object(registry_ctor), script::attr_builtin);

@@ -1000,13 +1000,23 @@ public:
     [[nodiscard]] value custom_elements_registry(context & cx);
 
 private:
+    // ONE CustomElementRegistry: the page's, a frame document's, or a scoped
+    // one a page made with `new CustomElementRegistry()` (HTML 4.13.3) -
+    // which belongs to no document, so nothing is looked up in it and only
+    // `new C()` reaches its definitions. Owned by the primary, so a pointer
+    // is stable for the life of the page.
+    struct custom_element_registry {
+        dom_bindings * document = nullptr; // whose global registry, or null
+        value object;                      // the JS CustomElementRegistry
+        flat_map<std::string, value> when_defined;
+        bool running = false; // HTML 4.13.4's "element definition is running"
+    };
     struct custom_element_definition {
         std::string name;
         std::string local_name; // the `extends` name, or `name` itself
-        // THE REGISTRY IT WAS DEFINED IN - the bindings of the document whose
-        // `customElements` took it. Every definition of the realm lives in
-        // the primary's vector, so an index means the same thing everywhere.
-        dom_bindings * registry = nullptr;
+        // THE REGISTRY IT WAS DEFINED IN. Every definition of the realm lives
+        // in the primary's vector, so an index means the same thing everywhere.
+        custom_element_registry * registry = nullptr;
         value constructor;
         value prototype;
         // The lifecycle callbacks, captured at define time as the
@@ -1099,9 +1109,11 @@ private:
     [[nodiscard]] const dom_bindings & primary() const noexcept {
         return primary_ == nullptr ? *this : *primary_;
     }
-    // The bindings behind a `customElements` object a native was called on -
-    // the primary's for anything that is not one of the registries.
-    [[nodiscard]] dom_bindings & registry_of(value receiver);
+    // The registry a `customElements`-shaped receiver is - the page's for
+    // anything that is not one of them.
+    [[nodiscard]] custom_element_registry & registry_of(value receiver);
+    // A new registry record on the primary, for `object`.
+    custom_element_registry & make_registry(dom_bindings * document, value object);
     // `document.createElement(name, options)`: a defined name is constructed
     // through the author's class, anything else is a plain node wrapped;
     // `options.is` names a customized built-in's definition.
@@ -1149,24 +1161,21 @@ private:
     void sync_custom_element_roots();
     // A document with a browsing context has a registry: the page's, and a
     // frame's once frames.cpp asked for it.
-    [[nodiscard]] bool has_browsing_context() const noexcept {
-        return !secondary_ || frame_document_;
-    }
+    [[nodiscard]] bool has_browsing_context() const noexcept { return registry_ != nullptr; }
 
     std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
     std::vector<custom_element_reaction> custom_reactions_;
-    flat_map<std::string, value> when_defined_;
-    // HTML 4.13.4's "element definition is running" flag, per registry.
-    bool custom_definition_running_ = false;
-    bool frame_document_ = false;
     value construct_fence_;                    // the primary's
-    value custom_elements_registry_;           // this document's `customElements`
     value custom_elements_registry_prototype_; // the primary's
-    // Every registry object of the realm and the bindings behind it, on the
-    // primary - how a method on the shared prototype learns which document's
-    // registry it was called on.
-    flat_map<std::uint64_t, dom_bindings *> registries_;
+    // THIS DOCUMENT'S GLOBAL REGISTRY - null for a document a page made,
+    // which has no browsing context and looks nothing up.
+    custom_element_registry * registry_ = nullptr;
+    // Every registry of the realm, on the primary, and the map from a
+    // registry object to its record - how a method on the shared prototype
+    // learns which registry it was called on.
+    std::vector<std::unique_ptr<custom_element_registry>> registries_;
+    flat_map<std::uint64_t, custom_element_registry *> registry_objects_;
     // The CustomElementRegistry interface object, whose `retained` list roots
     // every constructor, prototype, callback and pending promise above - the
     // arrangement install_mutation_observer uses, for the same reason.
