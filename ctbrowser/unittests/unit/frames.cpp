@@ -102,9 +102,13 @@ void test_a_frame_has_a_document_of_its_own() {
        " return (e instanceof d.defaultView.DOMException) && e.name === 'SyntaxError'; } })()",
        "true");
     is(one_frame, "'TypeError' in document.getElementById('f').contentWindow", "true");
-    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame has no location of
-    // its own here, and the page's must not be reachable through it.
-    is(one_frame, "typeof document.getElementById('f').contentWindow.location", "undefined");
+    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame's `location` is
+    // its own document's, never the page's.
+    is(one_frame,
+       "(function () { var w = document.getElementById('f').contentWindow;"
+       " return (w.location === window.location) + ',' + /inner\\.html$/.test(w.location.href);"
+       " })()",
+       "false,true");
 }
 
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {

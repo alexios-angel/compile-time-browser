@@ -224,6 +224,7 @@ void dom_bindings::deliver_mutation_records() {
     // what `MutationObserver-nested-crash.html` observes from the inside.
     mutation_delivery_queued_ = false;
     if (cx_ == nullptr) { return; }
+    delivering_mutations_ = true;
     // By index with the bound re-read: a callback may construct observers.
     for (std::size_t i = 0; i < mutation_observers_.size(); ++i) {
         script::object_object * observer = mutation_observer_at(i);
@@ -250,6 +251,7 @@ void dom_bindings::deliver_mutation_records() {
     for (std::size_t i = 0; i < secondary_documents_.size(); ++i) {
         secondary_documents_[i]->fire_signalled_slots();
     }
+    delivering_mutations_ = false;
 }
 
 // --- the snapshot -----------------------------------------------------------

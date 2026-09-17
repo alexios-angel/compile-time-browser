@@ -920,6 +920,12 @@ private:
     // which is what makes several mutations in one script turn arrive as ONE
     // callback holding several records.
     bool mutation_delivery_queued_ = false;
+    // Set while the mutation observer microtask runs (callbacks and the
+    // slotchange events after them): a dispatch inside it must not drain
+    // the microtask queue, which HTML's "performing a microtask checkpoint"
+    // flag forbids - a queueMicrotask() queued before the delivery would
+    // otherwise run between two slotchange events.
+    bool delivering_mutations_ = false;
     // END mutation observers
 
     // BEGIN web animations (bindings/animations.cpp)

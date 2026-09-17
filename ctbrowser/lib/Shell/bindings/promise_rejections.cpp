@@ -88,7 +88,10 @@ void dom_bindings::track_promise_rejection(value promise, bool handled) {
                     object->set("reason", reason_of(promise));
                     object->set(std::string{trusted_property}, value::boolean(true));
                     object->set(std::string{initialised_property}, value::boolean(true));
-                    return dispatch_event(type, node_id{}, event);
+                    // AT THE WINDOW STEP: the event does not bubble, so a
+                    // dispatch from the document would never reach it.
+                    object->set("target", c.global("window"));
+                    return dispatch_to(event, path_step{node_id{}, listen_on::window});
                 };
                 for (const value & promise : due) {
                     if (context::promise_is_handled(promise)) { continue; }

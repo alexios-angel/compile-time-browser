@@ -153,9 +153,10 @@ void browser::resize(int width, int height) {
     // page with no `@media` at all never re-resolves, which is the invariant
     // browser.hpp states about a resize.
     const bool flipped = media_environment_changed();
-    // AND REPORT IT TO THE PAGE'S MediaQueryLists (CSSOM View §13): the
-    // `change` events go out on the next tick.
-    if (flipped && bindings_) { bindings_->report_media_query_changes(); }
+    // AND REPORT IT TO THE PAGE'S MediaQueryLists (CSSOM View §13) - whether
+    // or not a SHEET's query flipped; a list's query need not be in any
+    // sheet. The `change` events go out on the next tick.
+    if (bindings_) { bindings_->report_media_query_changes(); }
     mark(flipped ? dirty::styles : dirty::layout);
 }
 

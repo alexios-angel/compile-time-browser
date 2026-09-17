@@ -92,6 +92,9 @@ void test_a_frame_has_its_own_lists() {
             f.contentDocument.body.offsetWidth;
             const w = f.contentWindow;
             const mql = w.matchMedia("(max-width: 200px)");
+            console.log('probe=' + f.contentDocument.documentElement.clientWidth + 'x' +
+                        f.contentDocument.documentElement.clientHeight + ',' + f.offsetWidth + 'x' +
+                        f.offsetHeight);
             console.log('frame=' + mql.matches + ',' + w.matchMedia("(max-height: 50px)").matches +
                         ',' + w.matchMedia("(min-width: 150px)").matches + ',' +
                         matchMedia("(max-width: 200px)").matches + ',' +

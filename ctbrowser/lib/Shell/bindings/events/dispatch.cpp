@@ -564,8 +564,10 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // everything, and nothing anywhere said why.
     // ...and after an event, which is the other checkpoint a browser has: a
     // listener that resolves a promise has its handlers run before the next
-    // event is dispatched, not at some later frame.
-    cx.drain_microtasks();
+    // event is dispatched, not at some later frame. NOT from inside the
+    // mutation observer microtask, though: a checkpoint does not nest
+    // (HTML's "performing a microtask checkpoint" flag).
+    if (!primary().delivering_mutations_) { cx.drain_microtasks(); }
     note_callback_fault(type);
     return prevented(event);
 }

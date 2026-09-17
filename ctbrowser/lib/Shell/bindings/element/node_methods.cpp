@@ -898,10 +898,14 @@ void dom_bindings::install_node_methods(context & cx) {
             (void)doc_->set_text(
                 one.node, one.data,
                 document::data_edit{one.units, 0, static_cast<std::uint32_t>(added)});
+            // The data step's range moves (7.3) settle BEFORE the absorbed
+            // siblings' boundaries move into the node (7.5-7.8), or a
+            // boundary just moved to (node, length + offset) would be pushed
+            // along by the append it was placed after.
+            mutated();
             for (const absorbed & gone : one.rest) {
                 absorb_live_ranges(gone.node, one.parent, gone.index, one.node, gone.at);
             }
-            mutated();
         }
         for (const node_id node : removed) {
             (void)doc_->remove_child(node);

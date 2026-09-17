@@ -470,12 +470,16 @@ void document::detach(node * child_node, node_id child) {
     if (!old_parent) { return; }
     node * parent_node = find(old_parent);
     if (parent_node == nullptr) { return; }
+    if (log_writes_) {
+        // Its index BEFORE it goes: what the live ranges on the parent move
+        // against (std::ranges::remove's subrange begins at the new end, not
+        // at the removed element).
+        const auto at = std::ranges::find(parent_node->children, child);
+        note_edit(write_note::edit::removed, old_parent, child,
+                  static_cast<std::size_t>(at - parent_node->children.begin()));
+    }
     // std::erase/erase_if only overload for std containers, not Boost's
     const auto gone = std::ranges::remove(parent_node->children, child);
-    if (log_writes_) {
-        note_edit(write_note::edit::removed, old_parent, child,
-                  static_cast<std::size_t>(gone.begin() - parent_node->children.begin()));
-    }
     parent_node->children.erase(gone.begin(), gone.end());
     child_node->parent = node_id{};
 }
