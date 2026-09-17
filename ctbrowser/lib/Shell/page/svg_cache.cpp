@@ -192,7 +192,7 @@ std::shared_ptr<const paint::bitmap> svg_store::pixels_for(node_id id, int width
     // Cached even when empty. A document plutosvg cannot render fails the same
     // way every frame, and without this the engine would retry the parse on
     // every single one.
-    auto shared = std::make_shared<const paint::bitmap>(std::move(pixels));
+    const auto shared = std::make_shared<const paint::bitmap>(std::move(pixels));
     rasters_.emplace(key, raster_entry{shared, true});
     return shared->empty() ? nullptr : shared;
 }
