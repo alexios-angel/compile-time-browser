@@ -67,7 +67,7 @@ void test_template_contents_travel_and_serialise() {
              "alert([t.childNodes.length, t.content.firstChild.localName, t.innerHTML].join());"
              "</script>"),
         "0,1,x,<table><tbody><tr><td>x</td></tr></tbody></table>,"
-        "<template><table><tbody><tr><td>x</td></tr></tbody></table></template>;"
+        "<template id=\"t\"><table><tbody><tr><td>x</td></tr></tbody></table></template>;"
         "0,b,<b>y</b>");
 }
 

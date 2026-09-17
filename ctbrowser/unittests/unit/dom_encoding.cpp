@@ -104,9 +104,10 @@ void test_the_bytes_are_decoded_by_name() {
     // And the page: a windows-1251 document shows its Cyrillic.
     browser page{browser_options{300, 200}};
     page.load_html("<?xml version=\"1.0\" encoding=\"windows-1251\"?><p id=p>\xE6</p><script>"
-                   "console.log(document.characterSet + ',' + p.textContent.charCodeAt(0))"
+                   "console.log(document.characterSet + ',' + "
+                   "(document.getElementById('p').textContent === '\\u0436'))"
                    "</script>");
-    CHECK_EQ(page.bindings().console_output().back(), std::string{"windows-1251,1078"});
+    CHECK_EQ(page.bindings().console_output().back(), std::string{"windows-1251,true"});
 }
 
 void test_the_document_reports_the_name() {
