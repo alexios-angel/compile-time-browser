@@ -79,6 +79,12 @@ void dom_bindings::install_window_scrolling(context & cx, script::object_object 
             return value::number(axis == 'x' ? at.x : at.y);
         });
     }
+    // §4's screenX/screenY and their Left/Top aliases: where the window sits
+    // on the screen, which for a headless engine is the origin.
+    for (const char * name : {"screenX", "screenY", "screenLeft", "screenTop"}) {
+        define_getter(cx, window, name,
+                      [](context &, std::span<value>) { return value::number(0); });
+    }
     // §4's scroll(): two numbers, or a ScrollToOptions whose absent members
     // keep the current position; scrollBy() adds to it. The Promise is the
     // one the Element methods return (element/views.cpp): rejected for an

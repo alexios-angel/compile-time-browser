@@ -202,6 +202,74 @@ void test_quirks_mode_scrolling_element() {
     CHECK_EQ(logged(page, "potentially="), std::string{"potentially=null"});
 }
 
+// cssom-getBoxQuads-001, cssom-geometryutils-convertPointFromNode,
+// getClientRects, DOMRectList, checkVisibility, scrollParent: the geometry
+// interfaces and GeometryUtils, translation only.
+void test_geometry_utils() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><html><head><style>
+        html, body { margin: 0 }
+        #target { position: absolute; left: 20px; top: 25px; width: 260px; height: 180px;
+                  margin: 7px 11px 13px 17px; border: solid; border-width: 3px 5px 7px 9px;
+                  padding: 2px 4px 6px 8px }
+        #source { position: absolute; left: 70px; top: 55px; width: 90px; height: 45px;
+                  margin: 10px 14px 18px 22px; border: solid; border-width: 1px 3px 5px 7px;
+                  padding: 2px 4px 6px 8px }
+        .container { width: 100px; height: 50px }
+        .container span { display: block; height: 4px; width: 14px; margin: auto; border: 3px solid }
+        #scroller { overflow: auto; height: 50px }
+        </style></head><body>
+        <div id=target><div id=source></div></div>
+        <div class=container><span id=bb></span></div>
+        <div id=hidden style="display: none"></div>
+        <div id=vh style="visibility: hidden">x</div>
+        <div id=scroller><div id=inner style="height: 200px"></div></div>
+        <script>
+        const target = document.getElementById('target'), source = document.getElementById('source');
+        const r = new DOMRect(1, 2, 3, 4), p = new DOMPoint(5, 6);
+        console.log('rect=' + r.right + ',' + r.bottom + ',' + JSON.stringify(r) + ',' +
+                    (r instanceof DOMRectReadOnly) + ',' + p.w + ',' + DOMQuad.fromRect(r).p3.x);
+        const q = source.getBoxQuads()[0];
+        console.log('quads=' + q.p1.x + ',' + q.p1.y + ',' + q.getBounds().width + ',' +
+                    source.getBoxQuads({box: 'margin', relativeTo: target})[0].p1.x + ',' +
+                    (q instanceof DOMQuad) + ',' + document.getElementById('hidden').getBoxQuads().length);
+        const bb = document.getElementById('bb');
+        console.log('auto=' + bb.getBoxQuads({box: 'border'})[0].getBounds().width + ',' +
+                    bb.getBoxQuads({box: 'margin'})[0].getBounds().width);
+        const pt = target.convertPointFromNode({x: 0, y: 0}, source, {fromBox: 'content', toBox: 'padding'});
+        const back = source.convertPointFromNode(target.convertPointFromNode({x: 10, y: 20}, source), target);
+        console.log('convert=' + pt.x + ',' + pt.y + ',' + back.x + ',' + back.y + ',' +
+                    document.convertPointFromNode({x: 0, y: 0}, source).x);
+        let caught = '';
+        try { target.convertPointFromNode({x: 0, y: 0}, document.getElementById('hidden')); } catch (e) { caught = e.name; }
+        const rects = source.getClientRects();
+        console.log('rects=' + caught + ',' + rects.length + ',' + rects.item(0).left + ',' + rects.item(5) +
+                    ',' + rects[0].height);
+        console.log('visible=' + document.getElementById('hidden').checkVisibility() + ',' +
+                    document.getElementById('vh').checkVisibility() + ',' +
+                    document.getElementById('vh').checkVisibility({checkVisibilityCSS: true}) + ',' +
+                    source.checkVisibility());
+        console.log('scrollParent=' + (document.getElementById('inner').scrollParent.id) + ',' +
+                    (source.scrollParent === document.documentElement) + ',' +
+                    document.body.scrollParent + ',' + screenX + ',' + window.screenTop);
+        </script></body></html>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "rect="),
+             std::string{"rect=4,6,{\"x\":1,\"y\":2,\"width\":3,\"height\":4,\"top\":2,"
+                         "\"right\":4,\"bottom\":6,\"left\":1},true,1,4"});
+    // source's border box: target's padding edge (20+17+9, 25+7+3) plus
+    // left/top 70/55 plus its own margin 22/10 = 138, 100; width 90+8+4+7+3.
+    // Its margin box against target's border edge (37, 32): 138-22-37.
+    CHECK_EQ(logged(page, "quads="), std::string{"quads=138,100,112,79,true,0"});
+    CHECK_EQ(logged(page, "auto="), std::string{"auto=20,100"});
+    // content origin of source (138+7+8, 100+1+2) against target's padding
+    // origin (37+9, 32+3): 107, 68.
+    CHECK_EQ(logged(page, "convert="), std::string{"convert=107,68,10,20,138"});
+    CHECK_EQ(logged(page, "rects="), std::string{"rects=NotFoundError,1,138,null,59"});
+    CHECK_EQ(logged(page, "visible="), std::string{"visible=false,true,false,true"});
+    CHECK_EQ(logged(page, "scrollParent="), std::string{"scrollParent=scroller,true,null,0,0"});
+}
+
 } // namespace
 
 int main() {
@@ -210,5 +278,6 @@ int main() {
     test_element_scrolling();
     test_viewport_scrolling_and_hit_testing();
     test_quirks_mode_scrolling_element();
+    test_geometry_utils();
     REPORT("cssom_view");
 }

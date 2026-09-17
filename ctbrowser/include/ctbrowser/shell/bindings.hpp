@@ -497,12 +497,23 @@ private:
     // pending scroll event targets).
     void queue_scroll_event(node_id target);
     void install_element_scrolling(context & cx);
+    void install_element_geometry(context & cx);
     void install_window_scrolling(context & cx, script::object_object & window);
     void install_document_geometry(context & cx, script::object_object & doc);
     // §5's hit test over the fragment tree, topmost first: every element
     // whose border box is under the viewport point, painted-last first, the
     // root last. `all` false stops at the first.
     [[nodiscard]] std::vector<node_id> elements_from_point(double x, double y, bool all);
+    // GeometryUtils (§10) and the geometry interfaces it answers in. A box of
+    // the node in viewport coordinates - "margin", "border", "padding" or
+    // "content" - or nothing when it has none; a Document names the viewport.
+    [[nodiscard]] std::optional<rect> box_rect_of(context & cx, value node, std::string_view box);
+    [[nodiscard]] static value make_dom_point(context & cx, double x, double y);
+    [[nodiscard]] static value make_dom_rect(context & cx, const rect & r);
+    [[nodiscard]] static value make_dom_quad(context & cx, const rect & r);
+    void install_geometry_interfaces(context & cx);
+    // The computed value of `property` for `id` from the cascade's map, or "".
+    [[nodiscard]] std::string_view cascade_value(node_id id, std::string_view property) const;
 
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
