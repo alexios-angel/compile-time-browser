@@ -61,6 +61,9 @@ OBSERVATIONS = {
     "constructor-identity": (1, 1),
     "descriptor": (0, 0),
     "static-constant": (7, 7),
+    "static-defaults": (923, 923),
+    "static-defaults-chain": (12423, 12423),
+    "static-default-fields": (7, 7),
     "static-chain": (1, 1),
     "static-methods": (192, 192),
     "static-setter": (7, 7),
@@ -101,6 +104,8 @@ POSITIVES = {
     "method-constructor-chain",
     "method-constructor-constant",
     "static-constant",
+    "static-defaults",
+    "static-defaults-chain",
     "static-chain",
     "static-methods",
     "static-repeated",
@@ -165,7 +170,7 @@ def check_refusal(name, text, functions):
         raise RuntimeError(f"{name}: lost named native refusal boundary\n{text}")
 
 
-def prepare(args, name, source, manifest, *, success, options=""):
+def prepare(args, name, source, manifest, *, success, options="", diagnostic=""):
     config = args.work / f"{name}.json"
     output = args.work / f"{name}.prepared.mlir"
     config.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -182,6 +187,7 @@ def prepare(args, name, source, manifest, *, success, options=""):
     if not success and (
         result.returncode != 1
         or "error:" not in result.stderr
+        or diagnostic not in result.stderr
         or (output.exists() and output.read_text())
     ):
         raise RuntimeError(f"{name}: preparation failed without a diagnostic or emitted partial IR")
@@ -305,7 +311,7 @@ def check_overflow_input(args, source):
         raise RuntimeError("overflow closure index escaped its parser refusal")
 
 
-def check_getter_parent(args, source, manifest):
+def check_getter_parent(args, source, manifest, prepared):
     # A numeric function index is insufficient: make_closure requires the
     # current function's closure, not an arbitrary value of the same IR type.
     forged = args.work / "getter-enclosing-closure.mlir"
@@ -355,7 +361,52 @@ def check_getter_parent(args, source, manifest):
             dict(manifest, module_sha256=host.fingerprint(args.opt, altered)),
             success=False,
         )
-    return 3
+    closures = re.findall(
+        r"(%\w+) = ctjs.create_closure %\w+\[(\d+)\] this %\w+\n"
+        r"\s*%\w+ = ctjs.constant #ctjs.undefined\n"
+        r'\s*ctjs.define_accessor "[^"]+" on %\w+ get \1 set %\w+',
+        text,
+    )
+    symbols = re.compile(r"^\s*ctjs\.func\b[^@\n]*@([^\s(]+)", re.M)
+    functions = symbols.findall(text)
+    indices = {index for _, index in closures}
+    getters = {name for name in functions if name.rsplit("$", 1)[-1] in indices}
+    if len(getters) != 2 or symbols.findall(prepared.read_text()) != [
+        name for name in functions if name not in getters
+    ]:
+        raise RuntimeError("class preparation did not remove exactly its two expanded getters")
+
+    # Symbol references in the module's own attributes and nested operations
+    # must retain the definition, even when closure uses are fully expanded.
+    attribute = f"test.getter_ref = @{sorted(getters)[0]}"
+    for label, pattern, replacement in (
+        ("module", r"^module attributes \{", rf"\g<0>{attribute}, "),
+        ("function", r"(\bctjs.func[^\n]*\battributes \{)", rf"\g<0>{attribute}, "),
+        (
+            "operation",
+            r"^\s*%\w+ = ctjs.constant #ctjs.undefined$",
+            rf"\g<0> {{{attribute}}}",
+        ),
+        ("unresolved", r"^module attributes \{", rf"\g<0>{attribute}::@missing, "),
+    ):
+        changed, count = re.subn(pattern, replacement, text, count=1, flags=re.M)
+        if count != 1:
+            raise RuntimeError(f"getter {label} reference control lost its attribute site")
+        altered = args.work / f"getter-{label}-reference.mlir"
+        altered.write_text(changed)
+        prepare(
+            args,
+            f"getter-{label}-reference",
+            altered,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, altered)),
+            success=False,
+            diagnostic=(
+                "class initialization has an unresolved symbol reference"
+                if label == "unresolved"
+                else "static getter has a remaining symbol reference"
+            ),
+        )
+    return 7
 
 
 def check_executable(args, name, native, expected):
@@ -398,6 +449,13 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
+    vendor = Path(__file__).resolve().parents[5] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    bootstrap = vendor.read_text()
+    defaults = (args.fixtures / "static-defaults.js").read_text()
+    for name in ("Default", "DefaultType"):
+        body = f"        static get {name}() {{\n            return {{}}\n        }}"
+        if body not in bootstrap or body not in defaults:
+            raise RuntimeError(f"Bootstrap Config {name} getter source pin changed")
     refusals = 0
     preparation_refusals = 0
     checked = 0
@@ -440,7 +498,7 @@ def main():
         prepared = prepare(args, name, structured, manifest, success=name in POSITIVES)
         preparation_refusals += name not in POSITIVES
         if name == "static-chain":
-            preparation_refusals += check_getter_parent(args, structured, manifest)
+            preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
         if name == "empty":
             check_overflow_input(args, structured)
             for label, control, options in (
@@ -458,6 +516,7 @@ def main():
             "static-chain",
             "static-repeated",
             "static-forward-chain",
+            "static-defaults-chain",
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4

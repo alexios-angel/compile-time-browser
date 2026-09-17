@@ -2,6 +2,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringSet.h"
@@ -153,12 +154,12 @@ struct classInitialization {
             auto & required = dependencies[fn];
             for (mlir::Operation & op : entry) {
                 if (!step()) { return false; }
-                if (!llvm::isa<ctjs::ConstantOp, ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp,
-                               ctjs::TruthyOp, ctjs::FromBoolOp, ctjs::FrameEnterOp,
-                               ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
+                if (!llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp, ctjs::BinaryOp,
+                               ctjs::UnaryOp, ctjs::CompareOp, ctjs::TruthyOp, ctjs::FromBoolOp,
+                               ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
                     auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
                     if (!read || read.getObject() != entry.getArgument(ctjs::arg_receiver)) {
-                        return refuse("static getter body is not a closed scalar expression");
+                        return refuse("static getter body is not a closed expression");
                     }
                 }
             }
@@ -499,7 +500,25 @@ struct classInitialization {
                    "effect");
             return mlir::WalkResult::interrupt();
         });
-        return !walked.wasInterrupted();
+        if (walked.wasInterrupted()) { return false; }
+        // Closure references and calls are covered above. Symbol attributes
+        // must not retain a getter definition after all its reads are expanded.
+        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+            if (!uses) { return refuse("static getter symbol uses could not be enumerated"); }
+            for (const auto & use : *uses) {
+                if (!step()) { return false; }
+                auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                    use.getUser(), use.getSymbolRef());
+                if (!target) {
+                    return refuse("class initialization has an unresolved symbol reference");
+                }
+                if (getters.contains(target)) {
+                    return refuse("static getter has a remaining symbol reference");
+                }
+            }
+        }
+        return true;
     }
 };
 
@@ -551,9 +570,10 @@ struct CTNativeSpecializeClassInitializationPass
             for (ctjs::GetPropertyOp read : reads[target]) {
                 mlir::OpBuilder at(read);
                 mlir::IRMapping mapping;
-                // Dependencies have already been expanded. This scalar body
+                // Dependencies have already been expanded. This closed body
                 // has no remaining implicit-argument or external-value uses.
-                // Clone at each original read, preserving evaluation order.
+                // Clone at each original read, preserving evaluation order and
+                // fresh object identity, including through getter dependencies.
                 for (mlir::Operation & op : target.getBody().front()) {
                     if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp>(op)) { continue; }
                     if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
@@ -573,6 +593,9 @@ struct CTNativeSpecializeClassInitializationPass
             }
             closure.erase();
         }
+        // Every source read has its own expanded body. The complete closed
+        // census leaves no caller or observable identity for these definitions.
+        for (ctjs::FuncOp getter : proof.getterOrder) { getter.erase(); }
         module.walk([&](ctjs::LoadGlobalOp load) {
             if (load.getName() == host_detail::classDefinedIntrinsic &&
                 load.getResult().use_empty()) {
