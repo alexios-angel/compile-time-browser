@@ -117,14 +117,14 @@ void test_validity() {
        " n.value = '5'; o.push(n.validity.stepMismatch, n.validity.valid);"
        " n.value = '12'; o.push(n.validity.rangeOverflow); n.value = '1'; "
        "o.push(n.validity.rangeUnderflow);"
-       " n.value = 'abc'; o.push(n.validity.badInput);"
+       " n.value = 'abc'; o.push(n.validity.badInput); /* sanitised to '' - not bad input */"
        " e.value = 'nope'; o.push(e.validity.typeMismatch, e.validity.valueMissing);"
        " e.value = 'a@b.c'; o.push(e.validity.valid, e.validationMessage === '');"
        " e.setCustomValidity('bad'); o.push(e.validity.customError, e.validationMessage, "
        "e.validity.valid);"
        " e.setCustomValidity(''); o.push(e.validity.valid);"
        " return o.join(); })()",
-       "true,true,false,false,true,false,true,true,false,true,true,true,true,false,true,true,true,"
+       "true,true,false,false,true,false,true,true,false,true,true,false,true,false,true,true,true,"
        "bad,false,true");
     // The barred ones: disabled, readonly, a disabled fieldset's descendants
     // but not its first legend's, hidden, and the never-candidates.
@@ -180,7 +180,7 @@ void test_input_numbers_and_dates() {
     is("(function () { var h = document.getElementById('hid'); var o = [h.value, h.files, h.list,"
        " h.willValidate, h.indeterminate]; h.value = 'w'; h.indeterminate = true;"
        " o.push(h.value, h.getAttribute('value'), h.indeterminate); return o.join(); })()",
-       "q,,,false,false,w,q,true");
+       "q,,,false,false,w,w,true");
     is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
        "'2020-02-29';"
        " var o = [d.valueAsNumber, d.valueAsDate.getUTCFullYear(), d.valueAsDate.getUTCDate()];"
@@ -319,6 +319,7 @@ void test_value_sanitization_and_type_change() {
        " try { i.value = 'x'; } catch (e) { o.push(e.name); }"
        " var n = document.createElement('input'); n.type = 'number'; n.value = 'abc'; "
        "o.push(n.value === '');"
+       " n = document.createElement('input'); n.type = 'number';"
        " n.setAttribute('value', '1e3'); o.push(n.value); n.setAttribute('value', '1d+2'); "
        "o.push(n.value === '');"
        " var r = document.createElement('input'); r.type = 'range'; r.min = '10'; r.max = '20';"

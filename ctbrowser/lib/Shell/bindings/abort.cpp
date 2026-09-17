@@ -127,6 +127,7 @@ void dom_bindings::signal_abort(context & cx, value signal, value reason) {
         value event = make_event_object(cx, "abort", false, false);
         if (auto * carrier = object_of(event)) {
             carrier->set(std::string{trusted_property}, value::boolean(true));
+            carrier->set(std::string{initialised_property}, value::boolean(true));
         }
         (void)dispatch_to(event, path_step{node_id{}, listen_on::object, at});
     };

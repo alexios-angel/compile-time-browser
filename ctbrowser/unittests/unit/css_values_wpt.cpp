@@ -482,7 +482,7 @@ void test_what_a_page_reads_back() {
         // `vi`/`vb` follow the ELEMENT'S writing mode (the root's does not
         // matter): a 400x200 viewport.
         const v = document.createElement('div');
-        v.style.height = '100vi'; v.style.width = '100vb';
+        v.style.height = '100vi'; v.style.width = '100vb'; v.style.writingMode = 'initial';
         document.body.appendChild(v);
         const vs = getComputedStyle(v);
         const before = vs.height + ' ' + vs.width;

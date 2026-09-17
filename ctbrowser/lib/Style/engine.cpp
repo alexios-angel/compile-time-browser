@@ -1743,7 +1743,13 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     fold([&](const declaration & d) {
         if (d.property != writing_mode_) { return; }
         const std::string_view text = trim(d.value, html_whitespace);
-        if (ascii_iequals(text, "inherit") || css::may_have_var(text)) { return; }
+        if (css::may_have_var(text)) { return; }
+        // `initial` is horizontal-tb; the other wide keywords keep the
+        // parent's answer on an inherited property.
+        if (ascii_iequals(text, "initial")) {
+            vertical = false;
+            return;
+        }
         if (css::is_wide_keyword(text)) { return; }
         const std::string lowered = ascii_lower_copy(text);
         vertical = lowered.starts_with("vertical-") || lowered.starts_with("sideways-");
