@@ -226,6 +226,10 @@ struct numeric_pair {
 // (random-in-animations).
 [[nodiscard]] css::calc_result mix(const css::calc_result & a, const css::calc_result & b,
                                    double p) {
+    // At 0 and 1 the value IS the endpoint: `50% 50%` to `20px 20px` ends
+    // at `20px`, not `calc(0% + 20px)`.
+    if (p == 0) { return a; }
+    if (p == 1) { return b; }
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     css::calc_result out;
     out.type = a.type;
@@ -473,6 +477,13 @@ template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & 
         return parts[0] + ' ' + parts[1] + ' ' + parts[2];
     }
     if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
+    // A line width keyword is its length (CSS Backgrounds 3 §4.2), so
+    // `border-left-width: initial` - `medium` - pairs with `23px`.
+    if (property.ends_with("-width")) {
+        if (ascii_iequals(text, "thin")) { return "1px"; }
+        if (ascii_iequals(text, "medium")) { return "3px"; }
+        if (ascii_iequals(text, "thick")) { return "5px"; }
+    }
     return std::string{text};
 }
 
@@ -735,6 +746,10 @@ struct decomposed2d {
     std::optional<std::vector<transform_fn>> b = parse_transforms(to);
     if (!a || !b) { return std::nullopt; }
     if (a->empty() && b->empty()) { return "none"; }
+    // The endpoints are themselves, as written: `translateY(90%)` at 1 is
+    // `translateY(90%)` and not its two-argument spelling.
+    if (p == 0) { return std::string{from}; }
+    if (p == 1) { return std::string{to}; }
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     const std::size_t shorter = std::min(a->size(), b->size());
     bool matched = true;
@@ -874,6 +889,76 @@ struct filter_fn {
     return out;
 }
 
+// --- the rotate property (CSS Transforms 2 §7.2) ---
+
+struct rotation {
+    double x = 0, y = 0, z = 1, angle = 0;
+};
+
+// `none`, `<angle>`, `x|y|z <angle>` or `<number>{3} <angle>`, the axis as
+// given; nothing for anything else.
+[[nodiscard]] std::optional<rotation> rotation_of(std::string_view text,
+                                                  const css::length_context & ctx) {
+    rotation out;
+    if (ascii_iequals(text, "none")) { return out; }
+    std::vector<std::string_view> parts;
+    for (const std::string_view part : split_top_level(text, html_whitespace)) {
+        if (!part.empty()) { parts.push_back(part); }
+    }
+    if (parts.empty() || parts.size() == 3 || parts.size() > 4) { return std::nullopt; }
+    const css::math_answer angle = css::evaluate_math(parts.back(), ctx);
+    if (angle.outcome != css::math_outcome::resolved ||
+        angle.value.type != css::numeric_type::angle) {
+        return std::nullopt;
+    }
+    out.angle = angle.value.px;
+    if (parts.size() == 2) {
+        const std::string axis = ascii_lower_copy(parts[0]);
+        if (axis == "x") {
+            out.x = 1, out.z = 0;
+        } else if (axis == "y") {
+            out.y = 1, out.z = 0;
+        } else if (axis != "z") {
+            return std::nullopt;
+        }
+    } else if (parts.size() == 4) {
+        double v[3];
+        for (std::size_t i = 0; i < 3; ++i) {
+            const std::optional<double> n = number_of(parts[i]);
+            if (!n) { return std::nullopt; }
+            v[i] = *n;
+        }
+        out.x = v[0], out.y = v[1], out.z = v[2];
+    }
+    return out;
+}
+
+// Two rotations about one axis - or one of them by nothing, which takes the
+// other's axis - interpolate by angle; different axes stay discrete.
+// ponytail: the spec's quaternion slerp for differing axes, when a test
+// reads one.
+[[nodiscard]] std::optional<std::string> interpolate_rotate(std::string_view from,
+                                                            std::string_view to, double p,
+                                                            const css::length_context & ctx) {
+    std::optional<rotation> a = rotation_of(from, ctx);
+    std::optional<rotation> b = rotation_of(to, ctx);
+    if (!a || !b) { return std::nullopt; }
+    const auto unit = [](rotation & r) {
+        const double n = std::hypot(r.x, r.y, r.z);
+        if (n == 0) { return false; }
+        r.x /= n, r.y /= n, r.z /= n;
+        return true;
+    };
+    if (!unit(*a) || !unit(*b)) { return std::nullopt; }
+    if (a->angle == 0) { a->x = b->x, a->y = b->y, a->z = b->z; }
+    if (b->angle == 0) { b->x = a->x, b->y = a->y, b->z = a->z; }
+    const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+    if (!near(a->x, b->x) || !near(a->y, b->y) || !near(a->z, b->z)) { return std::nullopt; }
+    const double angle = (1 - p) * a->angle + p * b->angle;
+    return css::serialize_number(a->x) + " " + css::serialize_number(a->y) + " " +
+           css::serialize_number(a->z) + " " + css::serialize_number(angle) + "deg";
+}
+
 // --- ratios ---
 
 // A `<ratio>` as one number: `1 / 2`, `0.5`, `2 / 0` is infinite. Nothing
@@ -921,7 +1006,22 @@ struct filter_fn {
         if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
     }
     if (property == "aspect-ratio") {
-        if (const std::optional<std::string> r = interpolate_ratio(from, to, p)) { return *r; }
+        // `auto <ratio>` on both sides keeps `auto` and interpolates the
+        // ratio; `auto` on one side only is discrete.
+        const bool auto_a = ascii_istarts_with(from, "auto");
+        const bool auto_b = ascii_istarts_with(to, "auto");
+        if (auto_a == auto_b) {
+            const std::string_view ra = auto_a ? trim(from.substr(4), html_whitespace) : from;
+            const std::string_view rb = auto_b ? trim(to.substr(4), html_whitespace) : to;
+            if (const std::optional<std::string> r = interpolate_ratio(ra, rb, p)) {
+                return auto_a ? "auto " + *r : *r;
+            }
+        }
+    }
+    if (property == "rotate") {
+        if (const std::optional<std::string> r = interpolate_rotate(from, to, p, ctx)) {
+            return *r;
+        }
     }
     if (property == "filter" || property == "backdrop-filter") {
         if (const std::optional<std::string> f = interpolate_filter(from, to, p, ctx)) {

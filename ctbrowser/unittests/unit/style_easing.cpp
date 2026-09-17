@@ -111,6 +111,14 @@ void test_interpolation() {
     CHECK(interpolate_text("aspect-ratio", "0.5", "2", 0.5, context) == "1 / 1");
     CHECK(interpolate_text("aspect-ratio", "1 / 2", "2 / 1", 1.5, context) == "4 / 1");
     CHECK(interpolate_text("aspect-ratio", "auto", "2 / 1", 0.4, context) == "auto");
+    CHECK(interpolate_text("aspect-ratio", "auto 1 / 2", "auto 2 / 1", 0.5, context) ==
+          "auto 1 / 1");
+    CHECK(interpolate_text("perspective-origin", "50% 50%", "20px 20px", 1, context) ==
+          "20px 20px");
+    CHECK(interpolate_text("border-left-width", "medium", "23px", -0.3, context) == "0px");
+    CHECK(interpolate_text("rotate", "3 6 9 360deg", "none", 0.75, context) ==
+          "0.267261 0.534522 0.801784 90deg");
+    CHECK(interpolate_text("rotate", "x 90deg", "y 90deg", 0.5, context) == "y 90deg");
     // A filter list function by function, padded with each function's lacuna
     // and clamped (Filter Effects 1 §11.2).
     CHECK(interpolate_text("filter", "hue-rotate(0deg) blur(6px)", "hue-rotate(180deg) blur(10px)",
@@ -178,7 +186,7 @@ void test_composition() {
     CHECK(interpolate_text("scale", "none", "4 3 2", 0.125, context) == "1.375 1.25 1.125");
     CHECK(interpolate_text("scale", "none", "none", 0.5, context) == "none");
     CHECK(interpolate_text("translate", "10px", "none", 0.5, context) == "5px 0px 0px");
-    CHECK(interpolate_text("rotate", "none", "100deg", 0.5, context) == "50deg");
+    CHECK(interpolate_text("rotate", "none", "100deg", 0.5, context) == "0 0 1 50deg");
     // A transform list function by function while the lists match, padded
     // with identities; else as decomposed matrices (CSS Transforms 1 §12).
     CHECK(interpolate_text("transform", "rotate(30deg)", "rotate(60deg)", 0.5, context) ==
@@ -189,6 +197,8 @@ void test_composition() {
     CHECK(interpolate_text("transform", "rotate(90deg)", "scale(2)", 0.5, context)
               .starts_with("matrix(1.06066"));
     CHECK(interpolate_text("transform", "none", "none", 0.5, context) == "none");
+    CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%)", 1, context) ==
+          "translateY(90%)");
     CHECK(interpolate_text("transform", "translate(12px, 70%)", "translate(13px, 90%)", 0.25,
                            context) == "translate(12.25px, 75%)");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
