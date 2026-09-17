@@ -229,8 +229,35 @@ struct shorthand_lists {
 
 namespace {
 
+// calc-size(A, B) extracts A and B; nullopt if not calc-size() or malformed.
+[[nodiscard]] std::optional<std::pair<std::string_view, std::string_view>>
+calc_size_args(std::string_view text) {
+    text = trim(text, html_whitespace);
+    if (!ascii_iequals(text.substr(0, 10), "calc-size(") || !text.ends_with(')')) {
+        return std::nullopt;
+    }
+    // Find the comma separating basis from calculation.
+    std::size_t depth = 1, comma = std::string_view::npos;
+    for (std::size_t i = 10; i < text.size() - 1 && comma == std::string_view::npos; ++i) {
+        if (text[i] == '(') { ++depth; }
+        else if (text[i] == ')') { --depth; }
+        else if (text[i] == ',' && depth == 1) { comma = i; }
+    }
+    if (comma == std::string_view::npos) { return std::nullopt; }
+    return std::pair{trim(text.substr(10, comma - 10), html_whitespace),
+                     trim(text.substr(comma + 1, text.size() - comma - 2), html_whitespace)};
+}
+
 [[nodiscard]] bool numeric_pair(std::string_view from, std::string_view to) {
     style::css::length_context ctx;
+    // calc-size(A, B) interpolates with calc-size(C, D) when A with C and B with D can.
+    const auto a_size = calc_size_args(from), b_size = calc_size_args(to);
+    if (a_size && b_size) {
+        return numeric_pair(a_size->first, b_size->first) &&
+               numeric_pair(a_size->second, b_size->second);
+    }
+    // One calc-size against a plain value: discrete.
+    if (a_size || b_size) { return false; }
     const style::css::math_answer a = style::css::evaluate_math(from, ctx);
     const style::css::math_answer b = style::css::evaluate_math(to, ctx);
     return a.outcome == style::css::math_outcome::resolved &&
@@ -282,6 +309,18 @@ namespace {
     if (const auto a = style::css::resolve_color(from, {}), b = style::css::resolve_color(to, {});
         a && b) {
         return lerp_color(*a, *b, p);
+    }
+    // calc-size(A, B) interpolates with calc-size(C, D) by interpolating A with C
+    // and B with D (CSS Values 5 §10.3).
+    if (const auto a_size = calc_size_args(from), b_size = calc_size_args(to);
+        a_size && b_size) {
+        const std::string basis =
+            interpolate_pair(property, a_size->first, b_size->first, p, ctx, interpolable);
+        if (!interpolable) { return std::string{p < 0.5 ? from : to}; }
+        const std::string calc =
+            interpolate_pair(property, a_size->second, b_size->second, p, ctx, interpolable);
+        if (!interpolable) { return std::string{p < 0.5 ? from : to}; }
+        return "calc-size(" + basis + ", " + calc + ")";
     }
     if (numeric_pair(from, to)) { return style::interpolate_text(property, from, to, p, ctx); }
     const std::vector<std::string_view> lists_a = split_top_level(from, ",");
