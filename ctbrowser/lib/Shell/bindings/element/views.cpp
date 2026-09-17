@@ -4,6 +4,7 @@
 #include "internal.hpp"
 
 #include <ctbrowser/dom/token_list.hpp>
+#include <ctbrowser/layout/overflow.hpp>
 
 namespace ctbrowser::shell {
 
@@ -15,7 +16,107 @@ namespace {
 // table, see declarations.cpp.
 using style::css::css_name_of;
 
+// An INLINE box in §7's sense - `display: inline` - and not an inline-level
+// block or replaced box, which have client edges of their own.
+[[nodiscard]] bool is_inline_box(const layout::fragment & f) noexcept {
+    return f.box != nullptr && f.box->kind == layout::box_kind::inline_;
+}
+
 } // namespace
+
+dom_bindings::located dom_bindings::locate(node_id id) const {
+    located out;
+    if (fragments_ == nullptr || !id) { return out; }
+    const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy) -> bool {
+        const rect box = at.absolute_bounds(dx, dy);
+        if (at.source == id) {
+            out.f = &at;
+            out.abs = box;
+            return true;
+        }
+        for (const layout::fragment & child : at.children) {
+            if (self(self, child, box.x, box.y)) { return true; }
+        }
+        return false;
+    };
+    (void)walk(walk, *fragments_, 0, 0);
+    return out;
+}
+
+bool dom_bindings::potentially_scrollable(node_id body) const {
+    const located at = locate(body);
+    if (at.f == nullptr || at.f->box == nullptr) { return false; }
+    node_id parent;
+    {
+        const auto txn = doc_->read();
+        parent = txn.parent(body);
+    }
+    const located up = locate(parent);
+    return at.f->box->scroll_container && up.f != nullptr && up.f->box != nullptr &&
+           up.f->box->scroll_container;
+}
+
+bool dom_bindings::is_viewport_element(node_id id, bool scrolling) {
+    const bool quirks = doc_->quirks();
+    const bool root = [&] {
+        const auto txn = doc_->read();
+        return id == txn.root();
+    }();
+    if (root) { return !quirks; }
+    if (!quirks || id != body_element()) { return false; }
+    return !scrolling || !potentially_scrollable(id);
+}
+
+node_id dom_bindings::offset_parent_of(node_id id) {
+    const located at = locate(id);
+    if (at.f == nullptr || at.f->box == nullptr) { return node_id{}; }
+    const node_id body = body_element();
+    node_id parent;
+    {
+        const auto txn = doc_->read();
+        if (id == txn.root() || id == body) { return node_id{}; }
+        parent = txn.parent(id);
+    }
+    const auto box_of_node = [this](node_id node) -> const layout::box_node * {
+        const located found = locate(node);
+        return found.f == nullptr ? nullptr : found.f->box;
+    };
+    // A transform establishes a containing block for fixed and absolute
+    // descendants alike (CSS Transforms 1 §2).
+    const auto anchors_fixed = [](const layout::box_node * b) {
+        return b != nullptr && b->transformed;
+    };
+    const auto anchors_absolute = [](const layout::box_node * b) {
+        return b != nullptr && (b->is_positioned() || b->transformed);
+    };
+    const bool fixed = at.f->box->position == layout::position_kind::fixed;
+    const bool static_ = at.f->box->position == layout::position_kind::static_;
+    if (fixed) {
+        bool anchored = false;
+        for (node_id up = parent; up; up = doc_->read().parent(up)) {
+            if (anchors_fixed(box_of_node(up))) {
+                anchored = true;
+                break;
+            }
+        }
+        if (!anchored) { return node_id{}; }
+    }
+    for (node_id up = parent; up; up = doc_->read().parent(up)) {
+        const layout::box_node * b = box_of_node(up);
+        if (fixed ? anchors_fixed(b) : anchors_absolute(b)) { return up; }
+        if (fixed) { continue; }
+        if (up == body) { return up; }
+        if (static_) {
+            const auto txn = doc_->read();
+            const std::string_view tag = txn.local_name(up);
+            if (txn.element_ns(up) == node_ns::html &&
+                (tag == "td" || tag == "th" || tag == "table")) {
+                return up;
+            }
+        }
+    }
+    return node_id{};
+}
 
 long long dom_bindings::size_attribute(const read_txn & txn, node_id id, std::string_view name,
                                        long long fallback) const {
@@ -30,8 +131,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // view onto ONE element and it has to be installed as its wrapper is made.
     install_sheet_property(cx, obj, id);
 
-    // --- the box metrics: offsetLeft/Top/Width/Height, clientWidth/Height,
-    // clientLeft/Top, scrollWidth/Height.
+    // --- the box metrics: offsetParent/Left/Top/Width/Height, clientWidth/
+    // Height, clientLeft/Top, scrollWidth/Height - CSSOM View §7 and §8.
     //
     // ACCESSORS THAT FLUSH LAYOUT, not numbers copied in at refresh. Reading
     // `offsetWidth` is how a page - Bootstrap's `reflow(el)`, every WPT file
@@ -40,17 +141,21 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // a copy taken at the last refresh said whatever the previous statement
     // left. `flush_layout` runs only what is stale (set_layout_hook).
     //
-    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT, and its two axes come from
-    // different places on purpose: the width is the root box's own (the layout
-    // viewport, 15px narrower than the window when a scrollbar appears - which
-    // is what Bootstrap's `.container` centred itself in), the height the
-    // window's, because `documentElement.clientHeight` means "how tall is the
-    // window" to p5's windowHeight. Before the first layout the root has no
-    // box and the window stands in FOR THE ROOT ONLY: an ordinary element with
-    // no box has a client width of zero, and handing it the viewport told
-    // Babylon its canvas was window-sized before layout had sized it, which
-    // failed WebGL setup outright. The body is an ordinary element here, as in
-    // Chrome. clientLeft/Top are 0: borders are not in the box arithmetic.
+    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT (§7: the root element in a
+    // no-quirks document, the body in a quirks one), and its two axes come
+    // from different places on purpose: the width is the layout viewport (15px
+    // narrower than the window when a scrollbar appears - which is what
+    // Bootstrap's `.container` centred itself in), the height the window's,
+    // because `documentElement.clientHeight` means "how tall is the window"
+    // to p5's windowHeight. An ordinary element with no box has a client width
+    // of zero: handing it the viewport told Babylon its canvas was
+    // window-sized before layout had sized it, which failed WebGL setup
+    // outright. An inline box answers zero for all four client metrics, as
+    // §7 says. scrollWidth/scrollHeight are the SCROLLING AREA - the padding
+    // box grown to everything that overflows it (layout/overflow.hpp) - and
+    // for the root the viewport's; they answered the border box before, which
+    // is 600 subtests of scrollWidthHeight-negative-margin-002 alone.
+    // The `long` metrics are rounded, because that is what a `long` is.
     {
         enum class metric : std::uint8_t {
             offset_left,
@@ -75,30 +180,80 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             auto * getter = cx.allocate<script::native_object>(
                 name, [this, id, which](context &, std::span<value>) {
                     flush_layout();
-                    const rect box = box_of(id);
-                    const bool is_root = [&] {
-                        const auto txn = doc_->read();
-                        return atoms_->text(txn.tag(id).value_or(atom{})) == "html";
-                    }();
+                    const located at = locate(id);
+                    const bool viewport_element = is_viewport_element(
+                        id, which == metric::scroll_width || which == metric::scroll_height);
                     double v = 0;
                     switch (which) {
-                    case metric::offset_left: v = box.x; break;
-                    case metric::offset_top: v = box.y; break;
-                    case metric::offset_width:
-                    case metric::scroll_width: v = box.width; break;
-                    case metric::offset_height:
-                    case metric::scroll_height: v = box.height; break;
-                    case metric::client_width:
-                        v = is_root && box.width <= 0 ? viewport_width_ : box.width;
+                    case metric::offset_left:
+                    case metric::offset_top: {
+                        if (at.f == nullptr || id == body_element()) { break; }
+                        // Against the offsetParent's padding edge, or the
+                        // initial containing block when there is none (§8).
+                        point origin{};
+                        if (const node_id parent = offset_parent_of(id)) {
+                            const located p = locate(parent);
+                            if (p.f != nullptr) {
+                                const rect pad = layout::padding_box_of(*p.f);
+                                origin = point{p.abs.x + pad.x, p.abs.y + pad.y};
+                            }
+                        }
+                        v = which == metric::offset_left ? at.abs.x - origin.x
+                                                         : at.abs.y - origin.y;
                         break;
-                    case metric::client_height: v = is_root ? viewport_height_ : box.height; break;
-                    case metric::client_left:
-                    case metric::client_top: v = 0; break;
                     }
-                    return value::number(v);
+                    case metric::offset_width: v = at.abs.width; break;
+                    case metric::offset_height: v = at.abs.height; break;
+                    case metric::client_width:
+                    case metric::client_height:
+                    case metric::client_left:
+                    case metric::client_top: {
+                        if (viewport_element &&
+                            (which == metric::client_width || which == metric::client_height)) {
+                            v = which == metric::client_width ? viewport_width_ : viewport_height_;
+                            break;
+                        }
+                        if (at.f == nullptr || is_inline_box(*at.f)) { break; }
+                        const rect pad = layout::padding_box_of(*at.f);
+                        switch (which) {
+                        case metric::client_width: v = pad.width; break;
+                        case metric::client_height: v = pad.height; break;
+                        case metric::client_left: v = pad.x; break;
+                        default: v = pad.y; break;
+                        }
+                        break;
+                    }
+                    case metric::scroll_width:
+                    case metric::scroll_height: {
+                        rect area{};
+                        if (viewport_element) {
+                            area = fragments_ == nullptr
+                                       ? rect{0, 0, static_cast<float>(viewport_width_),
+                                              static_cast<float>(viewport_height_)}
+                                       : layout::viewport_scrolling_area(
+                                             *fragments_, static_cast<float>(viewport_width_),
+                                             static_cast<float>(viewport_height_));
+                        } else if (at.f != nullptr) {
+                            area = layout::scrolling_area_of(*at.f);
+                        }
+                        v = which == metric::scroll_width ? area.width : area.height;
+                        break;
+                    }
+                    }
+                    return value::number(std::round(v));
                 });
             obj.define_accessor(name, value::object(getter), value::undefined());
         }
+        // `offsetParent`, §8: null for the root, the body, a box-less element
+        // and a fixed one; otherwise the nearest positioned ancestor, the body,
+        // or a table part around a static element.
+        auto * parent_getter = cx.allocate<script::native_object>(
+            "offsetParent", [this, id](context & c, std::span<value>) {
+                flush_layout();
+                const node_id parent = offset_parent_of(id);
+                return parent ? wrap(c, parent) : value::null();
+            });
+        obj.define_accessor("offsetParent", value::object(parent_getter), value::undefined());
     }
 
     // --- element.attributes

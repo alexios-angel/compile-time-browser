@@ -124,6 +124,15 @@ struct box_node {
     // other, but the first/last ones cannot escape through this box's edges -
     // especially important when the same box clips their paint.
     bool blocks_margin_collapse = false;
+    // THE SAME QUESTION AS CSS OVERFLOW 3 ASKS IT: `scroll_container` is
+    // `overflow` hidden/scroll/auto/overlay on either axis - the box has a
+    // scrolling box and a scroll offset (CSSOM View reads and writes it);
+    // `clips_overflow` adds `clip`, which clips paint and the scrollable
+    // overflow contribution to an ancestor but scrolls nothing. Both false is
+    // `visible`, where a descendant that spills out still counts toward the
+    // ancestor's scrollable overflow rectangle (layout/overflow.hpp).
+    bool scroll_container = false;
+    bool clips_overflow = false;
     side_lengths margin{}, padding{};
     // WHERE THIS BOX IS PLACED, and by whom.
     //
@@ -537,6 +546,10 @@ private:
             };
             b.blocks_margin_collapse =
                 scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
+            b.scroll_container = b.blocks_margin_collapse;
+            b.clips_overflow = b.scroll_container ||
+                               ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
+                               ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
             b.inset = sides_of(style, inset_sides_);
             // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
             // `left` in a horizontal-tb, left-to-right document, which is the

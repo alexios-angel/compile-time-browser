@@ -431,6 +431,26 @@ private:
 
     [[nodiscard]] rect box_of(node_id id) const;
 
+    // --- CSSOM VIEW GEOMETRY (bindings/element/views.cpp) -------------------
+    // The first fragment for a node in tree order, with its absolute border
+    // box - what box_of answers, plus the fragment itself for the edges and
+    // the scrolling area. `f` is null when the node has no box.
+    struct located {
+        const layout::fragment * f = nullptr;
+        rect abs;
+    };
+    [[nodiscard]] located locate(node_id id) const;
+    // Whether `id` is the element whose client rectangle and scrolling area
+    // are the VIEWPORT's (CSSOM View §7): the root element in a no-quirks
+    // document, the body in a quirks one - and, for the scrolling area, only
+    // a body that is not potentially scrollable.
+    [[nodiscard]] bool is_viewport_element(node_id id, bool scrolling);
+    // "Potentially scrollable" (§2): the body has a box and neither it nor
+    // its parent is `overflow: visible`/`clip` on the axis.
+    [[nodiscard]] bool potentially_scrollable(node_id body) const;
+    // `offsetParent`, §8 - empty where the specification says null.
+    [[nodiscard]] node_id offset_parent_of(node_id id);
+
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
     // `"insertBefore" in Node.prototype` and `.length` on each are what the
