@@ -188,6 +188,15 @@ constexpr property_syntax modules[] = {
     {"-webkit-border-bottom-left-radius", k::freeform, "", "0px", false, false},
     {"margin-trim", k::freeform, "", "none", false, false},
     {"contain", k::freeform, "", "none", false, false},
+    // CSS Conditional 5 §4: the container queries' two longhands and their
+    // shorthand. `CSS.supports("container-type:size")` is how every
+    // css-conditional container-query file asks whether they exist (110 of
+    // them were HARNESS_ERROR while these were unknown); the engine has
+    // evaluated `@container` against them since before they were in the
+    // table. Grammars in keywords.cpp, the split in shorthands.cpp.
+    {"container-type", k::freeform, "", "normal", false, false},
+    {"container-name", k::freeform, "", "none", false, false},
+    {"container", k::freeform, "", "none", false, false, true},
     {"will-change", k::freeform, "", "auto", false, false},
     {"field-sizing", k::keyword_only, "fixed content", "fixed", false, false},
     {"interactivity", k::keyword_only, "auto inert", "auto", true, false},
