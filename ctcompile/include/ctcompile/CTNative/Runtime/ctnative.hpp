@@ -684,38 +684,48 @@ auto invoke_session(const std::shared_ptr<Table> & table, Args... args) {
 #ifdef CTNATIVE_DOM
 // --- the DOM entry -----------------------------------------------------------
 
-// Only the complete DOM proof may use this: source is null/array/object,
-// target is a distinct fresh object, and no shallow alias can be observed.
-inline void copy_json_properties(ctbrowser::json_value & target,
-                                 const ctbrowser::json_value & source) {
+// ECMAScript array-index keys precede ordinary keys.
+inline std::uint32_t json_property_index(std::string_view key) {
+    constexpr auto ordinary = std::numeric_limits<std::uint32_t>::max();
+    if (key.empty() || (key.size() > 1 && key.front() == '0')) { return ordinary; }
+    std::uint32_t value = ordinary;
+    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
+    return error == std::errc{} && end == key.data() + key.size() ? value : ordinary;
+}
+
+// Only proved own-data writes use this. Assignment additionally excludes the
+// inherited __proto__ setter; spread defines that name as an own data property.
+inline void set_json_property(ctbrowser::json_value & target, std::string key,
+                              ctbrowser::json_value value) {
     auto & members = std::get<ctbrowser::json_value::object>(target.data);
     // ponytail: linear overwrite lookup; index the keys if large Config
-    // merges make this quadratic work measurable.
-    const auto put = [&](const std::string & key, const ctbrowser::json_value & value) {
-        const auto found = std::ranges::find(members, key, &ctbrowser::json_value::member::key);
-        if (found == members.end()) {
-            members.push_back({key, value});
-        } else {
-            found->value = value;
-        }
-    };
-    if (const auto * object = std::get_if<ctbrowser::json_value::object>(&source.data)) {
-        for (const auto & member : *object) { put(member.key, member.value); }
-    } else if (const auto * array = std::get_if<ctbrowser::json_value::array>(&source.data)) {
-        for (std::size_t i = 0; i < array->size(); ++i) { put(std::to_string(i), (*array)[i]); }
+    // objects make this quadratic work measurable.
+    const auto found = std::ranges::find(members, key, &ctbrowser::json_value::member::key);
+    if (found != members.end()) {
+        found->value = std::move(value);
+        return;
     }
-    // ECMAScript array-index keys precede ordinary keys. Stable sorting keeps
-    // the first insertion position of overwritten ordinary properties.
-    const auto index = [](const std::string & key) {
-        constexpr auto ordinary = std::numeric_limits<std::uint32_t>::max();
-        if (key.empty() || (key.size() > 1 && key.front() == '0')) { return ordinary; }
-        std::uint32_t value = ordinary;
-        const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), value);
-        return error == std::errc{} && end == key.data() + key.size() ? value : ordinary;
-    };
-    std::stable_sort(members.begin(), members.end(), [&](const auto & left, const auto & right) {
-        return index(left.key) < index(right.key);
-    });
+    const auto index = json_property_index(key);
+    const auto position =
+        index == std::numeric_limits<std::uint32_t>::max()
+            ? members.end()
+            : std::ranges::lower_bound(members, index, {}, [](const auto & member) {
+                  return json_property_index(member.key);
+              });
+    members.insert(position, {std::move(key), std::move(value)});
+}
+
+// Source is null/array/object, target is a distinct fresh object, and no
+// shallow alias can be observed. Both paths retain first key/last value order.
+inline void copy_json_properties(ctbrowser::json_value & target,
+                                 const ctbrowser::json_value & source) {
+    if (const auto * object = std::get_if<ctbrowser::json_value::object>(&source.data)) {
+        for (const auto & member : *object) { set_json_property(target, member.key, member.value); }
+    } else if (const auto * array = std::get_if<ctbrowser::json_value::array>(&source.data)) {
+        for (std::size_t i = 0; i < array->size(); ++i) {
+            set_json_property(target, std::to_string(i), (*array)[i]);
+        }
+    }
 }
 
 inline void require_element(ctbrowser::element_ref element) {
