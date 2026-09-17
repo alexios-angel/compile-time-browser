@@ -991,7 +991,10 @@ void dom_bindings::refresh_document() {
     // property refreshed on the tick answered a read taken in the same
     // statement as the write with the value from before it, which is the shape
     // of nearly every test in html/dom's title group: set it, read it back.
-    doc->set("activeElement", wrap(*cx_, focused_));
+    // HTML 6.6.2: when nothing in the document is focused the answer is the
+    // body element, and null only while there is no body (a page reads
+    // `document.activeElement === document.body` after blur()).
+    doc->set("activeElement", wrap(*cx_, focused_ ? focused_ : body_element()));
 }
 
 } // namespace ctbrowser::shell
