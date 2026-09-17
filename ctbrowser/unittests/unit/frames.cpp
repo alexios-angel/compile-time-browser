@@ -327,6 +327,19 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
 
 } // namespace
 
+// HTML 4.10.21.3: a GET submission aimed at a frame this document names
+// navigates the frame to the action with the entries as its query - the
+// frame's own `location` reads it back and its document is the action's.
+void test_a_form_submits_into_a_named_frame() {
+    is("<form id=fm action=inner.html target=f><input name=a value='x y'><input name=b value=2>"
+       "</form><iframe id=f name=f></iframe>",
+       "(function () { document.getElementById('fm').submit();"
+       " var w = document.getElementById('f').contentWindow;"
+       " return w.location.search + '|' + w.document.title + '|' + (w.location === "
+       "w.document.location) + '|' + (w.location === window.location); })()",
+       "?a=x+y&b=2|inner|true|false");
+}
+
 int main() {
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
@@ -343,5 +356,6 @@ int main() {
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();
     test_a_frame_runs_no_script();
+    test_a_form_submits_into_a_named_frame();
     REPORT("frames");
 }

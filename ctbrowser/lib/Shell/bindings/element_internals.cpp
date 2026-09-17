@@ -286,6 +286,25 @@ void dom_bindings::install_element_internals(context & cx,
         return form ? at.owner->wrap(c, form) : value::null();
     });
 
+    // For the entry list (control_methods.cpp): is `id` a form-associated
+    // custom element, and what did setFormValue leave - null, a string, a
+    // File, a FormData? Undefined when it is not one.
+    face_submission_value_ = [this](node_id id) -> value {
+        const auto state = custom_elements_.find(id.key());
+        if (state == custom_elements_.end() ||
+            !primary().custom_definitions_[state->second.definition].form_associated) {
+            return value::undefined();
+        }
+        const auto held = wrappers_.find(id.key());
+        script::object_object * wrapper = held == wrappers_.end() ? nullptr : held->second;
+        if (wrapper == nullptr) { return value::null(); }
+        const value internals = slot(*wrapper, internals_key);
+        if (!internals.is_object()) { return value::null(); }
+        const value * form_value =
+            static_cast<script::object_object *>(internals.as_heap())->find(form_value_key);
+        return form_value == nullptr ? value::null() : *form_value;
+    };
+
     set_method(cx, *proto, "setFormValue",
                [form_associated_target](context & c, std::span<value> args) {
                    const target at = form_associated_target(c, "setFormValue");

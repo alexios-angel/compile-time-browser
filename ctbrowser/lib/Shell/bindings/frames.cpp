@@ -105,7 +105,10 @@ namespace {
 // is better reported as `application/octet-stream` - which is what a browser
 // does with it - than guessed at.
 std::string_view dom_bindings::mime_for_path(std::string_view path) {
-    const std::string_view ext = extension_of(path);
+    // The extension of the PATH: `blank.html?n=v` is an HTML file with a
+    // query, which a form submission's URL carries.
+    const std::string_view ext =
+        extension_of(path.substr(0, std::min(path.find('?'), path.find('#'))));
     // ASCII-folded through the shared helper: `FOO.HTML` is an HTML file, and
     // core/algorithms.hpp is where this engine folds case so a render never
     // depends on LC_ALL.
@@ -315,6 +318,12 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         made.observe_location(href, hash == std::string::npos ? std::string{} : href.substr(hash));
     }
 
+    // THE FRAME'S OWN `location`: its document's address, which a page reads
+    // back after a form submission navigated the frame (`iframe.contentWindow
+    // .location.search` is how every form-submission test reads the entry
+    // list). Made after observe_location, which writes its parts.
+    made.location_ = made.make_location(cx);
+
     // Hung off the WRAPPER rather than kept in a table beside it, so the frame
     // document is reachable from the element that owns it and the collector
     // needs no new root: `wrappers_` is already marked.
@@ -367,6 +376,8 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     const value frame_view = value::object(
         cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
     frame_window->set("document", made.document_);
+    frame_window->set("location", made.location_);
+    if (auto * doc = made.document_object()) { doc->set("location", made.location_); }
     frame_window->set("customElements", made.custom_elements_registry(cx)); // custom_elements.cpp
     made.install_window_scrolling(cx,
                                   *frame_window); // scrollX/scrollY, scrollTo on a frame's window
@@ -416,6 +427,60 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     // owner whose element it is; settle_frame hands it back.
     top.frame_loads_.push_back(pending_frame{id, ok, false, &top == this ? nullptr : this});
     return &made;
+}
+
+// HTML 4.10.21.3 "submit", steps 17-22, for the one case this engine can
+// take without a server: the GET method aimed at a nested navigable this
+// document names - `<form target="if1">` and `<iframe name="if1">`. The
+// action URL's query becomes the entry list, urlencoded, and the frame is
+// navigated to it: a new document under the same element, whose
+// `location.search` is the query and whose `load` fires at the element.
+// `_self`/`_blank`/`_parent`/`_top` and the POST method are the browser's
+// (a navigation of the page itself, or one that needs a server) and stay
+// where they were: recorded as `last_submission`. Answers whether it
+// navigated. ponytail: no `formtarget`/`formaction` on the submitter, which
+// browser::submit does not carry.
+bool dom_bindings::navigate_form_target(node_id form, const form_pairs & entries) {
+    if (cx_ == nullptr || !form) { return false; }
+    std::string action;
+    std::string method;
+    std::string target;
+    {
+        const auto txn = doc_->read();
+        action = std::string{txn.attribute_value(form, atoms_->intern("action"))};
+        method = ascii_lower_copy(txn.attribute_value(form, atoms_->intern("method")));
+        target = std::string{txn.attribute_value(form, atoms_->intern("target"))};
+    }
+    if (method == "post" || method == "dialog") { return false; }
+    if (target.empty() || target.front() == '_') { return false; }
+    node_id frame;
+    {
+        const auto txn = doc_->read();
+        for (const node_id id : all_html_elements("iframe")) {
+            if (txn.attribute_value(id, atoms_->intern("name")) == target) {
+                frame = id;
+                break;
+            }
+        }
+    }
+    if (!frame) { return false; }
+    // "Mutate action URL": the action - this document's address when there is
+    // none - with its query replaced by the entries. Kept as the page wrote it
+    // (a path the registry resolves), not resolved into an absolute URL, so
+    // the load goes where the page's other subresources go.
+    std::string url = action.empty() ? location_href_ : action;
+    url = url.substr(0, std::min(url.find('?'), url.find('#')));
+    url += "?" + serialize_form_urlencoded(entries);
+    reconcile_frames();
+    dom_bindings * made = load_frame(*cx_, frame, url);
+    const auto entry =
+        std::ranges::find_if(frames_, [&](const frame_entry & e) { return e.element == frame; });
+    if (entry != frames_.end()) {
+        entry->bindings = made;
+    } else {
+        frames_.push_back(frame_entry{frame, std::string{}, made});
+    }
+    return true;
 }
 
 // `load` at the frame, or `error` when the src resolved to no bytes. It does

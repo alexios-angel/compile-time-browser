@@ -2440,9 +2440,30 @@ void dom_bindings::install_control_methods(context & cx) {
         };
         for (const node_id one : elements_of_form(b, form)) {
             const auto txn = b->doc_->read();
-            if (!txn.contains(one) || !is_submittable(txn, one) || is_disabled(txn, b, one)) {
+            if (!txn.contains(one) || is_disabled(txn, b, one)) { continue; }
+            // A FORM-ASSOCIATED CUSTOM ELEMENT (step 5.5-5.7): its submission
+            // value - nothing for null, a FormData's entries, else the value
+            // under its name.
+            if (const value face =
+                    b->face_submission_value_ ? b->face_submission_value_(one) : value::undefined();
+                !face.is_undefined()) {
+                if (face.is_null()) { continue; }
+                if (face.is_object()) {
+                    if (const value * held = static_cast<script::object_object *>(face.as_heap())
+                                                 ->find(entries_slot);
+                        held != nullptr && held->is_array()) {
+                        for (const value & pair :
+                             static_cast<script::array_object *>(held->as_heap())->items) {
+                            list->items.push_back(pair);
+                        }
+                        continue;
+                    }
+                }
+                const std::string name = attribute_of(txn, b, one, "name");
+                if (!name.empty()) { add(name, face); }
                 continue;
             }
+            if (!is_submittable(txn, one)) { continue; }
             bool in_datalist = false;
             for (node_id up = txn.parent(one); up; up = txn.parent(up)) {
                 if (is(txn, up, "datalist")) { in_datalist = true; }
@@ -2709,10 +2730,31 @@ void dom_bindings::install_control_methods(context & cx) {
     // built (which fires `formdata`), and nothing navigates. `submit()`
     // fires no `submit` event; `requestSubmit()` validates, fires it, and
     // builds the list unless it was cancelled.
-    const auto build_submission = [new_form_data, entry_list](context & c, dom_bindings * b,
-                                                              node_id form, node_id submitter) {
+    const auto build_submission = [new_form_data, entry_list, entry_name,
+                                   entry_value](context & c, dom_bindings * b, node_id form,
+                                                node_id submitter) {
         const value data = new_form_data(c);
-        if (data.is_object()) { entry_list(c, b, form, submitter, data); }
+        if (!data.is_object()) { return; }
+        entry_list(c, b, form, submitter, data);
+        if (c.throw_pending()) { return; }
+        // ...AND THE NAVIGATION, when the form aims a GET at a frame this
+        // document names (frames.cpp): the entries as strings - a File by
+        // its name, as the urlencoded serialiser says.
+        std::vector<std::pair<std::string, std::string>> pairs;
+        const value * held =
+            static_cast<script::object_object *>(data.as_heap())->find(entries_slot);
+        if (held != nullptr && held->is_array()) {
+            for (const value & pair : static_cast<script::array_object *>(held->as_heap())->items) {
+                const value v = entry_value(pair);
+                std::string text =
+                    v.is_object_like() ? c.to_string(c.lookup_property(v, "name")) : c.to_string(v);
+                pairs.emplace_back(entry_name(c, pair), std::move(text));
+            }
+        }
+        (void)b->navigate_form_target(form, pairs);
+    };
+    submit_form_ = [this, build_submission](node_id form, node_id submitter) {
+        if (cx_ != nullptr) { build_submission(*cx_, this, form, submitter); }
     };
     operation("HTMLFormElement", "submit", 0,
               [this, build_submission](context & c, std::span<value>) {

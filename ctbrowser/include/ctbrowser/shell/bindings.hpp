@@ -325,6 +325,15 @@ public:
     // is resolved through the asset registry, so a frame loads from wherever
     // the page's other subresources load from and reaches no socket of its own.
     void reconcile_frames();
+    // A form submission (GET) aimed at a frame this document names by
+    // `target`: the frame navigates to the action with the entries as its
+    // query. False when the submission is not one of those - see frames.cpp.
+    bool navigate_form_target(node_id form,
+                              const std::vector<std::pair<std::string, std::string>> & entries);
+    // HTML 4.10.21.3 from the browser's activation: the entry list (with its
+    // `formdata` event), then the navigation above. control_methods.cpp
+    // installs it.
+    std::function<void(node_id form, node_id submitter)> submit_form_;
     // Paint Timing: `first-paint` and `first-contentful-paint`, at the page
     // clock's current reading, once. The browser calls it from its first frame.
     void record_first_paint();
@@ -1334,6 +1343,9 @@ private:
     // members, the ARIA mixin, the CustomStateSet. Installed by
     // install_custom_elements, which owns HTMLElement.prototype.
     void install_element_internals(context & cx, script::object_object & html_element_proto);
+    // A form-associated custom element's submission value (undefined for an
+    // element that is not one) - what "construct the entry list" appends.
+    std::function<value(node_id)> face_submission_value_;
     // HTML 4.10.17.3, the form owner of a form-associated element: the form
     // its `form` attribute names in the same tree, else the nearest <form>
     // ancestor.
