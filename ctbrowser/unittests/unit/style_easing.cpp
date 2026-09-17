@@ -5,7 +5,10 @@
 #include <cmath>
 #include <string>
 
+using ctbrowser::style::composite_op;
+using ctbrowser::style::composite_text;
 using ctbrowser::style::easing;
+using ctbrowser::style::interpolable_text;
 using ctbrowser::style::interpolate_text;
 using ctbrowser::style::parse_easing;
 
@@ -102,6 +105,43 @@ void test_interpolation() {
     CHECK(interpolate_text("text-align", "left", "right", 0.49, context) == "left");
     CHECK(interpolate_text("text-align", "left", "right", 0.5, context) == "right");
     CHECK(interpolate_text("left", "10px", "2s", 0.5, context) == "2s");
+    // Colours premultiplied in sRGB, clamped to the gamut when extrapolated.
+    CHECK(interpolate_text("color", "rgb(0, 0, 255)", "rgba(255, 0, 0, 0)", 0.5, context) ==
+          "rgba(0.0000, 0.0000, 255.0000, 0.5000)");
+    CHECK(interpolate_text("color", "yellow", "green", -0.3, context) ==
+          "rgba(255.0000, 255.0000, 0.0000, 1.0000)");
+    // Lists item by item, and a shadow list padded with transparent zeros.
+    CHECK(interpolate_text("border-width", "0px 10px", "10px 30px", 0.5, context) == "5px 20px");
+    CHECK(interpolate_text("box-shadow", "rgb(10, 20, 30) 1px 2px 3px 4px", "none", 0.5, context) ==
+          "rgba(10.0000, 20.0000, 30.0000, 0.5000) 0.5px 1px 1.5px 2px");
+    CHECK(interpolate_text("box-shadow", "rgb(10, 20, 30) 1px 2px 3px 4px", "none", 1.5, context) ==
+          "rgba(0.0000, 0.0000, 0.0000, 0.0000) -0.5px -1px 0px -2px");
+    // An inset against an outset shadow is discrete, in computed shape.
+    CHECK(interpolate_text("box-shadow", "red 1px 1px inset", "blue 1px 1px", 0.5, context) ==
+          "blue 1px 1px 0px 0px");
+    // A percentage mix is not clamped before its basis exists.
+    CHECK(interpolate_text("width", "calc(100px + 10%)", "30%", 1.5, context) ==
+          "calc(40% - 50px)");
+    CHECK(interpolable_text("width", "10px", "calc(100% - 10px)"));
+    CHECK(!interpolable_text("width", "auto", "10px"));
+}
+
+void test_composition() {
+    ctbrowser::style::css::length_context context;
+    CHECK(composite_text("width", "50px", "100px", composite_op::add, context) == "150px");
+    CHECK(composite_text("width", "10%", "100px", composite_op::accumulate, context) ==
+          "calc(10% + 100px)");
+    CHECK(composite_text("width", "100px", "auto", composite_op::add, context) == "auto");
+    CHECK(composite_text("width", "50px", "100px", composite_op::replace, context) == "100px");
+    CHECK(composite_text("color", "rgb(50, 50, 50)", "rgb(100, 100, 100)", composite_op::add,
+                         context) == "rgba(150.0000, 150.0000, 150.0000, 1.0000)");
+    CHECK(composite_text("box-shadow", "rgb(1, 2, 3) 1px 2px", "rgb(4, 5, 6) 3px 4px inset",
+                         composite_op::add, context) ==
+          "rgb(1, 2, 3) 1px 2px 0px 0px, rgb(4, 5, 6) 3px 4px 0px 0px inset");
+    CHECK(composite_text("box-shadow", "none", "rgb(4, 5, 6) 3px 4px", composite_op::add,
+                         context) == "rgb(4, 5, 6) 3px 4px 0px 0px");
+    CHECK(composite_text("border-width", "1px 2px", "10px 20px", composite_op::add, context) ==
+          "11px 22px");
 }
 
 } // namespace
@@ -109,5 +149,6 @@ void test_interpolation() {
 int main() {
     test_easing();
     test_interpolation();
+    test_composition();
     REPORT("style_easing");
 }

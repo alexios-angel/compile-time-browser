@@ -43,11 +43,35 @@ private:
 // CSS easing keywords, cubic-bezier() and steps(); invalid text returns nullopt.
 [[nodiscard]] std::optional<easing> parse_easing(std::string_view text);
 
-// Numeric values interpolate and extrapolate in the supplied length context,
-// with computed-value and property bounds. Other values switch at progress 0.5.
-// The returned text owns its bytes; neither input text nor context is retained.
+// ONE VALUE BETWEEN TWO, CSS Values 4 §4 "combining values" by the property's
+// animation type: a number, length, percentage or calc() mix arithmetically
+// in the supplied length context (extrapolating, then clamped to the computed
+// and property bounds), a colour premultiplied in sRGB (CSS Color 4 §17), a
+// shadow list in its computed shape padded with transparent zero shadows (CSS
+// Backgrounds 3 §7.2), and any LIST of those - comma-separated, then
+// space-separated - item by item. A pair that is none of these switches at
+// progress 0.5. The returned text owns its bytes; nothing is retained.
 [[nodiscard]] std::string interpolate_text(std::string_view property, std::string_view from,
                                            std::string_view to, double progress,
                                            const css::length_context & context);
+
+// Whether `interpolate_text` would interpolate the pair rather than switch it -
+// which is what decides whether a transition starts (CSS Transitions 1 §3).
+[[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
+                                     std::string_view to);
+
+// THE COMPOSITE OPERATIONS of Web Animations 1 §4.5.1: `value` added to, or
+// accumulated onto, `underlying` by the property's animation type (CSS Values
+// 4 §4.3-4.4: numbers and lengths sum, colours sum premultiplied, a shadow or
+// transform list is appended, a list of the rest adds item by item). A pair
+// the type cannot add is `value` alone, as the specification says.
+enum class composite_op : std::uint8_t {
+    replace,
+    add,
+    accumulate
+};
+[[nodiscard]] std::string composite_text(std::string_view property, std::string_view underlying,
+                                         std::string_view value, composite_op op,
+                                         const css::length_context & context);
 
 } // namespace ctbrowser::style

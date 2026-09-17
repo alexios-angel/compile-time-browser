@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -178,41 +181,69 @@ namespace {
 
 // --- interpolation ------------------------------------------------------------
 
-// (1 - p) * from + p * to, the specification's own formula, which is also the
-// one that extrapolates sensibly: `p` is outside [0, 1] whenever the easing
-// overshoots, and a `p` of 0 or 1 hands back the endpoint's own text so its
-// computed value is exactly the declared one.
-[[nodiscard]] std::string interpolate_text(std::string_view property, std::string_view from,
-                                           std::string_view to, double p,
-                                           const css::length_context & ctx) {
-    const auto lerp = [p](double a, double b) { return (1 - p) * a + p * b; };
+namespace {
+
+// --- numbers, lengths, percentages and their calc() mixes ---
+
+struct numeric_pair {
+    css::calc_result a, b;
+};
+
+// Both endpoints as one numeric type, or nothing: `10px` and `2s` do not pair,
+// nor `auto` and anything.
+[[nodiscard]] std::optional<numeric_pair> numeric_of(std::string_view from, std::string_view to,
+                                                     const css::length_context & ctx) {
     const css::math_answer a = css::evaluate_math(from, ctx);
     const css::math_answer b = css::evaluate_math(to, ctx);
-    const bool numeric = a.outcome == css::math_outcome::resolved &&
-                         b.outcome == css::math_outcome::resolved && a.value.type == b.value.type &&
-                         a.value.is_number == b.value.is_number;
-    // An endpoint's own text at 0 and 1 when it is not arithmetic, so a
-    // keyword's computed value is exactly the declared one. A numeric endpoint
-    // goes through the interpolation like every other progress: its value is
-    // the same and its text is the COMPUTED spelling - `random(300, 100)` is
-    // `300` at progress 1 and not the function (random-in-animations) - and
-    // an infinity is clamped below like every value on the way there
-    // (calc-interpolation).
-    // ponytail: colours, transforms and lists flip at the midpoint; add a
-    // colour lerp beside this when a test reads an animated colour.
-    if (!numeric) { return std::string{p < 0.5 ? from : to}; }
+    if (a.outcome != css::math_outcome::resolved || b.outcome != css::math_outcome::resolved ||
+        a.value.type != b.value.type || a.value.is_number != b.value.is_number) {
+        return std::nullopt;
+    }
+    return numeric_pair{a.value, b.value};
+}
+
+// (1 - p) * a + p * b, the specification's own formula, which is also the one
+// that extrapolates sensibly: `p` is outside [0, 1] whenever the easing
+// overshoots. A numeric endpoint goes through the arithmetic at 0 and 1 too:
+// its value is the same and its text is the COMPUTED spelling -
+// `random(300, 100)` is `300` at progress 1 and not the function
+// (random-in-animations).
+[[nodiscard]] css::calc_result mix(const css::calc_result & a, const css::calc_result & b,
+                                   double p) {
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     css::calc_result out;
-    out.type = a.value.type;
-    out.is_number = a.value.is_number;
-    out.px = lerp(a.value.px, b.value.px);
-    out.has_percent = a.value.has_percent || b.value.has_percent;
-    out.percent = lerp(a.value.has_percent ? a.value.percent : 0.0,
-                       b.value.has_percent ? b.value.percent : 0.0);
-    // CLAMPED AS A COMPUTED VALUE IS: an infinity lands on the bound it
-    // overflowed and a NaN is zero (CSS Values 4 §10.10), after the
-    // interpolation rather than before - `0px` to `calc(infinity * 1px)`
-    // is the bound at every progress past zero, which is what the corpus
-    // reads. The bound is the fold's (lib/Style/css/calc/fold.cpp).
+    out.type = a.type;
+    out.is_number = a.is_number;
+    out.px = lerp(a.px, b.px);
+    out.has_percent = a.has_percent || b.has_percent;
+    out.percent = lerp(a.has_percent ? a.percent : 0.0, b.has_percent ? b.percent : 0.0);
+    return out;
+}
+
+// CSS Values 4 §4.3: addition of two numerics of one type is the sum, term
+// by term for a percentage mix. Accumulation is the same for every type here.
+[[nodiscard]] css::calc_result sum(const css::calc_result & a, const css::calc_result & b) {
+    css::calc_result out;
+    out.type = a.type;
+    out.is_number = a.is_number;
+    out.px = a.px + b.px;
+    out.has_percent = a.has_percent || b.has_percent;
+    out.percent = (a.has_percent ? a.percent : 0.0) + (b.has_percent ? b.percent : 0.0);
+    return out;
+}
+
+// The text of a numeric result, CLAMPED AS A COMPUTED VALUE IS: an infinity
+// lands on the bound it overflowed and a NaN is zero (CSS Values 4 §10.10) -
+// after the arithmetic rather than before, so `0px` to `calc(infinity * 1px)`
+// is the bound at every progress past zero, which is what the corpus reads.
+// The bound is the fold's (lib/Style/css/calc/fold.cpp). Then an <integer>
+// rounds half up (§3.2), and the property's own range applies: the table's
+// floor at zero - only when no percentage is left to resolve, since
+// `calc(-50px + 40%)` cannot be judged before its basis exists - and
+// font-weight's [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
+// ponytail: the one property with a range that is not "non-negative"; give
+// the table a range when a second one animates.
+[[nodiscard]] std::string numeric_text(std::string_view property, css::calc_result out) {
     constexpr double bound = 33554432.0;
     const auto clamped = [](double v) {
         if (std::isnan(v)) { return 0.0; }
@@ -220,19 +251,289 @@ namespace {
     };
     out.px = clamped(out.px);
     out.percent = clamped(out.percent);
-    // CSS Values 4 §3.2: an interpolated <integer> rounds half up.
     const css::property_syntax * known = css::find_property(property);
     if (out.is_number && known != nullptr && known->kind == css::value_kind::integer) {
         out.px = std::floor(out.px + 0.5);
     }
-    // ...AND IS CLAMPED TO THE PROPERTY'S RANGE, as a computed value is
-    // (CSS Values 4 §10.10): the table's floor at zero, and font-weight's own
-    // [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
-    // ponytail: the one property with a range that is not "non-negative";
-    // give the table a range when a second one animates.
-    if (known != nullptr && known->nonnegative && out.px < 0) { out.px = 0; }
+    if (known != nullptr && known->nonnegative && out.px < 0 && !out.has_percent) { out.px = 0; }
     if (property == "font-weight") { out.px = std::clamp(out.px, 1.0, 1000.0); }
     return css::serialize_calc(out);
+}
+
+// --- colours ---
+
+// A colour as sRGB with alpha, premultiplied: CSS Color 4 §17 interpolates
+// legacy colours in sRGB with the channels weighted by alpha, so a transparent
+// endpoint contributes no hue. Through style's resolver rather than paint's:
+// paint holds a channel in eight bits, and an alpha of 0.5 read back as
+// 128/255 - which put the midpoint of blue and half-transparent red at 0.753
+// rather than 0.75.
+struct premultiplied {
+    double r, g, b, a;
+};
+
+[[nodiscard]] premultiplied premultiply(const css::srgb_color & c) {
+    return {c.r * c.a, c.g * c.a, c.b * c.a, c.a};
+}
+
+// Back to `rgba()` text, clamped to the gamut as a computed colour is. The
+// text goes through the same `rgb()` parser the computed-style serialiser
+// reads, which rounds.
+[[nodiscard]] std::string color_text(const premultiplied & c) {
+    const double alpha = std::clamp(c.a, 0.0, 1.0);
+    const auto channel = [alpha](double v) {
+        return std::clamp(alpha == 0 ? 0.0 : v / alpha, 0.0, 1.0) * 255.0;
+    };
+    const auto number = [](double v) {
+        char buffer[32];
+        const auto [end, ec] =
+            std::to_chars(buffer, buffer + sizeof buffer, v, std::chars_format::fixed, 4);
+        return ec == std::errc{} ? std::string{buffer, end} : std::string{"0"};
+    };
+    return "rgba(" + number(channel(c.r)) + ", " + number(channel(c.g)) + ", " +
+           number(channel(c.b)) + ", " + number(alpha) + ")";
+}
+
+[[nodiscard]] std::string lerp_color(const css::srgb_color & from, const css::srgb_color & to,
+                                     double p) {
+    const premultiplied a = premultiply(from);
+    const premultiplied b = premultiply(to);
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
+    return color_text({lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b), lerp(a.a, b.a)});
+}
+
+// CSS Color 4 §12.4: colours add channel by channel, premultiplied, the alpha
+// summed and clamped.
+[[nodiscard]] std::string add_color(const css::srgb_color & x, const css::srgb_color & y) {
+    const premultiplied a = premultiply(x);
+    const premultiplied b = premultiply(y);
+    return color_text({a.r + b.r, a.g + b.g, a.b + b.b, a.a + b.a});
+}
+
+// --- the computed shape of a list item ---
+
+[[nodiscard]] bool is_shadow(std::string_view property) {
+    return property == "box-shadow" || property == "text-shadow";
+}
+
+// A LIST WHOSE ADDITION IS CONCATENATION: a shadow list, a transform list and
+// a filter list append (CSS Backgrounds 3 §7.2, CSS Transforms 1 §12, Filter
+// Effects 1 §11); every other comma list adds item by item.
+[[nodiscard]] bool appends(std::string_view property) {
+    return is_shadow(property) || property == "transform" || property == "filter" ||
+           property == "backdrop-filter";
+}
+
+// THE COMPUTED SHAPE OF A VALUE WHOSE GRAMMAR LETS THE AUTHOR REORDER OR OMIT:
+// a shadow is `<color> <x> <y> <blur> <spread> inset?` with the colour first
+// and the omitted lengths zero (CSS Backgrounds 3 §7.2, the order the
+// computed-style serialiser prints), a corner radius is two lengths. Paired
+// as written, `10px 30px orange` against `green 20px 20px 20px` has nothing
+// to interpolate; in computed shape it has a colour and three lengths. A
+// shadow list's `none` is the empty list.
+[[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text) {
+    if (is_shadow(property)) {
+        if (ascii_iequals(text, "none")) { return {}; }
+        const bool box = property == "box-shadow";
+        std::string out;
+        for (const std::string_view shadow : split_top_level(text, ",")) {
+            std::string colour;
+            std::vector<std::string> lengths;
+            bool inset = false;
+            for (const std::string_view raw : split_top_level(shadow, html_whitespace)) {
+                const std::string_view part = trim(raw, html_whitespace);
+                if (part.empty()) { continue; }
+                if (ascii_iequals(part, "inset")) {
+                    inset = true;
+                } else if (ascii_iequals(part, "currentcolor") || css::resolve_color(part, {})) {
+                    colour = std::string{part};
+                } else {
+                    lengths.emplace_back(part);
+                }
+            }
+            const std::size_t wanted = box ? 4 : 3;
+            if (lengths.size() < 2 || lengths.size() > wanted) { return std::string{text}; }
+            while (lengths.size() < wanted) { lengths.emplace_back("0px"); }
+            if (!out.empty()) { out += ", "; }
+            out += colour.empty() ? std::string{"currentcolor"} : colour;
+            for (const std::string & len : lengths) { out += ' ' + len; }
+            if (inset) { out += " inset"; }
+        }
+        return out.empty() ? std::string{text} : out;
+    }
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
+        if (parts.size() == 1) { return std::string{parts[0]} + ' ' + std::string{parts[0]}; }
+    }
+    return std::string{text};
+}
+
+// The shadow a shorter list is padded with: transparent, every length zero,
+// inset when the shadow it pairs with is (CSS Backgrounds 3 §7.2).
+[[nodiscard]] std::string blank_shadow(bool box, std::string_view like) {
+    std::string out = box ? "rgba(0, 0, 0, 0) 0px 0px 0px 0px" : "rgba(0, 0, 0, 0) 0px 0px 0px";
+    if (like.ends_with("inset")) { out += " inset"; }
+    return out;
+}
+
+[[nodiscard]] std::vector<std::string_view> comma_items(std::string_view text) {
+    std::vector<std::string_view> out;
+    for (const std::string_view item : split_top_level(text, ",")) {
+        const std::string_view trimmed = trim(item, html_whitespace);
+        if (!trimmed.empty()) { out.push_back(trimmed); }
+    }
+    return out;
+}
+
+// --- the pair ---
+
+// CSS Values 4 §4.1: two values interpolate when they are one number, length
+// or percentage each; two colours; or LISTS of the same shape -
+// comma-separated, then space-separated - whose items pair off as one of
+// those or as identical text (`inset`, `/`, `auto`). `border-width: 20px
+// 40px`, `box-shadow: red 2px 2px`, `background-size: 10px 20%` are all that.
+// When the pair does not, `interpolable` is false and the answer flips at the
+// midpoint.
+[[nodiscard]] std::string interpolate_pair(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const css::length_context & ctx, bool & interpolable) {
+    from = trim(from, html_whitespace);
+    to = trim(to, html_whitespace);
+    interpolable = true;
+    if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
+        return lerp_color(*a, *b, p);
+    }
+    if (const std::optional<numeric_pair> n = numeric_of(from, to, ctx)) {
+        return numeric_text(property, mix(n->a, n->b, p));
+    }
+    std::vector<std::string> lists_a;
+    std::vector<std::string> lists_b;
+    for (const std::string_view item : comma_items(from)) { lists_a.emplace_back(item); }
+    for (const std::string_view item : comma_items(to)) { lists_b.emplace_back(item); }
+    const auto discrete = [&] {
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    };
+    const bool shadow = is_shadow(property);
+    if (shadow) {
+        // The shorter shadow list is padded at its end to the longer one's
+        // length, each blank shadow inset when its partner is.
+        while (lists_a.size() < lists_b.size()) {
+            lists_a.push_back(blank_shadow(property == "box-shadow", lists_b[lists_a.size()]));
+        }
+        while (lists_b.size() < lists_a.size()) {
+            lists_b.push_back(blank_shadow(property == "box-shadow", lists_a[lists_b.size()]));
+        }
+    }
+    if (lists_a.size() != lists_b.size() || lists_a.empty()) { return discrete(); }
+    std::string out;
+    for (std::size_t i = 0; i < lists_a.size(); ++i) {
+        const std::vector<std::string_view> items_a = split_top_level(lists_a[i], html_whitespace);
+        const std::vector<std::string_view> items_b = split_top_level(lists_b[i], html_whitespace);
+        if (items_a.size() != items_b.size() || items_a.empty()) { return discrete(); }
+        // A single item on each side is the pair itself, already refused above.
+        if (items_a.size() == 1 && lists_a.size() == 1) { return discrete(); }
+        if (i != 0) { out += ", "; }
+        std::size_t k_out = 0;
+        for (std::size_t k = 0; k < items_a.size(); ++k) {
+            const std::string_view x = trim(items_a[k], html_whitespace);
+            const std::string_view y = trim(items_b[k], html_whitespace);
+            if (x.empty() && y.empty()) { continue; }
+            if (k_out++ != 0) { out += ' '; }
+            if (x == y) {
+                out += x;
+                continue;
+            }
+            bool item_ok = true;
+            std::string piece = interpolate_pair(property, x, y, p, ctx, item_ok);
+            if (!item_ok) { return discrete(); }
+            // A shadow's blur - the third length, in computed shape - cannot
+            // go negative (CSS Backgrounds 3 §7.2): the extrapolated one is zero.
+            if (shadow && k_out == 4 && piece.starts_with('-')) { piece = "0px"; }
+            out += piece;
+        }
+    }
+    return out;
+}
+
+// Web Animations 1 §4.5.1 over one item: numerics sum, colours sum, identical
+// keywords keep, a list adds item by item, and anything else is `value`.
+[[nodiscard]] std::string add_pair(std::string_view property, std::string_view underlying,
+                                   std::string_view value, const css::length_context & ctx) {
+    underlying = trim(underlying, html_whitespace);
+    value = trim(value, html_whitespace);
+    if (underlying.empty()) { return std::string{value}; }
+    if (const auto a = css::resolve_color(underlying, {}), b = css::resolve_color(value, {});
+        a && b) {
+        return add_color(*a, *b);
+    }
+    if (const std::optional<numeric_pair> n = numeric_of(underlying, value, ctx)) {
+        return numeric_text(property, sum(n->a, n->b));
+    }
+    const std::vector<std::string_view> lists_a = comma_items(underlying);
+    const std::vector<std::string_view> lists_b = comma_items(value);
+    if (lists_a.size() != lists_b.size() || lists_a.empty()) { return std::string{value}; }
+    std::string out;
+    for (std::size_t i = 0; i < lists_a.size(); ++i) {
+        const std::vector<std::string_view> items_a = split_top_level(lists_a[i], html_whitespace);
+        const std::vector<std::string_view> items_b = split_top_level(lists_b[i], html_whitespace);
+        if (items_a.size() != items_b.size() || items_a.empty()) { return std::string{value}; }
+        if (items_a.size() == 1 && lists_a.size() == 1) { return std::string{value}; }
+        if (i != 0) { out += ", "; }
+        std::size_t k_out = 0;
+        for (std::size_t k = 0; k < items_a.size(); ++k) {
+            const std::string_view x = trim(items_a[k], html_whitespace);
+            const std::string_view y = trim(items_b[k], html_whitespace);
+            if (x.empty() && y.empty()) { continue; }
+            if (k_out++ != 0) { out += ' '; }
+            if (x == y) {
+                out += x;
+                continue;
+            }
+            bool item_ok = true;
+            (void)interpolate_pair(property, x, y, 0.5, ctx, item_ok);
+            if (!item_ok) { return std::string{value}; }
+            out += add_pair(property, x, y, ctx);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+[[nodiscard]] std::string interpolate_text(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const css::length_context & ctx) {
+    bool interpolable = true;
+    return interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
+                            p, ctx, interpolable);
+}
+
+[[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
+                                     std::string_view to) {
+    bool interpolable = true;
+    const css::length_context ctx;
+    (void)interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
+                           0.5, ctx, interpolable);
+    return interpolable;
+}
+
+[[nodiscard]] std::string composite_text(std::string_view property, std::string_view underlying,
+                                         std::string_view value, composite_op op,
+                                         const css::length_context & ctx) {
+    if (op == composite_op::replace) { return std::string{value}; }
+    const std::string base = computed_shape(property, trim(underlying, html_whitespace));
+    const std::string added = computed_shape(property, trim(value, html_whitespace));
+    if (appends(property)) {
+        // The underlying list first, then the keyframe's; `none` on either
+        // side is the empty list and contributes nothing.
+        const bool base_none = base.empty() || ascii_iequals(base, "none");
+        const bool added_none = added.empty() || ascii_iequals(added, "none");
+        if (base_none) { return added; }
+        if (added_none) { return base; }
+        return base + ", " + added;
+    }
+    return add_pair(property, base, added, ctx);
 }
 
 } // namespace ctbrowser::style
