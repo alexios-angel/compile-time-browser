@@ -127,11 +127,38 @@ void test_unicode_sets() {
                   "true,true,false");
 }
 
+// `new RegExp(p, f)` is judged by the same early-error scan a literal gets
+// (22.2.3.4), a class range out of order is one of those errors in both
+// readers, `\k` outside `u` is Annex B's letter k, and `(?ims-ims:...)` sets
+// the modifiers for its body alone (22.2.2.1.1).
+void test_constructor_and_modifiers() {
+    for (const char * bad :
+         {"a**", "??", "+a", "x{1}{1,}", "[b-a]", "(?s-s:a)", "(?x:a)", "(?-:a)", "[\\\\d-x]"}) {
+        const std::string flags = std::string_view{bad} == "[\\\\d-x]" ? "u" : "";
+        expect_result("try { new RegExp('" + std::string{bad} + "', '" + flags +
+                          "'); return 'no'; } catch (e) { return e.name; }",
+                      "SyntaxError");
+    }
+    refused("/[b-ac-e]/");
+    refused("/[\\d-x]/u");
+    expect_result("return /[\\d-x]/.test('-') + ',' + /[--0]/.test('.') + ',' + "
+                  "/\\k</.test('k<') + ',' + /\\k<x>/.test('k<x>');",
+                  "true,true,true,true");
+    expect_result("return /(?i:a)b/.test('Ab') + ',' + /(?i:a)b/.test('AB') + ',' + "
+                  "/(?-i:a)b/i.test('Ab') + ',' + /(?-i:a)b/i.test('aB');",
+                  "true,false,false,true");
+    expect_result("return /(?s:.)/.test('\\n') + ',' + /(?m:^b)/.test('a\\nb') + ',' + "
+                  "/(?i:(?-i:a)b)/.test('aB') + ',' + /(?i:(?-i:a)b)/.test('Ab') + ',' + "
+                  "/(?i:a)|b/.test('B') + ',' + /(?i:a)/.ignoreCase;",
+                  "true,true,true,false,false,false");
+}
+
 } // namespace
 
 int main() {
     test_property_escapes();
     test_canonicalize();
     test_unicode_sets();
+    test_constructor_and_modifiers();
     REPORT("regexp_unicode");
 }

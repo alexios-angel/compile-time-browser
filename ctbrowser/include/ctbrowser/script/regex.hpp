@@ -57,6 +57,12 @@ std::optional<rx_property_set> rx_property_lookup(std::string_view name, std::st
 // OTHER code point that folds to `folded`, at most eight, written to `out`.
 char32_t rx_fold_simple(char32_t cp);
 std::size_t rx_unfold(char32_t folded, char32_t (&out)[8]);
+// 22.2.1.1's early errors for a pattern and its flags - what a literal is
+// refused for at parse time, and what `new RegExp(p, f)` throws a
+// SyntaxError for (22.2.3.4 RegExpInitialize): the same scan, defined in
+// lib/Script/compile/early_errors/regexp.cpp, which says what it judges.
+// The first thing wrong, or nothing.
+std::optional<std::string> rx_pattern_error(std::string_view body, std::string_view flags);
 
 struct rx_class {
 	bool neg = false;
@@ -115,6 +121,8 @@ struct rx_piece {
 	// - which a repetition resets.
 	std::string ref_name;
 	std::int32_t caps_lo = 0, caps_hi = 0;
+	// `(?ims-ims:...)`: the modifiers the group adds and removes, i=1 m=2 s=4.
+	std::uint8_t mod_on = 0, mod_off = 0;
 	std::int32_t min = 1;
 	std::int32_t max = 1; // -1 = unbounded
 	bool greedy = true;
@@ -531,6 +539,30 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		pc.kind = rx_piece::grp;
 		if (i + 1 < src.size() && src[i] == '?' && src[i + 1] == ':') {
 			i += 2;
+		} else if (i + 1 < src.size() && src[i] == '?' &&
+		           (src[i + 1] == 'i' || src[i + 1] == 'm' || src[i + 1] == 's' ||
+		            src[i + 1] == '-')) {
+			// `(?ims-ims:...)`, the modifiers (22.2.2.1.1 UpdateModifiers): a
+			// non-capturing group that sets i, m and s for its body.
+			++i;
+			std::uint8_t * side = &pc.mod_on;
+			for (;;) {
+				const char m = i < src.size() ? src[i] : '\0';
+				if (m == 'i' || m == 'm' || m == 's') {
+					*side = static_cast<std::uint8_t>(*side | (m == 'i' ? 1u : m == 'm' ? 2u : 4u));
+					++i;
+				} else if (m == '-' && side == &pc.mod_on) {
+					side = &pc.mod_off;
+					++i;
+				} else {
+					break;
+				}
+			}
+			if (i >= src.size() || src[i] != ':' || (pc.mod_on | pc.mod_off) == 0) {
+				rx_fail(p, src);
+				return pc;
+			}
+			++i;
 		} else if (i + 1 < src.size() && src[i] == '?' && src[i + 1] == '=') {
 			i += 2;
 			pc.kind = rx_piece::ahead;
@@ -631,6 +663,11 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			if (i + 1 < src.size() && src[i] == '-' && src[i + 1] != ']') {
 				++i;
 				class_atom(hi);
+				// 22.2.1.1: `[b-a]` is a SyntaxError.
+				if (hi < lo) {
+					rx_fail(p, src);
+					return pc;
+				}
 			}
 			pc.cc.ranges.push_back({lo, hi});
 		}
@@ -682,6 +719,13 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			std::size_t close = start;
 			while (close < src.size() && src[close] != '>') { ++close; }
 			if (close >= src.size()) {
+				// B.1.2: without `u`, `\k` that is not a GroupName is the
+				// letter k; under `u` it is a SyntaxError.
+				if (!p.unicode && !p.unicode_sets) {
+					pc.kind = rx_piece::lit;
+					pc.c = 'k';
+					return pc;
+				}
 				rx_fail(p, src);
 				return pc;
 			}
@@ -837,7 +881,17 @@ inline void rx_resolve_backrefs(rx_alt & alt, rx_prog & p, std::string_view src)
 						break;
 					}
 				}
-				if (pc.cap < 0) { rx_fail(p, src); }
+				if (pc.cap < 0) {
+					// B.1.2 again: a pattern that binds no name at all, without
+					// `u`, reads `\k<x>` as the letters k<x>.
+					if (!p.unicode && !p.unicode_sets && p.names.empty()) {
+						pc.kind = rx_piece::lit;
+						pc.text = "k<" + pc.ref_name + ">";
+						pc.ref_name.clear();
+						continue;
+					}
+					rx_fail(p, src);
+				}
 			} else if (pc.cap >= p.ngroups) {
 				// Annex B.1.2: a number past the last group is a LEGACY OCTAL
 				// escape (`\1` with no group is U+0001, up to `\377`), except
@@ -906,6 +960,9 @@ struct rx_state {
 	const std::string * s = nullptr;
 	const rx_prog * p = nullptr;
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps; // -1,-1 = unmatched
+	// The Modifiers Record (22.2.2.1.1): the flags' i, m and s as a
+	// `(?ims-ims:...)` group has set them for the piece being matched.
+	bool icase = false, multi = false, dotall = false;
 };
 
 inline char rx_fold(char c, bool icase) {
@@ -954,7 +1011,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 	const std::string & s = *st.s;
 	switch (pc.kind) {
 	case rx_piece::lit:
-		if (st.p->icase && (st.p->unicode || st.p->unicode_sets) && pos < s.size()) {
+		if (st.icase && (st.p->unicode || st.p->unicode_sets) && pos < s.size()) {
 			// Canonicalize under `iu` is the simple case fold of BOTH code
 			// points (`/k/iu` takes the KELVIN SIGN), so a literal of any
 			// width is compared as one decoded code point.
@@ -972,7 +1029,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 			if (s.compare(pos, pc.text.size(), pc.text) != 0) { return false; }
 			return k(pos + pc.text.size());
 		}
-		return pos < s.size() && rx_fold(s[pos], st.p->icase) == rx_fold(pc.c, st.p->icase) &&
+		return pos < s.size() && rx_fold(s[pos], st.icase) == rx_fold(pc.c, st.icase) &&
 		       k(pos + 1);
 	case rx_piece::any: {
 		// ONE CODE POINT, however many bytes: `"é".match(/./)[0]` is "é". A
@@ -981,7 +1038,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		if (pos >= s.size()) { return false; }
 		std::size_t width = 1;
 		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
-		if (!st.p->dotall && (cp == '\n' || cp == '\r' || cp == 0x2028u || cp == 0x2029u)) {
+		if (!st.dotall && (cp == '\n' || cp == '\r' || cp == 0x2028u || cp == 0x2029u)) {
 			return false;
 		}
 		return k(pos + width);
@@ -1007,8 +1064,8 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		const auto len = static_cast<std::size_t>(cap.second - cap.first);
 		if (pos + len > s.size()) { return false; }
 		for (std::size_t j = 0; j < len; ++j) {
-			if (rx_fold(s[pos + j], st.p->icase) !=
-			    rx_fold(s[static_cast<std::size_t>(cap.first) + j], st.p->icase)) {
+			if (rx_fold(s[pos + j], st.icase) !=
+			    rx_fold(s[static_cast<std::size_t>(cap.first) + j], st.icase)) {
 				return false;
 			}
 		}
@@ -1046,13 +1103,13 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		if (pos >= s.size()) { return false; }
 		std::size_t width = 1;
 		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
-		return rx_class_hit(pc.cc, cp, st.p->icase, st.p->unicode || st.p->unicode_sets) &&
+		return rx_class_hit(pc.cc, cp, st.icase, st.p->unicode || st.p->unicode_sets) &&
 		       k(pos + width);
 	}
 	case rx_piece::bol:
-		return (pos == 0 || (st.p->multi && s[pos - 1] == '\n')) && k(pos);
+		return (pos == 0 || (st.multi && s[pos - 1] == '\n')) && k(pos);
 	case rx_piece::eol:
-		return (pos == s.size() || (st.p->multi && s[pos] == '\n')) && k(pos);
+		return (pos == s.size() || (st.multi && s[pos] == '\n')) && k(pos);
 	case rx_piece::wordb:
 	case rx_piece::nwordb: {
 		const bool before = pos > 0 && rx_is_word(s[pos - 1]);
@@ -1064,13 +1121,32 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		const std::int32_t cap = pc.cap;
 		const auto saved = cap >= 0 ? st.caps[static_cast<std::size_t>(cap)]
 		                            : std::pair<std::ptrdiff_t, std::ptrdiff_t>{-1, -1};
+		// The modifiers hold inside the group and nowhere else: the
+		// continuation runs with the outer record and puts the group's back
+		// when it fails, since the body may still backtrack.
+		const bool outer[3] = {st.icase, st.multi, st.dotall};
+		const auto apply = [&](bool inner) {
+			for (int f = 0; f < 3; ++f) {
+				const std::uint8_t bit = static_cast<std::uint8_t>(1u << f);
+				bool & flag = f == 0 ? st.icase : f == 1 ? st.multi : st.dotall;
+				flag = inner ? ((outer[f] || (pc.mod_on & bit) != 0) && (pc.mod_off & bit) == 0)
+				             : outer[f];
+			}
+		};
+		const bool mods = (pc.mod_on | pc.mod_off) != 0;
+		if (mods) { apply(true); }
 		const bool ok = rx_match_alt(*pc.sub, st, pos, [&](std::size_t end) {
 			if (cap >= 0) {
 				st.caps[static_cast<std::size_t>(cap)] = {static_cast<std::ptrdiff_t>(pos),
 				                                     static_cast<std::ptrdiff_t>(end)};
 			}
-			return k(end);
+			if (!mods) { return k(end); }
+			apply(false);
+			const bool went = k(end);
+			if (!went) { apply(true); }
+			return went;
 		});
+		if (mods) { apply(false); }
 		if (!ok && cap >= 0) { st.caps[static_cast<std::size_t>(cap)] = saved; }
 		return ok;
 	}
@@ -1202,6 +1278,9 @@ inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from
 		rx_state st;
 		st.s = &s;
 		st.p = &p;
+		st.icase = p.icase;
+		st.multi = p.multi;
+		st.dotall = p.dotall;
 		st.caps.assign(static_cast<std::size_t>(p.ngroups), {-1, -1});
 		std::size_t got_end = 0;
 		if (rx_match_alt(*p.root, st, start, [&](std::size_t end) {

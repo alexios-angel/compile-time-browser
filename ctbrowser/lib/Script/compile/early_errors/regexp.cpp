@@ -114,13 +114,12 @@ private:
             fail("a regular expression literal may not contain a line terminator");
             return;
         }
-        if (c == '\\') {
-            escape();
+        if (in_class_) {
+            class_step(c);
             return;
         }
-        if (in_class_) {
-            if (c == ']') { in_class_ = false; }
-            ++i_;
+        if (c == '\\') {
+            escape();
             return;
         }
         switch (c) {
@@ -163,6 +162,78 @@ private:
             quantifiable_ = true;
             return;
         }
+    }
+
+    // ONE STEP INSIDE A CLASS: the closing bracket, a `-` that opens a range,
+    // or an atom - which is read for its code point first, then consumed
+    // the way the lexer did (escape() judges the escapes). 22.2.1.1's rule
+    // for NonemptyClassRanges: a range's start may not exceed its end, and
+    // under `u` neither end may be a CharacterClassEscape (Annex B lets
+    // `[\d-x]` stand as three members).
+    void class_step(char c) {
+        if (c == ']') {
+            in_class_ = false;
+            have_atom_ = false;
+            range_dash_ = false;
+            ++i_;
+            return;
+        }
+        if (c == '-' && have_atom_ && !range_dash_ && peek(1) != ']') {
+            range_dash_ = true;
+            ++i_;
+            return;
+        }
+        const std::int64_t v = class_atom_value();
+        if (c == '\\') {
+            escape();
+        } else {
+            std::size_t width = 1;
+            rx::rx_utf8_decode(s_, i_, width);
+            i_ += width;
+        }
+        if (range_dash_) {
+            range_dash_ = false;
+            have_atom_ = false;
+            if (unicode_ && (v == -2 || last_atom_ == -2)) {
+                fail("a character class escape cannot bound a range with the u flag");
+            } else if (v >= 0 && last_atom_ >= 0 && v < last_atom_) {
+                fail("the character class range is out of order");
+            }
+            return;
+        }
+        have_atom_ = true;
+        last_atom_ = v;
+    }
+
+    // The code point the class atom at i_ stands for: -1 when it is not one
+    // this scan can name (a legacy octal, a malformed escape), -2 for a
+    // CharacterClassEscape (`\d`, `\p{...}`).
+    [[nodiscard]] std::int64_t class_atom_value() const {
+        if (s_[i_] != '\\') {
+            std::size_t width = 1;
+            return static_cast<std::int64_t>(rx::rx_utf8_decode(s_, i_, width));
+        }
+        if (i_ + 1 >= s_.size()) { return -1; }
+        const char e = s_[i_ + 1];
+        std::size_t j = i_ + 2;
+        std::uint32_t cp = 0;
+        if (rx::rx_code_point_escape(s_, j, e, cp)) { return cp; }
+        if (std::string_view{"dDsSwW"}.find(e) != std::string_view::npos) { return -2; }
+        if ((e == 'p' || e == 'P') && unicode_) { return -2; }
+        if (e == 'c') { return j < s_.size() && ascii_letter(s_[j]) ? s_[j] % 32 : -1; }
+        if (e == 'b') { return 0x08; }
+        if (e == '0') { return j < s_.size() && digit(s_[j]) ? -1 : 0; }
+        if (digit(e) || e == 'u' || e == 'x' || e == 'k') { return -1; }
+        switch (e) {
+        case 'n': return '\n';
+        case 'r': return '\r';
+        case 't': return '\t';
+        case 'f': return '\f';
+        case 'v': return '\v';
+        default: break;
+        }
+        std::size_t width = 1;
+        return static_cast<std::int64_t>(rx::rx_utf8_decode(s_, i_ + 1, width));
     }
 
     // A quantifier `width` characters wide, at i_. The thing before it has to
@@ -503,6 +574,9 @@ private:
     bool unicode_;
     std::size_t i_ = 0;
     bool in_class_ = false;
+    bool have_atom_ = false;  // a class atom precedes, so a `-` may open a range
+    bool range_dash_ = false; // ...and one did: the next atom is the range's end
+    std::int64_t last_atom_ = -1;
     bool quantifiable_ = false;
     std::uint32_t captures_ = 0;
     std::vector<group> groups_;
@@ -549,12 +623,25 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
             return "the regular expression literal contains a line break";
         }
     }
-    const std::string_view flags = lexeme.substr(close + 1);
+    std::string_view flags = lexeme.substr(close + 1);
+    // The lexer reads any non-ASCII byte as part of the flags, a Unicode
+    // space after the literal included - not judged here.
+    for (std::size_t i = 0; i < flags.size(); ++i) {
+        if (static_cast<unsigned char>(flags[i]) >= 0x80) {
+            flags = flags.substr(0, i);
+            break;
+        }
+    }
+    return rx::rx_pattern_error(body, flags);
+}
+
+} // namespace ctbrowser::script::detail::early
+
+namespace ctbrowser::script::rx {
+
+std::optional<std::string> rx_pattern_error(std::string_view body, std::string_view flags) {
     std::string seen;
     for (const char f : flags) {
-        // The lexer reads any non-ASCII byte as part of the flags, a
-        // Unicode space after the literal included - not judged here.
-        if (static_cast<unsigned char>(f) >= 0x80) { break; }
         if (std::string_view{"dgimsuvy"}.find(f) == std::string_view::npos) {
             return std::string{"`"} + f + "` is not a regular expression flag";
         }
@@ -570,10 +657,10 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
     // is implemented in full by the matcher's own reader - so under `v` the
     // matcher judges the body, and what it refuses is the early error.
     if (seen.find('v') != std::string::npos) {
-        if (rx::rx_compile(body, seen).ok) { return std::nullopt; }
+        if (rx_compile(body, seen).ok) { return std::nullopt; }
         return "the pattern is not a Pattern under the v flag";
     }
-    return scan{body, seen.find('u') != std::string::npos}.run();
+    return detail::early::scan{body, seen.find('u') != std::string::npos}.run();
 }
 
-} // namespace ctbrowser::script::detail::early
+} // namespace ctbrowser::script::rx
