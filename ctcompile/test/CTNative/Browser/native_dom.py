@@ -188,7 +188,9 @@ IDENTITY_CHECKS = r"""
         assert(!@ENTRY@(element, foreign));
         assert(!@ENTRY@(foreign, element));
         assert(@ENTRY@(foreign, foreign));
+        assert(doc.take_writes().empty());
         assert(doc.remove_child(button));
+        (void)doc.take_writes();
         assert(!doc.read().parent(button));
         assert(@ENTRY@(element, alias));
         assert(!@ENTRY@(element, foreign));
@@ -270,6 +272,7 @@ FORCED_CHECKS = r"""
         assert(doc.read().attribute_value(button, classes) == "btn");
         assert(!doc.read().has_attribute(button, disabled));
         assert(doc.remove_child(button));
+        (void)doc.take_writes();
         version = doc.version();
         assert(!@ENTRY@(element));
         assert(doc.version() == version && doc.take_writes().empty());
