@@ -409,6 +409,29 @@ void test_timers() {
     check(page.tick(200) == 1, "the 100ms timer fires later");
     check(log_of(page).back() == "late", "in the right order");
     check(page.tick(1000) == 0, "a one-shot timer does not fire twice");
+
+    // A THROW IN A CALLBACK IS REPORTED TO THE PAGE (HTML 8.6: the timer task
+    // reports the exception), a string handler runs as a script, and one that
+    // does not parse is a SyntaxError reported the same way.
+    (void)page.run_script(
+        "window.onerror = function (m, u, l, c, e) { console.log('onerror:' + (typeof m) + ':' +"
+        " (e && e.message)); return true; };"
+        "setTimeout(function () { throw new Error('boom'); }, 1);"
+        "setTimeout('console.log(\"string:\" + (this === window))', 2);"
+        "setTimeout('this is not js', 3);"
+        "setTimeout(function () { console.log('after'); }, 4);");
+    (void)page.tick(20);
+    const auto & lines = log_of(page);
+    check(lines.size() >= 4, "four lines from the four timers");
+    if (lines.size() >= 4) {
+        const std::size_t n = lines.size();
+        check(lines[n - 4] == "onerror:string:boom",
+              "the throw reached window.onerror: " + lines[n - 4]);
+        check(lines[n - 3] == "string:true", "the string handler ran as a script: " + lines[n - 3]);
+        check(lines[n - 2].starts_with("onerror:string:"),
+              "the parse error was reported: " + lines[n - 2]);
+        check(lines[n - 1] == "after", "and the next timer still ran");
+    }
 }
 
 void test_interval_repeats_and_can_be_cleared() {

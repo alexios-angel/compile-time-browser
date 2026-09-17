@@ -334,7 +334,7 @@ void browser::run_scripts() {
             // window.onerror reading document.currentScript sees the script
             // that failed - to parse, too - which Document.currentScript.html
             // asserts by id.
-            (void)bindings_->dispatch_error(result.error);
+            (void)bindings_->dispatch_error(result.error, script.specifier);
         }
         running.pop_back();
         bindings_->set_current_script(running.empty() ? node_id{} : running.back());

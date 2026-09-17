@@ -48,6 +48,10 @@ inline constexpr std::string_view path_property = "__path";
 }
 
 // --- helpers shared by more than one file of bindings/events/ ----------------
+// A thrown value as `Name: message`, reading the two properties rather than
+// calling `toString` (a reporter that faults is worse than a fault nobody
+// reports). Defined in dispatch.cpp.
+[[nodiscard]] std::string describe_thrown(context & cx, value thrown);
 // Defined in dispatch.cpp beside make_event_object.
 [[nodiscard]] value is_trusted_getter_of(value event_prototype);
 void initialise_event(context & cx, script::object_object & event, std::string_view type,

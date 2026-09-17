@@ -133,7 +133,41 @@ std::size_t dom_bindings::run_due_callbacks() {
         } else {
             still->cancelled = true;
         }
-        (void)cx_->call(t.callback, {});
+        // BEHIND A FENCE, and REPORTED TO THE PAGE: HTML 8.6's timer task
+        // "reports the exception" - `window.onerror` hears a throw in a
+        // setTimeout callback (window-runtime-error.html), where before it
+        // was an engine fault the embedder alone saw. A STRING handler
+        // (initialisation steps 8.2) is compiled as a classic script and run
+        // the same way; one that does not parse is a SyntaxError reported
+        // likewise (compile-error-in-setTimeout.html).
+        bool threw = false;
+        value thrown = value::undefined();
+        if (t.callback.is_string()) {
+            script::program compiled = script::compiler::compile(cx_->to_string(t.callback));
+            if (!compiled.ok) {
+                (void)dispatch_error("uncaught SyntaxError: " + compiled.error);
+            } else {
+                const script::program & held = cx_->own_program(std::move(compiled));
+                for (const std::string & name : held.hoisted_vars) {
+                    if (!cx_->has_global(name)) { cx_->define_global(name, value::undefined()); }
+                }
+                auto * entry = cx_->allocate<script::closure_object>(&held.functions[0]);
+                entry->owner = &held;
+                (void)cx_->call_fenced(value::object(entry), {}, cx_->global_this(), threw, thrown);
+            }
+        } else {
+            (void)cx_->call_fenced(t.callback, {}, cx_->global_this(), threw, thrown);
+        }
+        if (threw || cx_->failed()) {
+            const context::rooted keep_thrown{*cx_, thrown};
+            const std::string fault = cx_->failed()
+                                          ? cx_->take_error()
+                                          : "uncaught " + detail::describe_thrown(*cx_, thrown);
+            const bool handled = dispatch_error_value(fault, thrown);
+            if (!handled && callback_error_.empty()) {
+                callback_error_ = "setTimeout callback: " + fault;
+            }
+        }
         note_callback_fault("setTimeout");
         ++ran;
     }

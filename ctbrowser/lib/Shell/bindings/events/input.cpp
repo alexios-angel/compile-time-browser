@@ -74,11 +74,16 @@ bool dom_bindings::dispatch_error(std::string_view message) {
     return dispatch_error_value(message, value::undefined());
 }
 
+bool dom_bindings::dispatch_error(std::string_view message, std::string_view script_src) {
+    return dispatch_error_value(message, value::undefined(), script_src);
+}
+
 // THE VALUE MATTERS AND NOT ONLY THE TEXT. A page's own reporting is written
 // against `event.error`, and so is the suite's: EventListener-handleEvent.html
 // rethrows it - `throw event.error` - and asserts the identity of the object it
 // gets back against the one its getter threw, which no string can answer.
-bool dom_bindings::dispatch_error_value(std::string_view message, value error) {
+bool dom_bindings::dispatch_error_value(std::string_view message, value error,
+                                        std::string_view script_src) {
     if (cx_ == nullptr) { return false; }
     // ROOTED ACROSS THE ALLOCATIONS BELOW. `error` arrives in a C++ local, which
     // is not somewhere the collector looks, and building the event object
@@ -88,10 +93,16 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error) {
     value event = make_event(*cx_, "error", node_id{});
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("message", cx_->string(std::string{message}));
-    // The document's URL: "report an exception" names the script's URL and an
-    // inline script's is its document's (`source === location.href` in the
-    // body-onerror files). No position yet - the VM keeps none for a throw.
-    object->set("filename", cx_->string(location_href_));
+    // The script's URL: "report an exception" names it, and an inline
+    // script's is its document's (`source === location.href` in the
+    // body-onerror files; compile-error-same-origin.html wants the external
+    // one's, resolved). No position yet - the VM keeps none for a throw.
+    std::string filename = location_href_;
+    if (!script_src.empty() && !script_src.starts_with("<inline:")) {
+        filename = location_href_.empty() ? std::string{script_src}
+                                          : resolve(location_href_, std::string{script_src});
+    }
+    object->set("filename", cx_->string(filename));
     object->set("lineno", value::number(0));
     object->set("colno", value::number(0));
     object->set("error", error);

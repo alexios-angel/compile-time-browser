@@ -282,6 +282,10 @@ public:
     // five properties that handler reads; only `message` is real here, and the
     // rest say so by being empty rather than by being absent.
     bool dispatch_error(std::string_view message);
+    // ...naming the script that failed: an external script's URL, resolved
+    // against the document's, is the ErrorEvent's `filename`; empty means the
+    // document's own (an inline script).
+    bool dispatch_error(std::string_view message, std::string_view script_src);
 
     // A MouseEvent. clientX/clientY are viewport coordinates, which is what
     // MDN's breakout reads to move its paddle.
@@ -1610,7 +1614,8 @@ private:
     // The `error` event a faulting callback produces, carrying the VALUE the
     // throw left behind beside its text. `dispatch_error` is this with no value,
     // which is what a fault that was never an exception has to hand a page.
-    bool dispatch_error_value(std::string_view message, value error);
+    bool dispatch_error_value(std::string_view message, value error,
+                              std::string_view script_src = {});
     // The MouseEvent (or PointerEvent) the engine sends for one input event:
     // the coordinates, the button and the modifiers, on the right prototype so
     // dispatch can tell it from a plain `new Event("click")`.

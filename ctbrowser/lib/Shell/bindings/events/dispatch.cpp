@@ -22,7 +22,11 @@ namespace {
 // `toString` that throws, and a reporter that faults is the one thing worse
 // than a fault nobody reports. (`context::describe_thrown` is the same shape
 // and is private to the VM.)
-[[nodiscard]] std::string describe_thrown(context & cx, value thrown) {
+} // namespace
+
+namespace detail {
+
+std::string describe_thrown(context & cx, value thrown) {
     if (!thrown.is_object()) { return cx.to_string(thrown); }
     const value name = cx.lookup_property(thrown, "name");
     const value message = cx.lookup_property(thrown, "message");
@@ -32,10 +36,6 @@ namespace {
     if (!body.empty()) { text += ": " + body; }
     return text;
 }
-
-} // namespace
-
-namespace detail {
 
 // THE ONE `isTrusted` GETTER OF THIS REALM, fetched back off Event.prototype.
 //
