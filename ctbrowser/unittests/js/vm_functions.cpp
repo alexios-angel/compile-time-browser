@@ -184,6 +184,13 @@ void test_destructuring_declarations() {
     expect_result("const {a, ...rest} = {a: 1, b: 2, c: 3}; "
                   "return a + '|' + Object.keys(rest).join(',');",
                   "1|b,c");
+    // a computed key is excluded from the rest too (14.3.3.3 excludedNames)
+    expect_result("const k = 'b'; const {[k]: v, ...rest} = {a: 1, b: 2, c: 3}; "
+                  "return v + '|' + Object.keys(rest).join(',');",
+                  "2|a,c");
+    expect_result("let b, rest; ({['fo' + 'o']: b, ...rest} = {foo: 1, bar: 2}); "
+                  "return b + '|' + Object.keys(rest).join(',');",
+                  "1|bar");
     // nested
     expect_result("const {a: {b}} = {a: {b: 'deep'}}; return b;", "deep");
     expect_result("const [[m], [n]] = [[1], [2]]; return m + n;", "3");
