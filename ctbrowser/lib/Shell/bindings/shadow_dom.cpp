@@ -238,7 +238,15 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
     document scratch{*atoms_};
-    const node_id body = parse_html_body_fragment(scratch, markup);
+    // The fragment case with the ELEMENT as its context (HTML 12.4 step 5:
+    // "with context element"), not a body's - `table.setHTMLUnsafe("<tr>")`
+    // keeps its row - and the document's own scripting flag.
+    node_id body;
+    {
+        const auto txn = doc_->read();
+        body = parse_html_fragment(scratch, markup, txn.local_name(target), txn.element_ns(target),
+                                   doc_->scripting());
+    }
     attach_declarative_shadow_roots(scratch, body);
     const auto from = scratch.read();
     const std::span<const node_id> kids = from.children(body);
