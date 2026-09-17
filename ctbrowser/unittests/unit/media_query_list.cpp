@@ -106,6 +106,7 @@ void test_a_frame_has_its_own_lists() {
         </script></body></html>)html");
     for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
     CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "probe="), std::string{"probe=200x100,200x100"});
     CHECK_EQ(logged(page, "frame="), std::string{"frame=true,false,true,false,true"});
     CHECK_EQ(logged(page, "changed="), std::string{"changed=false,true,false"});
 }

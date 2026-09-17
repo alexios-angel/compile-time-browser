@@ -45,6 +45,9 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
 // the expression logged.
 [[nodiscard]] std::string answer(const std::string & body, const std::string & expression) {
     browser page{browser_options{400, 300}};
+    // An address, so a frame's `location` resolves against something: a
+    // submission's `?query` is only a query of an absolute URL.
+    page.set_location("file:///pages/the-page.html");
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
     // A `setTimeout` INSIDE the window's load handler. One tick does, in
