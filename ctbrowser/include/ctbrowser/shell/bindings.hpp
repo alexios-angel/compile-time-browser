@@ -992,11 +992,21 @@ public:
     // every candidate it makes whether or not the result is connected, and
     // the scan cannot see a detached subtree it has never been told about.
     void upgrade_created_subtree(node_id root);
+    // THIS DOCUMENT'S OWN `customElements`. A frame's document has a browsing
+    // context and so a registry of its own (HTML 4.13.3) even though the realm
+    // - HTMLElement, every prototype - is the page's: frames.cpp hangs this
+    // on `contentWindow`, and asking for it marks the document as a frame's.
+    // The primary's is the `customElements` global.
+    [[nodiscard]] value custom_elements_registry(context & cx);
 
 private:
     struct custom_element_definition {
         std::string name;
         std::string local_name; // the `extends` name, or `name` itself
+        // THE REGISTRY IT WAS DEFINED IN - the bindings of the document whose
+        // `customElements` took it. Every definition of the realm lives in
+        // the primary's vector, so an index means the same thing everywhere.
+        dom_bindings * registry = nullptr;
         value constructor;
         value prototype;
         // The lifecycle callbacks, captured at define time as the
@@ -1040,7 +1050,7 @@ private:
         bool connected = false;
         bool visited = false; // scratch for one scan
         node_id parent;
-        std::vector<std::pair<atom, std::string>> attributes; // observed only
+        std::vector<attribute> attributes; // observed only
     };
     struct custom_element_reaction {
         enum class kind : std::uint8_t {
@@ -1056,7 +1066,8 @@ private:
         kind what = kind::upgrade;
         // Strings rather than `value`s: a reaction waits in this queue while
         // the ones before it run script, and nothing would root a heap string.
-        std::string name;
+        std::string name; // the attribute's LOCAL name
+        std::string ns;   // its namespace, "" for none
         std::string old_value;
         std::string new_value;
         bool has_old = false;
@@ -1068,16 +1079,20 @@ private:
     };
 
     void install_custom_elements(context & cx);
-    // THE REGISTRY IS THE PRIMARY'S. A document a page made has no browsing
-    // context and so no registry of its own (HTML 4.13.3) - it never upgrades
-    // a candidate - but an element adopted into it keeps its definition, and
-    // that definition is looked up here.
-    [[nodiscard]] dom_bindings & registry() noexcept {
+    // WHERE THE DEFINITIONS LIVE: the primary's vector, whichever registry
+    // took them. A document a page made (createHTMLDocument, DOMParser) has
+    // no browsing context and so no registry (HTML 4.13.3) - it never
+    // upgrades a candidate - but an element adopted into it keeps its
+    // definition, and that definition is found here.
+    [[nodiscard]] dom_bindings & primary() noexcept {
         return primary_ == nullptr ? *this : *primary_;
     }
-    [[nodiscard]] const dom_bindings & registry() const noexcept {
+    [[nodiscard]] const dom_bindings & primary() const noexcept {
         return primary_ == nullptr ? *this : *primary_;
     }
+    // The bindings behind a `customElements` object a native was called on -
+    // the primary's for anything that is not one of the registries.
+    [[nodiscard]] dom_bindings & registry_of(value receiver);
     // `document.createElement(name, options)`: a defined name is constructed
     // through the author's class, anything else is a plain node wrapped;
     // `options.is` names a customized built-in's definition.
@@ -1123,15 +1138,26 @@ private:
     [[nodiscard]] value construct_fenced(context & cx, value constructor, bool & threw,
                                          value & thrown);
     void sync_custom_element_roots();
-    [[nodiscard]] bool has_browsing_context() const noexcept { return !secondary_; }
+    // A document with a browsing context has a registry: the page's, and a
+    // frame's once frames.cpp asked for it.
+    [[nodiscard]] bool has_browsing_context() const noexcept {
+        return !secondary_ || frame_document_;
+    }
 
-    std::vector<custom_element_definition> custom_definitions_;
+    std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
     std::vector<custom_element_reaction> custom_reactions_;
     flat_map<std::string, value> when_defined_;
-    // HTML 4.13.4's "element definition is running" flag, on the registry.
+    // HTML 4.13.4's "element definition is running" flag, per registry.
     bool custom_definition_running_ = false;
-    value construct_fence_;
+    bool frame_document_ = false;
+    value construct_fence_;                    // the primary's
+    value custom_elements_registry_;           // this document's `customElements`
+    value custom_elements_registry_prototype_; // the primary's
+    // Every registry object of the realm and the bindings behind it, on the
+    // primary - how a method on the shared prototype learns which document's
+    // registry it was called on.
+    flat_map<std::uint64_t, dom_bindings *> registries_;
     // The CustomElementRegistry interface object, whose `retained` list roots
     // every constructor, prototype, callback and pending promise above - the
     // arrangement install_mutation_observer uses, for the same reason.

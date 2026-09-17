@@ -159,11 +159,14 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 // --- lookups ------------------------------------------------------------------
 
 std::size_t dom_bindings::custom_definition_for(const read_txn & txn, node_id id) const {
+    // HTML 4.13.3 "look up a custom element definition": null for a document
+    // with no browsing context, and otherwise THIS document's registry.
+    if (!has_browsing_context()) { return npos; }
     const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
-    const std::vector<custom_element_definition> & defs = registry().custom_definitions_;
+    const std::vector<custom_element_definition> & defs = primary().custom_definitions_;
     for (std::size_t i = 0; i < defs.size(); ++i) {
         const custom_element_definition & def = defs[i];
-        if (def.local_name != tag) { continue; }
+        if (def.registry != this || def.local_name != tag) { continue; }
         if (def.name == def.local_name) { return i; }
         // A customized built-in is named by its `is` attribute.
         if (txn.attribute_value(id, atoms_->intern("is")) == def.name) { return i; }
@@ -172,13 +175,16 @@ std::size_t dom_bindings::custom_definition_for(const read_txn & txn, node_id id
 }
 
 std::size_t dom_bindings::custom_definition_of(context & cx, value receiver) {
-    const std::vector<custom_element_definition> & defs = registry().custom_definitions_;
-    if (const node_id held = handle_of(receiver)) {
+    const std::vector<custom_element_definition> & defs = primary().custom_definitions_;
+    dom_bindings * owner = owner_of(receiver);
+    if (const node_id held = owner == nullptr ? node_id{} : owner->handle_of(receiver)) {
         // AN UPGRADE IN PROGRESS: the receiver is the element on top of some
         // definition's construction stack.
         for (std::size_t i = 0; i < defs.size(); ++i) {
             const auto & stack = defs[i].construction_stack;
-            if (!stack.empty() && stack.back().element == held) { return i; }
+            if (!stack.empty() && stack.back().element == held && defs[i].registry == owner) {
+                return i;
+            }
         }
         return npos;
     }
@@ -194,10 +200,11 @@ std::size_t dom_bindings::custom_definition_of(context & cx, value receiver) {
 }
 
 void dom_bindings::sync_custom_element_roots() {
-    if (custom_elements_interface_ == nullptr) { return; }
-    std::vector<value> & roots = custom_elements_interface_->retained;
+    dom_bindings & top = primary();
+    if (top.custom_elements_interface_ == nullptr) { return; }
+    std::vector<value> & roots = top.custom_elements_interface_->retained;
     roots.clear();
-    for (const custom_element_definition & def : custom_definitions_) {
+    for (const custom_element_definition & def : top.custom_definitions_) {
         for (const value & held :
              {def.constructor, def.prototype, def.connected, def.disconnected, def.adopted,
               def.attribute_changed, def.connected_move, def.form_associated_callback,
@@ -205,8 +212,32 @@ void dom_bindings::sync_custom_element_roots() {
             roots.push_back(held);
         }
     }
-    for (const auto & [name, promise] : when_defined_) { roots.push_back(promise); }
-    roots.push_back(construct_fence_);
+    for (const auto & [bits, reg] : top.registries_) {
+        roots.push_back(reg->custom_elements_registry_);
+        for (const auto & [name, promise] : reg->when_defined_) { roots.push_back(promise); }
+    }
+    roots.push_back(top.construct_fence_);
+    roots.push_back(top.custom_elements_registry_prototype_);
+}
+
+dom_bindings & dom_bindings::registry_of(value receiver) {
+    dom_bindings & top = primary();
+    const auto found = top.registries_.find(receiver.bits());
+    return found == top.registries_.end() ? top : *found->second;
+}
+
+value dom_bindings::custom_elements_registry(context & cx) {
+    if (custom_elements_registry_.is_object()) { return custom_elements_registry_; }
+    dom_bindings & top = primary();
+    auto * registry = cx.allocate<script::object_object>();
+    registry->prototype = top.custom_elements_registry_prototype_;
+    custom_elements_registry_ = value::object(registry);
+    top.registries_.emplace(custom_elements_registry_.bits(), this);
+    // Only a frame asks for one: a document a page made has no window to
+    // hang it on. Having a registry is having a browsing context.
+    if (secondary_) { frame_document_ = true; }
+    sync_custom_element_roots();
+    return custom_elements_registry_;
 }
 
 // --- the HTML element constructor ---------------------------------------------
@@ -218,11 +249,11 @@ value dom_bindings::construct_html_element(context & c, value self,
                                        "': please use the 'new' operator.");
         return value::undefined();
     }
-    dom_bindings & reg = registry();
+    const bool is_element = owner_of(self) != nullptr;
     // HTML 4.13.4 step 2: NewTarget equal to the active function object - the
     // receiver made from THIS interface's own prototype - is a TypeError
     // whether or not somebody defined the interface itself as an element.
-    if (!handle_of(self)) {
+    if (!is_element) {
         const value own = c.lookup_property(c.global(std::string{interface_name}), "prototype");
         if (own.bits() == c.get_prototype(self).bits()) {
             c.throw_error("TypeError", "Illegal constructor");
@@ -234,7 +265,7 @@ value dom_bindings::construct_html_element(context & c, value self,
         c.throw_error("TypeError", "Illegal constructor");
         return value::undefined();
     }
-    custom_element_definition & def = reg.custom_definitions_[index];
+    custom_element_definition & def = primary().custom_definitions_[index];
     // Steps 5-6: an autonomous definition constructs through HTMLElement and
     // nothing else; a customized built-in through the interface its `extends`
     // tag has - `class extends HTMLButtonElement` with `{extends: "p"}` is a
@@ -250,7 +281,7 @@ value dom_bindings::construct_html_element(context & c, value self,
     // Step 7: AN UPGRADE. The element is on the construction stack; `super()`
     // gives it the class's prototype and marks it constructed. A second
     // `super()` on the same element is the "already constructed marker".
-    if (const node_id held = handle_of(self)) {
+    if (is_element) {
         custom_element_definition::construction & top = def.construction_stack.back();
         if (top.constructed) {
             throw_dom_exception(c, "InvalidStateError",
@@ -258,30 +289,32 @@ value dom_bindings::construct_html_element(context & c, value self,
             return value::undefined();
         }
         top.constructed = true;
-        (void)held;
         static_cast<script::object_object *>(self.as_heap())->prototype = def.prototype;
         return self;
     }
-    // Steps 8-13: a NEW element, custom from the start.
-    const node_id made = doc_->create_element(atoms_->intern(def.local_name));
+    // Steps 8-13: a NEW element, custom from the start, IN THE DOCUMENT WHOSE
+    // REGISTRY HOLDS THE DEFINITION - a frame's, when the class was defined
+    // through `frame.contentWindow.customElements`.
+    dom_bindings & owner = *def.registry;
+    const node_id made = owner.doc_->create_element(atoms_->intern(def.local_name));
     if (def.local_name != def.name) {
-        (void)doc_->set_attribute(made, atoms_->intern("is"), def.name);
+        (void)owner.doc_->set_attribute(made, atoms_->intern("is"), def.name);
     }
     // THE RECEIVER BECOMES THE WRAPPER - what wrap() does to a fresh object,
     // done to the instance `new` made, whose prototype is the author's class.
     auto * obj = static_cast<script::object_object *>(self.as_heap());
     obj->set(std::string{handle_property}, value::number(static_cast<double>(made.key())));
-    install_element_views(c, *obj, made);
-    refresh_element(c, *obj, made);
-    wrappers_.emplace(made.key(), obj);
+    owner.install_element_views(c, *obj, made);
+    owner.refresh_element(c, *obj, made);
+    owner.wrappers_.emplace(made.key(), obj);
     custom_element_state state;
     state.definition = index;
-    custom_elements_.emplace(made.key(), std::move(state));
+    owner.custom_elements_.emplace(made.key(), std::move(state));
     // A customized built-in <script> is a script nothing has started, exactly
     // as createElement("script") notes one: its text runs when it connects,
     // and before its connectedCallback (the reactions follow the
     // post-connection steps).
-    if (def.local_name == "script") { note_unstarted_script(made); }
+    if (def.local_name == "script") { owner.note_unstarted_script(made); }
     return self;
 }
 
@@ -291,23 +324,24 @@ value dom_bindings::construct_fenced(context & cx, value constructor, bool & thr
                                      value & thrown) {
     threw = false;
     thrown = value::undefined();
-    if (!construct_fence_.is_callable()) {
+    value & fence = primary().construct_fence_;
+    if (!fence.is_callable()) {
         // `new C()` from JavaScript, where a throw has a `catch` to land in:
         // from C++ a throw crossing construct() unwinds to whatever page code
         // is above the native, which is the page's `try`, not this one's.
         script::program compiled = script::compiler::compile(
             "return (function (C) { try { return [true, new C()]; } catch (e) { return [false, "
             "e]; } });\n");
-        if (compiled.ok) { construct_fence_ = cx.run_nested(cx.own_program(std::move(compiled))); }
+        if (compiled.ok) { fence = cx.run_nested(cx.own_program(std::move(compiled))); }
         sync_custom_element_roots();
     }
-    if (!construct_fence_.is_callable()) {
+    if (!fence.is_callable()) {
         const value made = cx.construct(constructor, {});
         threw = cx.throw_pending();
         return made;
     }
     const value passed[1] = {constructor};
-    const value answer = cx.call(construct_fence_, passed);
+    const value answer = cx.call(fence, passed);
     if (!answer.is_array()) {
         threw = true;
         return value::undefined();
@@ -325,7 +359,7 @@ void dom_bindings::report_custom_element_exception(context & cx, value thrown,
                                                    std::string_view where) {
     const context::rooted keep{cx, thrown};
     const std::string fault = std::string{where} + ": uncaught " + describe(cx, thrown);
-    const bool handled = registry().dispatch_error_value(fault, thrown);
+    const bool handled = primary().dispatch_error_value(fault, thrown);
     if (!handled && callback_error_.empty()) { callback_error_ = fault; }
 }
 
@@ -341,12 +375,12 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
         if (cx.throw_pending()) { return value::undefined(); }
         if (!given.is_nullish()) { is = cx.to_string(given); }
     }
-    dom_bindings & reg = registry();
+    dom_bindings & reg = primary();
     std::size_t index = npos;
     if (has_browsing_context()) {
         for (std::size_t i = 0; i < reg.custom_definitions_.size(); ++i) {
             const custom_element_definition & def = reg.custom_definitions_[i];
-            if (def.local_name != lowered) { continue; }
+            if (def.registry != this || def.local_name != lowered) { continue; }
             if (def.name == def.local_name || def.name == is) {
                 index = i;
                 break;
@@ -424,7 +458,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         node_id at;
         bool moved; // an ancestor changed parent while connected
     };
-    const std::vector<custom_element_definition> & defs = registry().custom_definitions_;
+    const std::vector<custom_element_definition> & defs = primary().custom_definitions_;
     const auto observed = [](const custom_element_definition & def, std::string_view name) {
         for (const std::string & want : def.observed_attributes) {
             if (want == name) { return true; }
@@ -432,41 +466,54 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         return false;
     };
     // The observed attributes as they are now, diffed against `was`.
+    // THE LOCAL NAME is what observedAttributes names and what the callback
+    // receives: `svg:title` in a namespace is the attribute `title`.
+    const auto local_name = [this](const attribute & held) {
+        const std::string_view qualified = atoms_->text(held.name);
+        const std::size_t colon = qualified.find(':');
+        return std::string{held.ns && colon != std::string_view::npos ? qualified.substr(colon + 1)
+                                                                      : qualified};
+    };
+    const auto same = [](const attribute & a, const attribute & b) {
+        return a.name == b.name && a.ns == b.ns;
+    };
     const auto diff_attributes = [&](const custom_element_definition & def,
                                      custom_element_state & state, node_id at) {
         if (def.observed_attributes.empty()) { return; }
-        std::vector<std::pair<atom, std::string>> now;
+        std::vector<attribute> now;
         for (const attribute & held : txn.attributes(at)) {
-            const std::string spelling{atoms_->text(held.name)};
-            if (!observed(def, spelling)) { continue; }
-            now.emplace_back(held.name, held.value);
+            const std::string local = local_name(held);
+            if (!observed(def, local)) { continue; }
+            now.push_back(held);
             const std::string * before = nullptr;
-            for (const auto & [name, old_value] : state.attributes) {
-                if (name == held.name) { before = &old_value; }
+            for (const attribute & old : state.attributes) {
+                if (same(old, held)) { before = &old.value; }
             }
             if (before != nullptr && *before == held.value) { continue; }
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
             reaction.what = custom_element_reaction::kind::attribute_changed;
-            reaction.name = spelling;
+            reaction.name = local;
+            reaction.ns = std::string{atoms_->text(held.ns)};
             reaction.has_old = before != nullptr;
             if (before != nullptr) { reaction.old_value = *before; }
             reaction.has_new = true;
             reaction.new_value = held.value;
             custom_reactions_.push_back(std::move(reaction));
         }
-        for (const auto & [name, old_value] : state.attributes) {
+        for (const attribute & old : state.attributes) {
             bool still = false;
-            for (const auto & [now_name, now_value] : now) { still = still || now_name == name; }
+            for (const attribute & held : now) { still = still || same(held, old); }
             if (still) { continue; }
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
             reaction.what = custom_element_reaction::kind::attribute_changed;
-            reaction.name = std::string{atoms_->text(name)};
+            reaction.name = local_name(old);
+            reaction.ns = std::string{atoms_->text(old.ns)};
             reaction.has_old = true;
-            reaction.old_value = old_value;
+            reaction.old_value = old.value;
             custom_reactions_.push_back(std::move(reaction));
         }
         state.attributes = std::move(now);
@@ -551,7 +598,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
 }
 
 void dom_bindings::upgrade_created_subtree(node_id root) {
-    if (registry().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr || !root ||
+    if (primary().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr || !root ||
         !has_browsing_context()) {
         return;
     }
@@ -647,7 +694,7 @@ void dom_bindings::scan_custom_elements() {
 }
 
 void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, value wrapper) {
-    dom_bindings & reg = registry();
+    dom_bindings & reg = primary();
     const auto found = custom_elements_.find(target.key());
     if (found == custom_elements_.end()) { return; }
     found->second.state = custom_element_state::status::precustomized;
@@ -706,7 +753,7 @@ void dom_bindings::flush_custom_element_reactions() {
     while (!custom_reactions_.empty()) {
         const custom_element_reaction reaction = std::move(custom_reactions_.front());
         custom_reactions_.erase(custom_reactions_.begin());
-        if (reaction.definition >= registry().custom_definitions_.size()) { continue; }
+        if (reaction.definition >= primary().custom_definitions_.size()) { continue; }
         const value wrapper = wrap(cx, reaction.target);
         if (!wrapper.is_object()) { continue; }
         using kind = custom_element_reaction::kind;
@@ -716,7 +763,7 @@ void dom_bindings::flush_custom_element_reactions() {
         }
         // COPIED OUT: a callback may define another element and grow the
         // vector under a reference.
-        const custom_element_definition def = registry().custom_definitions_[reaction.definition];
+        const custom_element_definition def = primary().custom_definitions_[reaction.definition];
         value callback = value::undefined();
         std::vector<value> args;
         switch (reaction.what) {
@@ -734,7 +781,7 @@ void dom_bindings::flush_custom_element_reactions() {
             args.push_back(cx.string(reaction.name));
             args.push_back(reaction.has_old ? cx.string(reaction.old_value) : value::null());
             args.push_back(reaction.has_new ? cx.string(reaction.new_value) : value::null());
-            args.push_back(value::null()); // namespace: attributes carry none here
+            args.push_back(reaction.ns.empty() ? value::null() : cx.string(reaction.ns));
             break;
         }
         if (!callback.is_callable()) { continue; }
@@ -755,7 +802,7 @@ void dom_bindings::flush_custom_element_reactions() {
 }
 
 void dom_bindings::react_custom_elements() {
-    if (registry().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
+    if (primary().custom_definitions_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
     scan_custom_elements();
     flush_custom_element_reactions();
 }
@@ -778,9 +825,13 @@ void dom_bindings::install_custom_elements(context & cx) {
 
     // --- CustomElementRegistry.prototype -----------------------------------
     auto * registry_proto = cx.allocate<script::object_object>();
-    const auto defined = [this](std::string_view name) {
+    custom_elements_registry_prototype_ = value::object(registry_proto);
+    // (registry, name) -> the definition's index in the primary's vector.
+    const auto defined = [this](const dom_bindings & reg, std::string_view name) {
         for (std::size_t i = 0; i < custom_definitions_.size(); ++i) {
-            if (custom_definitions_[i].name == name) { return i; }
+            if (custom_definitions_[i].registry == &reg && custom_definitions_[i].name == name) {
+                return i;
+            }
         }
         return npos;
     };
@@ -788,6 +839,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     set_method(
         cx, *registry_proto, "define",
         [this, defined](context & c, std::span<value> args) -> value {
+            dom_bindings & reg = registry_of(c.current_this());
             // HTML 4.13.4 "element definition", in the specification's order:
             // the constructor, the name, the name twice over, the `extends`,
             // the running flag, then the prototype and everything read off it.
@@ -803,14 +855,14 @@ void dom_bindings::install_custom_elements(context & cx) {
                                     "'" + name + "' is not a valid custom element name");
                 return value::undefined();
             }
-            if (defined(name) != npos) {
+            if (defined(reg, name) != npos) {
                 throw_dom_exception(c, "NotSupportedError",
                                     "the name '" + name +
                                         "' has already been used with this registry");
                 return value::undefined();
             }
             for (const custom_element_definition & def : custom_definitions_) {
-                if (def.constructor.bits() == ctor.bits()) {
+                if (def.registry == &reg && def.constructor.bits() == ctor.bits()) {
                     throw_dom_exception(
                         c, "NotSupportedError",
                         "this constructor has already been used with this registry");
@@ -839,17 +891,18 @@ void dom_bindings::install_custom_elements(context & cx) {
                     }
                 }
             }
-            if (custom_definition_running_) {
+            if (reg.custom_definition_running_) {
                 throw_dom_exception(c, "NotSupportedError",
                                     "customElements.define is already running");
                 return value::undefined();
             }
-            custom_definition_running_ = true;
+            reg.custom_definition_running_ = true;
             // Steps 8-9: everything read off the constructor and its
             // prototype, with the flag cleared however it ends.
             custom_element_definition def;
             def.name = name;
             def.local_name = local_name;
+            def.registry = &reg;
             def.constructor = ctor;
             const bool read = [&] {
                 def.prototype = c.lookup_property(ctor, "prototype");
@@ -909,15 +962,17 @@ void dom_bindings::install_custom_elements(context & cx) {
                 }
                 return true;
             }();
-            custom_definition_running_ = false;
+            reg.custom_definition_running_ = false;
             if (!read) { return value::undefined(); }
             custom_definitions_.push_back(std::move(def));
             sync_custom_element_roots();
-            // The candidates in the document are upgraded, then whenDefined settles.
-            react_custom_elements();
-            if (const auto waiting = when_defined_.find(name); waiting != when_defined_.end()) {
+            // The candidates in the registry's document are upgraded, then
+            // whenDefined settles.
+            reg.react_custom_elements();
+            if (const auto waiting = reg.when_defined_.find(name);
+                waiting != reg.when_defined_.end()) {
                 const value promise = waiting->second;
-                when_defined_.erase(waiting);
+                reg.when_defined_.erase(waiting);
                 c.settle_promise(promise, ctor, false);
             }
             sync_custom_element_roots();
@@ -928,7 +983,8 @@ void dom_bindings::install_custom_elements(context & cx) {
     set_method(
         cx, *registry_proto, "get",
         [this, defined](context & c, std::span<value> args) {
-            const std::size_t index = defined(arg_string(c, args, 0));
+            const std::size_t index =
+                defined(registry_of(c.current_this()), arg_string(c, args, 0));
             return index == npos ? value::undefined() : custom_definitions_[index].constructor;
         },
         script::attr_builtin);
@@ -943,8 +999,11 @@ void dom_bindings::install_custom_elements(context & cx) {
                                            "type 'Function'.");
                 return value::undefined();
             }
+            const dom_bindings & reg = registry_of(c.current_this());
             for (const custom_element_definition & def : custom_definitions_) {
-                if (def.constructor.bits() == ctor.bits()) { return cx_->string(def.name); }
+                if (def.registry == &reg && def.constructor.bits() == ctor.bits()) {
+                    return cx_->string(def.name);
+                }
             }
             return value::null();
         },
@@ -953,6 +1012,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     set_method(
         cx, *registry_proto, "whenDefined",
         [this, defined](context & c, std::span<value> args) {
+            dom_bindings & reg = registry_of(c.current_this());
             const std::string name = arg_string(c, args, 0);
             if (!is_valid_custom_element_name(name)) {
                 return c.make_promise(
@@ -960,15 +1020,15 @@ void dom_bindings::install_custom_elements(context & cx) {
                                        "'" + name + "' is not a valid custom element name"),
                     true);
             }
-            if (const std::size_t index = defined(name); index != npos) {
+            if (const std::size_t index = defined(reg, name); index != npos) {
                 return c.make_promise(custom_definitions_[index].constructor, false);
             }
             // ONE promise per name, however often it is asked for.
-            if (const auto held = when_defined_.find(name); held != when_defined_.end()) {
+            if (const auto held = reg.when_defined_.find(name); held != reg.when_defined_.end()) {
                 return held->second;
             }
             const value promise = c.make_pending_promise();
-            when_defined_.emplace(name, promise);
+            reg.when_defined_.emplace(name, promise);
             sync_custom_element_roots();
             return promise;
         },
@@ -977,30 +1037,41 @@ void dom_bindings::install_custom_elements(context & cx) {
     set_method(
         cx, *registry_proto, "upgrade",
         [this](context & c, std::span<value> args) {
-            node_id root = handle_of(arg(args, 0));
-            if (!root && arg(args, 0).is_object_like() && document_.is_object_like() &&
-                arg(args, 0).bits() == document_.bits()) {
-                root = doc_->root();
+            // "Try to upgrade" every candidate under the node, against the
+            // registry of the node's own document.
+            const value given = arg(args, 0);
+            dom_bindings * owner = owner_of(given);
+            node_id root = owner == nullptr ? node_id{} : owner->handle_of(given);
+            if (!root && given.is_object_like()) {
+                for (dom_bindings * each : {static_cast<dom_bindings *>(this), owner}) {
+                    if (each != nullptr && each->document_.is_object_like() &&
+                        given.bits() == each->document_.bits()) {
+                        owner = each;
+                        root = each->doc_->root();
+                    }
+                }
             }
-            if (!root) {
+            if (!root || owner == nullptr) {
                 c.throw_error("TypeError",
                               "Failed to execute 'upgrade' on 'CustomElementRegistry': "
                               "parameter 1 is not of type 'Node'.");
                 return value::undefined();
             }
-            if (custom_definitions_.empty()) { return value::undefined(); }
-            {
-                const auto txn = doc_->read();
-                const node_id top = root_of_tree(txn, root, true);
-                for (auto & [key, state] : custom_elements_) { state.visited = false; }
-                std::vector<node_id> roots_seen;
-                walk_custom_elements(txn, root,
-                                     top == txn.root() ||
-                                         txn.kind(top).value_or(node_kind::element) ==
-                                             node_kind::document,
-                                     true, roots_seen);
+            if (custom_definitions_.empty() || !owner->has_browsing_context()) {
+                return value::undefined();
             }
-            flush_custom_element_reactions();
+            {
+                const auto txn = owner->doc_->read();
+                const node_id top = owner->root_of_tree(txn, root, true);
+                for (auto & [key, state] : owner->custom_elements_) { state.visited = false; }
+                std::vector<node_id> roots_seen;
+                owner->walk_custom_elements(txn, root,
+                                            top == txn.root() ||
+                                                txn.kind(top).value_or(node_kind::element) ==
+                                                    node_kind::document,
+                                            true, roots_seen);
+            }
+            owner->flush_custom_element_reactions();
             return value::undefined();
         },
         script::attr_builtin);
@@ -1017,9 +1088,7 @@ void dom_bindings::install_custom_elements(context & cx) {
 
     // `window.customElements` - a bare global, which the window proxy answers
     // for `window.customElements` and `self.customElements` too.
-    auto * registry = cx.allocate<script::object_object>();
-    registry->prototype = value::object(registry_proto);
-    cx.define_global("customElements", value::object(registry));
+    cx.define_global("customElements", custom_elements_registry(cx));
 }
 
 } // namespace ctbrowser::shell
