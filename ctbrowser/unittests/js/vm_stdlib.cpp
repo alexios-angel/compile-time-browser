@@ -664,6 +664,50 @@ void test_structured_clone() {
     expect_result("try { structuredClone({ f: function () {} }); } catch (e) { return e.name; }"
                   "return 'not thrown';",
                   "DataCloneError");
+    // HTML 2.7: what the specification serialises - a wrapper, a Date, a
+    // RegExp (lastIndex reset), a Map and a Set, an Error of the seven kinds,
+    // a bigint, an ArrayBuffer and a view over it - and what it does not: a
+    // non-enumerable or inherited property, a symbol, a getter that throws.
+    expect_result("const b = structuredClone(new Number(5));"
+                  "return (b instanceof Number) + ',' + Number(b) + ',' + typeof b;",
+                  "true,5,object");
+    expect_result("const d = structuredClone(new Date(86400000));"
+                  "return (d instanceof Date) + ',' + d.getTime();",
+                  "true,86400000");
+    expect_result("const r = /a+/gi; r.lastIndex = 3; const c = structuredClone(r);"
+                  "return c.source + '/' + c.flags + '/' + c.lastIndex + '/' + (c !== r);",
+                  "a+/gi/0/true");
+    expect_result("const m = new Map([[1, {x: 1}]]); const c = structuredClone(m);"
+                  "return (c instanceof Map) + ',' + c.get(1).x + ',' + (c.get(1) !== m.get(1));",
+                  "true,1,true");
+    expect_result("const s = structuredClone(new Set([1, 'a'])); return s.has('a') + ',' + s.size;",
+                  "true,2");
+    expect_result("const e = new RangeError('m', { cause: 7 }); e.foo = 1;"
+                  "const c = structuredClone(e); return c.name + ',' + c.message + ',' + c.cause +"
+                  "',' + (c instanceof RangeError) + ',' + c.foo;",
+                  "RangeError,m,7,true,undefined");
+    expect_result("return typeof structuredClone(12n) + ',' + structuredClone(12n);", "bigint,12");
+    expect_result("const buf = new Uint8Array([1, 2, 3, 4]).buffer;"
+                  "const v = new Uint8Array(buf, 1, 2); const c = structuredClone({ v, buf });"
+                  "return c.v[0] + ',' + c.v.length + ',' + (c.v.buffer === c.buf) + ',' +"
+                  "(c.buf !== buf) + ',' + c.buf.byteLength;",
+                  "2,2,true,true,4");
+    expect_result("const o = Object.create({ inherited: 1 }); o.own = 2;"
+                  "Object.defineProperty(o, 'hidden', { value: 3, enumerable: false });"
+                  "const c = structuredClone(o);"
+                  "return ('inherited' in c) + ',' + c.own + ',' + ('hidden' in c);",
+                  "false,2,false");
+    expect_result("const a = [1, , 3]; a.foo = 'bar'; const c = structuredClone(a);"
+                  "return c.length + ',' + (1 in c) + ',' + c.foo;",
+                  "3,false,bar");
+    expect_result("try { structuredClone({ get x() { throw new TypeError('g'); } }); }"
+                  "catch (e) { return e.name + ':' + e.message; }",
+                  "TypeError:g");
+    expect_result("try { structuredClone(Symbol('s')); } catch (e) { return e.name; }",
+                  "DataCloneError");
+    expect_result("const p = structuredClone(Object.prototype); return Object.keys(p).length + ','"
+                  " + (p !== Object.prototype);",
+                  "0,true");
 }
 
 } // namespace
