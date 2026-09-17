@@ -184,6 +184,8 @@ public:
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
+    // Present own member from this element's immutable, uninvalidated key snapshot.
+    [[nodiscard]] mlir::Value datasetValueElement(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringPrefixRegExp(ctjs::CallOp call) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
@@ -217,6 +219,7 @@ private:
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
+    std::vector<std::pair<ctjs::GetPropertyOp, mlir::Value>> datasetValues;
     std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;

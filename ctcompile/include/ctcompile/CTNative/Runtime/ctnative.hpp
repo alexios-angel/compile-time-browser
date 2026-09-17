@@ -743,6 +743,9 @@ inline std::vector<std::string> dataset_keys(ctbrowser::element_ref element) {
     }
     return keys;
 }
+inline std::string dataset_value(ctbrowser::element_ref element, std::string_view key) {
+    return ctbrowser::dataset_value(*element.owner, element.id, key).value();
+}
 inline bool toggle_class(ctbrowser::element_ref element, std::string_view token,
                          std::optional<bool> force = std::nullopt) {
     auto result = ctbrowser::toggle_token(*element.owner, element.id,

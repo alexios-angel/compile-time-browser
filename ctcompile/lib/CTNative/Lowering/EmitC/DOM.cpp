@@ -46,6 +46,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         function.walk([&](ctjs::GetPropertyOp read) {
             if (entry.isStringVectorLength(read)) { vectorLengthReads.insert(read); }
             if (entry.isStringVectorIndex(read)) { domStringVectorIndices.insert(read); }
+            if (auto element = entry.datasetValueElement(read)) {
+                domDatasetValues.try_emplace(read, element);
+            }
             if (entry.method(read) || entry.isTokenList(read.getResult()) ||
                 entry.isDataset(read.getResult())) {
                 domReads.insert(read);
@@ -165,6 +168,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     mlir::OpBuilder at(operation);
     const auto where = operation->getLoc();
     const auto optionalString = ec::OpaqueType::get(context, kDOMOptionalStringType);
+    if (auto found = domDatasetValues.find(operation); found != domDatasetValues.end()) {
+        auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctnative::dataset_value"),
+            mlir::ValueRange{found->second, read.getKey()});
+        read.getResult().replaceAllUsesWith(value.getResult(0));
+        read.erase();
+        return true;
+    }
     if (domStringVectorIndices.contains(operation)) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
         auto index = ec::CastOp::create(at, where, ec::OpaqueType::get(context, "std::size_t"),

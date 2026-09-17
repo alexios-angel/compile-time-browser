@@ -25,7 +25,8 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read && (domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read))) {
+            read && (domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
+                     domEntry->datasetValueElement(read))) {
             return true;
         }
         if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);

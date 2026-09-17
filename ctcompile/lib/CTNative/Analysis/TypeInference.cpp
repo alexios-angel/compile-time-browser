@@ -660,7 +660,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     mlir::MLIRContext * c = op->getContext();
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && domEntry_->isStringVectorIndex(read)) {
+        read && domEntry_ &&
+        (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read))) {
         propagateIfChanged(results[0],
                            results[0]->join(TypeValue{StrType::get(c, StrEncoding::UTF8)}));
         return mlir::success();

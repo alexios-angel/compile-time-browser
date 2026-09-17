@@ -69,7 +69,8 @@ module {
         input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
-                     !proof.isStringVectorLength(read) && !proof.isStringVectorIndex(read);
+                     !proof.isStringVectorLength(read) && !proof.isStringVectorIndex(read) &&
+                     !proof.datasetValueElement(read);
         });
         return empty;
     };
@@ -119,6 +120,133 @@ module {
         DOMEntryAnalysis refused(*input, request);
         check(noEvidence(*input, refused),
               "nonzero starts, wrong latches, wrong indices and inexact bounds withhold evidence");
+    }
+
+    const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";
+    const std::string valueSource = replaced(
+        source, "        %nextCount =", "        " + memberRead + "\n        %nextCount =");
+    const std::string mutation = R"MLIR(
+    %removeName = ctjs.constant #ctjs.string<"removeAttribute">
+    %remove = ctjs.get_property %element[%removeName]
+    %attribute = ctjs.constant #ctjs.string<"data-bs-z">
+    %removed = ctjs.call %remove(%element, %attribute)
+)MLIR";
+    for (const auto & admitted :
+         {valueSource,
+          replaced(valueSource, memberRead,
+                   "%fresh = ctjs.get_property %element[%datasetName]\n        "
+                   "%value = ctjs.get_property %fresh[%key]"),
+          replaced(valueSource, "    %dataset =", mutation + "    %dataset =")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(admitted, &context);
+        check(static_cast<bool>(input), "independent present dataset member fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            request.provider = provider;
+            DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "same-element snapshot members prove in their enumeration epoch");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            auto entry = input->lookupSymbol<ctjs::FuncOp>(request.entry);
+            const auto element = entry.getBody().front().getArgument(ctjs::implicit_arguments);
+            unsigned members = 0;
+            input->walk([&](ctjs::GetPropertyOp read) {
+                const auto owner = proof.datasetValueElement(read);
+                const bool member = proof.isDataset(read.getObject());
+                check(static_cast<bool>(owner) == member && (!owner || owner == element),
+                      "only the present member read receives its exact element capability");
+                members += static_cast<bool>(owner);
+            });
+            check(members == 1 && hostContractFingerprint(*input) == request.moduleSha256,
+                  "member proof preserves every source operation and publishes one capability");
+            check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+                  "dataset member proof reproduces its exact charged budget");
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*input, request, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "incomplete member proof withholds all membership and host evidence");
+            }
+        }
+    }
+    const std::string freshRead = "%fresh = ctjs.get_property %element[%datasetName]\n        "
+                                  "%value = ctjs.get_property %fresh[%key]";
+    const std::string otherElement =
+        replaced(replaced(valueSource, "%element: !ctjs.value)",
+                          "%element: !ctjs.value, %other: !ctjs.value)"),
+                 memberRead,
+                 "%otherData = ctjs.get_property %other[%datasetName]\n        "
+                 "%value = ctjs.get_property %otherData[%key]");
+    for (const auto & invalid : {
+             replaced(valueSource, memberRead,
+                      "%literal = ctjs.constant #ctjs.string<\"bsZ\">\n        "
+                      "%value = ctjs.get_property %dataset[%literal]"),
+             replaced(valueSource, memberRead,
+                      "%empty = ctjs.constant #ctjs.string<\"\">\n        "
+                      "%changed = ctjs.binary add %key, %empty\n        "
+                      "%value = ctjs.get_property %dataset[%changed]"),
+             replaced(valueSource, memberRead,
+                      "%joined = scf.if %test -> (!ctjs.value) {\n"
+                      "          scf.yield %key : !ctjs.value\n"
+                      "        } else {\n"
+                      "          scf.yield %key : !ctjs.value\n"
+                      "        }\n        %value = ctjs.get_property %dataset[%joined]"),
+             replaced(valueSource, "    %loop:3 =", mutation + "    %loop:3 ="),
+             replaced(replaced(valueSource, memberRead, freshRead),
+                      "    %loop:3 =", mutation + "    %loop:3 ="),
+             replaced(valueSource, "    %keys = ctjs.call %keysMethod(%Object, %dataset)",
+                      mutation + "    %fresh = ctjs.get_property %element[%datasetName]\n"
+                                 "    %keys = ctjs.call %keysMethod(%Object, %fresh)"),
+             replaced(valueSource, memberRead,
+                      "ctjs.set_property %keys[%index], %key\n        " + memberRead),
+             replaced(valueSource, memberRead, mutation + "        " + memberRead),
+             otherElement,
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsupported dataset membership fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        if (invalid == otherElement) {
+            request.elementParameters = {0, 1};
+            request.datasetParameters = {0, 1};
+        }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            request.provider = provider;
+            DOMEntryAnalysis proof(*input, request);
+            check(noEvidence(*input, proof),
+                  "stale, changed, joined and cross-element keys cannot prove a present value");
+            check(hostContractFingerprint(*input) == request.moduleSha256,
+                  "refused membership proof preserves the complete source");
+        }
+    }
+    auto staleMember = mlir::parseSourceString<mlir::ModuleOp>(valueSource, &context);
+    check(static_cast<bool>(staleMember), "dataset membership fingerprint fixture parses");
+    if (staleMember) {
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*staleMember);
+        mlir::Builder builder(&context);
+        staleMember->walk([&](ctjs::GetPropertyOp read) {
+            read->setAttr("ctnative.host_dataset_value", builder.getBoolAttr(true));
+        });
+        check(DOMEntryAnalysis(*staleMember, request).proved(),
+              "printed member claims do not replace original provenance discovery");
+        staleMember->walk([&](ctjs::GetPropertyOp read) {
+            if (ctjs::constantKey(read.getKey()).empty() &&
+                !llvm::isa<mlir::BlockArgument>(read.getKey())) {
+                read->setOperand(1, read.getObject());
+            }
+        });
+        DOMEntryAnalysis stale(*staleMember, request);
+        check(noEvidence(*staleMember, stale) && stale.reason().contains("fingerprint"),
+              "changed membership operands invalidate the original fingerprint");
+        request.moduleSha256 = hostContractFingerprint(*staleMember);
+        check(noEvidence(*staleMember, DOMEntryAnalysis(*staleMember, request)),
+              "a fresh fingerprint and forged member reports cannot supply presence");
     }
 
     const std::string completion = prefix + R"MLIR(
