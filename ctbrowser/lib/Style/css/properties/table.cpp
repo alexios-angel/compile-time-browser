@@ -76,10 +76,12 @@ constexpr property_syntax table[] = {
     {"margin-right", k::length_percentage, "auto", "0px", false, false},
     {"margin-bottom", k::length_percentage, "auto", "0px", false, false},
     {"margin-left", k::length_percentage, "auto", "0px", false, false},
-    // The flow-relative sides, CSS Logical 1 §4. The cascade does not map them
-    // yet; they are here because the CSSOM's shorthand rules are about the
-    // logical property GROUP a declaration sits in, and `margin-inline: 10px`
-    // written between two halves of `margin` decides whether `margin` folds.
+    // The flow-relative sides, CSS Logical 1 §4. The cascade maps each onto
+    // the physical side of the element's writing mode and direction
+    // (physical_property_of, below); they are rows of their own because the
+    // CSSOM's shorthand rules are about the logical property GROUP a
+    // declaration sits in, and `margin-inline: 10px` written between two
+    // halves of `margin` decides whether `margin` folds.
     {"margin-inline", k::freeform, "", "0px", false, false, true},
     {"margin-inline-start", k::length_percentage, "auto", "0px", false, false},
     {"margin-inline-end", k::length_percentage, "auto", "0px", false, false},
@@ -95,8 +97,7 @@ constexpr property_syntax table[] = {
     {"padding-inline-start", k::length_percentage, "", "0px", false, true},
     {"padding-inline-end", k::length_percentage, "", "0px", false, true},
     {"padding-block", k::freeform, "", "0px", false, false, true},
-    // The logical border longhands, which getComputedStyle answers as the
-    // physical ones of horizontal-tb (computed_style/entries.cpp).
+    // The logical border longhands, mapped like the margins.
     {"border-block-start-width", k::length, "thin medium thick", "medium", false, true},
     {"border-block-end-width", k::length, "thin medium thick", "medium", false, true},
     {"border-inline-start-width", k::length, "thin medium thick", "medium", false, true},
@@ -391,6 +392,91 @@ const property_syntax * find_property(std::string_view name) {
 
 std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{every_property()};
+}
+
+// CSS Logical 1 §2: the four flow-relative sides as physical ones. Block
+// start/end follow the writing mode alone; inline start/end follow it and
+// the direction, and `sideways-lr` is the one mode whose inline axis runs
+// upward.
+std::string physical_property_of(std::string_view logical, std::string_view writing_mode,
+                                 std::string_view direction) {
+    const std::string mode = ascii_lower_copy(trim(writing_mode, html_whitespace));
+    const bool vertical = mode.starts_with("vertical-") || mode.starts_with("sideways-");
+    const bool rtl = ascii_iequals(trim(direction, html_whitespace), "rtl");
+    std::string_view block_start, block_end, inline_start, inline_end;
+    if (!vertical) {
+        block_start = "top";
+        block_end = "bottom";
+        inline_start = rtl ? "right" : "left";
+        inline_end = rtl ? "left" : "right";
+    } else {
+        const bool rl = mode.ends_with("-rl");
+        block_start = rl ? "right" : "left";
+        block_end = rl ? "left" : "right";
+        const bool downward = (mode != "sideways-lr") != rtl;
+        inline_start = downward ? "top" : "bottom";
+        inline_end = downward ? "bottom" : "top";
+    }
+    const std::string name = ascii_lower_copy(logical);
+    // `inline-size`, `min-block-size`: a dimension.
+    if (name.ends_with("-size")) {
+        const std::string_view stem = std::string_view{name}.substr(0, name.size() - 5);
+        std::string_view prefix;
+        std::string_view axis = stem;
+        if (stem.starts_with("min-") || stem.starts_with("max-")) {
+            prefix = stem.substr(0, 4);
+            axis = stem.substr(4);
+        }
+        if (axis != "inline" && axis != "block") { return {}; }
+        const bool horizontal = (axis == "inline") != vertical;
+        return std::string{prefix} + (horizontal ? "width" : "height");
+    }
+    // `border-start-end-radius`: block side then inline side, and the physical
+    // name puts the vertical side first.
+    if (name.starts_with("border-") && name.ends_with("-radius")) {
+        const std::string_view corner = std::string_view{name}.substr(7, name.size() - 14);
+        const std::size_t dash = corner.find('-');
+        if (dash == std::string_view::npos) { return {}; }
+        const std::string_view b = corner.substr(0, dash);
+        const std::string_view i = corner.substr(dash + 1);
+        if ((b != "start" && b != "end") || (i != "start" && i != "end")) { return {}; }
+        const std::string_view block_side = b == "start" ? block_start : block_end;
+        const std::string_view inline_side = i == "start" ? inline_start : inline_end;
+        const std::string_view first = vertical ? inline_side : block_side;
+        const std::string_view second = vertical ? block_side : inline_side;
+        return "border-" + std::string{first} + "-" + std::string{second} + "-radius";
+    }
+    // `overflow-block`, `overscroll-behavior-inline`: an axis.
+    for (const auto [suffix, axis_is_inline] : {std::pair{std::string_view{"-block"}, false},
+                                                std::pair{std::string_view{"-inline"}, true}}) {
+        if (!name.ends_with(suffix)) { continue; }
+        const std::string_view stem = std::string_view{name}.substr(0, name.size() - suffix.size());
+        if (stem != "overflow" && stem != "overscroll-behavior") { return {}; }
+        const bool horizontal = axis_is_inline != vertical;
+        return std::string{stem} + (horizontal ? "-x" : "-y");
+    }
+    // `margin-block-start`, `inset-inline-end`, `border-block-start-width`:
+    // the side, in place of the flow-relative words; `inset-` is dropped
+    // because the physical insets are bare `top`/`right`/`bottom`/`left`.
+    static constexpr std::pair<std::string_view, int> sides[] = {
+        {"block-start", 0}, {"block-end", 1}, {"inline-start", 2}, {"inline-end", 3}};
+    for (const auto & [words, which] : sides) {
+        const std::size_t at = name.find(words);
+        if (at == std::string::npos) { continue; }
+        // A real property name only: `-block-start` after a family or at the
+        // start of `inset-block-start`, never inside another word.
+        const std::string_view stem = std::string_view{name}.substr(0, at);
+        if (!stem.empty() && !stem.ends_with('-')) { return {}; }
+        if (find_property(logical) == nullptr) { return {}; }
+        const std::string_view side = which == 0   ? block_start
+                                      : which == 1 ? block_end
+                                      : which == 2 ? inline_start
+                                                   : inline_end;
+        std::string out = std::string{stem} + std::string{side} + name.substr(at + words.size());
+        if (out.starts_with("inset-")) { out.erase(0, 6); }
+        return out;
+    }
+    return {};
 }
 
 // CSSOM §2.1 "serialize an identifier".

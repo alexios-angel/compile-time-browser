@@ -1752,25 +1752,98 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // `vi`/`vb` swap axes in a vertical one (CSS Values 4 §6.1.2), and the
     // property inherits, so the parent's answer stands until a declaration
     // says otherwise - a keyword, never a length, so nothing to fold.
-    bool vertical = parent && parent->inherited &&
-                    !parent->inherited->get(writing_mode_).starts_with("horizontal") &&
-                    !parent->inherited->get(writing_mode_).empty();
-    fold([&](const declaration & d) {
-        if (d.property != writing_mode_) { return; }
-        const std::string_view text = trim(d.value, html_whitespace);
-        if (css::may_have_var(text)) { return; }
-        // `initial` is horizontal-tb; the other wide keywords keep the
-        // parent's answer on an inherited property.
-        if (ascii_iequals(text, "initial")) {
-            vertical = false;
-            return;
+    // ...AND ITS DIRECTION, settled the same way: the two together decide
+    // which physical side a logical property lands on (CSS Logical 1 §2).
+    const auto inherited_keyword = [&](atom property, std::string_view initial) {
+        std::string held;
+        if (parent && parent->inherited) {
+            held = ascii_lower_copy(parent->inherited->get(property));
         }
-        if (css::is_wide_keyword(text)) { return; }
-        const std::string lowered = ascii_lower_copy(text);
-        vertical = lowered.starts_with("vertical-") || lowered.starts_with("sideways-");
-    });
+        if (held.empty()) { held = initial; }
+        fold([&](const declaration & d) {
+            if (d.property != property) { return; }
+            const std::string_view text = trim(d.value, html_whitespace);
+            if (css::may_have_var(text)) { return; }
+            // `initial` is the initial value; the other wide keywords keep
+            // the parent's answer on an inherited property.
+            if (ascii_iequals(text, "initial")) {
+                held = initial;
+                return;
+            }
+            if (css::is_wide_keyword(text)) { return; }
+            held = ascii_lower_copy(text);
+        });
+        return held;
+    };
+    const std::string writing_mode = inherited_keyword(writing_mode_, "horizontal-tb");
+    const std::string direction = inherited_keyword(atoms_->intern_lower("direction"), "ltr");
+    const bool vertical =
+        writing_mode.starts_with("vertical-") || writing_mode.starts_with("sideways-");
     css::length_context lengths = font_context(own_font_size, own_line_height, own_zero_advance);
     lengths.vertical = vertical;
+    // THE LOGICAL -> PHYSICAL MAPPING, CSS Logical 1 §4. A flow-relative
+    // property is stored as the physical one it maps to on THIS element, at
+    // the declaration's own position in the fold: `margin-left: 1px;
+    // margin-inline-start: 2px` is 2px in ltr and the reverse order is 1px -
+    // whichever spelling of the logical property group came later wins - and
+    // layout and getComputedStyle only ever read the physical side. A
+    // property that is not logical maps to itself.
+    const auto physical = [&](atom property) -> atom {
+        const std::string_view name = atoms_->text(property);
+        if (name.find("block") == std::string_view::npos &&
+            name.find("inline") == std::string_view::npos) {
+            return property;
+        }
+        const std::string mapped = css::physical_property_of(name, writing_mode, direction);
+        return mapped.empty() ? property : atoms_->intern_lower(mapped);
+    };
+    // ...AND THE LOGICAL SHORTHANDS (§4.2-4.4), which expand_shorthand does
+    // not know: split into their logical longhands here, each then mapped
+    // like any other. `margin-block: a b` is a start and an end;
+    // `border-block-width` the same for one component; `border-block-start`
+    // is `border-top`'s grammar on one flow-relative side and `border-block`
+    // that grammar on both sides of the axis.
+    const auto expand_logical = [&](std::string_view name, std::string_view text) {
+        std::vector<std::pair<std::string, std::string>> out;
+        const bool axis = name.ends_with("-block") || name.ends_with("-inline");
+        const auto pair = [&](std::string_view prefix, std::string_view suffix) {
+            const std::vector<std::string_view> parts = split_top_level(text, " \t\n\r\f");
+            if (parts.empty() || parts.size() > 2) { return; }
+            out.emplace_back(std::string{prefix} + "-start" + std::string{suffix},
+                             std::string{parts[0]});
+            out.emplace_back(std::string{prefix} + "-end" + std::string{suffix},
+                             std::string{parts.size() == 2 ? parts[1] : parts[0]});
+        };
+        if (axis && (name.starts_with("margin-") || name.starts_with("padding-") ||
+                     name.starts_with("inset-") || name.starts_with("scroll-margin-") ||
+                     name.starts_with("scroll-padding-"))) {
+            pair(name, "");
+        } else if (name.starts_with("border-") && name.size() > 6 &&
+                   (name.ends_with("-width") || name.ends_with("-style") ||
+                    name.ends_with("-color"))) {
+            const std::string_view prefix = name.substr(0, name.size() - 6);
+            if (prefix == "border-block" || prefix == "border-inline") {
+                pair(prefix, name.substr(name.size() - 6));
+            }
+        } else if (name == "border-block" || name == "border-inline" ||
+                   name == "border-block-start" || name == "border-block-end" ||
+                   name == "border-inline-start" || name == "border-inline-end") {
+            std::vector<std::string> sides;
+            if (axis) {
+                sides = {std::string{name} + "-start", std::string{name} + "-end"};
+            } else {
+                sides = {std::string{name}};
+            }
+            for (const auto & [top, part] : expand_shorthand("border-top", text)) {
+                // `border-top-width` -> `-width`, on each side asked for.
+                const std::string_view component = top.substr(10);
+                for (const std::string & side : sides) {
+                    out.emplace_back(side + std::string{component}, std::string{part});
+                }
+            }
+        }
+        return out;
+    };
     // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
     // `line-height: 2lh` folded against its own answer would double it -
     // and `line_height_lengths` above is what that property folds with; and
@@ -1883,7 +1956,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 erase(atoms_->intern("overflow-x"));
                 erase(atoms_->intern("overflow-y"));
             } else {
-                erase(d.property);
+                erase(physical(d.property));
             }
         };
         const bool had_var = css::may_have_var(value);
@@ -2014,6 +2087,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         };
         const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {
+            if (const auto logical = expand_logical(property, value); !logical.empty()) {
+                for (const auto & [name, text] : logical) {
+                    put(declaration{physical(atoms_->intern_lower(name)), folded(text)});
+                }
+                return;
+            }
             // A substituted token stream is validated only now. If it is
             // not overflow grammar, the winning shorthand is invalid at
             // computed-value time and resets both axes; a parse-time
@@ -2022,11 +2101,11 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 unset();
                 return;
             }
-            put(declaration{d.property, folded(std::move(value))});
+            put(declaration{physical(d.property), folded(std::move(value))});
             return;
         }
         for (const auto & [name, text] : expanded) {
-            put(declaration{atoms_->intern_lower(name), folded(std::string{text})});
+            put(declaration{physical(atoms_->intern_lower(name)), folded(std::string{text})});
         }
     });
 

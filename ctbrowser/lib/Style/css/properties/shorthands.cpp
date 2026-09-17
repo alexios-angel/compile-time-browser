@@ -23,19 +23,21 @@ namespace {
 
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
 enum class shape : std::uint8_t {
-    sides,      // 1-4 values: top, right, bottom, left, in `margin`'s way
-    pair,       // 1-2 values: start/end, x/y or row/column; one sets both
-    place,      // `place-*`: an align value then a justify one, each of several words
-    grid_lines, // grid-row / grid-column / grid-area: `/`-separated grid lines
-    slash_pair, // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
-    bar,        // `a || b || c`: each part goes to the longhand that takes it
-    flex,       // Flexbox 1 §7.1.1's own defaults
-    font,       // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
-    border,     // `bar` over width/style/color, applied to four sides, plus
-                // border-image reset to its initial values
-    all,        // every longhand; CSS-wide keywords only
-    whole,      // a grammar this table does not split: only a CSS-wide keyword
-                // reaches the longhands, and only one folds back
+    sides,       // 1-4 values: top, right, bottom, left, in `margin`'s way
+    pair,        // 1-2 values: start/end, x/y or row/column; one sets both
+    place,       // `place-*`: an align value then a justify one, each of several words
+    grid_lines,  // grid-row / grid-column / grid-area: `/`-separated grid lines
+    slash_pair,  // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
+    bar,         // `a || b || c`: each part goes to the longhand that takes it
+    flex,        // Flexbox 1 §7.1.1's own defaults
+    font,        // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
+    border,      // `bar` over width/style/color, applied to four sides, plus
+                 // border-image reset to its initial values
+    border_axis, // `border-block` / `border-inline`: `bar` over width/style/
+                 // color applied to the axis's two sides (CSS Logical 1 §4.4)
+    all,         // every longhand; CSS-wide keywords only
+    whole,       // a grammar this table does not split: only a CSS-wide keyword
+                 // reaches the longhands, and only one folds back
 };
 
 struct shorthand_syntax {
@@ -77,6 +79,30 @@ constexpr shorthand_syntax table[] = {
     {"border-bottom", shape::bar, "border-bottom-width border-bottom-style border-bottom-color",
      "none"},
     {"border-left", shape::bar, "border-left-width border-left-style border-left-color", "none"},
+    // The flow-relative borders, CSS Logical 1 §4.4: a side, an axis's two
+    // sides, and one component across an axis.
+    {"border-block-start", shape::bar,
+     "border-block-start-width border-block-start-style border-block-start-color", "none"},
+    {"border-block-end", shape::bar,
+     "border-block-end-width border-block-end-style border-block-end-color", "none"},
+    {"border-inline-start", shape::bar,
+     "border-inline-start-width border-inline-start-style border-inline-start-color", "none"},
+    {"border-inline-end", shape::bar,
+     "border-inline-end-width border-inline-end-style border-inline-end-color", "none"},
+    {"border-block", shape::border_axis,
+     "border-block-start-width border-block-start-style border-block-start-color "
+     "border-block-end-width border-block-end-style border-block-end-color",
+     "none"},
+    {"border-inline", shape::border_axis,
+     "border-inline-start-width border-inline-start-style border-inline-start-color "
+     "border-inline-end-width border-inline-end-style border-inline-end-color",
+     "none"},
+    {"border-block-width", shape::pair, "border-block-start-width border-block-end-width", ""},
+    {"border-block-style", shape::pair, "border-block-start-style border-block-end-style", ""},
+    {"border-block-color", shape::pair, "border-block-start-color border-block-end-color", ""},
+    {"border-inline-width", shape::pair, "border-inline-start-width border-inline-end-width", ""},
+    {"border-inline-style", shape::pair, "border-inline-start-style border-inline-end-style", ""},
+    {"border-inline-color", shape::pair, "border-inline-start-color border-inline-end-color", ""},
     {"outline", shape::bar, "outline-color outline-style outline-width", "none"},
     {"flex", shape::flex, "flex-grow flex-shrink flex-basis", ""},
     {"flex-flow", shape::bar, "flex-direction flex-wrap", "row"},
@@ -415,6 +441,19 @@ split split_border(std::span<const std::string_view> parts, std::vector<std::str
     return split::ok;
 }
 
+// `border-block` / `border-inline`: width || style || color on the axis's
+// start side, copied to its end side.
+split split_border_axis(const expansion & e, std::span<const std::string_view> parts,
+                        std::vector<std::string> & out) {
+    const expansion * start = expansion_of(e.longhands[0].substr(0, e.longhands[0].size() - 6));
+    std::vector<std::string> one;
+    const split result = split_bar(*start, parts, one);
+    if (result != split::ok) { return result; }
+    out = one;
+    out.insert(out.end(), one.begin(), one.end());
+    return split::ok;
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
@@ -459,6 +498,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::bar: return split_bar(e, parts, out);
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
+    case shape::border_axis: return split_border_axis(e, parts, out);
     case shape::font: return split_font(parts, out);
     case shape::all:
     case shape::whole: break;
@@ -552,6 +592,14 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
             if (!ascii_iequals(v[i], initial_of(e.longhands[i]))) { return {}; }
         }
         return fold_bar(*expansion_of("border-top"), one);
+    }
+    case shape::border_axis: {
+        // The two sides equal, component by component.
+        for (std::size_t c = 0; c < 3; ++c) {
+            if (v[c] != v[c + 3]) { return {}; }
+        }
+        const expansion * start = expansion_of(e.longhands[0].substr(0, e.longhands[0].size() - 6));
+        return fold_bar(*start, v.subspan(0, 3));
     }
     }
     return {};
