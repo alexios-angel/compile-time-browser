@@ -11,6 +11,7 @@ using ctbrowser::style::easing;
 using ctbrowser::style::interpolable_text;
 using ctbrowser::style::interpolate_text;
 using ctbrowser::style::parse_easing;
+using ctbrowser::style::with_currentcolor;
 
 namespace {
 
@@ -124,6 +125,12 @@ void test_interpolation() {
           "calc(40% - 50px)");
     CHECK(interpolable_text("width", "10px", "calc(100% - 10px)"));
     CHECK(!interpolable_text("width", "auto", "10px"));
+    // A background layer list repeats to match the longer one.
+    CHECK(interpolate_text("background-position", "10px 10px", "30px 30px, 50px 50px", 0.5,
+                           context) == "20px 20px, 30px 30px");
+    CHECK(with_currentcolor("currentcolor 1px 1px, red 2px 2px", "rgb(1, 2, 3)") ==
+          "rgb(1, 2, 3) 1px 1px, red 2px 2px");
+    CHECK(with_currentcolor("CurrentColor", "blue") == "blue");
 }
 
 void test_composition() {
@@ -142,6 +149,8 @@ void test_composition() {
                          context) == "rgb(4, 5, 6) 3px 4px 0px 0px");
     CHECK(composite_text("border-width", "1px 2px", "10px 20px", composite_op::add, context) ==
           "11px 22px");
+    CHECK(composite_text("background-size", "40px 40px", "60px 60px, 260px 260px",
+                         composite_op::add, context) == "100px 100px, 300px 300px");
     // The individual transform properties: a scale multiplies, `none` is 1 1 1.
     CHECK(composite_text("scale", "1 2 3", "4 5 6", composite_op::add, context) == "4 10 18");
     CHECK(composite_text("scale", "none", "4 5 6", composite_op::accumulate, context) == "4 5 6");

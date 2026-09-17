@@ -467,11 +467,18 @@ void dom_bindings::update_css_transitions(
             ascii_iequals(item_at(behaviors, match, "normal"), "allow-discrete");
         const double combined = duration + delay;
 
-        std::string before_value{value_on(before, *atoms_, property)};
+        // Each side's `currentcolor` is that side's `color` (CSS Color 4
+        // §7.1), for every property but `color` itself.
+        const auto resolved = [&](const style::computed_style & style, std::string_view text) {
+            return property == "color"
+                       ? std::string{text}
+                       : style::with_currentcolor(text, value_on(style, *atoms_, "color"));
+        };
+        std::string before_value = resolved(before, value_on(before, *atoms_, property));
         for (const auto & [name, text] : current) {
             if (name == property) { before_value = trim(text, html_whitespace); }
         }
-        const std::string after_value{value_on(after, *atoms_, property)};
+        const std::string after_value = resolved(after, value_on(after, *atoms_, property));
 
         const auto start = [&](const std::string & from, const std::string & to, double start_delay,
                                double active, double factor, const std::string & reversing_start) {
@@ -620,6 +627,20 @@ void dom_bindings::update_css_animation_list(node_id element, std::size_t tree_o
             frame.composite = k.composite.empty() ? "auto" : k.composite;
             frame.values = k.values;
             keyframes.push_back(std::move(frame));
+        }
+        // A MISSING 0% KEYFRAME IS SYNTHESISED WITH THE ELEMENT'S TIMING
+        // FUNCTION (CSS Animations 1 §4.1, §4.3): its values are the
+        // underlying ones, which only the sampler knows, so it goes in
+        // empty and carries the easing the interval from it needs. Without
+        // it a `to`-only rule ran its first interval linearly, whatever
+        // `animation-timing-function` said.
+        if (std::ranges::none_of(keyframes,
+                                 [](const animation_keyframe & k) { return k.offset == 0; })) {
+            animation_keyframe from;
+            from.offset = 0;
+            from.offset_given = true;
+            from.easing = element_easing;
+            keyframes.insert(keyframes.begin(), std::move(from));
         }
 
         // The record at this index, kept while its name is the same.

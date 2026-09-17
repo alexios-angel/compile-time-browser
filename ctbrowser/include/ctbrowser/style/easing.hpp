@@ -60,6 +60,12 @@ private:
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
                                      std::string_view to);
 
+// `currentcolor` in a value replaced by the element's colour text, whole or
+// as a list item: a colour interpolates as the colour it resolves to (CSS
+// Color 4 §7.1), and `text-shadow: currentcolor 1px 1px` pairs with a colour
+// only once it is one.
+[[nodiscard]] std::string with_currentcolor(std::string_view value, std::string_view color);
+
 // THE COMPOSITE OPERATIONS of Web Animations 1 §4.5.1: `value` added to, or
 // accumulated onto, `underlying` by the property's animation type (CSS Values
 // 4 §4.3-4.4: numbers and lengths sum, colours sum premultiplied, a shadow or

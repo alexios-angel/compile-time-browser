@@ -339,6 +339,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 }
             }
         }
+        // What `currentcolor` means on this element, for every property but
+        // `color` itself (whose currentcolor is the parent's).
+        const std::string current_color{trim(underlying("color"), html_whitespace)};
         for (const std::string & property : properties) {
             struct point {
                 double offset;
@@ -348,6 +351,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             };
             std::vector<point> points;
             const auto * known = style::css::find_property(property);
+            const auto resolved_color = [&](std::string_view value) {
+                return property == "color" || current_color.empty()
+                           ? std::string{value}
+                           : style::with_currentcolor(value, current_color);
+            };
             for (const animation_keyframe & k : e.keyframes) {
                 for (const auto & [name, text] : k.values) {
                     if (name != property) { continue; }
@@ -362,7 +370,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                          (ascii_iequals(value, "unset") && !known->inherited))) {
                         value = known->initial;
                     }
-                    points.push_back(point{k.offset, std::string{value}, k.easing, k.composite});
+                    points.push_back(point{k.offset, resolved_color(value), k.easing, k.composite});
                 }
             }
             // THE UNDERLYING VALUE (§5.4.3): what the animations before this
@@ -374,10 +382,21 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 out, [&property](const auto & entry) { return entry.first == property; });
             std::string base = seen != out.end()
                                    ? seen->second
-                                   : std::string{trim(underlying(property), html_whitespace)};
+                                   : resolved_color(trim(underlying(property), html_whitespace));
             if (base.empty() && known != nullptr) { base = std::string{known->initial}; }
             if (points.front().offset != 0) {
-                points.insert(points.begin(), point{0, base, "linear", "replace"});
+                // The neutral keyframe's easing is linear (§5.4.3) - unless
+                // the effect carries a valueless keyframe at 0, which is how
+                // a CSS animation hands over the element's timing function
+                // for the interval it synthesises (bindings/animations/css.cpp).
+                std::string easing = "linear";
+                for (const animation_keyframe & k : e.keyframes) {
+                    if (k.offset == 0 && k.values.empty()) {
+                        easing = k.easing;
+                        break;
+                    }
+                }
+                points.insert(points.begin(), point{0, base, std::move(easing), "replace"});
             }
             if (points.back().offset != 1) {
                 points.push_back(point{1, base, "linear", "replace"});

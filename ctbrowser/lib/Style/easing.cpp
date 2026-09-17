@@ -6,11 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -333,7 +335,30 @@ struct premultiplied {
 // as written, `10px 30px orange` against `green 20px 20px 20px` has nothing
 // to interpolate; in computed shape it has a colour and three lengths. A
 // shadow list's `none` is the empty list.
-[[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text) {
+// A LIST THAT REPEATS TO MATCH (CSS Values 4 §4.1, "repeatable list"): the
+// background and mask layer lists pair the shorter with the longer by
+// repeating it, to the least common multiple of the two lengths.
+[[nodiscard]] bool repeatable(std::string_view property) {
+    return property.starts_with("background-") || property.starts_with("mask-");
+}
+
+template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & b) {
+    if (a.empty() || b.empty() || a.size() == b.size()) { return; }
+    const std::size_t n = std::lcm(a.size(), b.size());
+    for (std::size_t i = a.size(); i < n; ++i) { a.push_back(a[i % a.size()]); }
+    for (std::size_t i = b.size(); i < n; ++i) { b.push_back(b[i % b.size()]); }
+}
+
+[[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
+                                         const css::length_context & ctx) {
+    if (repeatable(property)) {
+        // Keywords as percentages, a size's second `auto` written, so
+        // `left 20px top 20px` and `20px 20px` are one shape.
+        css::color_context cc;
+        cc.lengths = &ctx;
+        const std::string computed = css::computed_background_list(property, text, cc);
+        return computed.empty() ? std::string{text} : computed;
+    }
     if (is_shadow(property)) {
         if (ascii_iequals(text, "none")) { return {}; }
         const bool box = property == "box-shadow";
@@ -697,6 +722,7 @@ struct decomposed2d {
         interpolable = false;
         return std::string{p < 0.5 ? from : to};
     };
+    if (repeatable(property)) { repeat_to_match(lists_a, lists_b); }
     const bool shadow = is_shadow(property);
     if (shadow) {
         // The shorter shadow list is padded at its end to the longer one's
@@ -753,8 +779,9 @@ struct decomposed2d {
     if (const std::optional<numeric_pair> n = numeric_of(underlying, value, ctx)) {
         return numeric_text(property, sum(n->a, n->b));
     }
-    const std::vector<std::string_view> lists_a = comma_items(underlying);
-    const std::vector<std::string_view> lists_b = comma_items(value);
+    std::vector<std::string_view> lists_a = comma_items(underlying);
+    std::vector<std::string_view> lists_b = comma_items(value);
+    if (repeatable(property)) { repeat_to_match(lists_a, lists_b); }
     if (lists_a.size() != lists_b.size() || lists_a.empty()) { return std::string{value}; }
     std::string out;
     for (std::size_t i = 0; i < lists_a.size(); ++i) {
@@ -793,25 +820,45 @@ struct decomposed2d {
         return std::string{trim(from, html_whitespace)};
     }
     bool interpolable = true;
-    return interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
-                            p, ctx, interpolable);
+    return interpolate_pair(property, computed_shape(property, from, ctx),
+                            computed_shape(property, to, ctx), p, ctx, interpolable);
 }
 
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
                                      std::string_view to) {
     bool interpolable = true;
     const css::length_context ctx;
-    (void)interpolate_pair(property, computed_shape(property, from), computed_shape(property, to),
-                           0.5, ctx, interpolable);
+    (void)interpolate_pair(property, computed_shape(property, from, ctx),
+                           computed_shape(property, to, ctx), 0.5, ctx, interpolable);
     return interpolable;
+}
+
+[[nodiscard]] std::string with_currentcolor(std::string_view value, std::string_view color) {
+    static constexpr std::string_view word = "currentcolor";
+    std::string out;
+    std::size_t i = 0;
+    const auto boundary = [](char c) {
+        return !(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_');
+    };
+    while (i < value.size()) {
+        if (value.size() - i >= word.size() && ascii_iequals(value.substr(i, word.size()), word) &&
+            (i == 0 || boundary(value[i - 1])) &&
+            (i + word.size() == value.size() || boundary(value[i + word.size()]))) {
+            out += color;
+            i += word.size();
+            continue;
+        }
+        out += value[i++];
+    }
+    return out;
 }
 
 [[nodiscard]] std::string composite_text(std::string_view property, std::string_view underlying,
                                          std::string_view value, composite_op op,
                                          const css::length_context & ctx) {
     if (op == composite_op::replace) { return std::string{value}; }
-    const std::string base = computed_shape(property, trim(underlying, html_whitespace));
-    const std::string added = computed_shape(property, trim(value, html_whitespace));
+    const std::string base = computed_shape(property, trim(underlying, html_whitespace), ctx);
+    const std::string added = computed_shape(property, trim(value, html_whitespace), ctx);
     if (appends(property)) {
         // The underlying list first, then the keyframe's; `none` on either
         // side is the empty list and contributes nothing.
