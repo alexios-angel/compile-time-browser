@@ -113,8 +113,7 @@ void test_interpolation() {
     CHECK(interpolate_text("aspect-ratio", "auto", "2 / 1", 0.4, context) == "auto");
     CHECK(interpolate_text("aspect-ratio", "auto 1 / 2", "auto 2 / 1", 0.5, context) ==
           "auto 1 / 1");
-    CHECK(interpolate_text("perspective-origin", "50% 50%", "20px 20px", 1, context) ==
-          "20px 20px");
+    CHECK(interpolate_text("border-image-width", "10%", "20px", 1, context) == "calc(0% + 20px)");
     CHECK(interpolate_text("border-left-width", "medium", "23px", -0.3, context) == "0px");
     CHECK(interpolate_text("border-top-left-radius", "10px", "20px", 0.3, context) == "13px");
     CHECK(interpolate_text("border-top-left-radius", "10px", "20px 40px", 0.5, context) ==
@@ -187,6 +186,14 @@ void test_composition() {
                          composite_op::add, context) == "100px 100px, 300px 300px");
     // The individual transform properties: a scale multiplies, `none` is 1 1 1.
     CHECK(composite_text("scale", "1 2 3", "4 5 6", composite_op::add, context) == "4 10 18");
+    CHECK(composite_text("rotate", "1 2 3 90deg", "none", composite_op::add, context) ==
+          "1 2 3 90deg");
+    CHECK(composite_text("rotate", "1 2 3 90deg", "2 4 6 270deg", composite_op::add, context)
+              .ends_with(" 360deg"));
+    CHECK(composite_text("rotate", "x 90deg", "y 90deg", composite_op::add, context)
+              .ends_with(" 120deg"));
+    CHECK(interpolate_text("rotate", "3 6 9 360deg", "0 1 0 100deg", 0.25, context) ==
+          "0 1 0 25deg");
     CHECK(composite_text("scale", "none", "4 5 6", composite_op::accumulate, context) == "4 5 6");
     CHECK(composite_text("scale", "2", "2", composite_op::accumulate, context) == "3 3 1");
     CHECK(interpolate_text("scale", "none", "4 3 2", 0.125, context) == "1.375 1.25 1.125");

@@ -226,10 +226,8 @@ struct numeric_pair {
 // (random-in-animations).
 [[nodiscard]] css::calc_result mix(const css::calc_result & a, const css::calc_result & b,
                                    double p) {
-    // At 0 and 1 the value IS the endpoint: `50% 50%` to `20px 20px` ends
-    // at `20px`, not `calc(0% + 20px)`.
-    if (p == 0) { return a; }
-    if (p == 1) { return b; }
+    // A mix keeps both terms at 0 and 1 too: `10%` to `20px` ends at
+    // `calc(0% + 20px)`, which is what a computed length-percentage is.
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     css::calc_result out;
     out.type = a.type;
@@ -748,8 +746,8 @@ struct decomposed2d {
     if (a->empty() && b->empty()) { return "none"; }
     // The endpoints are themselves, as written: `translateY(90%)` at 1 is
     // `translateY(90%)` and not its two-argument spelling.
-    if (p == 0) { return std::string{from}; }
-    if (p == 1) { return std::string{to}; }
+    if (p == 0 && !a->empty()) { return std::string{from}; }
+    if (p == 1 && !b->empty()) { return std::string{to}; }
     const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     const std::size_t shorter = std::min(a->size(), b->size());
     bool matched = true;
@@ -953,8 +951,9 @@ struct rotation {
     if (a->angle == 0) { a->x = b->x, a->y = b->y, a->z = b->z; }
     if (b->angle == 0) { b->x = a->x, b->y = a->y, b->z = a->z; }
     const auto text = [](double x, double y, double z, double angle) {
-        return css::serialize_number(x) + " " + css::serialize_number(y) + " " +
-               css::serialize_number(z) + " " + css::serialize_number(angle) + "deg";
+        const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // no `-0`
+        return css::serialize_number(tidy(x)) + " " + css::serialize_number(tidy(y)) + " " +
+               css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) + "deg";
     };
     const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
     if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
@@ -984,6 +983,10 @@ struct rotation {
     }
     const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
     for (double & v : q) { v /= norm; }
+    // The canonical spelling of a rotation is the one under a half turn.
+    if (q[3] < 0) {
+        for (double & v : q) { v = -v; }
+    }
     const double angle = 2 * std::acos(std::clamp(q[3], -1.0, 1.0));
     const double s = std::sin(angle / 2);
     if (std::fabs(s) < 1e-9) { return text(0, 0, 1, 0); }
@@ -1226,6 +1229,50 @@ struct rotation {
         if (base_none) { return added; }
         if (added_none) { return base; }
         return base + (is_shadow(property) ? ", " : " ") + added;
+    }
+    if (property == "rotate") {
+        // CSS Transforms 2 §7.2: `none` adds nothing; about one axis the
+        // angles sum; about two the rotations compose as quaternions.
+        std::optional<rotation> a = rotation_of(base, ctx);
+        std::optional<rotation> b = rotation_of(added, ctx);
+        if (!a || !b) { return added; }
+        if (b->angle == 0) { return base; }
+        if (a->angle == 0) { return added; }
+        const auto unit = [](rotation & r) {
+            const double n = std::hypot(r.x, r.y, r.z);
+            if (n == 0) { return false; }
+            r.x /= n, r.y /= n, r.z /= n;
+            return true;
+        };
+        if (!unit(*a) || !unit(*b)) { return added; }
+        const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+        const auto text = [](double x, double y, double z, double angle) {
+            const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // no `-0`
+            return css::serialize_number(tidy(x)) + " " + css::serialize_number(tidy(y)) + " " +
+                   css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) +
+                   "deg";
+        };
+        if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
+            return text(a->x, a->y, a->z, a->angle + b->angle);
+        }
+        // q = qb * qa: the underlying rotation first, then the keyframe's.
+        const auto quaternion = [](const rotation & r) {
+            const double half = radians(r.angle) / 2;
+            return std::array<double, 4>{r.x * std::sin(half), r.y * std::sin(half),
+                                         r.z * std::sin(half), std::cos(half)};
+        };
+        const std::array<double, 4> qa = quaternion(*a), qb = quaternion(*b);
+        std::array<double, 4> q{qb[3] * qa[0] + qb[0] * qa[3] + qb[1] * qa[2] - qb[2] * qa[1],
+                                qb[3] * qa[1] - qb[0] * qa[2] + qb[1] * qa[3] + qb[2] * qa[0],
+                                qb[3] * qa[2] + qb[0] * qa[1] - qb[1] * qa[0] + qb[2] * qa[3],
+                                qb[3] * qa[3] - qb[0] * qa[0] - qb[1] * qa[1] - qb[2] * qa[2]};
+        if (q[3] < 0) {
+            for (double & v : q) { v = -v; }
+        }
+        const double angle = 2 * std::acos(std::clamp(q[3], -1.0, 1.0));
+        const double sn = std::sin(angle / 2);
+        if (std::fabs(sn) < 1e-9) { return text(0, 0, 1, 0); }
+        return text(q[0] / sn, q[1] / sn, q[2] / sn, angle * 180.0 / std::numbers::pi);
     }
     if (property == "scale") {
         // CSS Transforms 2 §7: scales add by multiplying component by
