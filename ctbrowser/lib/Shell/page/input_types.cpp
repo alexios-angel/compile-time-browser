@@ -4,6 +4,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/page/input_types.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 
 #include <charconv>
 #include <cmath>
@@ -448,13 +449,12 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
         return type_number_to_text(type, number);
     }
     if (type == "color") {
-        // A "valid simple color" - `#` and six hex digits - lowercased; else black.
-        if (value.size() == 7 && value[0] == '#') {
-            bool hex = true;
-            for (const char ch : value.substr(1)) { hex = hex && hex_value(ch) >= 0; }
-            if (hex) { return ascii_lower_copy(value); }
-        }
-        return "#000000";
+        // HTML's "update a color well control color": the value parsed as a
+        // CSS <color> (opaque black when it is not one) and serialised for
+        // the control's colour space. The `colorspace` and `alpha` attributes
+        // are not threaded through here yet, so this is the limited-sRGB,
+        // opaque form: `#rrggbb`.
+        return style::css::sanitize_color(value, false, false);
     }
     if (type == "date" || type == "month" || type == "week" || type == "time" ||
         type == "datetime-local") {

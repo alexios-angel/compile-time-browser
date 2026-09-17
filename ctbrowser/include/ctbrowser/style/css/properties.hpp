@@ -226,6 +226,13 @@ struct srgb_color {
 };
 [[nodiscard]] std::optional<srgb_color> resolve_color(std::string_view specified,
                                                       const color_context & ctx);
+// HTML's "serialize a color well control color" over a parsed `value`, for
+// `<input type=color>`: text that is not a `<color>` (or needs a context,
+// like `currentcolor`) is opaque black; without `alpha` the colour is made
+// opaque; `display_p3` gives `color(display-p3 r g b / a)`, otherwise the
+// colour is sRGB at eight bits per channel - `#rrggbb` without `alpha`,
+// `color(srgb r g b / a)` with it.
+[[nodiscard]] std::string sanitize_color(std::string_view value, bool display_p3, bool alpha);
 
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.

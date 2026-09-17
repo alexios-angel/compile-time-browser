@@ -162,7 +162,11 @@ void test_relative_colours_and_mixing() {
     ok("rgb(from rgb(20%, 40%, 60%, 80%) r g b / alpha)",
        "rgb(from rgba(51, 102, 153, 0.8) r g b / alpha)");
     ok("rgb(from rebeccapurple b calc(r * .5) 10)", "rgb(from rebeccapurple b calc(0.5 * r) 10)");
-    ok("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(from rgba(128, 128, 128, 0.5) h s l)");
+    // An origin keeps the modern form when rgb() would lose a missing channel
+    // or a powerless hue - the computed value is computed from this text.
+    ok("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(from hsl(120 none 50 / 0.5) h s l)");
+    ok("hsl(from hsl(120 0% 50%) h s l)", "hsl(from hsl(120 0 50) h s l)");
+    ok("hsl(from hsl(120 50% 50%) h s l)", "hsl(from rgb(64, 191, 64) h s l)");
     ok("alpha(from hsl(120 50% 50%) / 0.5)", "alpha(from rgb(64, 191, 64) / 0.5)");
     ok("alpha(from currentcolor / calc(alpha + 0.1))",
        "alpha(from currentcolor / calc(0.1 + alpha))");
@@ -264,6 +268,30 @@ void test_the_computed_value() {
     CHECK_EQ(serialize_color("12px"), std::string{});
 }
 
+// HTML's colour well serialisation (html/semantics/forms/the-input-element/
+// color.window.js): eight bits per channel in sRGB, `#rrggbb` when opaque.
+void test_the_color_well() {
+    using ctbrowser::style::css::sanitize_color;
+    CHECK_EQ(sanitize_color("", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color(" #FFFFFF ", false, false), std::string{"#ffffff"});
+    CHECK_EQ(sanitize_color("#fff", false, false), std::string{"#ffffff"});
+    CHECK_EQ(sanitize_color("#ffffff;", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color("crimson", false, false), std::string{"#dc143c"});
+    CHECK_EQ(sanitize_color("currentColor", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color("inherit", false, false), std::string{"#000000"});
+    CHECK_EQ(sanitize_color("#ffffff08", false, false), std::string{"#ffffff"});
+    CHECK_EQ(sanitize_color("#ffffff08", false, true), std::string{"color(srgb 1 1 1 / 0.031373)"});
+    CHECK_EQ(sanitize_color("transparent", false, true), std::string{"color(srgb 0 0 0 / 0)"});
+    CHECK_EQ(sanitize_color("rgb(1,1,1,0.5)", false, true),
+             std::string{"color(srgb 0.003922 0.003922 0.003922 / 0.501961)"});
+    CHECK_EQ(sanitize_color("rgb(1,1,1,0.5)", true, false),
+             std::string{"color(display-p3 0.003922 0.003922 0.003922)"});
+    CHECK_EQ(sanitize_color("color(display-p3 3 none .2 / .6)", true, true),
+             std::string{"color(display-p3 3 0 0.2 / 0.6)"});
+    computed_near(sanitize_color("crimson", true, false),
+                  "color(display-p3 0.791711 0.191507 0.257367)", 0.0001);
+}
+
 } // namespace
 
 int main() {
@@ -271,5 +299,6 @@ int main() {
     test_lab_lch_and_color();
     test_relative_colours_and_mixing();
     test_the_computed_value();
+    test_the_color_well();
     REPORT("css_values_color");
 }
