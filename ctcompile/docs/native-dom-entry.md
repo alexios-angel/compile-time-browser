@@ -392,15 +392,29 @@ own data keys. Fresh `{}` constructs the explicit object alternative of
 keys, sort array-index keys first, and retain `__proto__` as an own data key.
 This is distinct from assignment through its inherited setter.
 
-Every mutable target must be a direct fresh local allocation, with all writes in
-its source block before any branch yield, source spread or return can copy it.
-No descendant property access, identity observation, capture or later mutation is
-admitted. These complete-use restrictions make the owning value result equivalent
-to JavaScript's shallow spread without introducing a shared object graph. Parsed
-nested trees retain the public Core representation. Immutable saved cells may be
-read inside structured branches only when their initialization precedes the whole
-branch; conditional and late assignments refuse. Generic JSON/String spreads,
-parsed/branch-result targets and dataset/config dynamic writes remain unsupported.
+Constant String-key assignments on the same fresh object also compile, including
+writes inside proved branches and dataset loops. Values must be owning JSON trees,
+Strings, optional Strings, null, Boolean or Number. Empty keys, embedded NULs,
+`constructor` and numeric-looking names retain their String identity. A shared
+member-update helper preserves first position/last value for ordinary keys and
+numeric index order for assignment and spread. Assignment to `__proto__` refuses;
+spread's own-data definition does not prove the inherited setter's behavior.
+
+Every mutable target must be a direct fresh local allocation. A spread stays in
+its allocation block. Every write must finish before any branch yield, source
+spread, value assignment or return can snapshot the target. Conditional and loop
+writes are accepted only when their entire containing region precedes each such
+observation; an observation inside the target's mutation loop refuses. No descendant
+property access, identity observation, capture or later mutation is admitted. These
+complete-use restrictions make the owning result equivalent to JavaScript's shallow
+aliases under the supported observations, without introducing a shared object graph.
+Parsed nested trees retain the public Core representation, including parse-order
+keys; a JSON observation applies JavaScript enumeration to those keys.
+
+Immutable saved cells may be read inside structured branches only when their
+initialization precedes the whole branch; conditional and late cell assignments
+refuse. Generic JSON/String spreads, parsed/branch-result targets, Undefined and
+borrowed assignment values, and dataset/config dynamic writes remain unsupported.
 
 Direct entries with inert declaration wrappers may use structured `if`/`else`
 branches through the existing SCF lowering. Each condition must be a proved Boolean or a supported scalar truthiness

@@ -1,6 +1,49 @@
 # What native Bootstrap needs next
 
-## Current boundary: result assignment after guarded M loops, 2026-09-17
+## Current boundary: Unicode keys after ordered result writes, 2026-09-17
+
+**`e8d5aae0` / `1576568d`** complete the next documented fresh-object seam:
+receiver-only source writes survive structured branches/loops, and the complete
+DOM proof admits constant non-`__proto__` String-key assignments with owning values.
+Every write must finish before its target is observed; snapshots inside a mutation
+loop refuse. Assignment and spread share ordered member updates. Results remain
+public owning `ctbrowser::json_value` trees without Script/VM/GC dependencies.
+
+The new assignment driver passes **six sources / 111 Node-VM observations / eight
+GCC-Clang binaries / 88 refusals**, both providers/policies/layouts and lifetime
+sanitizers. It also checks 111 Node accessor traces. Both earlier JSON refusal
+sources retain their exact bodies as positives. Parsed nested trees keep the public
+Core representation; the observation adapter checks raw result-key order before
+applying JS JSON enumeration. No browser/runtime semantics changed.
+
+**`eec9fcb9`** independently preserves exact negative Number Sub snapshots:
+**20 source sites / eight sound / zero violations / eight of 12 precision**, plus
+27 CFG/SCF rows. String coercions and unbounded/mutable latches remain refused.
+
+Full **310/310 CTests (2087.43s) / 260/260 lit (1822.86s)** pass, with no skips;
+all **1,796 input hashes** match locally/remotely. Fresh Bootstrap stays **19/574
+native / 0 of 47 globals**, Button **4/86 / 22 lifecycle observations**, and the
+original DOM Data session passes its **7/7** admission and lifetime assertions.
+Stable formatting passes **890/108/105** files; pinned formatting retains the
+same **nine unchanged files / 26 diagnostics**. No WPT/test262 corpus rerun.
+
+**Exact next:** 44 admission probes show fixed result writes compile one function
+and original M fixed-key dataset loops compile two, in all four provider/policy
+modes. Full H advances to the same unsupported property read as isolated Unicode
+`charAt(0).toLowerCase() + slice(1)`. Dynamic and `__proto__` writes retain their
+explicit final assignment diagnostic. The current VM's byte/ASCII String behavior
+cannot supply JavaScript Unicode semantics; the previous É/İ discrepancy was not
+remeasured. Coordinate a public non-VM Unicode seam with the browser work.
+
+A Node-only review suggests a later narrow proof for original H's single possible
+`bs__proto__` key and final own-data observations. Generic repeated prototype writes
+or previous spreads defeat that shortcut; it is not implemented or native-validated.
+Full H, Config/inheritance/defaults, retained callbacks and the application driver
+remain open. Claude's round-six/seven runtime changes are outside this frozen oracle.
+See [HANDOFF](HANDOFF.md) and `/tmp/ctcompile-assignment/` for measured results,
+failed fixtures, source hashes, generated C++, probes and prototype counterexamples.
+
+## Previous boundary: result assignment after guarded M loops, 2026-09-17
 
 **`0a186321`** proves helper/capture initialization before enclosing structured
 branches and loops, preserving actual arguments and URI/JSON exception continuations.
