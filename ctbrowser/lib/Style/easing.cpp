@@ -952,11 +952,42 @@ struct rotation {
     if (!unit(*a) || !unit(*b)) { return std::nullopt; }
     if (a->angle == 0) { a->x = b->x, a->y = b->y, a->z = b->z; }
     if (b->angle == 0) { b->x = a->x, b->y = a->y, b->z = a->z; }
+    const auto text = [](double x, double y, double z, double angle) {
+        return css::serialize_number(x) + " " + css::serialize_number(y) + " " +
+               css::serialize_number(z) + " " + css::serialize_number(angle) + "deg";
+    };
     const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
-    if (!near(a->x, b->x) || !near(a->y, b->y) || !near(a->z, b->z)) { return std::nullopt; }
-    const double angle = (1 - p) * a->angle + p * b->angle;
-    return css::serialize_number(a->x) + " " + css::serialize_number(a->y) + " " +
-           css::serialize_number(a->z) + " " + css::serialize_number(angle) + "deg";
+    if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
+        return text(a->x, a->y, a->z, (1 - p) * a->angle + p * b->angle);
+    }
+    // Different axes: the two rotations as unit quaternions, slerped
+    // (CSS Transforms 2 §9's interpolation of rotate3d()), then back to an
+    // axis and an angle.
+    const auto quaternion = [](const rotation & r) {
+        const double half = radians(r.angle) / 2;
+        return std::array<double, 4>{r.x * std::sin(half), r.y * std::sin(half),
+                                     r.z * std::sin(half), std::cos(half)};
+    };
+    std::array<double, 4> q1 = quaternion(*a), q2 = quaternion(*b);
+    double dot = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
+    if (dot < 0) {
+        for (double & v : q2) { v = -v; }
+        dot = -dot;
+    }
+    dot = std::min(dot, 1.0);
+    const double theta = std::acos(dot);
+    std::array<double, 4> q;
+    for (std::size_t i = 0; i < 4; ++i) {
+        q[i] = theta < 1e-6 ? (1 - p) * q1[i] + p * q2[i]
+                            : (std::sin((1 - p) * theta) * q1[i] + std::sin(p * theta) * q2[i]) /
+                                  std::sin(theta);
+    }
+    const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    for (double & v : q) { v /= norm; }
+    const double angle = 2 * std::acos(std::clamp(q[3], -1.0, 1.0));
+    const double s = std::sin(angle / 2);
+    if (std::fabs(s) < 1e-9) { return text(0, 0, 1, 0); }
+    return text(q[0] / s, q[1] / s, q[2] / s, angle * 180.0 / std::numbers::pi);
 }
 
 // --- ratios ---

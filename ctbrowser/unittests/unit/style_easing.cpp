@@ -121,7 +121,10 @@ void test_interpolation() {
           "15px 25px");
     CHECK(interpolate_text("rotate", "3 6 9 360deg", "none", 0.75, context) ==
           "0.267261 0.534522 0.801784 90deg");
-    CHECK(interpolate_text("rotate", "x 90deg", "y 90deg", 0.5, context) == "y 90deg");
+    CHECK(interpolate_text("rotate", "45deg", "-1 1 0 60deg", 0.125, context)
+              .starts_with("-0.13645"));
+    CHECK(interpolate_text("rotate", "45deg", "-1 1 0 60deg", 0.125, context)
+              .ends_with(" 40.603733deg"));
     // A filter list function by function, padded with each function's lacuna
     // and clamped (Filter Effects 1 §11.2).
     CHECK(interpolate_text("filter", "hue-rotate(0deg) blur(6px)", "hue-rotate(180deg) blur(10px)",
