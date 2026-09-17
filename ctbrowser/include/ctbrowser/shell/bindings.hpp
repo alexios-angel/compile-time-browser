@@ -1767,6 +1767,7 @@ private:
     canvas_store * canvases_;
     form_store * forms_;
     std::function<void()> on_mutation_;
+    bool settling_types_ = false; // mutated() is settling <input> types (see it)
     std::function<void(node_id)> on_focus_;
     std::function<void(const std::string &)> on_alert_;
     std::function<void(node_id)> on_activate_;

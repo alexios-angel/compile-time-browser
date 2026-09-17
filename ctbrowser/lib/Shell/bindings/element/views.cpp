@@ -496,33 +496,58 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
         // NOT A <button>: its `value` is a plain reflection of the attribute
         // (HTMLButtonElement, a row in the table), not a control's state, and
-        // an own accessor here would shadow the row on the prototype.
-        if (control_kind_of(tag, type) != control_kind::none && tag != "button") {
-            obj.define_accessor("value",
-                                value::object(cx.allocate<script::native_object>(
-                                    "value",
-                                    [this, id](context & c, std::span<value>) {
-                                        const auto read = doc_->read();
-                                        return c.string(forms_->state_of(read, *atoms_, id).value);
-                                    })),
-                                value::object(cx.allocate<script::native_object>(
-                                    "value", [this, id](context & c, std::span<value> a) {
-                                        const auto read = doc_->read();
-                                        control_state & control =
-                                            forms_->state_of(read, *atoms_, id);
-                                        control.value = arg_string(c, a, 0);
-                                        control.caret = control.value.size();
-                                        control.selection = control.caret;
-                                        // An assignment DIRTIES the control, so the `value`
-                                        // attribute stops being the answer - otherwise setting
-                                        // it to "" would be undone by the next read.
-                                        control.value_edited = true;
-                                        // The browser has to learn a control changed, or the
-                                        // paint is stale until something else marks it.
-                                        wrote_to_control_ = true;
-                                        mutated();
-                                        return value::undefined();
-                                    })));
+        // an own accessor here would shadow the row on the prototype. EVERY
+        // <input> though, whatever its type today: `input.type` changes and
+        // the store follows the type state (HTML 4.10.5.1's value modes), so
+        // the accessor cannot be decided by the type the wrapper was made at.
+        if (tag == "input" || control_kind_of(tag, type) != control_kind::none) {
+            obj.define_accessor(
+                "value",
+                value::object(cx.allocate<script::native_object>(
+                    "value",
+                    [this, id](context & c, std::span<value>) {
+                        const auto read = doc_->read();
+                        return c.string(forms_->state_of(read, *atoms_, id).value);
+                    })),
+                value::object(cx.allocate<script::native_object>(
+                    "value", [this, id](context & c, std::span<value> a) {
+                        // `[LegacyNullToEmptyString]`: null is "", not the word.
+                        const value given = arg(a, 0);
+                        std::string text = given.is_null() ? std::string{} : c.to_string(given);
+                        std::string mode;
+                        {
+                            const auto read = doc_->read();
+                            mode = input_types::value_mode_of(
+                                forms_->state_of(read, *atoms_, id).type);
+                        }
+                        if (mode == "filename") {
+                            // HTML 4.10.5.3: only the empty string may be
+                            // assigned, and it empties the selected files.
+                            if (!text.empty()) {
+                                throw_dom_exception(c, "InvalidStateError",
+                                                    "the value of a file input can only "
+                                                    "be set to the empty string");
+                            }
+                            return value::undefined();
+                        }
+                        if (mode == "default" || mode == "default/on") {
+                            // The default modes WRITE THE CONTENT ATTRIBUTE.
+                            (void)doc_->set_attribute(id, atoms_->intern("value"), text);
+                            mutated();
+                            return value::undefined();
+                        }
+                        const auto read = doc_->read();
+                        // An assignment DIRTIES the control, so the `value`
+                        // attribute stops being the answer - otherwise setting
+                        // it to "" would be undone by the next read - and the
+                        // type's sanitization runs over what was assigned.
+                        forms_->assign_value(read, *atoms_, id, std::move(text));
+                        // The browser has to learn a control changed, or the
+                        // paint is stale until something else marks it.
+                        wrote_to_control_ = true;
+                        mutated();
+                        return value::undefined();
+                    })));
             obj.define_accessor("checked",
                                 value::object(cx.allocate<script::native_object>(
                                     "checked",

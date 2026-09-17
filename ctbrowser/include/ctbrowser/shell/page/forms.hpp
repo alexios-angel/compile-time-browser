@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -9,6 +10,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/shell/page/input_types.hpp>
 #include <ctbrowser/style/style.hpp>
 
 // Form control state.
@@ -53,6 +55,16 @@ struct control_state {
     std::size_t selection = 0; // anchor; equal to caret means no selection
     bool checked = false;
     bool value_edited = false; // once true, the `value` attribute stops being the answer
+    // THE INPUT TYPE STATE `value` WAS LAST SANITISED FOR (HTML 4.10.5.1), so
+    // state_of notices a type change on the next read and runs the "type
+    // attribute changes" steps and the new state's sanitization. Empty until
+    // first seeded; the tag for a control that is not an <input>.
+    std::string type;
+    // A `value` content attribute those steps want written (step 1: a value
+    // carried into the default modes). The store reads under a read
+    // transaction and cannot write; the bindings' `value` accessor does, and
+    // until then this IS the value the default mode reads.
+    std::optional<std::string> pending_attribute;
     // WHERE THE FIELD IS LOOKING. A control's value can be bigger than the box
     // it is drawn in, in either direction, and these say which part of it is on
     // screen. View state, so it belongs here beside the caret rather than on
@@ -79,6 +91,15 @@ public:
     [[nodiscard]] control_state & state_of(const read_txn & txn, atom_table & atoms, node_id id);
 
     [[nodiscard]] const control_state * find(node_id id) const;
+
+    // After a DOM write: every seeded <input> whose type attribute moved runs
+    // its type-change steps now (state_of does), and the `value` attributes
+    // those steps left pending are handed to `write` - the store cannot write
+    // under its read transaction, so the caller does, outside one.
+    // ponytail: O(seeded controls) per mutation; index by type write if a
+    // page with thousands of controls ever mutates in a storm.
+    [[nodiscard]] std::vector<std::pair<node_id, std::string>> settle_types(const read_txn & txn,
+                                                                            atom_table & atoms);
 
     void clear() { states_.clear(); }
 
@@ -121,6 +142,10 @@ public:
     // to the end, which is where a browser puts it, and the control counts as
     // edited so the `value` attribute stops being the answer.
     static void set_value(control_state & control, std::string text);
+    // The same through the input's type state: the value sanitization
+    // algorithm runs over `text` first (HTML 4.10.5.1 - `input.value = "a\nb"`
+    // is "ab" on a text input and "" on a number one).
+    void assign_value(const read_txn & txn, atom_table & atoms, node_id id, std::string text);
 
     // Insert typed text at the caret, replacing any selection.
     void insert_text(control_state & control, std::string_view text);

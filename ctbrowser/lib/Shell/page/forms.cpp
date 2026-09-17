@@ -5,9 +5,56 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// An <input>'s type state, or the tag of any other control.
+[[nodiscard]] std::string type_of(const read_txn & txn, atom_table & atoms, node_id id) {
+    const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
+    if (tag != "input") { return std::string{tag}; }
+    return input_types::type_state_of(txn.attribute_value(id, atoms.intern("type")));
+}
+
+// The value sanitization algorithm of the control's type over `text`.
+[[nodiscard]] std::string sanitized(const read_txn & txn, atom_table & atoms, node_id id,
+                                    std::string_view type, std::string text) {
+    if (atoms.text(txn.tag(id).value_or(atom{})) != "input") { return text; }
+    return input_types::sanitize_value(type, std::move(text),
+                                       txn.attribute_value(id, atoms.intern("min")),
+                                       txn.attribute_value(id, atoms.intern("max")),
+                                       txn.attribute_value(id, atoms.intern("step")));
+}
+
+} // namespace
+
 control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, node_id id) {
     const auto it = states_.find(id.key());
     if (it != states_.end()) {
+        control_state & held = it->second;
+        const std::string type = type_of(txn, atoms, id);
+        if (held.type != type) {
+            // HTML 4.10.5, "when the type attribute changes": a value carried
+            // into a default mode goes to the content attribute; a default mode
+            // becoming the value mode re-reads it, undirtied; the file state
+            // starts empty; and the new state sanitises what is left.
+            const std::string_view was = input_types::value_mode_of(held.type);
+            const std::string_view now = input_types::value_mode_of(type);
+            if (was == "value" && !held.value.empty() &&
+                (now == "default" || now == "default/on")) {
+                held.pending_attribute = held.value;
+            } else if ((was == "default" || was == "default/on") && now == "value") {
+                held.value = held.pending_attribute
+                                 ? *held.pending_attribute
+                                 : std::string{txn.attribute_value(id, atoms.intern("value"))};
+                held.value_edited = false;
+            } else if (was != "filename" && now == "filename") {
+                held.value.clear();
+                held.value_edited = false;
+            }
+            held.type = type;
+            held.value = sanitized(txn, atoms, id, type, std::move(held.value));
+            held.caret = std::min(held.caret, held.value.size());
+            held.selection = std::min(held.selection, held.value.size());
+        }
         // THE ATTRIBUTE IS STILL THE ANSWER UNTIL SOMETHING EDITS THE CONTROL.
         //
         // The state used to be seeded once, when the control was first asked
@@ -21,13 +68,27 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
         // being the answer and re-reading it would undo their work. A textarea
         // takes its value from its children and a select from its options, so
         // neither has an attribute to re-read.
-        control_state & held = it->second;
-        if (!held.value_edited) {
+        // THE DEFAULT MODES ARE THE ATTRIBUTE, dirty or not (a submit button's
+        // `.value = x` writes the attribute); "on" for a checkbox or radio
+        // with none (the default/on mode's answer).
+        const std::string_view mode = input_types::value_mode_of(type);
+        if (mode == "default" || mode == "default/on") {
+            if (held.pending_attribute) {
+                held.value = *held.pending_attribute;
+            } else {
+                const atom value_attr = atoms.intern("value");
+                held.value = std::string{txn.attribute_value(id, value_attr)};
+                if (mode == "default/on" && !txn.has_attribute(id, value_attr)) {
+                    held.value = "on";
+                }
+            }
+        } else if (!held.value_edited) {
             const std::string_view tag = atoms.text(txn.tag(id).value_or(atom{}));
-            if (tag != "textarea" && tag != "select") {
+            if (tag != "textarea" && tag != "select" && mode != "filename") {
                 const std::string_view attribute = txn.attribute_value(id, atoms.intern("value"));
-                if (attribute != held.value) {
-                    held.value = std::string{attribute};
+                std::string fresh = sanitized(txn, atoms, id, type, std::string{attribute});
+                if (fresh != held.value) {
+                    held.value = std::move(fresh);
                     held.caret = held.value.size();
                     held.selection = held.caret;
                 }
@@ -49,10 +110,41 @@ control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, n
     } else {
         seeded.value = txn.attribute_value(id, atoms.intern("value"));
     }
+    seeded.type = type_of(txn, atoms, id);
+    const std::string_view mode = input_types::value_mode_of(seeded.type);
+    if (mode == "filename") {
+        seeded.value.clear();
+    } else if (mode == "default/on" && !txn.has_attribute(id, atoms.intern("value"))) {
+        seeded.value = "on";
+    } else if (mode == "value") {
+        seeded.value = sanitized(txn, atoms, id, seeded.type, std::move(seeded.value));
+    }
     seeded.checked = txn.has_attribute(id, atoms.intern("checked"));
     seeded.caret = seeded.value.size();
     seeded.selection = seeded.caret;
     return states_.emplace(id.key(), std::move(seeded)).first->second;
+}
+
+std::vector<std::pair<node_id, std::string>> form_store::settle_types(const read_txn & txn,
+                                                                      atom_table & atoms) {
+    std::vector<std::pair<node_id, std::string>> writes;
+    const atom input_tag = atoms.intern_lower("input");
+    for (auto & [key, held] : states_) {
+        const node_id id{static_cast<std::uint32_t>(key >> 32), static_cast<std::uint32_t>(key)};
+        if (txn.tag(id).value_or(atom{}) != input_tag) { continue; }
+        control_state & settled = state_of(txn, atoms, id);
+        if (settled.pending_attribute) {
+            writes.emplace_back(id, *settled.pending_attribute);
+            settled.pending_attribute.reset();
+        }
+    }
+    return writes;
+}
+
+void form_store::assign_value(const read_txn & txn, atom_table & atoms, node_id id,
+                              std::string text) {
+    control_state & control = state_of(txn, atoms, id);
+    set_value(control, sanitized(txn, atoms, id, control.type, std::move(text)));
 }
 
 const control_state * form_store::find(node_id id) const {

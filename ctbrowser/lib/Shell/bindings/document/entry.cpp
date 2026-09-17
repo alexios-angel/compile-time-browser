@@ -281,6 +281,22 @@ void dom_bindings::mutated() {
     record_mutations();
     // A "replace all" note is for the mutation it preceded and no other.
     replace_all_.reset();
+    // AN <input> WHOSE TYPE MOVED runs HTML 4.10.5's type-change steps now,
+    // and a `value` attribute those steps carry over is written here - the
+    // store reads under a read transaction and cannot. Guarded, because that
+    // write comes back through this funnel.
+    if (forms_ != nullptr && !settling_types_) {
+        settling_types_ = true;
+        std::vector<std::pair<node_id, std::string>> writes;
+        {
+            const auto txn = doc_->read();
+            writes = forms_->settle_types(txn, *atoms_);
+        }
+        for (const auto & [id, text] : writes) {
+            (void)doc_->set_attribute(id, atoms_->intern("value"), text);
+        }
+        settling_types_ = false;
+    }
     // An `<iframe>` can only appear, change its `src` or leave through a
     // mutation, so this is where the reconcile is told there is something to
     // look at. The walk itself is not done here: it needs the script context

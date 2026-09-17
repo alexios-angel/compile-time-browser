@@ -283,12 +283,41 @@ void test_output_and_textarea() {
 
 } // namespace
 
+// --- the value sanitization algorithm and the value modes, HTML 4.10.5.1 ----------
+
+void test_value_sanitization_and_type_change() {
+    // type-change-state.html, valueMode.html, number.html, range.html, color.html.
+    is("(function () { var i = document.createElement('input'); var o = [];"
+       " i.value = '  foo\\rbar  '; o.push(JSON.stringify(i.value));"
+       " i.type = 'url'; o.push(i.value); i.type = 'number'; o.push(i.value === '');"
+       " i.value = '50'; i.type = 'range'; o.push(i.value); i.type = 'color'; o.push(i.value);"
+       " i.value = '#ABCDEF'; o.push(i.value); i.type = 'submit'; o.push(i.value, "
+       "i.getAttribute('value'));"
+       " i.type = 'text'; o.push(i.value); i.value = 'typed'; i.type = 'checkbox'; "
+       "o.push(i.getAttribute('value'));"
+       " i.removeAttribute('value'); o.push(i.value); i.type = 'file'; o.push(i.value === '');"
+       " try { i.value = 'x'; } catch (e) { o.push(e.name); }"
+       " var n = document.createElement('input'); n.type = 'number'; n.value = 'abc'; "
+       "o.push(n.value === '');"
+       " n.setAttribute('value', '1e3'); o.push(n.value); n.setAttribute('value', '1d+2'); "
+       "o.push(n.value === '');"
+       " var r = document.createElement('input'); r.type = 'range'; r.min = '10'; r.max = '20';"
+       " r.value = '5'; o.push(r.value); r.value = 'junk'; o.push(r.value);"
+       " var d = document.createElement('input'); d.type = 'datetime-local'; d.value = "
+       "'2014-01-01 11:11:00'; o.push(d.value);"
+       " var t = document.createElement('input'); t.value = null; o.push(t.value === '');"
+       " return o.join(); })()",
+       "\"  foobar  \",foobar,true,50,#000000,#abcdef,#abcdef,#abcdef,#abcdef,typed,on,true,"
+       "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true");
+}
+
 int main() {
     test_select_options_and_selectedness();
     test_form_elements_and_named_access();
     test_labels_and_control();
     test_validity();
     test_input_numbers_and_dates();
+    test_value_sanitization_and_type_change();
     test_selection_api();
     test_form_data_and_submission();
     test_output_and_textarea();
