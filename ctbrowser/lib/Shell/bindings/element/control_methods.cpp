@@ -3036,8 +3036,8 @@ void dom_bindings::install_control_methods(context & cx) {
         // mode says.
         operation(
             which, "setRangeText", 1,
-            [this, at, selection_applies, selection_of, set_selection,
-             store_value](context & c, std::span<value> a) {
+            [this, at, selection_applies, selection_of, set_selection](context & c,
+                                                                       std::span<value> a) {
                 const auto where = at(c);
                 dom_bindings * b = where.first;
                 const node_id id = where.second;
@@ -3108,8 +3108,22 @@ void dom_bindings::install_control_methods(context & cx) {
                     if (old_end > start && old_end < end) { e = new_end; }
                 }
                 {
+                    // The value, with the selection LEFT WHERE IT WAS: the
+                    // replacement itself moves no boundary (HTML 4.10.19.7
+                    // step 12 sets the range afterwards), so `select` fires
+                    // only when that range differs from the one before the
+                    // call - a second identical setRangeText fires nothing
+                    // (select-event.html). store_value would have put the
+                    // caret at the end and made every call a change.
                     const auto txn = b->doc_->read();
-                    store_value(txn, b, id, text);
+                    control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+                    const std::size_t caret = std::min(held.caret, text.size());
+                    const std::size_t anchor = std::min(held.selection, text.size());
+                    held.value = std::move(text);
+                    held.caret = caret;
+                    held.selection = anchor;
+                    held.value_edited = true;
+                    b->wrote_to_control_ = true;
                 }
                 set_selection(c, b, id, static_cast<double>(s), static_cast<double>(e),
                               current.direction);

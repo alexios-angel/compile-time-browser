@@ -646,6 +646,12 @@ void context::resume(value coroutine, value with, bool rejected) {
             value * state = obj->find("__rejected");
             outcome = held == nullptr ? value::undefined() : *held;
             failed_outcome = state != nullptr && truthy(*state);
+            // ADOPTED, as far as the host's rejection tracker is concerned:
+            // this is the `then` a PromiseResolveThenableJob would have
+            // called (PerformPromiseThen step 9), and without it the fence's
+            // `Promise.reject(e)` - rejected, consumed here, never reacted to
+            // - was reported to the page as an unhandled rejection.
+            mark_promise_handled(returned);
         }
     }
     promise_settler_(*this, saved->promise, outcome, failed_outcome);

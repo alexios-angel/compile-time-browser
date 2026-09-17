@@ -441,19 +441,25 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 }
                 // A node may be assigned to ONE slot: taking it here takes it
                 // from wherever it was.
-                for (auto & [key, held] : manual_slots_) {
-                    if (key == slot.key()) { continue; }
-                    std::erase_if(held, [&](node_id one) {
-                        return std::ranges::find(assigned, one) != assigned.end();
-                    });
-                }
-                manual_slots_.insert_or_assign(slot.key(), std::move(assigned));
-                // A manual assignment moves nothing the write log sees: the
-                // slot's tree is recomputed on this mutation regardless.
                 {
                     const auto txn = doc_->read();
+                    for (auto & [key, held] : manual_slots_) {
+                        if (key == slot.key()) { continue; }
+                        const std::size_t before = held.size();
+                        std::erase_if(held, [&](node_id one) {
+                            return std::ranges::find(assigned, one) != assigned.end();
+                        });
+                        // A slot that lost a node - in this tree or another -
+                        // reports the loss as a slotchange too.
+                        if (held.size() != before && txn.contains(unpack(key))) {
+                            slot_roots_dirty_.push_back(root_of_tree(txn, unpack(key), false));
+                        }
+                    }
+                    // A manual assignment moves nothing the write log sees:
+                    // the slot's tree is recomputed on this mutation regardless.
                     slot_roots_dirty_.push_back(root_of_tree(txn, slot, false));
                 }
+                manual_slots_.insert_or_assign(slot.key(), std::move(assigned));
                 mutated();
                 return value::undefined();
             },

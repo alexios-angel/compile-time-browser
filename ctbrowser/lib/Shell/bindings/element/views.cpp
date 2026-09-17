@@ -888,9 +888,18 @@ void dom_bindings::install_style_accessor(context & cx) {
         const node_id id = owner.handle_of(self);
         if (!id) { return value::undefined(); }
         auto * wrapper = static_cast<script::object_object *>(self.as_heap());
-        if (const value * held = wrapper->find(key); held != nullptr) { return *held; }
+        // The cached view is THIS document's: a node adopted into another
+        // document keeps its wrapper, and a view built over the old document
+        // would write the old node (style-attr-update-across-documents.html).
+        constexpr std::string_view owner_key = "@@sym:ctbrowser:style-owner";
+        const value * held = wrapper->find(key);
+        const value * made_by = wrapper->find(owner_key);
+        if (held != nullptr && made_by != nullptr && made_by->bits() == owner.document_.bits()) {
+            return *held;
+        }
         const value made = owner.make_style_view(c, id);
         wrapper->define(std::string{key}, made, script::attr_none);
+        wrapper->define(std::string{owner_key}, owner.document_, script::attr_none);
         return made;
     };
     for (const char * interface : {"HTMLElement", "SVGElement", "MathMLElement"}) {
