@@ -25,6 +25,21 @@ took MediaQueryList (`194ea703`: an EventTarget, `change` on resize, a
 frame's own `matchMedia`) and the live ranges (`c1110fac`: DOM 5.5's range
 steps over the document's write log - dom/ranges Range-mutations-*).
 
+**Round eight, briefs written and waiting** (`~/Downloads/claude/wt/
+wpt11-session/round8-brief-*.md`), in order of what they unblock:
+- **REALM** - one realm per browsing context in the VM (a globals table +
+  global object every function records; `context::call` switches). The
+  single largest lever left: dom/ranges' five `Range-*Contents/insertNode`
+  files (4,600 subtests drive an iframe's `run()`), css/selectors
+  attribute-case (518), ~20 webappapis document.open files, the frame-
+  handler and cross-realm files. lib/Script - after J2's branch lands.
+- **FLAT** - the flat tree in style and layout: shadow trees get computed
+  styles and boxes, slots render their assigned nodes, scoped sheets. Every
+  shadow-dom layout file and every custom element that renders into its
+  shadow root. lib/Style/engine.cpp + lib/Layout/box_builder.cpp.
+- **CE2** - scoped custom element registries (custom-elements/registries/*,
+  25 files, ~330 subtests) and CE's leftovers.
+
 **What round six's agents left for their own areas** (from their reports):
 - CE: SCOPED REGISTRIES proper (custom-elements/registries/*, ~330
   subtests, 25 files) - `Element/ShadowRoot/Document.customElementRegistry`,
