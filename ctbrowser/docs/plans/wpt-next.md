@@ -30,9 +30,16 @@ merged tree is gated.
 - **No script runs in a frame** (`bindings/frames.cpp`'s header): the
   realm is shared, so a frame's `<script>` would be the page's. dom/ranges'
   five `Range-*Contents/insertNode/surroundContents` files (4,800 subtests)
-  drive an iframe's `run()`; webappapis' document.open files and the
-  cross-realm dom/events files want it too. Needs a per-frame global object
-  in the VM (a realm switch at every entry point) - a plan, not a brief.
+  drive an iframe's `run()`; css/selectors/attribute-selectors/attribute-
+  case/{semantics,syntax}.html (518 subtests) HARNESS_ERROR because the
+  quirks frame's `var mode = "quirks mode"` never ran and `global.mode`
+  read the page's; webappapis' document.open files and the cross-realm
+  dom/events files want it too. The shape it needs in the VM: a REALM (a
+  globals table + global object) that every function object records at
+  creation and that `context::call` switches to for the call's duration,
+  so a frame's closure invoked by the page still sees the frame's globals;
+  the bindings then run a frame's `<script>`s and handlers under the
+  frame's realm. Agent J's territory; one session's work.
 - **`encoding.py` needs a server**: dom/nodes/Document-characterSet-
   normalization-1/2 (636 subtests) load `encoding.py?label=` frames.
 - **The form named getter** (`form.button`, form-nameditem.html, 11) needs
