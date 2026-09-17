@@ -422,61 +422,73 @@ void dom_bindings::install_document_geometry(context & cx, script::object_object
         const node_id which = scrolling_element();
         return which ? wrap(c, which) : value::null();
     });
-    set_method(cx, doc, "elementFromPoint", [this](context & c, std::span<value> args) {
-        if (args.size() < 2) {
-            c.throw_error("TypeError", "elementFromPoint: 2 arguments required");
-            return value::undefined();
+    // The two coordinates are WebIDL `double`s: absent, NaN or infinite is a
+    // TypeError (elementFromPoint-parameters).
+    const auto coordinates = [](context & c, std::span<value> args, const char * who, double & x,
+                                double & y) {
+        x = args.empty() ? std::nan("") : context::to_number(args[0]);
+        y = args.size() < 2 ? std::nan("") : context::to_number(args[1]);
+        if (!std::isfinite(x) || !std::isfinite(y)) {
+            c.throw_error("TypeError", std::string{who} + ": the coordinates must be finite");
+            return false;
         }
-        const std::vector<node_id> found =
-            elements_from_point(context::to_number(args[0]), context::to_number(args[1]), false);
-        return found.empty() ? value::null() : wrap(c, found.front());
-    });
-    set_method(cx, doc, "elementsFromPoint", [this](context & c, std::span<value> args) {
-        if (args.size() < 2) {
-            c.throw_error("TypeError", "elementsFromPoint: 2 arguments required");
-            return value::undefined();
-        }
-        const std::vector<node_id> found =
-            elements_from_point(context::to_number(args[0]), context::to_number(args[1]), true);
-        const value out = c.make_array();
-        auto * items = static_cast<script::array_object *>(out.as_heap());
-        for (const node_id id : found) { items->items.push_back(wrap(c, id)); }
-        return out;
-    });
+        return true;
+    };
+    set_method(cx, doc, "elementFromPoint",
+               [this, coordinates](context & c, std::span<value> args) {
+                   double x = 0, y = 0;
+                   if (!coordinates(c, args, "elementFromPoint", x, y)) {
+                       return value::undefined();
+                   }
+                   const std::vector<node_id> found = elements_from_point(x, y, false);
+                   return found.empty() ? value::null() : wrap(c, found.front());
+               });
+    set_method(cx, doc, "elementsFromPoint",
+               [this, coordinates](context & c, std::span<value> args) {
+                   double x = 0, y = 0;
+                   if (!coordinates(c, args, "elementsFromPoint", x, y)) {
+                       return value::undefined();
+                   }
+                   const std::vector<node_id> found = elements_from_point(x, y, true);
+                   const value out = c.make_array();
+                   auto * items = static_cast<script::array_object *>(out.as_heap());
+                   for (const node_id id : found) { items->items.push_back(wrap(c, id)); }
+                   return out;
+               });
     // caretPositionFromPoint: the element under the point as the caret node,
     // with offset 0 - the insertion point within a text run is what the
     // browser's own click-to-caret path knows (browser/input.cpp) and this
     // object model does not reach it yet. null off the viewport.
-    set_method(cx, doc, "caretPositionFromPoint", [this](context & c, std::span<value> args) {
-        if (args.size() < 2) {
-            c.throw_error("TypeError", "caretPositionFromPoint: 2 arguments required");
-            return value::undefined();
-        }
-        const std::vector<node_id> found =
-            elements_from_point(context::to_number(args[0]), context::to_number(args[1]), false);
-        if (found.empty()) { return value::null(); }
-        auto * position = c.allocate<script::object_object>();
-        position->set("offsetNode", wrap(c, found.front()));
-        position->set("offset", value::number(0));
-        set_method(c, *position, "getClientRect",
-                   [this, id = found.front()](context & cc, std::span<value>) {
-                       const rect box = client_rect_of(id);
-                       auto * out = cc.allocate<script::object_object>();
-                       const auto set = [&](const char * name, float v) {
-                           out->set(name, value::number(static_cast<double>(v)));
-                       };
-                       set("x", box.x);
-                       set("y", box.y);
-                       set("left", box.x);
-                       set("top", box.y);
-                       set("width", 0);
-                       set("height", box.height);
-                       set("right", box.x);
-                       set("bottom", box.y + box.height);
-                       return value::object(out);
-                   });
-        return value::object(position);
-    });
+    set_method(cx, doc, "caretPositionFromPoint",
+               [this, coordinates](context & c, std::span<value> args) {
+                   double x = 0, y = 0;
+                   if (!coordinates(c, args, "caretPositionFromPoint", x, y)) {
+                       return value::undefined();
+                   }
+                   const std::vector<node_id> found = elements_from_point(x, y, false);
+                   if (found.empty()) { return value::null(); }
+                   auto * position = c.allocate<script::object_object>();
+                   position->set("offsetNode", wrap(c, found.front()));
+                   position->set("offset", value::number(0));
+                   set_method(c, *position, "getClientRect",
+                              [this, id = found.front()](context & cc, std::span<value>) {
+                                  const rect box = client_rect_of(id);
+                                  auto * out = cc.allocate<script::object_object>();
+                                  const auto set = [&](const char * name, float v) {
+                                      out->set(name, value::number(static_cast<double>(v)));
+                                  };
+                                  set("x", box.x);
+                                  set("y", box.y);
+                                  set("left", box.x);
+                                  set("top", box.y);
+                                  set("width", 0);
+                                  set("height", box.height);
+                                  set("right", box.x);
+                                  set("bottom", box.y + box.height);
+                                  return value::object(out);
+                              });
+                   return value::object(position);
+               });
 }
 
 } // namespace ctbrowser::shell

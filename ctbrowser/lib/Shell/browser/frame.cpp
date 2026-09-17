@@ -292,9 +292,18 @@ void browser::run_layout() {
     };
     boxes_ = builder.build(txn, txn.root());
     const ctbrowser::layout::engine eng{measure()};
+    // THE PAGE IS AS TALL AS ITS SCROLLING AREA (CSSOM View §2), not as its
+    // root box: an absolutely positioned box below the fold is reachable by
+    // scrolling in every browser, and the scroll-behavior-main-frame-window
+    // tests lay their whole content out that way.
+    // (With no viewport floor: a short page stays shorter than the window.)
+    const auto page_height = [&](float width) {
+        return std::max(fragments_.bounds.height,
+                        ctbrowser::layout::viewport_scrolling_area(fragments_, width, 0).height);
+    };
     fragments_ =
         eng.run(boxes_, static_cast<float>(options_.width), static_cast<float>(options_.height));
-    content_height_ = fragments_.bounds.height;
+    content_height_ = page_height(static_cast<float>(options_.width));
 
     // TWO PASSES when the page overflows: the scrollbar takes width away
     // from the content, and content laid out at the full width would run
@@ -307,7 +316,7 @@ void browser::run_layout() {
         scrollbar_shown_) {
         layout_width_ = static_cast<float>(options_.width) - options_.scrollbar_width;
         fragments_ = eng.run(boxes_, layout_width_, static_cast<float>(options_.height));
-        content_height_ = fragments_.bounds.height;
+        content_height_ = page_height(layout_width_);
     }
     content_width_ = ctbrowser::layout::viewport_scrolling_area(fragments_, layout_width_,
                                                                 static_cast<float>(options_.height))

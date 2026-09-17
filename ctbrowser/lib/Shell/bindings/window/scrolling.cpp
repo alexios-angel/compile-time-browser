@@ -124,7 +124,7 @@ void dom_bindings::install_window_scrolling(context & cx, script::object_object 
             const double to_y =
                 (relative ? current.y : 0.0) + y.value_or(relative ? 0.0 : current.y);
             scroll_viewport_to(to_x, to_y);
-            return c.make_promise(value::undefined(), false);
+            return scroll_settled(c);
         };
     };
     for (const auto & [name, relative] :

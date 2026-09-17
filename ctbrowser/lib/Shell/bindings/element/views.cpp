@@ -404,6 +404,15 @@ void dom_bindings::install_element_geometry(context & cx) {
         });
 }
 
+// WHAT A FINISHED SCROLL'S PROMISE RESOLVES WITH: a ScrollResult whose
+// `interrupted` is false - an instant scroll is never cut short by another
+// (element-scroll-promises reads the member off the settled value).
+value dom_bindings::scroll_settled(context & c) {
+    auto * result = c.allocate<script::object_object>();
+    result->set("interrupted", value::boolean(false));
+    return c.make_promise(value::object(result), false);
+}
+
 // scroll(), scrollTo(), scrollBy() and scrollIntoView() on Element.prototype
 // (§6). The three scroll methods return the Promise the specification gives
 // them - a rejected one for an argument the IDL refuses, a resolved one
@@ -419,7 +428,7 @@ void dom_bindings::install_element_scrolling(context & cx) {
             const node_id self = receiver(c);
             const scroll_arguments read = read_scroll_arguments(c, args);
             if (read.bad) { return rejected(c, "scroll: the argument is not a ScrollToOptions"); }
-            if (!self) { return c.make_promise(value::undefined(), false); }
+            if (!self) { return scroll_settled(c); }
             flush_layout();
             const bool quirks = doc_->quirks();
             const bool root = self == doc_->read().root();
@@ -432,13 +441,13 @@ void dom_bindings::install_element_scrolling(context & cx) {
                 x += current.x;
                 y += current.y;
             }
-            if (root && quirks) { return c.make_promise(value::undefined(), false); }
+            if (root && quirks) { return scroll_settled(c); }
             if (viewport_element) {
                 scroll_viewport_to(x, y);
             } else {
                 scroll_element_to(self, x, y);
             }
-            return c.make_promise(value::undefined(), false);
+            return scroll_settled(c);
         };
     };
     define_operation(cx, {"Element"}, "scroll", 0, scroll(false));
@@ -475,7 +484,7 @@ void dom_bindings::install_element_scrolling(context & cx) {
                 block = "end";
             }
             if (self) { scroll_into_view(self, block, inline_, nearest_container); }
-            return value::undefined();
+            return scroll_settled(c);
         });
 }
 
@@ -637,16 +646,19 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                         if (at.f == nullptr || id == body_element()) { break; }
                         // Against the offsetParent's padding edge, or the
                         // initial containing block when there is none (§8).
+                        // "ignoring any transforms that apply to the element
+                        // and its ancestors": the translation comes off both.
                         point origin{};
                         if (const node_id parent = offset_parent_of(id)) {
                             const located p = locate(parent);
                             if (p.f != nullptr) {
                                 const rect pad = layout::padding_box_of(*p.f);
-                                origin = point{p.abs.x + pad.x, p.abs.y + pad.y};
+                                origin = point{p.abs.x + pad.x - p.translation.x,
+                                               p.abs.y + pad.y - p.translation.y};
                             }
                         }
-                        v = which == metric::offset_left ? at.abs.x - origin.x
-                                                         : at.abs.y - origin.y;
+                        v = which == metric::offset_left ? at.abs.x - at.translation.x - origin.x
+                                                         : at.abs.y - at.translation.y - origin.y;
                         break;
                     }
                     case metric::offset_width: v = at.abs.width; break;
@@ -661,7 +673,14 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                             break;
                         }
                         if (at.f == nullptr || is_inline_box(*at.f)) { break; }
-                        const rect pad = layout::padding_box_of(*at.f);
+                        // A TABLE'S client box is its whole border box and its
+                        // client edges are 0: the border sits on the table
+                        // wrapper's grid, not around a padding box
+                        // (table-client-props, table-with-border-client-*).
+                        const bool table =
+                            at.f->box != nullptr && at.f->box->kind == layout::box_kind::table;
+                        const rect pad = table ? rect{0, 0, at.abs.width, at.abs.height}
+                                               : layout::padding_box_of(*at.f);
                         switch (which) {
                         case metric::client_width: v = pad.width; break;
                         case metric::client_height: v = pad.height; break;
@@ -755,8 +774,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                         flush_layout();
                         const located at = locate(id);
                         return value::number(std::round(at.f == nullptr ? 0.0
-                                                        : vertical      ? at.abs.y
-                                                                        : at.abs.x));
+                                                        : vertical ? at.abs.y - at.translation.y
+                                                                   : at.abs.x - at.translation.x));
                     });
                 obj.define_accessor(name, value::object(getter), value::undefined());
             }

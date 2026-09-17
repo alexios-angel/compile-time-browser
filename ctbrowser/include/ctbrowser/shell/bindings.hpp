@@ -438,6 +438,9 @@ private:
     struct located {
         const layout::fragment * f = nullptr;
         rect abs;
+        // What `transform: translate()` on the box and its ancestors moved it
+        // by - the part offsetTop and an image's `x` "ignore".
+        point translation;
     };
     // `scrolled` subtracts every scroll offset above the box - the viewport's
     // (unless a fixed box is on the way) and each scrolled container's - which
@@ -492,6 +495,8 @@ private:
     [[nodiscard]] node_id scrolling_element();
     // The border box in VIEWPORT coordinates - locate(id, true).
     [[nodiscard]] rect client_rect_of(node_id id) const;
+    // The Promise a finished scroll returns, resolved with its ScrollResult.
+    [[nodiscard]] static value scroll_settled(context & cx);
     void install_element_scrolling(context & cx);
     void install_element_geometry(context & cx);
     void install_window_scrolling(context & cx, script::object_object & window);
@@ -2196,8 +2201,16 @@ public:
     // pending scroll event targets). The browser calls it for a scroll the
     // user made; the bindings call it for their own.
     void queue_scroll_event(node_id target);
+    // A FRAME'S DOCUMENT FLUSHES THROUGH THE PAGE'S HOOK: only the primary
+    // bindings are given one, and the browser's flush lays out every frame
+    // whose document moved (frames_stale) - so a frame's `scrollWidth` read
+    // right after an innerHTML write answered from no layout at all.
     void flush_layout() {
-        if (flush_layout_) { flush_layout_(); }
+        if (flush_layout_) {
+            flush_layout_();
+        } else if (primary_ != nullptr && primary_->flush_layout_) {
+            primary_->flush_layout_();
+        }
     }
     std::function<void()> flush_layout_;
     // SCRIPTS A PAGE MADE AND HAS NOT RUN. HTML's "prepare the script element"
