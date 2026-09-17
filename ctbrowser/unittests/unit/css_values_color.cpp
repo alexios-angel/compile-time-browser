@@ -282,6 +282,23 @@ void test_the_computed_value() {
     CHECK_EQ(serialize_color("12px"), std::string{});
 }
 
+// The cascade's fold leaves a colour's math to the colour code: a relative
+// colour's channel keywords are its symbols, and an infinite chroma is its
+// own to clamp, not a length's 2^25.
+void test_the_cascade_leaves_colour_math_alone() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::math_context;
+    const length_context ctx;
+    CHECK_EQ(fold_math("rgb(from red calc(r * 2) g b)", ctx, math_context::any).text,
+             std::string{"rgb(from red calc(r * 2) g b)"});
+    CHECK_EQ(fold_math("lch(50 calc(infinity) 0)", ctx, math_context::any).text,
+             std::string{"lch(50 calc(infinity) 0)"});
+    CHECK_EQ(fold_math("calc(1 + 1) rgb(calc(1 + 1) 0 0)", ctx, math_context::any).text,
+             std::string{"2 rgb(calc(1 + 1) 0 0)"});
+    computed("lch(50 calc(infinity) 0)", "lch(50 calc(infinity) 0)");
+    computed("lch(50 10 calc(infinity))", "lch(50 10 0)");
+}
+
 // The interpolation API: a colour in a named space, missing components
 // carried, and its serialisation back.
 void test_a_colour_in_a_space() {
@@ -334,6 +351,7 @@ int main() {
     test_lab_lch_and_color();
     test_relative_colours_and_mixing();
     test_the_computed_value();
+    test_the_cascade_leaves_colour_math_alone();
     test_a_colour_in_a_space();
     test_the_color_well();
     REPORT("css_values_color");

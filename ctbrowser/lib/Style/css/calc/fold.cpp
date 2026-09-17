@@ -101,27 +101,22 @@ namespace detail {
     return value.substr(from, span.end - from - (span.closed ? 1 : 0));
 }
 
-// ONE PAST A RELATIVE COLOUR THAT STARTS AT `at`, or `at` itself. `rgb(from
-// red calc(r * 2) g b)` binds `r` to the origin's channel, which only the
-// colour code (properties/color.cpp) can do: folded here, every keyword was
-// nought and every relative colour computed black. The colour's own
-// evaluation runs against the same length context when the value is asked for.
-constexpr std::string_view color_function_names[] = {"rgba(",  "rgb(",   "hsla(", "hsl(",
-                                                     "hwb(",   "lab(",   "lch(",  "oklab(",
-                                                     "oklch(", "color(", "alpha("};
+// ONE PAST A COLOUR FUNCTION THAT STARTS AT `at`, or `at` itself. A colour's
+// math is the colour code's (properties/color.cpp), not this file's: `rgb(from
+// red calc(r * 2) g b)` binds `r` to the origin's channel, which nothing here
+// can do - folded here, every keyword was nought and every relative colour
+// computed black - and `lch(50 calc(infinity) 0)` keeps its infinite chroma
+// where this file's 2^25 bound is a length's. The colour evaluates its own
+// calc() against the same length context when the computed value is asked
+// for; a calc() the grammar could answer at parse time is already a number.
+constexpr std::string_view color_function_names[] = {
+    "rgba(",        "rgb(",   "hsla(",  "hsl(",   "hwb(",       "lab(",        "lch(",
+    "oklab(",       "oklch(", "color(", "alpha(", "color-mix(", "light-dark(", "contrast-color(",
+    "color-layers("};
 
-[[nodiscard]] std::size_t relative_color_end(std::string_view value, std::size_t at) noexcept {
+[[nodiscard]] std::size_t color_function_end(std::string_view value, std::size_t at) noexcept {
     const std::string_view name = name_at(value, at, color_function_names);
     if (name.empty()) { return at; }
-    std::size_t scan = at + name.size();
-    while (scan < value.size() && html_whitespace.find(value[scan]) != std::string_view::npos) {
-        ++scan;
-    }
-    const std::string_view rest = value.substr(scan);
-    if (!ascii_istarts_with(rest, "from") || rest.size() < 5 ||
-        html_whitespace.find(rest[4]) == std::string_view::npos) {
-        return at;
-    }
     return span_of(value, at, name).end;
 }
 
@@ -360,7 +355,7 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
             at = quoted;
             continue;
         }
-        if (const std::size_t past = relative_color_end(value, at); past != at) {
+        if (const std::size_t past = color_function_end(value, at); past != at) {
             out.append(value.substr(at, past - at));
             at = past;
             continue;
