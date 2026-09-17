@@ -533,7 +533,13 @@ void install_object(context & cx) {
         // detail::wrap_primitive.
         const value v = arg_at(a, 0);
         if (v.is_object_like()) { return v; }
-        if (v.is_nullish()) { return c.make_object(); }
+        // 20.1.1.1 step 1: under `new` from a subclass (`class O extends
+        // Object`, reached through super()) the instance [[Construct]] made
+        // from NewTarget IS the answer; a plain `new Object()` or a call
+        // makes a fresh one, which the instance also is.
+        if (v.is_nullish()) {
+            return detail::constructing_this(c.current_this()) ? c.current_this() : c.make_object();
+        }
         return detail::box_primitive(c, v);
     });
     // `Object.prototype` REACHABLE FROM SCRIPT, not just consulted by lookup.

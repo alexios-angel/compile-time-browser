@@ -271,7 +271,13 @@ value context::lookup_property(value target, const std::string & name) {
         // js_length, NOT length(): an index too far out to materialise raises
         // `length` without allocating for it, and this is the one read that has
         // to see that. Everything else keeps items.size() and its bounds.
-        if (name == "length") { return value::number(static_cast<double>(arr->js_length())); }
+        // A typed array's `length` is a prototype getter (23.2.3.19), so an own
+        // property of that name a page defined shadows it; an Array's is its own.
+        if (name == "length" &&
+            (arr->elements == element_kind::none || !arr->named ||
+             (arr->named->find(name) == nullptr && arr->named->find_accessor(name) == nullptr))) {
+            return value::number(static_cast<double>(arr->js_length()));
+        }
         // A CANONICAL INDEX SPELLED AS A STRING is the element: `a["0"]`, and
         // `for (i in a) a[i]` where i is always a string. It went to the
         // prototype (and, since the named table, would have gone there) - p5's
@@ -312,6 +318,19 @@ value context::lookup_property(value target, const std::string & name) {
             if (accessor_entry * entry = arr->named->find_accessor(name)) {
                 return call_getter(*this, *entry, target);
             }
+        }
+        // AN EXPLICIT [[Prototype]] - a subclass instance's, or one a page
+        // set - is the whole chain from here: it reaches Array.prototype (or
+        // the kind's) through its own links. See array_object::prototype.
+        if (!arr->prototype.is_null()) [[unlikely]] {
+            if (arr->prototype.is_object()) {
+                return lookup_along(static_cast<object_object *>(arr->prototype.as_heap()), target,
+                                    name);
+            }
+            if (arr->prototype.is_heap() && !arr->prototype.is_string()) {
+                return lookup_property(arr->prototype, name);
+            }
+            return value::undefined(); // an explicit null
         }
         // A TYPED array's own methods first, then every array's, then every
         // object's - which is the chain JavaScript actually has, and the reason
@@ -528,6 +547,26 @@ value context::lookup_property(value target, const std::string & name) {
 // `Object.prototype.__proto__` (B.2.2.1) was invisible to `({}).__proto__` and
 // visible to an object whose chain happened to reach the table by hand. The
 // getter runs with the ORIGINAL receiver, as a getter anywhere on a chain does.
+value context::lookup_along(object_object * obj, value receiver, const std::string & name) {
+    const prehashed_name key{name, hash_name(name)};
+    for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
+        if (value * found = obj->find(key)) { return *found; }
+        if (accessor_entry * entry = obj->find_accessor(name)) {
+            return call_getter(*this, *entry, receiver);
+        }
+        if (obj->prototype.is_object()) {
+            obj = static_cast<object_object *>(obj->prototype.as_heap());
+            continue;
+        }
+        if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
+            return lookup_property(obj->prototype, name);
+        }
+        if (obj->prototype.is_undefined()) { return value::undefined(); }
+        obj = nullptr;
+    }
+    return from_object_prototype(receiver, name);
+}
+
 value context::from_object_prototype(value receiver, const std::string & name) {
     object_object * table = prototype(proto_kind::object);
     if (table == nullptr) { return value::undefined(); }

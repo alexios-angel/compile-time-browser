@@ -705,15 +705,14 @@ public:
     // bind_this_name): a native pushes no frame, so frames_.back() is its
     // caller's - the derived constructor whose `super()` just returned. An
     // arrow's frame (a `super()` inside one) rebinds only the arrow's own
-    // receiver. ONLY WHEN THE PARENT IS A COMPILED FUNCTION: a native parent
-    // (Array, Object, a bound function) reached through super() is CALLED
-    // with the instance as `this`, and what it answers is an object of its
-    // own, not a return override - binding it lost `class A extends Array`
-    // its A.prototype (test262 subclass-builtins, gate 3).
+    // receiver. A NATIVE PARENT TOO: Error, Map, Date fill the instance and
+    // answer it, and Array and the typed arrays answer an array of their own
+    // carrying the instance's prototype (adopt_subclass_prototype) - either
+    // way the answer is the [[Construct]] result and is `this` from here.
+    // Until 2026-09-17 a native parent was skipped, so `class A extends
+    // Array` built a plain object that was never an array.
     void rebind_receiver(value v) {
-        if (frames_.empty()) { return; }
-        const closure_object * me = frames_.back().closure;
-        if (me == nullptr || !me->proto_link.is_kind(heap_kind::function)) { return; }
+        if (frames_.empty() || frames_.back().closure == nullptr) { return; }
         frames_.back().receiver = v;
     }
     // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
@@ -1361,6 +1360,13 @@ public:
     // data member or an accessor called with that receiver. The fallback every
     // arm of lookup_property ends in; see the definition for why.
     [[nodiscard]] value from_object_prototype(value receiver, const std::string & name);
+    // THE EXPLICIT CHAIN FROM `from` UPWARD, for `receiver`: a data member or an
+    // accessor called with the receiver, the implicit Object.prototype at the
+    // top, an explicit null ending it, and a link that is not a plain object
+    // (an array, a function) carrying on in its own arm of lookup_property.
+    // Shared by an object's walk and an array with a prototype of its own.
+    [[nodiscard]] value lookup_along(object_object * from, value receiver,
+                                     const std::string & name);
 
     // `delete o.k` - the NAMED form. delete_index is the computed one and they
     // are separate opcodes because the key arrives differently: a name is a

@@ -987,8 +987,53 @@ void test_derived_constructors() {
                   "ab");
 }
 
+// A BUILT-IN THAT MAKES ITS OWN OBJECT CAN BE EXTENDED. `class A extends
+// Array` reaches Array through super() with the instance [[Construct]] made;
+// Array answers an array of its own, which takes the instance's prototype
+// (array_object::prototype) and becomes `this`. Until 2026-09-17 the native
+// parent's answer was dropped and `new A()` was a plain object that was never
+// an array: `length` undefined, `Array.isArray` false, every method a
+// TypeError. The typed arrays are the same shape, and Object's `super()`
+// keeps the instance.
+void test_builtin_subclasses() {
+    expect_result("class A extends Array {} const a = new A(3);"
+                  "return a.length + ',' + Array.isArray(a) + ',' + (a instanceof A) + ',' +"
+                  "(a instanceof Array) + ',' + (Object.getPrototypeOf(a) === A.prototype);",
+                  "3,true,true,true,true");
+    expect_result("class A extends Array { sum() { return this.reduce((s, x) => s + x, 0); } }"
+                  "const a = A.from([1, 2, 3]); const m = a.map(x => x * 2);"
+                  "return a.sum() + ',' + (m instanceof A) + ',' + m.sum();",
+                  "6,true,12");
+    expect_result("class A extends Array { constructor(...xs) { super(...xs); this.tag = 't'; } }"
+                  "const a = new A(1, 2); return a.tag + a.length + a[1];",
+                  "t22");
+    expect_result("class U extends Uint8Array {} const u = new U(2); u[0] = 300;"
+                  "return u.length + ',' + u[0] + ',' + (u instanceof U) + ',' +"
+                  "(u instanceof Uint8Array) + ',' + u.byteLength + ',' + u.subarray(1).length;",
+                  "2,44,true,true,2,1");
+    expect_result(
+        "class U extends Uint8Array {} const rab = new ArrayBuffer(4, {maxByteLength: 8});"
+        "const u = new U(rab, 0, 2); return u.length + ',' + (u.buffer === rab) + ',' +"
+        "Array.prototype.at.call(u, 0);",
+        "2,true,0");
+    expect_result("class O extends Object { constructor() { super(); this.x = 1; } }"
+                  "return new O().x + ',' + (new O() instanceof O);",
+                  "1,true");
+    // Object.setPrototypeOf on an array, and `in` through the chain.
+    expect_result(
+        "const a = [1]; Object.setPrototypeOf(a, { extra: 7 });"
+        "return a.extra + ',' + ('extra' in a) + ',' + a.length + ',' + (a instanceof Array)"
+        " + ',' + typeof a.push;",
+        "7,true,1,false,undefined");
+    // A typed array has no own `length`: a page may define one.
+    expect_result("const t = new Uint8Array(2); Object.defineProperty(t, 'length', {value: 9});"
+                  "return t.length + ',' + Object.getOwnPropertyNames(new Uint8Array(1)).join();",
+                  "9,0");
+}
+
 int main() {
     test_derived_constructors();
+    test_builtin_subclasses();
     test_default_parameters();
     test_rest_parameters();
     test_nested_function_declarations_are_local();

@@ -165,6 +165,7 @@ void context::copy_own_properties(value target, value source) {
 
 value context::get_prototype(value target) {
     if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->prototype; }
+    if (target.is_array()) { return static_cast<array_object *>(target.as_heap())->prototype; }
     // A closure's own [[Prototype]]: the parent class `extends` chained it
     // to, else Function.prototype (10.2.5 / OrdinaryGetPrototypeOf) - which
     // is what `super.x` inside a static method starts from.
@@ -182,6 +183,7 @@ value context::get_prototype(value target) {
 
 void context::set_prototype(value target, value proto) {
     if (target.is_object()) { static_cast<object_object *>(target.as_heap())->prototype = proto; }
+    if (target.is_array()) { static_cast<array_object *>(target.as_heap())->prototype = proto; }
 }
 
 bool context::has_property(value target, value key) {
@@ -219,8 +221,10 @@ bool context::has_property(value target, const std::string & name) {
     // then the implicit tables property lookup falls back to.
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
-    value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                                    : value::null();
+    value link = target.is_object()  ? static_cast<object_object *>(target.as_heap())->prototype
+                 : target.is_array() ? static_cast<array_object *>(target.as_heap())->prototype
+                                     : value::null();
+    const bool explicit_chain = target.is_object() || (target.is_array() && !link.is_null());
     // A depth cap because a page can make the chain cyclic, exactly as
     // lookup_property does.
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
@@ -234,7 +238,12 @@ bool context::has_property(value target, const std::string & name) {
     }
     // An explicit null [[Prototype]] (object_object::prototype) ends the chain
     // without the implicit Object.prototype.
-    if (target.is_object() && link.is_undefined()) { return false; }
+    if (explicit_chain && link.is_undefined()) { return false; }
+    if (target.is_array() && explicit_chain) { // see instance_of
+        object_object * table = prototype(proto_kind::object);
+        return table != nullptr &&
+               (table->find(name) != nullptr || table->find_accessor(name) != nullptr);
+    }
     for (object_object * table : implicit_prototypes(target)) {
         if (table != nullptr &&
             (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
@@ -288,8 +297,11 @@ bool context::instance_of(value target, value ctor) {
     }
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
-    value link = subject.is_object() ? static_cast<object_object *>(subject.as_heap())->prototype
-                                     : value::null();
+    // ...and an array's own, when it has one (array_object::prototype).
+    value link = subject.is_object()  ? static_cast<object_object *>(subject.as_heap())->prototype
+                 : subject.is_array() ? static_cast<array_object *>(subject.as_heap())->prototype
+                                      : value::null();
+    const bool explicit_chain = subject.is_object() || (subject.is_array() && !link.is_null());
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
@@ -300,7 +312,13 @@ bool context::instance_of(value target, value ctor) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         return instance_of(link, ctor);
     }
-    if (subject.is_object() && link.is_undefined()) { return false; } // an explicit null
+    if (explicit_chain && link.is_undefined()) { return false; } // an explicit null
+    // An array's explicit chain ended at the implicit Object.prototype: the
+    // kind's tables are not behind it (Object.setPrototypeOf(arr, o) took
+    // Array.prototype out of the chain).
+    if (subject.is_array() && explicit_chain) {
+        return prototype(proto_kind::object) == wanted.as_heap();
+    }
     // Then the IMPLICIT one. An array, a function, a string and a plain object
     // have no prototype field to walk - their chain is the tables property
     // lookup falls back to - so instanceof answered false for every builtin

@@ -219,6 +219,20 @@ namespace detail {
     auto * obj = static_cast<object_object *>(self.as_heap());
     return obj->props.empty() && !obj->accessors.any;
 }
+// GetPrototypeFromConstructor (10.1.14) FOR A NATIVE THAT MAKES ITS OWN
+// OBJECT. `class A extends Array` reaches Array through super() with `this`
+// the instance [[Construct]] made from A.prototype; Array answers an array of
+// its own, and this gives that array the instance's prototype when it is not
+// the intrinsic - so the answer IS an A (ArrayCreate's proto argument, and
+// AllocateTypedArray's). bind_this_name then makes it `this`.
+inline void adopt_subclass_prototype(context & cx, value made, const object_object * intrinsic) {
+    if (!made.is_array()) { return; }
+    const value self = cx.current_this();
+    if (!constructing_this(self)) { return; }
+    const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+    if (!proto.is_object() || proto.as_heap() == intrinsic) { return; }
+    static_cast<array_object *>(made.as_heap())->prototype = proto;
+}
 
 // A REAL ITERATOR over a list that already exists - what `keys()`, `values()`
 // and `entries()` answer on an Array, a Map and a Set, and what

@@ -257,7 +257,15 @@ void context::store_property(value target, const std::string & name, value v) {
             store_index(target, value::number(static_cast<double>(at)), v);
             return;
         }
-        if (name != "length") {
+        // A TYPED ARRAY'S `length` is %TypedArray%.prototype's getter, so an
+        // OWN one a page defined is a named property like any other, and
+        // without one the write finds no setter: a no-op (10.4.5 / OrdinarySet).
+        const bool typed_length = name == "length" && arr->elements != element_kind::none;
+        if (typed_length && (!arr->named || (arr->named->find(name) == nullptr &&
+                                             arr->named->find_accessor(name) == nullptr))) {
+            return;
+        }
+        if (name != "length" || typed_length) {
             // A NAMED PROPERTY, in the array's own table - see
             // array_object::named. The same three checks as an object's: an
             // own accessor's setter, a non-writable own data property, and

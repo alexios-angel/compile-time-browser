@@ -133,7 +133,8 @@ namespace {
             (void)held;
             out.push_back(std::to_string(at));
         }
-        out.emplace_back("length");
+        // A typed array has NO own `length` (23.2.3.19 is a prototype getter).
+        if (arr->elements == element_kind::none) { out.emplace_back("length"); }
         // Then the named own properties - see array_object::named.
         if (arr->named) {
             arr->named->each_own_key([&](const std::string & k) {
@@ -299,8 +300,12 @@ namespace {
     if (of.is_number()) { return table(context::proto_kind::number); }
     if (of.is_boolean()) { return table(context::proto_kind::boolean); }
     if (of.is_array()) {
-        // A typed array's is its kind's own prototype object (23.2.7).
+        // Its own, when it has one (array_object::prototype: a subclass
+        // instance's, or one a page set); undefined there is an explicit null.
         auto * arr = static_cast<array_object *>(of.as_heap());
+        if (arr->prototype.is_object_like()) { return arr->prototype; }
+        if (arr->prototype.is_undefined()) { return value::null(); }
+        // A typed array's is its kind's own prototype object (23.2.7).
         if (object_object * own = typed_array_prototype(cx, arr->elements)) {
             return value::object(own);
         }
@@ -359,6 +364,9 @@ namespace {
     if (of.is_object()) {
         // null is an EXPLICIT null here - see object_object::prototype.
         static_cast<object_object *>(of.as_heap())->prototype =
+            proto.is_null() ? value::undefined() : proto;
+    } else if (of.is_array()) {
+        static_cast<array_object *>(of.as_heap())->prototype =
             proto.is_null() ? value::undefined() : proto;
     } else if (of.is_kind(heap_kind::function)) {
         static_cast<closure_object *>(of.as_heap())->proto_link = proto;
