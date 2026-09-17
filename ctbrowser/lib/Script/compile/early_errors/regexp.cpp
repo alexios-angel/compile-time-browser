@@ -23,6 +23,8 @@
 
 #include "checker.hpp"
 
+#include <ctbrowser/script/regex.hpp>
+
 #include <algorithm>
 #include <cstdint>
 
@@ -316,16 +318,18 @@ private:
             return;
         }
         if (c == 'p' || c == 'P') {
-            // `\p{Name}` / `\p{Name=Value}` under `u`: the braces and something
-            // in them are judged, the property name is not - that table is the
-            // rx engine's. Without `u` it is the letter p.
+            // `\p{Name}` / `\p{Name=Value}` under `u`: the rx engine's own
+            // reader of 22.2.1's UnicodePropertyValueExpression judges it,
+            // against the same table that will match it (22.2.1.1: a name or
+            // value the tables do not list is an early error). Without `u`
+            // it is the letter p.
             if (!unicode_) { return; }
-            const std::size_t end = peek() == '{' ? s_.find('}', i_) : std::string_view::npos;
-            if (end == std::string_view::npos || end == i_ + 1) {
-                fail("`\\p` must be followed by `{...}` with the u flag");
-                return;
+            rx::rx_prog mode;
+            mode.unicode = true;
+            rx::rx_class unused;
+            if (!rx::rx_parse_property(s_, i_, mode, c == 'P', unused)) {
+                fail("`\\p` must name a Unicode property the specification lists");
             }
-            i_ = end + 1;
             return;
         }
         if (std::string_view{"dDsSwWfnrtv"}.find(c) != std::string_view::npos) { return; }

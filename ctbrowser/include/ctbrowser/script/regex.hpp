@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -28,15 +30,76 @@
 // undefined). A pattern character above U+00FF is matched as its UTF-8 bytes,
 // which is what the subject is made of, and a CLASS is a set of CODE POINT
 // ranges matched against the code point decoded at the position.
+//
+// 2026-09-17: `\p{...}` / `\P{...}` (22.2.2.9) over the Unicode Character
+// Database in lib/Script/regex_properties.inc, Canonicalize under `iu` by
+// simple case folding (22.2.2.7.3), and a class is SORTED so a hit is one
+// binary search - a property brings hundreds of ranges and the subject a
+// million code points. A quantified single-character piece is matched by a
+// loop rather than a recursion per repetition, for the same subjects.
 
 namespace ctbrowser::script::rx {
 
-
+struct rx_range {
+	char32_t lo, hi;
+};
+struct rx_property_set {
+	std::span<const rx_range> ranges;    // sorted, disjoint
+	std::span<const char32_t> sequences; // {length, code points...} runs; table 69 only
+};
+// 22.2.2.9 UnicodeMatchProperty + UnicodeMatchPropertyValue over the UCD.
+// `value` is empty for the `\p{Name}` form; `strings` admits the properties
+// of strings (table 69, the `v` flag). Nullopt: not a name the specification
+// lists, which is a SyntaxError. Defined in lib/Script/regex_properties.cpp.
+std::optional<rx_property_set> rx_property_lookup(std::string_view name, std::string_view value,
+                                                  bool strings);
+// CaseFolding.txt's simple fold (C + S) - Canonicalize under `iu` - and every
+// OTHER code point that folds to `folded`, at most eight, written to `out`.
+char32_t rx_fold_simple(char32_t cp);
+std::size_t rx_unfold(char32_t folded, char32_t (&out)[8]);
 
 struct rx_class {
 	bool neg = false;
 	std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
+	// Under `v`, a class may hold STRINGS too (`\q{ab|c}`, a property of
+	// strings): UTF-8, tried longest first, before the code points.
+	std::vector<std::string> strings;
 };
+
+// Sorted and merged, so a hit is one binary search and a complement is a
+// walk. Every class goes through here once its atoms are read.
+inline void rx_class_normalize(rx_class & cc) {
+	std::sort(cc.ranges.begin(), cc.ranges.end());
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> merged;
+	for (const auto & r : cc.ranges) {
+		if (!merged.empty() &&
+		    (r.first <= merged.back().second || r.first == merged.back().second + 1)) {
+			merged.back().second = std::max(merged.back().second, r.second);
+		} else {
+			merged.push_back(r);
+		}
+	}
+	cc.ranges = std::move(merged);
+	// Longest first, so `\q{ab|a}` prefers "ab" (22.2.2.9: the strings of a
+	// class are tried by descending length).
+	std::stable_sort(cc.strings.begin(), cc.strings.end(),
+	                 [](const std::string & a, const std::string & b) { return a.size() > b.size(); });
+	cc.strings.erase(std::unique(cc.strings.begin(), cc.strings.end()), cc.strings.end());
+}
+
+// The complement over the code space, of a NORMALIZED range list.
+inline std::vector<std::pair<std::uint32_t, std::uint32_t>>
+rx_complement(const std::vector<std::pair<std::uint32_t, std::uint32_t>> & ranges) {
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+	std::uint32_t next = 0;
+	for (const auto & [lo, hi] : ranges) {
+		if (lo > next) { out.push_back({next, lo - 1}); }
+		if (hi >= 0x10FFFFu) { return out; }
+		next = hi + 1;
+	}
+	out.push_back({next, 0x10FFFFu});
+	return out;
+}
 struct rx_alt;
 struct rx_piece {
 	enum kind_t { lit, any, cls, grp, bol, eol, wordb, nwordb, ahead, nahead, behind, nbehind, backref } kind = lit;
@@ -91,12 +154,18 @@ inline constexpr void rx_class_escape(rx_class & out, char e) {
 		out.ranges.push_back({'_', '_'});
 		break;
 	case 's':
+		// WhiteSpace (12.2) and LineTerminator (12.3): the ASCII five, the
+		// Zs category, and NBSP, LS, PS and the BOM.
+		out.ranges.push_back({'\t', '\r'});
 		out.ranges.push_back({' ', ' '});
-		out.ranges.push_back({'\t', '\t'});
-		out.ranges.push_back({'\n', '\n'});
-		out.ranges.push_back({'\r', '\r'});
-		out.ranges.push_back({'\f', '\f'});
-		out.ranges.push_back({'\v', '\v'});
+		out.ranges.push_back({0xA0u, 0xA0u});
+		out.ranges.push_back({0x1680u, 0x1680u});
+		out.ranges.push_back({0x2000u, 0x200Au});
+		out.ranges.push_back({0x2028u, 0x2029u});
+		out.ranges.push_back({0x202Fu, 0x202Fu});
+		out.ranges.push_back({0x205Fu, 0x205Fu});
+		out.ranges.push_back({0x3000u, 0x3000u});
+		out.ranges.push_back({0xFEFFu, 0xFEFFu});
 		break;
 	default: break;
 	}
@@ -177,6 +246,52 @@ inline char rx_escape_char(char e) {
 	}
 }
 
+// `\p{Name}` / `\p{Name=Value}` (22.2.1 UnicodePropertyValueExpression),
+// `i` just past the `p` or `P`. No loose matching: the name is ControlLetters
+// and `_`, the value adds digits, and the spelling must be one the tables
+// carry. The set lands in `out` - complemented for `\P`, which is the
+// CharacterComplement of 22.2.2.9 and happens BEFORE Canonicalize, unlike
+// `[^...]`. False for a bad spelling, an unknown name, or a negated property
+// of strings (22.2.1.1 MayContainStrings) - each a SyntaxError.
+inline bool rx_parse_property(std::string_view src, std::size_t & i, const rx_prog & p, bool negate,
+                              rx_class & out) {
+	if (i >= src.size() || src[i] != '{') { return false; }
+	std::size_t j = i + 1;
+	const auto word = [&](bool digits) {
+		const std::size_t start = j;
+		while (j < src.size() && ((src[j] >= 'a' && src[j] <= 'z') || (src[j] >= 'A' && src[j] <= 'Z') ||
+		                          src[j] == '_' || (digits && src[j] >= '0' && src[j] <= '9'))) {
+			++j;
+		}
+		return src.substr(start, j - start);
+	};
+	const std::string_view name = word(false);
+	std::string_view value;
+	if (j < src.size() && src[j] == '=') {
+		++j;
+		value = word(true);
+		if (value.empty()) { return false; }
+	}
+	if (name.empty() || j >= src.size() || src[j] != '}') { return false; }
+	const auto set = rx_property_lookup(name, value, p.unicode_sets);
+	if (!set) { return false; }
+	const bool of_strings = value.empty() && !rx_property_lookup(name, value, false);
+	if (of_strings && negate) { return false; }
+	i = j + 1;
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
+	ranges.reserve(set->ranges.size());
+	for (const rx_range & r : set->ranges) { ranges.push_back({r.lo, r.hi}); }
+	if (negate) { ranges = rx_complement(ranges); }
+	out.ranges.insert(out.ranges.end(), ranges.begin(), ranges.end());
+	for (std::size_t at = 0; at < set->sequences.size();) {
+		const std::size_t len = set->sequences[at++];
+		std::string seq;
+		for (std::size_t n = 0; n < len; ++n) { append_utf8(seq, set->sequences[at++]); }
+		out.strings.push_back(std::move(seq));
+	}
+	return true;
+}
+
 inline std::shared_ptr<rx_alt> rx_parse_alt(std::string_view src, std::size_t & i, rx_prog & p,
                                             bool top);
 
@@ -241,11 +356,34 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			cp = rx_utf8_decode(src, i, width);
 			i += width;
 		};
+		const bool unicode_mode = p.unicode || p.unicode_sets;
 		while (i < src.size() && src[i] != ']') {
 			if (src[i] == '\\' && i + 1 < src.size() &&
 			    (src[i + 1] == 'd' || src[i + 1] == 'w' || src[i + 1] == 's')) {
 				rx_class_escape(pc.cc, src[i + 1]);
 				i += 2;
+				continue;
+			}
+			if (src[i] == '\\' && i + 1 < src.size() &&
+			    (src[i + 1] == 'D' || src[i + 1] == 'W' || src[i + 1] == 'S')) {
+				// The complement, spelled out: `[\D]` is every code point
+				// but the digits, not the letter D.
+				rx_class one;
+				rx_class_escape(one, static_cast<char>(src[i + 1] + ('a' - 'A')));
+				rx_class_normalize(one);
+				const auto rest = rx_complement(one.ranges);
+				pc.cc.ranges.insert(pc.cc.ranges.end(), rest.begin(), rest.end());
+				i += 2;
+				continue;
+			}
+			if (unicode_mode && src[i] == '\\' && i + 1 < src.size() &&
+			    (src[i + 1] == 'p' || src[i + 1] == 'P')) {
+				const bool negate = src[i + 1] == 'P';
+				i += 2;
+				if (!rx_parse_property(src, i, p, negate, pc.cc)) {
+					rx_fail(p, src);
+					return pc;
+				}
 				continue;
 			}
 			std::uint32_t lo = 0;
@@ -259,6 +397,9 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		}
 		if (i >= src.size()) { rx_fail(p, src); }
 		++i; // ']'
+		// A negated class may not contain strings (22.2.1.1 MayContainStrings).
+		if (pc.cc.neg && !pc.cc.strings.empty()) { rx_fail(p, src); }
+		rx_class_normalize(pc.cc);
 		return pc;
 	}
 	if (c == '.') {
@@ -313,12 +454,23 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		if (e == 'd' || e == 'w' || e == 's') {
 			pc.kind = rx_piece::cls;
 			rx_class_escape(pc.cc, e);
+			rx_class_normalize(pc.cc);
 			return pc;
 		}
 		if (e == 'D' || e == 'W' || e == 'S') {
 			pc.kind = rx_piece::cls;
 			pc.cc.neg = true;
 			rx_class_escape(pc.cc, static_cast<char>(e + ('a' - 'A')));
+			rx_class_normalize(pc.cc);
+			return pc;
+		}
+		if ((e == 'p' || e == 'P') && (p.unicode || p.unicode_sets)) {
+			pc.kind = rx_piece::cls;
+			if (!rx_parse_property(src, i, p, e == 'P', pc.cc)) {
+				rx_fail(p, src);
+				return pc;
+			}
+			rx_class_normalize(pc.cc);
 			return pc;
 		}
 		std::uint32_t cp = 0;
@@ -339,6 +491,18 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		return pc;
 	}
 	pc.kind = rx_piece::lit;
+	if (static_cast<unsigned char>(c) >= 0xC0u) {
+		// A pattern character above ASCII is ONE piece of however many
+		// bytes, so `/é+/` repeats the character and `/k/iu` can fold it -
+		// one byte at a time it was the last byte that got the quantifier.
+		std::size_t width = 1;
+		rx_utf8_decode(src, i, width);
+		if (width > 1) {
+			pc.text = std::string{src.substr(i, width)};
+			i += width;
+			return pc;
+		}
+	}
 	pc.c = c;
 	++i;
 	return pc;
@@ -501,15 +665,28 @@ inline constexpr bool rx_is_word(char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
 	       c == '_';
 }
-inline constexpr bool rx_class_hit(const rx_class & cc, std::uint32_t ch, bool icase) {
+inline bool rx_class_hit(const rx_class & cc, std::uint32_t ch, bool icase, bool unicode) {
+	// The ranges are sorted and disjoint (rx_class_normalize): the first one
+	// ending at or after the probe is the only one that can hold it.
 	const auto in = [&](std::uint32_t probe) {
-		for (const auto & [lo, hi] : cc.ranges) {
-			if (probe >= lo && probe <= hi) { return true; }
-		}
-		return false;
+		const auto it = std::lower_bound(
+		    cc.ranges.begin(), cc.ranges.end(), probe,
+		    [](const std::pair<std::uint32_t, std::uint32_t> & r, std::uint32_t v) { return r.second < v; });
+		return it != cc.ranges.end() && it->first <= probe;
 	};
 	bool hit = in(ch);
-	if (!hit && icase) {
+	if (!hit && icase && unicode) {
+		// 22.2.2.9 CharacterSetMatcher: a member a matches when
+		// Canonicalize(a) is Canonicalize(ch), and under `u` that is the
+		// simple case fold - so the fold itself and every code point that
+		// shares it are looked up.
+		const char32_t folded = rx_fold_simple(ch);
+		hit = folded != ch && in(folded);
+		char32_t others[8];
+		for (std::size_t n = rx_unfold(folded, others); !hit && n-- > 0;) {
+			hit = others[n] != ch && in(others[n]);
+		}
+	} else if (!hit && icase) {
 		// ASCII folding only, as everywhere in this engine (core/algorithms).
 		const std::uint32_t other = (ch >= 'a' && ch <= 'z')   ? ch - ('a' - 'A')
 		                            : (ch >= 'A' && ch <= 'Z') ? ch + ('a' - 'A')
@@ -521,12 +698,26 @@ inline constexpr bool rx_class_hit(const rx_class & cc, std::uint32_t ch, bool i
 
 using rx_cont = std::function<bool(std::size_t)>;
 
-inline constexpr bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, const rx_cont & k);
+inline bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, const rx_cont & k);
 
-inline constexpr bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
+inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
 	const std::string & s = *st.s;
 	switch (pc.kind) {
 	case rx_piece::lit:
+		if (st.p->icase && (st.p->unicode || st.p->unicode_sets) && pos < s.size()) {
+			// Canonicalize under `iu` is the simple case fold of BOTH code
+			// points (`/k/iu` takes the KELVIN SIGN), so a literal of any
+			// width is compared as one decoded code point.
+			std::size_t pattern_width = 1;
+			const std::uint32_t want = pc.text.empty()
+			                               ? static_cast<unsigned char>(pc.c)
+			                               : rx_utf8_decode(pc.text, 0, pattern_width);
+			if (pc.text.empty() || pattern_width == pc.text.size()) {
+				std::size_t width = 1;
+				const std::uint32_t got = rx_utf8_decode(s, pos, width);
+				return rx_fold_simple(got) == rx_fold_simple(want) && k(pos + width);
+			}
+		}
 		if (!pc.text.empty()) {
 			if (s.compare(pos, pc.text.size(), pc.text) != 0) { return false; }
 			return k(pos + pc.text.size());
@@ -597,10 +788,16 @@ inline constexpr bool rx_match_once(const rx_piece & pc, rx_state & st, std::siz
 	case rx_piece::cls: {
 		// A class consumes ONE CODE POINT of the UTF-8 subject, however many
 		// bytes it takes: `[\u1680]` matches the three bytes of U+1680.
+		// The strings of a `v` class go first, longest first (22.2.2.9: a
+		// ClassSetExpression's strings are matched by descending length).
+		for (const std::string & str : pc.cc.strings) {
+			if (s.compare(pos, str.size(), str) == 0 && k(pos + str.size())) { return true; }
+		}
 		if (pos >= s.size()) { return false; }
 		std::size_t width = 1;
 		const std::uint32_t cp = rx_utf8_decode(s, pos, width);
-		return rx_class_hit(pc.cc, cp, st.p->icase) && k(pos + width);
+		return rx_class_hit(pc.cc, cp, st.p->icase, st.p->unicode || st.p->unicode_sets) &&
+		       k(pos + width);
 	}
 	case rx_piece::bol:
 		return (pos == 0 || (st.p->multi && s[pos - 1] == '\n')) && k(pos);
@@ -653,7 +850,45 @@ inline constexpr bool rx_match_once(const rx_piece & pc, rx_state & st, std::siz
 	return false;
 }
 
-inline constexpr bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
+// A piece that consumes one character and captures nothing, whose
+// repetition is therefore a LOOP: `\p{Any}+` over the whole code space is
+// a million repetitions, and a recursion per repetition is a stack overflow.
+inline bool rx_simple_piece(const rx_piece & pc) {
+	return pc.kind == rx_piece::lit || pc.kind == rx_piece::any ||
+	       (pc.kind == rx_piece::cls && pc.cc.strings.empty());
+}
+
+inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
+	if ((pc.min != 1 || pc.max != 1) && rx_simple_piece(pc)) {
+		std::size_t end = 0;
+		const rx_cont take = [&](std::size_t np) {
+			end = np;
+			return true;
+		};
+		const auto step = [&](std::size_t at) { return rx_match_once(pc, st, at, take) ? end : at; };
+		if (!pc.greedy) {
+			std::size_t at = pos;
+			for (std::int32_t n = 0;; ++n) {
+				if (n >= pc.min && k(at)) { return true; }
+				if (pc.max >= 0 && n >= pc.max) { return false; }
+				const std::size_t np = step(at);
+				if (np == at) { return false; }
+				at = np;
+			}
+		}
+		// ends[n] is where n repetitions leave the position; the longest
+		// run is offered first, then each shorter one down to the minimum.
+		std::vector<std::size_t> ends{pos};
+		while (pc.max < 0 || static_cast<std::int32_t>(ends.size()) - 1 < pc.max) {
+			const std::size_t np = step(ends.back());
+			if (np == ends.back()) { break; }
+			ends.push_back(np);
+		}
+		for (std::size_t n = ends.size(); n-- > 0;) {
+			if (static_cast<std::int32_t>(n) >= pc.min && k(ends[n])) { return true; }
+		}
+		return false;
+	}
 	// quantified matching; a zero-width repetition stops the loop
 	std::function<bool(std::size_t, std::int32_t)> rec = [&](std::size_t at, std::int32_t n) -> bool {
 		const bool may_more = pc.max < 0 || n < pc.max;
@@ -686,7 +921,7 @@ inline constexpr bool rx_match_piece(const rx_piece & pc, rx_state & st, std::si
 	return rec(pos, 0);
 }
 
-inline constexpr bool rx_match_seq(const rx_seq & sq, std::size_t idx, rx_state & st, std::size_t pos,
+inline bool rx_match_seq(const rx_seq & sq, std::size_t idx, rx_state & st, std::size_t pos,
                          const rx_cont & k) {
 	if (idx == sq.size()) { return k(pos); }
 	return rx_match_piece(sq[idx], st, pos, [&](std::size_t np) {
@@ -694,7 +929,7 @@ inline constexpr bool rx_match_seq(const rx_seq & sq, std::size_t idx, rx_state 
 	});
 }
 
-inline constexpr bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, const rx_cont & k) {
+inline bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, const rx_cont & k) {
 	for (const rx_seq & sq : alt.alts) {
 		if (rx_match_seq(sq, 0, st, pos, k)) { return true; }
 	}
@@ -706,7 +941,7 @@ struct rx_match {
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps;
 };
 
-inline constexpr bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out) {
+inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out) {
 	for (std::size_t start = from; start <= s.size(); ++start) {
 		// A MATCH STARTS ON A CODE POINT, never inside one: a continuation
 		// byte is not a character, and `[^x]` at such a position would
