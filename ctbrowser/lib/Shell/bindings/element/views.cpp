@@ -305,17 +305,24 @@ void dom_bindings::install_element_scrolling(context & cx) {
         });
 }
 
+// FROM THE CASCADE rather than the box: the root's box carries no resolved
+// properties (box_builder::build sets its style and nothing else), and the
+// rule is about computed values in either axis.
 bool dom_bindings::potentially_scrollable(node_id body) const {
-    const located at = locate(body);
-    if (at.f == nullptr || at.f->box == nullptr) { return false; }
-    node_id parent;
-    {
-        const auto txn = doc_->read();
-        parent = txn.parent(body);
+    if (locate(body).f == nullptr || styles_ == nullptr) { return false; }
+    const auto scrolls = [this](node_id id, const char * property) {
+        const auto found = styles_->find(style::engine::key_of(id));
+        if (found == styles_->end() || !found->second) { return false; }
+        const std::string_view v =
+            trim(found->second->get(atoms_->intern(property)), html_whitespace);
+        return !v.empty() && !ascii_iequals(v, "visible") && !ascii_iequals(v, "clip");
+    };
+    const node_id parent = doc_->read().parent(body);
+    if (!parent) { return false; }
+    for (const char * axis : {"overflow-x", "overflow-y"}) {
+        if (scrolls(body, axis) && scrolls(parent, axis)) { return true; }
     }
-    const located up = locate(parent);
-    return at.f->box->scroll_container && up.f != nullptr && up.f->box != nullptr &&
-           up.f->box->scroll_container;
+    return false;
 }
 
 bool dom_bindings::is_viewport_element(node_id id, bool scrolling) {

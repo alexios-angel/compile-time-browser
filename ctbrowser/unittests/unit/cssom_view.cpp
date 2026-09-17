@@ -155,11 +155,13 @@ void test_viewport_scrolling_and_hit_testing() {
         document.documentElement.scrollTop = 20;
         scrollBy({top: 30});
         console.log('by=' + scrollY + ',' + scrollX);
-        console.log('point=' + document.elementFromPoint(10, 10).id + ',' +
-                    document.elementFromPoint(10, 960).id + ',' + document.elementFromPoint(-1, 5) +
-                    ',' + document.elementsFromPoint(10, 10).map(e => e.tagName || e.id).join('/'));
         b.scrollIntoView();
         console.log('into=' + scrollY + ',' + b.getBoundingClientRect().top);
+        // Off the viewport is null, whatever is there in the document.
+        console.log('point=' + document.elementFromPoint(10, 10).id + ',' +
+                    document.elementFromPoint(10, 260).id + ',' + document.elementFromPoint(-1, 5) +
+                    ',' + document.elementFromPoint(10, 960) + ',' +
+                    document.elementsFromPoint(10, 10).map(e => e.tagName || e.id).join('/'));
         b.scrollIntoView(false);
         console.log('end=' + scrollY);
         scrollTo(0, 100000);
@@ -169,7 +171,7 @@ void test_viewport_scrolling_and_hit_testing() {
     CHECK_EQ(logged(page, "scrolling="), std::string{"scrolling=true,0,0,0"});
     CHECK_EQ(logged(page, "scrolled="), std::string{"scrolled=100,100,900,-100"});
     CHECK_EQ(logged(page, "by="), std::string{"by=50,0"});
-    CHECK_EQ(logged(page, "point="), std::string{"point=a,b,null,DIV/BODY/HTML"});
+    CHECK_EQ(logged(page, "point="), std::string{"point=a,b,null,null,DIV/BODY/HTML"});
     // b's top is 1000 in the document; the viewport is 300 tall, the page
     // 1050, so the most it can scroll is 750: "start" is clamped there.
     CHECK_EQ(logged(page, "into="), std::string{"into=750,250"});
