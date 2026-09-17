@@ -469,7 +469,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // INTO A ROOTED ARRAY rather than a bare std::vector<value>, for the
         // reason `toSorted` gives: a getter can collect and a value held only
         // by a C++ vector is in none of the collector's roots.
-        value holder = c.make_array();
+        const value holder = c.make_array();
         const context::rooted keep(c, holder);
         auto & work = static_cast<array_object *>(holder.as_heap())->items;
         for (double k = 0; k < len; k += 1.0) {

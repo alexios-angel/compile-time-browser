@@ -114,7 +114,7 @@ void put_pair(context & c, array_object & entries, value key, value held) {
         static_cast<array_object *>(entry->as_heap())->items[1] = held;
         return;
     }
-    value pair = c.make_array();
+    const value pair = c.make_array();
     auto * cell = static_cast<array_object *>(pair.as_heap());
     cell->items.push_back(key);
     cell->items.push_back(held);
@@ -223,7 +223,7 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
         o->prototype = value::object(table);
     }
     o->define(slot_of(kind::set), value::boolean(true), attr_none);
-    value list = c.make_array();
+    const value list = c.make_array();
     static_cast<array_object *>(list.as_heap())->items = std::move(items);
     o->define("__entries", list, attr_builtin);
     return out;
@@ -636,7 +636,7 @@ void install_collections(context & cx) {
             const context::rooted keep_out{c, out};
             auto * pairs = static_cast<array_object *>(out.as_heap());
             for (const value & member : static_cast<array_object *>(all.as_heap())->items) {
-                value pair = c.make_array();
+                const value pair = c.make_array();
                 auto * both = static_cast<array_object *>(pair.as_heap());
                 both->items.push_back(member);
                 both->items.push_back(member);

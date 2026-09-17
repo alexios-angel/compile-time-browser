@@ -858,7 +858,7 @@ void install_object(context & cx) {
         auto * result = static_cast<array_object *>(out.as_heap());
         const context::rooted keep{c, out};
         each_enumerable_own(c, a[0], [&](const std::string & key, value held) {
-            value pair = c.make_array();
+            const value pair = c.make_array();
             auto * entry = static_cast<array_object *>(pair.as_heap());
             entry->items.push_back(c.string(key));
             entry->items.push_back(held);
