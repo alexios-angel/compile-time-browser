@@ -15,6 +15,85 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Present dataset values and signed unary snapshots, 2026-09-17 UTC
+
+Resumed **12 dirty ctcompile files on `6e8fb994`**, identified in the **02:27:52
+recovery / 02:29:20 abandoned-loop AGENT-SYNC journal**. The integrated-runtime
+recovery was already committed; September 7 WIP is already an ancestor. Three agents
+split dataset tests, escape recovery and independent review. Root recovered the two
+editing agents after service limits, reviewed their drafts and completed the gates.
+
+**`9a367648`** compiles original same-element `t.dataset[n]` reads through public
+`ctbrowser::dataset_value`. Immutable snapshots record their exact element and
+enumeration epoch; confined filtering preserves provenance, and the existing guarded
+vector index proof supplies a present own member. A fresh dataset lookup cannot renew
+an old key. Changed/joined/carried Strings, cross-element reads, mutations, unknown
+effects and incomplete budgets receive no membership evidence. Native C++ returns
+owning Strings; no browser implementation, Script/VM/GC dependency or runtime
+semantics changed.
+
+**`8207a051`** preserves held bounded signed Number facts through unary Plus and
+Neg, including a second Neg restoring a positive stride or own index. Exact initial
+values, invariant backedges and bounded final updates remain required. Coercible
+String/BigInt/unknown inputs do not acquire Number facts. CFG/SCF and complete source
+oracles cover retained children, zero trips, overshoot, source mutation and budget
+exhaustion.
+
+The **393-target build / 3/3 focused CTests (0.83s) / 5/5 lit (42.59s)** pass.
+Dataset tests cover **22 sources / 80 Node-VM source-double observations / eight
+GCC-Clang binaries / 392 refusals**, HTML/SVG and ASan/UBSan lifetime checks, including
+returned Strings after document/session destruction and mutation between calls.
+The new signed-unary oracle observes **20 sites / eight sound / zero violations /
+eight of 12 precision (66.7%)**. The complete historical fixture remains **895 sites /
+40 sound / zero violations / 40 of 172 precision (23.3%)**, with its snapshot unchanged.
+Independent static dataset proof/emission review found no actionable defect.
+
+The complete frozen gate passes **310/310 CTests (1950.15s) / 258/258 lit
+(1701.18s)**, wrapper **0**, with no skips. All **1,793 input hashes** match locally
+and on the devbox before documentation edits. This includes the corrected Annex B
+String witness from the preceding recovery. Array suites now cover **567 dense /
+234 induction / 162 structured rows**, with **21,935 / 15,806 / 9,424** conservative
+budget cutoffs.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 47 globals**, Data **7/7**, and
+Button **4/86 / 22 agreeing Node-VM lifecycle observations**. All four corpus reports
+are byte-identical to the preceding gate. The original dataset-value loop now admits
+**two native functions in all four provider/policy modes**, alongside the filter,
+count and prefix loops. Original M retains **24 nine-register blocks / handler ^bb12**.
+Full H still refuses **DOM helper branch contains an unproved local identity**.
+
+Stable formatting passes **890 C++ / 107 Python / 105 web files**. The required
+pinned formatter reproduces exactly the same **nine unchanged HEAD files / 26
+diagnostics**. WPT/test262 corpus measurements were not rerun. Evidence, source
+manifests, generated code, static review and boundary probes are preserved under
+`/tmp/ctcompile-values-finalize/`.
+
+**Exact next, measured in all four provider/policy modes:** prove the original
+`if (!t) return {};` for an already validated, nonnullable element input, and fold
+that exact guard on the private source candidate before iterator preparation. The
+isolated guard currently refuses the unsupported `ctjs.unary`; the guarded value
+loop refuses **DOM iteration requires one top-level source iterator**. An empty
+result object alone already admits one function.
+
+An independent composition thread is loop-local original M: both dataset-value and
+getAttribute arguments refuse **DOM helper call has unsupported arity or source
+order**. Extend the helper-call dominance/source-order proof at the actual nested
+call while preserving capture initialization and original exception continuations.
+Fresh result writes remain separate: static assignment refuses object escape/identity,
+and dynamic assignment refuses nonlocal/unordered object uses. Ordered collisions and
+inherited `__proto__` setter behavior need an assignment proof beyond JSON spread.
+The 28 isolated boundary probes are admission measurements, not full-H execution.
+
+The unchanged Unicode witness still disagrees for `bsÉtage` and `bsİtem`; ASCII,
+empty, emoji and supplementary Deseret agree. The original expression lowercases its
+first UTF-16 code unit. Keep this oracle issue coordinated with Claude; the filter
+does not establish an ASCII suffix.
+
+Full H, Unicode first-code-unit key normalization, loop-local M composition,
+ordered dynamic result assignment/collision semantics, Config/inheritance/defaults,
+retained callbacks and the application driver remain unfinished. Older sections below
+are historical checkpoints.
+
 ## Integrated-runtime recovery complete, 2026-09-17 UTC
 
 Resumed clean `228d80d1` from this handoff and the interrupted **2026-09-16

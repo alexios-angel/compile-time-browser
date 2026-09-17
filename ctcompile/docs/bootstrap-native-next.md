@@ -1,27 +1,36 @@
 # What native Bootstrap needs next
 
-## Current boundary: present dataset values, 2026-09-17
+## Current boundary: guarded dataset composition, 2026-09-17
 
-The interrupted integrated-runtime gate is recovered on `228d80d1`. Already-landed
-`c8b9856d / bf872db3 / c7d1b1a2` cover anchored prefix removal, branch-local confined
-filters and held bounded Neg strides. The original block self-copy is now a positive
-Annex B regression; a real repeated global export remains refused. Full **309/310
-CTests / 256/257 lit**, followed by corrected **3/3 focused CTests / 1/1 lit**, with
-both **1,792-input manifests** verified locally/remotely. Only the test driver changed;
-this is combined passing coverage, not a single green full invocation. Stable format
-passes; pinned format retains nine unchanged files / 26 diagnostics.
+**`9a367648`** compiles present same-element `t.dataset[n]` through public
+`ctbrowser::dataset_value`, returning owning Strings. Exact immutable snapshot
+membership and unchanged mutation epochs are required; reacquiring a dataset cannot
+renew a stale key. **`8207a051`** preserves held bounded signed Number snapshots
+through Plus/Neg, retaining exact initialization, stride invariance and final bounds.
+Both interrupted drafts were recovered from the 02:29:20 abandoned-loop journal.
+
+Full **310/310 CTests (1950.15s) / 258/258 lit (1701.18s), wrapper 0**;
+all **1,793 hashes** verified locally/remotely. Focused **3/3 CTests / 5/5 lit** pass.
+Dataset: **22 sources / 80 Node-VM source-double observations / eight binaries /
+392 refusals**, HTML/SVG and lifetime sanitization. New escape: **20 observed sites /
+eight sound / zero violations / eight of 12 precision**; historical **895 sites /
+40 sound / zero violations / 40 of 172** and the snapshot remain unchanged.
+Stable formatting passes; pinned format retains nine unchanged files / 26 diagnostics.
 
 Fresh Bootstrap **19/574, 0/47 globals**, Data **7/7**, Button **4/86 / 22 lifecycle
-observations** are unchanged. Prefix loops admit two functions in all four modes.
-Next: prove present same-element `t.dataset[n]` through immutable key provenance and
-mutation epochs, then call public `ctbrowser::dataset_value`. Existing iterator
-normalization suffices; general joined/carried String keys remain unproved. Independent
-escape work can preserve signed snapshots through unary Plus/double Neg. Full H,
-Unicode key normalization (including the current Node/VM gap), loop-local M, dynamic
-result writes, Config/inheritance/defaults, callbacks and driver remain unfinished.
-See [HANDOFF](HANDOFF.md) for exact measured
-boundaries and `/tmp/ctcompile-runtime-resume/` evidence. Older sections are historical.
+observations** are unchanged. The original dataset-value loop now compiles two
+functions in all four modes. Full H still refuses an unproved branch-local identity.
+Next: prove/fold its exact valid-element guard before iterator preparation. The
+isolated guard refuses `ctjs.unary`; the guarded loop requires a top-level iterator.
+In parallel, original M calls inside either value or attribute loops refuse helper
+arity/source order; extend nested-call dominance with captures/exceptions preserved.
+Static/dynamic result writes have separate identity/order refusals and need inherited
+`__proto__` assignment semantics. Unicode normalization still has the `bsÉtage` and
+`bsİtem` Node/VM gap. Config/inheritance/defaults, callbacks and driver remain open.
+Evidence: `/tmp/ctcompile-values-finalize/`; 28 isolated boundary probes are admission
+measurements, not full-H execution. Older sections are historical.
 
+See [HANDOFF](HANDOFF.md) for the exact measured continuation and proof seams.
 
 ## Previous boundary: snapshot length and original iteration, 2026-09-16
 
