@@ -519,8 +519,10 @@ void test_handler_properties() {
     const auto & log = log_of(page);
     check(log.size() == 2, "both the listener and the handler property fired");
     if (log.size() == 2) {
-        // `this` is the element, which is what a handler written this way reads.
-        check(log[0] == "listener" && log[1] == "handler click true",
+        // `this` is the element, which is what a handler written this way
+        // reads - and the handler was set FIRST, so it runs first (its
+        // listener was registered then; HTML 8.1.8.1).
+        check(log[0] == "handler click true" && log[1] == "listener",
               "the handler runs with the event and the element as `this`");
     }
 
@@ -529,7 +531,8 @@ void test_handler_properties() {
     (void)page.run_script("a.onclick = function () { console.log('replaced'); };");
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
-    check(log_of(page).size() == 4 && log_of(page)[3] == "replaced",
+    check(log_of(page).size() == 4 && log_of(page)[2] == "replaced" &&
+              log_of(page)[3] == "listener",
           "the second assignment replaced the first rather than adding to it");
     (void)page.run_script("a.onclick = null;");
     (void)page.handle(input_event::mouse_down_at(20, 20));

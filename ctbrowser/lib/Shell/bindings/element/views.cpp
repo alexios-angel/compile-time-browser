@@ -1072,6 +1072,20 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                     }
                                     return c.lookup_property(args[0], key);
                                 })));
+        // `has` too, or `Array.prototype.forEach` over the list - a HasProperty
+        // per index, holes skipped - visits nothing.
+        handler->set("has",
+                     value::object(cx.allocate<script::native_object>(
+                         "has", [tokens_now](context & c, std::span<value> args) {
+                             if (args.size() < 2) { return value::boolean(false); }
+                             const std::string key = c.to_string(args[1]);
+                             if (!key.empty() && key.size() < 10 &&
+                                 key.find_first_not_of("0123456789") == std::string::npos &&
+                                 (key == "0" || key[0] != '0')) {
+                                 return value::boolean(std::stoul(key) < tokens_now().size());
+                             }
+                             return value::boolean(c.has_property(args[0], key));
+                         })));
         return value::object(
             cx.allocate<script::proxy_object>(value::object(list), value::object(handler)));
     };
@@ -1112,24 +1126,40 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // every sheet and script has applied before the first frame is laid out,
     // and there is nothing left for `render` to hold back - the ordering the
     // attribute asks for is the only one the engine has.
+    //
+    // ...AND THE OTHER DOMTokenList ATTRIBUTES HTML REFLECTS THE SAME WAY:
+    // `relList` on a/area/link/form (over `rel`), `htmlFor` on output (over
+    // `for`), `sandbox` on iframe, `sizes` on link
+    // (DOMTokenList-coverage-for-attributes.html).
     {
         const auto txn = doc_->read();
         const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
-        if (txn.element_ns(id) == node_ns::html &&
-            (tag == "link" || tag == "script" || tag == "style")) {
-            const value list = make_token_list("blocking", "render");
+        const bool html = txn.element_ns(id) == node_ns::html;
+        const auto token_attribute = [&](const char * property, std::string_view attribute,
+                                         std::string_view supported) {
+            const value list = make_token_list(attribute, supported);
             auto * reader = cx.allocate<script::native_object>(
-                "blocking", [list](context &, std::span<value>) { return list; });
+                property, [list](context &, std::span<value>) { return list; });
             // A capture is not a GC edge - see the note on `attributes` above.
             reader->retained.push_back(list);
             auto * writer = cx.allocate<script::native_object>(
-                "blocking", [list](context & c, std::span<value> a) {
+                property, [list](context & c, std::span<value> a) {
                     c.store_property(list, "value", a.empty() ? c.string("") : a[0]);
                     return value::undefined();
                 });
             writer->retained.push_back(list);
-            obj.define_accessor("blocking", value::object(reader), value::object(writer));
+            obj.define_accessor(property, value::object(reader), value::object(writer));
+        };
+        if (html && (tag == "link" || tag == "script" || tag == "style")) {
+            token_attribute("blocking", "blocking", "render");
         }
+        if ((html && (tag == "a" || tag == "area" || tag == "link" || tag == "form")) ||
+            (txn.element_ns(id) == node_ns::svg && tag == "a")) {
+            token_attribute("relList", "rel", {});
+        }
+        if (html && tag == "output") { token_attribute("htmlFor", "for", {}); }
+        if (html && tag == "iframe") { token_attribute("sandbox", "sandbox", {}); }
+        if (html && tag == "link") { token_attribute("sizes", "sizes", {}); }
     }
 
     // --- element.dataset

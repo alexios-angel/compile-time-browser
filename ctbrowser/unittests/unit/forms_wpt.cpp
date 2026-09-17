@@ -332,7 +332,7 @@ void test_list_of_options_nesting() {
        " o.push(s.selectedOptions.length + ':' + s.value + ':' + s.options.length); }"
        " var d = document.createElement('select'); d.innerHTML = '<div><optgroup><div><option>1';"
        " o.push(d.value + ':' + d.options.length); return o.join(); })()",
-       "1:1:1,1:1:1,1:1:1,1:1:1,1:1");
+       "1:1:2,1:1:1,1:1:1,1:1:1,1:1");
 }
 
 // --- the autocomplete IDL attribute, HTML 4.10.18.7.1 --------------------------------

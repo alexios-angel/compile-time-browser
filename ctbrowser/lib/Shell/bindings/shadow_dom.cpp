@@ -253,8 +253,10 @@ void dom_bindings::install_shadow_dom(context & cx) {
     // `Document.parseHTMLUnsafe(html)`, HTML 8.6.1: a new document, parsed
     // with scripting off and the declarative shadow roots attached - the
     // static twin of setHTMLUnsafe, on the Document interface object.
-    if (const value ctor = cx.global("Document"); ctor.is_object()) {
-        set_method(cx, *static_cast<script::object_object *>(ctor.as_heap()), "parseHTMLUnsafe",
+    // (The interface object is a NATIVE, not a plain object - `is_object()`
+    // is heap_kind::object exactly.)
+    if (const value ctor = cx.global("Document"); ctor.is_kind(script::heap_kind::native)) {
+        set_method(cx, *static_cast<script::native_object *>(ctor.as_heap()), "parseHTMLUnsafe",
                    [this](context & c, std::span<value> a) {
                        const std::string markup = arg_string(c, a, 0);
                        const value made = parse_from_string(c, markup, "text/html");
