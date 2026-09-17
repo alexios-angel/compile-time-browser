@@ -295,6 +295,8 @@ struct module_record {
     // ONE PER MODULE, made on demand: two `import * as` of the same module must
     // give the same object. See context::module_namespace.
     value namespace_object = value::undefined();
+    // And the DEFERRED one (`import defer * as ns`, 16.2.2), likewise once.
+    value deferred_namespace_object = value::undefined();
     // Evaluated ONCE, however many modules import it. The flag is the whole of
     // "a module is a singleton".
     bool evaluated = false;
@@ -582,6 +584,21 @@ public:
     // RESULT KIND differs: an ordinary object whose properties are accessors
     // over the cells, not a cell.
     [[nodiscard]] value module_namespace_for(const std::string & specifier);
+    // THE DEFERRED NAMESPACE (16.2.2, `import defer * as ns`): the module's
+    // live namespace, except that the first read of an export EVALUATES the
+    // module first, through the hook the loader installed (EvaluateSync) -
+    // an evaluation that throws is that read's throw. A symbol key and
+    // `then` never trigger it (IsSymbolLikeNamespaceKey). What the hidden
+    // native import_defer_name answers; see the definition for what of the
+    // exotic object this ordinary one does not do.
+    [[nodiscard]] value deferred_module_namespace(module_record & of);
+    [[nodiscard]] value deferred_module_namespace_for(const std::string & specifier);
+    // WHAT A DEFERRED NAMESPACE CALLS TO RUN ITS MODULE: the loader's own
+    // post-order evaluation, so the module's not-yet-run dependencies run
+    // first. Answers false when the evaluation threw (last_thrown says what).
+    void set_module_evaluator(std::function<bool(context &, module_record &)> evaluator) {
+        module_evaluator_ = std::move(evaluator);
+    }
 
     // `a = import(specifier)` - a promise for the namespace object.
     //
@@ -1826,6 +1843,11 @@ public:
         // carry.
         bool async_gen = false;
         bool awaiting = false;
+        // A `.return(v)` whose v is being AWAITED (27.6.3.8 / 27.6.3.9)
+        // before the body sees it: 1 = the frame is at a yield and resumes
+        // with a return completion of the awaited value, 2 = the generator
+        // is finished and the request settles with it directly.
+        std::uint8_t return_pending = 0;
         value self;
         // THE ITERATOR RECORD OF A `yield*` IN PROGRESS (see yield_delegate_open_name),
         // undefined otherwise. While it is set, `.next()` on a sync generator
@@ -1853,6 +1875,15 @@ public:
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
+    // 27.7.5.3 Await steps 1-2 for a frame ALREADY parked: PromiseResolve
+    // (%Promise%, v), then resume() when it settles - from the promise's
+    // handler list, or from a job when it already has. A `constructor`
+    // getter that throws rejects on the spot, as PromiseResolve's `?` says.
+    void await_for(coroutine_object * saved, value v);
+    // What an async generator's `.throw(e)` / `.return(v)` becomes at a
+    // `yield*`: the value handed to the delegate loop, which forwards it to
+    // the inner iterator's own method (14.4.14 step 7.b / 7.c).
+    [[nodiscard]] value make_resume_record(std::string_view how, value v);
     // LIFT THE TOP FRAME INTO A COROUTINE (await and yield are the same
     // suspension): its register window is copied out, its handlers travel
     // with it with reg_top made RELATIVE - it comes back somewhere else in
@@ -2443,6 +2474,7 @@ private:
     // needs a program evaluated from inside the interpreter.
     run_result run_reentrant(const program & prog);
     std::function<value(context &, const std::string &, const std::string &)> module_loader_;
+    std::function<bool(context &, module_record &)> module_evaluator_;
     // Set by a frame that suspended, so `resume` can tell "awaited again" from
     // "returned" - both leave run_loop the same way.
     bool suspended_ = false;

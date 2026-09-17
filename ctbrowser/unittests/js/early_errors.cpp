@@ -597,6 +597,11 @@ int main() {
     module_accepted("var x; export { x }; export { x as other };");
     module_accepted("export { Number } from './m.js';");
     module_accepted("let a = 1; function b() {} export { a, b };");
+    // `import defer` (16.2.2) is deferral only before `*`; `defer` is an
+    // ordinary identifier otherwise, and a deferred import is namespace-only.
+    module_accepted("import defer * as ns from './m.js'; export { ns };");
+    module_accepted("import defer from './m.js'; export { defer };");
+    module_refused("import defer * as ns, { x } from './m.js';");
     // A module's top-level function declarations are LEXICAL, so two of a
     // name are a redeclaration where a script allows them.
     accepted("function x() {} function x() {}");

@@ -829,7 +829,8 @@ public:
 
     // `{a, ...rest} = o` - every own property except the ones already named.
     void emit_rest_object(std::uint16_t dst, std::uint16_t source,
-                          const std::vector<std::string> & taken);
+                          const std::vector<std::string> & taken,
+                          const std::vector<std::uint16_t> & taken_keys);
 
     // --- statements ---------------------------------------------------------
     void compile_stmt(std::int32_t idx);

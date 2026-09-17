@@ -127,21 +127,28 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
             emit_iterator_native(require_object_name, scratch, src);
             release_to(mark);
         }
-        // The keys already taken, so an object rest knows what to leave out.
+        // The keys already taken, so an object rest knows what to leave out:
+        // the names, and the COMPUTED keys, which stay in registers of their
+        // own for the rest to delete (14.3.3.3: excludedNames holds every
+        // property key evaluated so far, `{[a]: b, ...rest}` included).
         std::vector<std::string> taken;
+        std::vector<std::uint16_t> taken_keys;
         for (const std::int32_t entry : entries) {
             const vp::node & e = at(entry);
+            const bool computed = (e.d & computed_bit) != 0 && e.a >= 0 && e.kind != rest_kind;
+            std::uint16_t key = 0;
+            if (computed) {
+                key = alloc_reg(); // outlives this entry, for the rest
+                taken_keys.push_back(key);
+                const not_declaring expression{*this};
+                compile_expr(e.a, key);
+            }
             const std::uint32_t mark = reg_mark();
             const std::uint16_t item = alloc_reg();
             if (e.kind == rest_kind) {
-                emit_rest_object(item, src, taken);
+                emit_rest_object(item, src, taken, taken_keys);
                 compile_pattern(e.a, item);
-            } else if ((e.d & computed_bit) != 0 && e.a >= 0) { // a computed key
-                const std::uint16_t key = alloc_reg();
-                {
-                    const not_declaring expression{*this};
-                    compile_expr(e.a, key);
-                }
+            } else if (computed) {
                 proto().emit(instruction{op::get_index, item, src, key});
                 compile_pattern(e.b, item);
             } else {
@@ -228,11 +235,15 @@ void compiler_impl::compile_array_pattern(
 }
 
 void compiler_impl::emit_rest_object(std::uint16_t dst, std::uint16_t source,
-                                     const std::vector<std::string> & taken) {
+                                     const std::vector<std::string> & taken,
+                                     const std::vector<std::uint16_t> & taken_keys) {
     proto().emit(instruction{op::new_object, dst});
     proto().emit(instruction{op::copy_props, dst, source});
     for (const std::string & key : taken) {
         proto().emit(instruction{op::delete_prop, dst, name_operand(key)});
+    }
+    for (const std::uint16_t key : taken_keys) {
+        proto().emit(instruction{op::delete_index, dst, key});
     }
 }
 

@@ -448,8 +448,7 @@ void test_concurrent_awaits() {
 // and awaited, undefined answered; no `return` is undefined at once; a throw
 // from the getter or the call is the rejection.
 void test_async_dispose() {
-    // (An async generator's own `.return()` at a yield does not run its
-    // finally yet - coroutines.cpp says so - so the iterator here is hand-made.)
+    // (The iterator is hand-made so the test is about the method alone.)
     expect_after_turn("var result = ''; const proto = Object.getPrototypeOf(Object.getPrototypeOf("
                       "Object.getPrototypeOf((async function* () {})())));"
                       "const it = { __proto__: proto, return() { result += 'ret';"
@@ -520,6 +519,71 @@ void test_async_generators() {
         "var result = ''; async function* g() {}"
         "g().next.call({}).then(() => { result = 'no'; }, e => { result = e.name; });",
         "TypeError");
+}
+
+// `.return(v)` ON AN ASYNC GENERATOR AWAITS v, then resumes the body with a
+// return completion (27.6.3.8): the finally blocks run, a finally may yield
+// or return instead, a rejected v is thrown at the yield, and with no yield
+// to resume the request settles with the awaited value (27.6.3.9).
+void test_async_generator_return() {
+    expect_after_turn("var result = ''; async function* g() { try { yield 1; } finally { result "
+                      "+= 'f'; } }"
+                      "const it = g(); it.next().then(() => it.return('r')).then(r => { result += "
+                      "r.value + r.done; });",
+                      "frtrue");
+    expect_after_turn("var result = ''; async function* g() { try { yield 1; } finally { return "
+                      "'done'; } }"
+                      "const it = g(); it.next().then(() => it.return('r')).then(r => { result = "
+                      "r.value + r.done; return it.next(); }).then(r => { result += r.done; });",
+                      "donetruetrue");
+    expect_after_turn("var result = ''; async function* g() { try { yield 1; } finally { yield "
+                      "'in'; } }"
+                      "const it = g(); it.next().then(() => it.return('r')).then(r => { result = "
+                      "r.value + r.done; return it.next(); }).then(r => { result += r.value + "
+                      "r.done; });",
+                      "infalsertrue");
+    // v is awaited: a promise unwraps, a rejection is thrown at the yield
+    expect_after_turn("var result = ''; async function* g() { yield 1; }"
+                      "const it = g(); it.next().then(() => it.return(Promise.resolve(42)))"
+                      ".then(r => { result = r.value + ':' + r.done; });",
+                      "42:true");
+    expect_after_turn("var result = ''; async function* g() { try { yield 1; } catch (e) { "
+                      "result = e; return 2; } }"
+                      "const it = g(); it.next().then(() => it.return(Promise.reject('no')))"
+                      ".then(r => { result += ',' + r.value + ',' + r.done; });",
+                      "no,2,true");
+    expect_after_turn("var result = ''; async function* g() { yield 1; }"
+                      "const it = g(); it.return(Promise.resolve(7)).then(r => { result = "
+                      "r.value + ':' + r.done; });",
+                      "7:true");
+    expect_after_turn("var result = ''; async function* g() { yield 1; }"
+                      "const it = g(); it.return(Promise.reject('x')).then(() => { result = 'no'; "
+                      "}, e => { result = e; });",
+                      "x");
+    // `.return()` and `.throw()` at an async `yield*` go to the inner iterator
+    expect_after_turn(
+        "var result = ''; const inner = { [Symbol.iterator]() { return { next() { return "
+        "{ value: 1, done: false }; }, return(v) { result += 'R' + v; return { value: 'v', "
+        "done: true }; } }; } };"
+        "async function* g() { try { yield* inner; } finally { result += 'f'; } }"
+        "const it = g(); it.next().then(() => it.return('r')).then(r => { result += r.value + "
+        "r.done; });",
+        "Rrfvtrue");
+    expect_after_turn(
+        "var result = ''; const inner = { [Symbol.iterator]() { return { next() { return "
+        "{ value: 1, done: false }; } }; } };"
+        "async function* g() { yield* inner; }"
+        "const it = g(); it.next().then(() => it.throw(new Error('e'))).then(() => { result = "
+        "'no'; }, e => { result = e.name; return it.next(); }).then(r => { result += r.done; });",
+        "TypeErrortrue");
+    expect_after_turn(
+        "var result = ''; const inner = { [Symbol.iterator]() { return { next() { return "
+        "{ value: 1, done: false }; }, throw(e) { return { value: 't' + e, done: false }; } }; "
+        "} };"
+        "async function* g() { yield* inner; }"
+        "const it = g(); it.next().then(() => it.throw('!')).then(r => { result = r.value + "
+        "r.done; });",
+        "t!false");
 }
 
 // `for await (x of y)`: an async generator pulled lazily, a sync iterable
@@ -640,6 +704,7 @@ int main() {
     test_concurrent_awaits();
     test_async_dispose();
     test_async_generators();
+    test_async_generator_return();
     test_for_await();
     REPORT("vm_async");
 }

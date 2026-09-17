@@ -90,6 +90,16 @@ inline constexpr std::string_view yield_delegate_settle_name = "__ctbrowser_dele
 // escaping marker back into {value: v, done: true}.
 inline constexpr std::string_view return_marker_key = "@#return";
 inline constexpr std::string_view catch_filter_name = "__ctbrowser_catch_filter";
+// An async generator's `.throw(e)` / `.return(v)` at a `yield*`: the frame
+// resumes with {@#resume: "throw"|"return", @#resume_value: v} in the
+// yield's register, and the delegate loop's call native forwards it to the
+// inner iterator's method instead of `next` (14.4.14 steps 7.b and 7.c).
+// `import defer * as ns from "x"` (16.2.2): `(specifier)` answers the
+// deferred namespace object of the module - see context::deferred_module_
+// namespace - as one call the compiled tier already knows how to make.
+inline constexpr std::string_view import_defer_name = "__ctbrowser_import_defer";
+inline constexpr std::string_view resume_record_key = "@#resume";
+inline constexpr std::string_view resume_record_value_key = "@#resume_value";
 // An array literal's elisions (13.2.4.1): (array, index...) marks each index
 // a hole - the literal appended undefined there because `append` is the one
 // opcode an element has, and a hole is an attribute on the slot.
