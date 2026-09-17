@@ -34,6 +34,17 @@ namespace {
     return is_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
 
+// Namespaces in XML 1.0, section 3: an element or attribute name is a QName -
+// at most one colon, and neither half empty. `:a`, `a:` and `a::b` are
+// namespace-well-formedness violations, which a browser reports as it does
+// any other fatal error (DOMParser-parseFromString-xml-parsererror.html).
+[[nodiscard]] bool is_qname(std::string_view name) {
+    const std::size_t colon = name.find(':');
+    if (colon == std::string_view::npos) { return true; }
+    return colon != 0 && colon + 1 < name.size() &&
+           name.find(':', colon + 1) == std::string_view::npos;
+}
+
 // One element's namespace bindings. A vector rather than a map: an element
 // declares nought or one namespace in almost every document, and a linear
 // scan of a handful of entries beats hashing a prefix on every lookup.
@@ -442,6 +453,10 @@ private:
             fail("an element name is empty");
             return;
         }
+        if (!is_qname(qualified)) {
+            fail("<" + qualified + "> is not a qualified name");
+            return;
+        }
         std::vector<std::pair<std::string, std::string>> attrs;
         bool empty_element = false;
         for (;;) {
@@ -467,6 +482,10 @@ private:
             std::string attr_name = name();
             if (attr_name.empty()) {
                 fail("an attribute name is empty in <" + qualified + ">");
+                return;
+            }
+            if (!is_qname(attr_name)) {
+                fail("attribute " + attr_name + " is not a qualified name in <" + qualified + ">");
                 return;
             }
             skip_space();

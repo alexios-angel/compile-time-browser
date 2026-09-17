@@ -182,6 +182,15 @@ void test_wellformedness_is_fatal() {
         const xml_parse_result out = parse_xml(doc, "<a><input checked/></a>");
         CHECK(!out.error.empty());
     }
+    // Namespace well-formedness: a name is a QName, one colon at most and
+    // neither half empty.
+    for (const std::string_view bad :
+         {"<a :x=\"1\"/>", "<a ::=\"1\"/>", "<a xmlns:=\"urn:x\"/>", "<:a/>", "<a:b:c/>"}) {
+        atom_table atoms;
+        document doc{atoms};
+        const xml_parse_result out = parse_xml(doc, bad);
+        CHECK(!out.error.empty());
+    }
     {
         atom_table atoms;
         document doc{atoms};
