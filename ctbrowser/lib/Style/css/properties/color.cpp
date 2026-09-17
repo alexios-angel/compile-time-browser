@@ -1862,6 +1862,10 @@ struct channel_answer {
         out.c[static_cast<std::size_t>(hue)] = normalize_hue(out.c[static_cast<std::size_t>(hue)]);
     }
     if (!out.alpha_none) { out.alpha *= alpha_multiplier; }
+    // §4.4: A powerless hue in the result becomes missing.
+    if (hue >= 0 && hue_powerless(out)) {
+        out.none[static_cast<std::size_t>(hue)] = true;
+    }
     return out;
 }
 
