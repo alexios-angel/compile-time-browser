@@ -278,8 +278,10 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     } else if (type == "text/html") {
         if (const std::string declared = prescan_encoding(bytes); !declared.empty()) {
             fresh.set_encoding(declared);
+        } else {
+            fresh.set_encoding(doc_->encoding()); // 13.2.3.2 step 8: the parent's, same-origin
         }
-        (void)parse_html(fresh, bytes);
+        (void)parse_html(fresh, decode_document_bytes(bytes, fresh.encoding()));
     } else if (type.starts_with("text/") || type == "application/json" ||
                type == "text/javascript") {
         (void)parse_html(fresh, "<html><head></head><body><pre>" + escaped(bytes) +
