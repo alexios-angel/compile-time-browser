@@ -130,17 +130,43 @@ public:
         return text;
     }
 
+    // HTML 4.10.7 "list of options": the option descendants in tree order,
+    // excluding those inside another select, an option, an hr, or an
+    // optgroup nested in an optgroup (select-selectedOptions-nesting.html).
+    [[nodiscard]] static std::vector<node_id> list_of_options(const read_txn & txn,
+                                                              atom_table & atoms, node_id select) {
+        const atom option_tag = atoms.intern_lower("option");
+        const atom optgroup_tag = atoms.intern_lower("optgroup");
+        const atom select_tag = atoms.intern_lower("select");
+        const atom datalist_tag = atoms.intern_lower("datalist");
+        const atom hr_tag = atoms.intern_lower("hr");
+        std::vector<node_id> out;
+        const auto walk = [&](auto && self, node_id at, bool in_group) -> void {
+            for (const node_id child : txn.children(at)) {
+                const atom tag = txn.tag(child).value_or(atom{});
+                if (tag == option_tag) {
+                    out.push_back(child);
+                    continue;
+                }
+                if (tag == select_tag || tag == datalist_tag || tag == hr_tag) { continue; }
+                const bool group = tag == optgroup_tag;
+                if (group && in_group) { continue; }
+                self(self, child, in_group || group);
+            }
+        };
+        walk(walk, select, false);
+        return out;
+    }
+
     // The value a <select> starts with: the `selected` option's, else the
     // first one's, which is what a browser shows in a select nobody has
     // touched.
     [[nodiscard]] static std::string selected_option_value(const read_txn & txn, atom_table & atoms,
                                                            node_id select) {
-        const atom option_tag = atoms.intern_lower("option");
         const atom selected = atoms.intern("selected");
         std::string first;
         bool have_first = false;
-        for (const node_id child : txn.children(select)) {
-            if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+        for (const node_id child : list_of_options(txn, atoms, select)) {
             if (!have_first) {
                 first = option_value(txn, atoms, child);
                 have_first = true;

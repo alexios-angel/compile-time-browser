@@ -804,18 +804,10 @@ void dom_bindings::install_control_methods(context & cx) {
     // change of selectedness here is written through to that value - and a
     // store value the chrome or the shadowing `value` setter changed is read
     // back into selectedness when the two disagree (`reconcile`).
-    const auto options_of = [is](const read_txn & txn, dom_bindings * b, node_id select) {
-        std::vector<node_id> out;
-        const auto walk = [&](auto && self, node_id at2) -> void {
-            for (const node_id child : txn.children(at2)) {
-                if (is(txn, child, "option")) { out.push_back(child); }
-                if (is(txn, child, "select") || is(txn, child, "datalist")) { continue; }
-                self(self, child);
-            }
-        };
-        (void)b;
-        walk(walk, select);
-        return out;
+    // HTML 4.10.7 "list of options" - the store's walk, so the value the
+    // chrome paints and the options this model selects agree.
+    const auto options_of = [](const read_txn & txn, dom_bindings * b, node_id select) {
+        return form_store::list_of_options(txn, *b->atoms_, select);
     };
     const auto option_value = [](const read_txn & txn, dom_bindings * b, node_id option) {
         return form_store::option_value(txn, *b->atoms_, option);

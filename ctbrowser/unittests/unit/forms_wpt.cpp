@@ -283,6 +283,22 @@ void test_output_and_textarea() {
 
 } // namespace
 
+// --- the list of options, HTML 4.10.7 -------------------------------------------------
+
+void test_list_of_options_nesting() {
+    // select-selectedOptions-nesting.window.js: an option inside another
+    // option, an hr, a nested select or a nested optgroup is not in the list.
+    is("(function () { var o = []; for (var parent of ['option', 'hr', 'select', 'optgroup']) {"
+       " var s = document.createElement('select'); s.innerHTML = '<optgroup><option>1';"
+       " var p = s.firstChild.appendChild(document.createElement(parent));"
+       " var x = p.appendChild(document.createElement('option')); x.setAttribute('selected', '');"
+       " x.textContent = '2';"
+       " o.push(s.selectedOptions.length + ':' + s.value + ':' + s.options.length); }"
+       " var d = document.createElement('select'); d.innerHTML = '<div><optgroup><div><option>1';"
+       " o.push(d.value + ':' + d.options.length); return o.join(); })()",
+       "1:1:1,1:1:1,1:1:1,1:1:1,1:1");
+}
+
 // --- the autocomplete IDL attribute, HTML 4.10.18.7.1 --------------------------------
 
 void test_autocomplete_tokens() {
@@ -344,6 +360,7 @@ int main() {
     test_input_numbers_and_dates();
     test_value_sanitization_and_type_change();
     test_autocomplete_tokens();
+    test_list_of_options_nesting();
     test_selection_api();
     test_form_data_and_submission();
     test_output_and_textarea();
