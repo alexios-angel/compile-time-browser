@@ -466,6 +466,30 @@ void test_request_animation_frame() {
     check(page.bindings().pending_animation_frames() == 0, "and stops when it stops asking");
 }
 
+// cancel-pending.html and callback-exception.html: a callback cancelled by
+// an earlier one in the same frame does not run, and a throw in one is
+// reported to `window.onerror` without stopping the rest.
+void test_cancel_animation_frame_and_a_throw() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><script>
+    var seen = [];
+    addEventListener('error', function (e) { seen.push('error:' + e.error.message); });
+    function one() { cancelAnimationFrame(two); seen.push('one'); }
+    function throws() { throw new Error('boom'); }
+    function three() { seen.push('three'); }
+    requestAnimationFrame(one);
+    var two = requestAnimationFrame(function () { seen.push('two'); });
+    requestAnimationFrame(throws);
+    requestAnimationFrame(three);
+    var gone = requestAnimationFrame(function () { seen.push('gone'); });
+    cancelAnimationFrame(gone);
+    requestAnimationFrame(function () { console.log(seen.join(',')); });
+    </script></body></html>)");
+    for (int i = 0; i < 3; ++i) { (void)page.tick(16); }
+    check(log_of(page).size() == 1 && log_of(page).front() == "one,error:boom,three",
+          "cancelAnimationFrame from a callback, and a reported throw");
+}
+
 } // namespace
 
 // XMLHttpRequest over the same resource loading as fetch: the state walk
@@ -516,6 +540,7 @@ int main() {
     test_timers();
     test_interval_repeats_and_can_be_cleared();
     test_request_animation_frame();
+    test_cancel_animation_frame_and_a_throw();
     test_fetch_is_async();
     test_fetch_await_and_bytes();
     test_fetch_abort();

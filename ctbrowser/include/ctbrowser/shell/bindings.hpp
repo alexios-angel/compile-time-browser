@@ -2233,7 +2233,17 @@ private:
 
     std::vector<listener> listeners_;
     std::vector<timer> timers_;
-    std::vector<value> animation_callbacks_;
+    // The map of animation frame callbacks (HTML 8.9.2): handle -> callback,
+    // in registration order. `cancelAnimationFrame` removes an entry, and
+    // "run the animation frame callbacks" runs the entries of a COPY that are
+    // still in the map - so a callback cancelled by an earlier one this frame
+    // does not run.
+    struct animation_frame_callback {
+        std::uint32_t id = 0;
+        value callback;
+    };
+    std::vector<animation_frame_callback> animation_callbacks_;
+    std::vector<std::uint32_t> cancelled_frames_; // cancelled during this frame's run
     std::vector<std::string> console_;
     std::uint32_t next_timer_id_ = 0;
 

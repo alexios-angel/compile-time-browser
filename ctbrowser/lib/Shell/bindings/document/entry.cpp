@@ -103,7 +103,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         mark(waiting.reader);
         mark(waiting.blob);
     }
-    for (const value & callback : animation_callbacks_) { mark(callback); }
+    for (const animation_frame_callback & frame : animation_callbacks_) { mark(frame.callback); }
     for (const auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
