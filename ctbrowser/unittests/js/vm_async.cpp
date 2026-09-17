@@ -429,6 +429,19 @@ void test_concurrent_awaits() {
                       "class D { static async b(v) { return await v; } }"
                       "C.b(1).then(x => { result += x; }); D.b(2).then(x => { result += x; });",
                       "21"); // D settles first: C.b awaits twice
+    // THE SAME CUT FROM THE CALLER'S SIDE: testharness.js's promise_setup calls
+    // the page's async function and then reads its own `properties` - the
+    // registers above the suspended callee's slot - and got undefined
+    // ("Cannot read properties of undefined (reading 'hasOwnProperty')",
+    // every WPT file using promise_setup). The callee suspends INSIDE the
+    // caller's window; the caller's registers must survive it.
+    expect_after_turn("var result = '';"
+                      "function promise_setup(func, properties = {}) {"
+                      "  Promise.resolve().then(function () {"
+                      "    var r = func(); result += typeof properties + ':' +"
+                      "    properties.hasOwnProperty('x') + ':' + (typeof r.then); }); }"
+                      "promise_setup(async () => { await 1; });",
+                      "object:false:function");
 }
 
 // %AsyncIteratorPrototype%[Symbol.asyncDispose] (27.1.3.2): `return` called
