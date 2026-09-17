@@ -384,10 +384,19 @@ struct DOMSource {
     bool dataObject(ctjs::CreateObjectOp object) {
         // Preserve fresh data allocations for the complete DOM proof. Unlike
         // callable holders, their constructors and uses must not be erased here.
-        for (mlir::Operation * use : object.getResult().getUsers()) {
+        for (mlir::OpOperand & operand : object.getResult().getUses()) {
             if (!step()) { return false; }
+            auto * use = operand.getOwner();
             if (llvm::isa<ctjs::RootOp, ctjs::ReturnOp, mlir::scf::YieldOp, ctjs::CopyPropsOp>(
                     use)) {
+                continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use);
+                store && operand.getOperandNumber() == 0 &&
+                !store.getValue().getDefiningOp<ctjs::CreateClosureOp>() &&
+                precedesInStructuredBody(object, store)) {
+                // Keep assignment order intact. Key/value semantics still need
+                // complete DOM proof; callable slots retain their separate proof.
                 continue;
             }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(use);
