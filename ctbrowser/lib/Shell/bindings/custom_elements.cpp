@@ -290,16 +290,29 @@ value dom_bindings::construct_html_element(context & c, value self,
     // Step 7: AN UPGRADE. The element is on the construction stack; `super()`
     // gives it the class's prototype and marks it constructed. A second
     // `super()` on the same element is the "already constructed marker".
-    if (is_element) {
+    //
+    // AND WHILE ONE IS RUNNING, `new C()` from inside the constructor is the
+    // same step: the stack is not empty, so the element on top is what the
+    // constructor gets - or the marker, which is the TypeError. (The nested
+    // constructor's `this` stays the object `new` made, since a native's
+    // return cannot rebind it; what the outer `super()` then meets is the
+    // marker, and that is the TypeError the page sees reported.)
+    if (is_element || !def.construction_stack.empty()) {
         custom_element_definition::construction & top = def.construction_stack.back();
         if (top.constructed) {
-            throw_dom_exception(c, "InvalidStateError",
-                                "The HTML element constructor was called twice for one upgrade");
+            c.throw_error("TypeError", "The HTML element constructor was called twice for one "
+                                       "upgrade: the top of the construction stack is already "
+                                       "constructed");
             return value::undefined();
         }
         top.constructed = true;
-        static_cast<script::object_object *>(self.as_heap())->prototype = def.prototype;
-        return self;
+        dom_bindings & upgrading =
+            def.registry->document == nullptr ? primary() : *def.registry->document;
+        const value element = is_element ? self : upgrading.wrap(c, top.element);
+        if (element.is_object()) {
+            static_cast<script::object_object *>(element.as_heap())->prototype = def.prototype;
+        }
+        return element;
     }
     // Steps 8-13: a NEW element, custom from the start, IN THE DOCUMENT WHOSE
     // REGISTRY HOLDS THE DEFINITION - a frame's, when the class was defined
