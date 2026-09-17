@@ -293,8 +293,11 @@ void test_the_cascade_leaves_colour_math_alone() {
              std::string{"rgb(from red calc(r * 2) g b)"});
     CHECK_EQ(fold_math("lch(50 calc(infinity) 0)", ctx, math_context::any).text,
              std::string{"lch(50 calc(infinity) 0)"});
+    // ...but an absolute rgb() is folded, because paint reads that text.
     CHECK_EQ(fold_math("calc(1 + 1) rgb(calc(1 + 1) 0 0)", ctx, math_context::any).text,
-             std::string{"2 rgb(calc(1 + 1) 0 0)"});
+             std::string{"2 rgb(2 0 0)"});
+    CHECK_EQ(fold_math("oklch(0.5 calc(infinity) 0)", ctx, math_context::any).text,
+             std::string{"oklch(0.5 calc(infinity) 0)"});
     computed("lch(50 calc(infinity) 0)", "lch(50 calc(infinity) 0)");
     computed("lch(50 10 calc(infinity))", "lch(50 10 0)");
 }
