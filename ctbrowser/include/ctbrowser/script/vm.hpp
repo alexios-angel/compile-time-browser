@@ -1208,6 +1208,41 @@ public:
     void set_promise_factory(std::function<value(context &, value, bool)> make) {
         promise_factory_ = std::move(make);
     }
+    // HostPromiseRejectionTracker (27.2.1.9), for the host to wire
+    // `unhandledrejection` / `rejectionhandled` from: called with `handled`
+    // false when a promise is rejected while no reaction was ever attached to
+    // it (RejectPromise step 7, [[PromiseIsHandled]] false), and with `handled`
+    // true when a reaction is later attached to such a promise
+    // (PerformPromiseThen step 9 - `then`, `catch`, `finally`, an `await`).
+    // No JS semantics change and nothing is dispatched here; without a
+    // tracker the calls are dropped. [[PromiseIsHandled]] is the promise's
+    // private `@#PromiseIsHandled` slot (builtins/async.cpp).
+    void set_rejection_tracker(std::function<void(value promise, bool handled)> track) {
+        rejection_tracker_ = std::move(track);
+    }
+    void track_promise_rejection(value promise, bool handled) {
+        if (rejection_tracker_) { rejection_tracker_(promise, handled); }
+    }
+    // [[PromiseIsHandled]]: read and set through one member so attach_resume
+    // (an await is a PerformPromiseThen) and the standard library agree.
+    [[nodiscard]] static bool promise_is_handled(value promise) {
+        if (!promise.is_object()) { return true; }
+        const value * flag = static_cast<object_object *>(promise.as_heap())
+                                 ->find(std::string_view{"@#PromiseIsHandled"});
+        return flag != nullptr && truthy(*flag);
+    }
+    // PerformPromiseThen steps 9 and 11 for `promise`: the tracker's "handle"
+    // when it was rejected unhandled, then the flag.
+    void mark_promise_handled(value promise) {
+        if (!promise.is_object() || promise_is_handled(promise)) { return; }
+        auto * p = static_cast<object_object *>(promise.as_heap());
+        const value * rejected = p->find(std::string_view{"__rejected"});
+        const value * settled = p->find(std::string_view{"__settled"});
+        if (settled != nullptr && truthy(*settled) && rejected != nullptr && truthy(*rejected)) {
+            track_promise_rejection(promise, true);
+        }
+        p->define(std::string_view{"@#PromiseIsHandled"}, value::boolean(true), attr_none);
+    }
     // A PENDING promise, and settling one. What a host needs to model work that
     // finishes later - a fetch off the event loop, a decode, a file read - now
     // that `await` can actually suspend on one.
@@ -1916,6 +1951,7 @@ public:
         auto * record = allocate<object_object>();
         record->set("co", coroutine);
         static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
+        mark_promise_handled(promise); // an await is a PerformPromiseThen (27.7.5.3)
     }
 
 private:
@@ -2359,6 +2395,7 @@ private:
     std::function<double()> clock_;
     std::function<value(context &)> pending_promise_factory_;
     std::function<void(context &, value, value, bool)> promise_settler_;
+    std::function<void(value, bool)> rejection_tracker_; // see set_rejection_tracker
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();

@@ -257,6 +257,11 @@ void settle(context & cx, value promise, value with, bool rejected) {
     p->define(value_slot, with, attr_builtin);
     p->define(rejected_slot, value::boolean(rejected), attr_builtin);
     p->define(settled_slot, value::boolean(true), attr_builtin);
+    // RejectPromise step 7: HostPromiseRejectionTracker(promise, "reject")
+    // when nothing has reacted to it yet.
+    if (rejected && !context::promise_is_handled(promise)) {
+        cx.track_promise_rejection(promise, false);
+    }
     value * handlers = p->find(handlers_slot);
     if (handlers == nullptr || !handlers->is_array()) { return; }
     // COPIED before draining: a handler may register another on this same
@@ -323,10 +328,12 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
             static_cast<array_object *>(handlers->as_heap())
                 ->items.push_back(value::object(record));
         }
+        cx.mark_promise_handled(promise); // step 11
         return;
     }
     enqueue_reaction(cx, value::object(record), slot(p, value_slot),
                      context::truthy(slot(p, rejected_slot)));
+    cx.mark_promise_handled(promise); // steps 9 and 11
 }
 
 [[nodiscard]] value intrinsic_promise(context & cx) {
