@@ -124,6 +124,15 @@ struct box_node {
     // other, but the first/last ones cannot escape through this box's edges -
     // especially important when the same box clips their paint.
     bool blocks_margin_collapse = false;
+    // THE SAME QUESTION AS CSS OVERFLOW 3 ASKS IT: `scroll_container` is
+    // `overflow` hidden/scroll/auto/overlay on either axis - the box has a
+    // scrolling box and a scroll offset (CSSOM View reads and writes it);
+    // `clips_overflow` adds `clip`, which clips paint and the scrollable
+    // overflow contribution to an ancestor but scrolls nothing. Both false is
+    // `visible`, where a descendant that spills out still counts toward the
+    // ancestor's scrollable overflow rectangle (layout/overflow.hpp).
+    bool scroll_container = false;
+    bool clips_overflow = false;
     side_lengths margin{}, padding{};
     // WHERE THIS BOX IS PLACED, and by whom.
     //
@@ -537,6 +546,26 @@ private:
             };
             b.blocks_margin_collapse =
                 scrollable_overflow(overflow_x_) || scrollable_overflow(overflow_y_);
+            b.scroll_container = b.blocks_margin_collapse;
+            b.clips_overflow = b.scroll_container ||
+                               ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
+                               ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
+            // THE BODY'S OVERFLOW PROPAGATES TO THE VIEWPORT when the root's
+            // is `visible` (CSS Overflow 3 §3.3), and the body's own used
+            // value is `visible` then: it is not a scroll container, clips
+            // nothing and keeps its margins collapsing. Without this
+            // `body { overflow: hidden }` made the body the box scrollIntoView
+            // scrolled instead of the page. The root box is the one with no
+            // tag (build()).
+            if (tag_text == "body" && into.tag.empty() && into.source) {
+                const auto visible = [&](atom name) {
+                    const std::string_view v = trimmed(prop(into.style, name));
+                    return v.empty() || ascii_iequals(v, "visible");
+                };
+                if (visible(overflow_x_) && visible(overflow_y_)) {
+                    b.scroll_container = b.clips_overflow = b.blocks_margin_collapse = false;
+                }
+            }
             b.inset = sides_of(style, inset_sides_);
             // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
             // `left` in a horizontal-tb, left-to-right document, which is the
@@ -619,6 +648,18 @@ private:
         };
         if (tag == "canvas") {
             into.intrinsic_width = attribute_number("width", 300); // the HTML defaults
+            into.intrinsic_height = attribute_number("height", 150);
+            return;
+        }
+        // A NESTED BROWSING CONTEXT AND THE OTHER EMBEDS: CSS 2 §10.3.2's
+        // default object size, 300 by 150, unless the `width`/`height`
+        // attributes say (HTML 15.4.1, the presentational hints of `<iframe>`
+        // and friends). An iframe used to have no intrinsic size at all - a
+        // 0 by line-height box - so `<iframe width=200 height=100>` laid out
+        // nothing and its document's viewport, which is this box, was 0 by
+        // 20: every media query in a frame read that (matchMedia.html).
+        if (tag == "iframe" || tag == "embed" || tag == "object" || tag == "video") {
+            into.intrinsic_width = attribute_number("width", 300);
             into.intrinsic_height = attribute_number("height", 150);
             return;
         }

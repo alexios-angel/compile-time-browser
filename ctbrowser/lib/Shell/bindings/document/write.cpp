@@ -69,7 +69,10 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     parser_script_created_ = false;
     parser_ = std::make_unique<html::tree_builder>(*doc_, *atoms_);
     parser_->set_script_hook([this](node_id script) { prepare_parser_script(script); });
-    parser_->begin(html, false);
+    // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding
+    // into the document's name; a windows-1251 page reaches the tokenizer as
+    // UTF-8 here, and a UTF-8 one passes through untouched.
+    parser_->begin(decode_document_bytes(html, doc_->encoding()), false);
     parse_result out;
     out.root = parser_->document_element();
     out.svg_sources = parser_->foreign_sources();

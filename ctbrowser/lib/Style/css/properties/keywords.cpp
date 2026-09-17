@@ -60,6 +60,8 @@ constexpr or_grammar or_grammars[] = {
      "strict",
      "layout style paint",
      "content"},
+    // `normal | [ [ size | inline-size ] || scroll-state ]`, CSS Conditional 5 §4.2.
+    {"container-type", "normal", {"size inline-size", "scroll-state"}, true},
     {"font-synthesis", "none", {"weight", "style", "small-caps", "position"}, true},
     {"font-variant-ligatures",
      "normal none",
@@ -782,6 +784,17 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         if (handled || !ascii_iequals(g.property, property)) { continue; }
         handled = true;
         answer = custom_idents(g, ts, found);
+    }
+    if (!handled && ascii_iequals(property, "container-name")) {
+        // `none | <custom-ident>+`, CSS Conditional 5 §4.1 - which also takes
+        // `and`, `or` and `not` out of the idents, since a query names them.
+        handled = true;
+        answer = custom_idents({"container-name", "none", "", true, false}, ts, found);
+        if (answer) {
+            for (const std::string_view word : split_top_level(*answer, " ")) {
+                if (ascii_iequals_any(word, {"and", "or", "not"})) { answer = std::nullopt; }
+            }
+        }
     }
     for (const string_grammar & g : string_grammars) {
         if (handled || !ascii_iequals(g.property, property)) { continue; }

@@ -48,6 +48,12 @@ struct length_context {
     float root_zero_advance = 0.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
+    // THE ELEMENT'S WRITING MODE IS VERTICAL, so the inline axis is the
+    // viewport's height: `vi`/`vb` (and `cqi`/`cqb`) swap (CSS Values 4
+    // §6.1.2, viewport-units-writing-mode). The cascade sets it from the
+    // element's own `writing-mode` - not the root's, which the spec says
+    // does not matter.
+    bool vertical = false;
     // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, one-based, and how many there
     // are - what `sibling-index()` and `sibling-count()` answer (CSS Values 5
     // §tree-counting). Zero means "no element here", which is every context

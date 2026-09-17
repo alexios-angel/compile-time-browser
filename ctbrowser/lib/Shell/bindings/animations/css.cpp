@@ -385,6 +385,11 @@ void dom_bindings::cancel_record(std::size_t index) {
     const double active = sample_timing(a).active_time;
     a.cancelled_at = unresolved(active) ? 0 : active;
     if (cx_ != nullptr && play_state(a) != "idle" && !a.finished_settled) {
+        // Web Animations 4.4.3 "cancel an animation": the finished promise is
+        // rejected with an AbortError AND its [[PromiseIsHandled]] is set to
+        // true - a page that never asked for `finished` must not hear an
+        // unhandledrejection for it.
+        cx_->mark_promise_handled(a.finished);
         cx_->settle_promise(a.finished,
                             make_dom_exception(*cx_, "AbortError", "The user aborted a request."),
                             true);

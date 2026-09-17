@@ -103,7 +103,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         mark(waiting.reader);
         mark(waiting.blob);
     }
-    for (const value & callback : animation_callbacks_) { mark(callback); }
+    for (const animation_frame_callback & frame : animation_callbacks_) { mark(frame.callback); }
     for (const auto & [packed, obj] : wrappers_) {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
@@ -131,6 +131,13 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(event_prototype_);
     mark(custom_event_prototype_);
     mark(event_target_prototype_);
+    mark(abort_signal_prototype_);
+    mark(media_query_list_prototype_);
+    for (const value & range : live_ranges_) { mark(range); }
+    for (const value & list : pending_media_changes_) { mark(list); }
+    for (const value & promise : rejections_to_notify_) { mark(promise); }
+    for (const value & promise : outstanding_rejections_) { mark(promise); }
+    for (const value & promise : rejections_handled_late_) { mark(promise); }
     // DOMException.prototype, for the same reason: `assert_throws_dom`
     // requires `e.constructor === DOMException`, and a prototype the
     // collector could not see would break that on the first sweep.
@@ -164,6 +171,11 @@ void dom_bindings::install(context & cx) {
     install_computed_style(cx);
     // BEFORE anything that may throw one.
     install_dom_exception(cx);
+    // AFTER both: a signal is an EventTarget and aborts with a DOMException.
+    install_abort(cx);
+    install_media_queries(cx);
+    install_promise_rejections(cx);
+    install_xhr(cx);
     install_css_interface(cx);
     install_mutation_observer(cx);
     install_range(cx);
@@ -194,6 +206,7 @@ void dom_bindings::install(context & cx) {
     // Element.prototype and ShadowRoot.prototype are where slots and
     // setHTMLUnsafe go.
     install_shadow_dom(cx);
+    install_autocomplete(cx);
     install_xml_serializer(cx);
 }
 
@@ -275,9 +288,32 @@ void dom_bindings::mutated() {
     // THE MUTATION OBSERVERS FIRST, and from here rather than from each of the 23
     // natives that change the document: this is the funnel they all already go
     // through. It costs one branch on a page that never made an observer.
-    record_mutations();
+    // The document's write log, drained once and read twice: the observers'
+    // records, then the attribute change steps this engine models.
+    const std::vector<document::write_note> writes =
+        doc_ == nullptr ? std::vector<document::write_note>{} : doc_->take_writes();
+    record_mutations(writes);
+    settle_attribute_writes(writes);
+    settle_live_ranges(writes);
+    signal_slot_changes(writes);
     // A "replace all" note is for the mutation it preceded and no other.
     replace_all_.reset();
+    // AN <input> WHOSE TYPE MOVED runs HTML 4.10.5's type-change steps now,
+    // and a `value` attribute those steps carry over is written here - the
+    // store reads under a read transaction and cannot. Guarded, because that
+    // write comes back through this funnel.
+    if (forms_ != nullptr && !settling_types_) {
+        settling_types_ = true;
+        std::vector<std::pair<node_id, std::string>> writes;
+        {
+            const auto txn = doc_->read();
+            writes = forms_->settle_types(txn, *atoms_);
+        }
+        for (const auto & [id, text] : writes) {
+            (void)doc_->set_attribute(id, atoms_->intern("value"), text);
+        }
+        settling_types_ = false;
+    }
     // An `<iframe>` can only appear, change its `src` or leave through a
     // mutation, so this is where the reconcile is told there is something to
     // look at. The walk itself is not done here: it needs the script context
@@ -366,12 +402,42 @@ void dom_bindings::run_inserted_scripts() {
         }
         if (type == "module") { continue; }
         if (!src.empty()) {
-            const std::vector<std::byte> bytes =
-                assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
-            announce_load(id, !bytes.empty());
-            if (bytes.empty()) { continue; }
-            source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+            // AN EXTERNAL SCRIPT RUNS IN A LATER TASK (HTML 4.12.1.1 "prepare
+            // the script element" step 33: a script-inserted classic script
+            // with a src is fetched and executed "as soon as possible" - after
+            // the script that inserted it has finished, whether or not the
+            // element is still connected by then). Running it inside the
+            // insertion made `executeExternalScript()` in the fetched file see
+            // the null the page had not yet replaced (Document-prototype-
+            // currentScript.html). Its `load` fires after it ran.
+            (void)add_timer(
+                native(cx, "external script",
+                       [this, id, src](context & c, std::span<value>) {
+                           const std::vector<std::byte> bytes =
+                               assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+                           if (!bytes.empty()) {
+                               std::string text(reinterpret_cast<const char *>(bytes.data()),
+                                                bytes.size());
+                               execute_script_element(c, id, text);
+                           }
+                           announce_load(id, !bytes.empty());
+                           return value::undefined();
+                       }),
+                0, false);
+            continue;
         }
+        execute_script_element(cx, id, source);
+    }
+}
+
+// "Execute the script element" (HTML 4.12.1.2) for a classic script's source:
+// `document.currentScript` is the element while it runs - null for one in a
+// shadow tree, which is not in the document tree - and what it was before
+// afterwards; an uncaught throw is reported, and the caller carries on.
+void dom_bindings::execute_script_element(context & cx, node_id id, const std::string & source) {
+    if (doc_ == nullptr) { return; }
+    const atom src_name = atoms_->intern("src");
+    {
         // `document.currentScript` is this element while it runs - and while
         // its parse error is reported - and what it was, the outer script when
         // there is one, afterwards.
@@ -421,13 +487,18 @@ void dom_bindings::run_inserted_scripts() {
         }
         const bool frames_were_dirty = frames_dirty_;
         frames_dirty_ = false;
-        set_current_script(id);
+        // Null for a script whose root is a shadow root (HTML 4.12.1.2 step
+        // 5.2: only a node in the document tree is exposed).
+        {
+            const auto txn = doc_->read();
+            set_current_script(root_of_tree(txn, id, false) == txn.root() ? id : node_id{});
+        }
         script::program compiled = script::compiler::compile(source);
         if (!compiled.ok) {
             (void)dispatch_error(compiled.error);
             if (auto * doc = document_object()) { doc->set("currentScript", outer); }
             frames_dirty_ = frames_dirty_ || frames_were_dirty;
-            continue;
+            return;
         }
         const script::program & kept = cx.own_program(std::move(compiled));
         auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);

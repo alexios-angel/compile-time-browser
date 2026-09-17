@@ -122,6 +122,18 @@ public:
             return {baked.begin(), baked.end()};
         }
         if (name.empty()) { return {}; }
+        // A REGISTERED name matched without its query or fragment too: a
+        // form submission navigates a frame to `inner.html?a=1`, and the
+        // registry holds `inner.html` (the filesystem probe below drops both
+        // already; a packager records the literal reference, so the exact
+        // lookup above stays first).
+        if (const std::size_t cut = std::min(name.find('?'), name.find('#'));
+            cut != std::string_view::npos && !is_data_url(name)) {
+            if (const std::span<const std::byte> baked = find(name.substr(0, cut));
+                !baked.empty()) {
+                return {baked.begin(), baked.end()};
+            }
+        }
         // A data: URL CARRIES ITS OWN BYTES, so it resolves here and reaches no
         // socket and no disk. Doing it in the registry rather than at each
         // caller is what makes an <img src="data:...">, a fetch, a CSS url()

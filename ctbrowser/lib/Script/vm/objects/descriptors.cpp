@@ -156,7 +156,9 @@ bool context::own_property(value target, const std::string & name, property_desc
     // checks against the target (steps 15-22) are not made.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "getOwnPropertyDescriptor");
+        bool failed = false;
+        const value trap = proxy_trap(target, "getOwnPropertyDescriptor", &failed);
+        if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return own_property(p->target, name, out); }
         const value args[2] = {p->target, key_value(name)};
         const value answer = call(trap, args, p->handler);
@@ -202,7 +204,10 @@ bool context::own_property(value target, const std::string & name, property_desc
 
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        if (name == "length") {
+        // A TYPED ARRAY HAS NO OWN `length` (23.2.3.19 is a getter on
+        // %TypedArray%.prototype), so one a page defines lands in `named`
+        // like any other name: the three arms below say the same.
+        if (name == "length" && arr->elements == element_kind::none) {
             // 10.4.2: { [[Writable]]: true, [[Enumerable]]: false,
             // [[Configurable]]: false }. A freeze, or defineProperty with
             // writable: false, clears the writable bit.
@@ -390,7 +395,9 @@ bool context::delete_own_property(value target, const std::string & name) {
     // attribute, which no delete on its target could do.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "deleteProperty");
+        bool failed = false;
+        const value trap = proxy_trap(target, "deleteProperty", &failed);
+        if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return delete_own_property(p->target, name); }
         const value args[2] = {p->target, key_value(name)};
         return truthy(call(trap, args, p->handler));
@@ -438,7 +445,9 @@ bool context::delete_own_property(value target, const std::string & name) {
     }
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        if (name == "length") { return false; } // non-configurable, 10.4.2
+        if (name == "length" && arr->elements == element_kind::none) {
+            return false; // non-configurable, 10.4.2
+        }
         std::uint32_t at = 0;
         if (!object_object::array_index_key(name, at)) {
             return arr->named ? delete_own_property(value::object(arr->named.get()), name) : true;
@@ -483,7 +492,9 @@ bool context::define_own_property(value target, const std::string & name,
     // (FromPropertyDescriptor, step 8), or the target defines it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "defineProperty");
+        bool failed = false;
+        const value trap = proxy_trap(target, "defineProperty", &failed);
+        if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return define_own_property(p->target, name, wanted); }
         const value args[3] = {p->target, key_value(name), from_property_descriptor(wanted)};
         return truthy(call(trap, args, p->handler));
@@ -589,7 +600,7 @@ bool context::define_own_property(value target, const std::string & name,
         if (target.is_array()) {
             auto * arr = static_cast<array_object *>(target.as_heap());
             std::uint32_t at = 0;
-            if (name == "length") { return false; }
+            if (name == "length" && arr->elements == element_kind::none) { return false; }
             if (!object_object::array_index_key(name, at)) {
                 arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
                 return true;
@@ -627,7 +638,7 @@ bool context::define_own_property(value target, const std::string & name,
     }
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        if (name == "length") {
+        if (name == "length" && arr->elements == element_kind::none) {
             // ArraySetLength, 10.4.2.4. The value goes through ToNumber (a
             // valueOf runs) and must be a uint32 - `{value: undefined}` is NaN
             // against 0 and a RangeError, not a refusal. The RangeError is

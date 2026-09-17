@@ -678,6 +678,10 @@ namespace detail {
 
 } // namespace detail
 
+std::string_view dom_bindings::interface_name_for_tag(std::string_view tag) {
+    return interface_table[interface_for_tag(tag)].name;
+}
+
 value dom_bindings::interface_prototype(std::string_view name) const {
     const std::size_t at = interface_index(name);
     return at < interface_prototypes_.size() ? interface_prototypes_[at] : value::undefined();
@@ -780,35 +784,23 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             // no browsing context. See make_xml_document.
             const bool constructible = name == "Text" || name == "Comment" ||
                                        name == "DocumentFragment" || name == "Document";
-            auto * ctor = cx.allocate<script::native_object>(name, [this, name, constructible,
-                                                                    i](context & c,
-                                                                       std::span<value> args) {
-                if (constructible) { return construct_node_interface(c, name, args); }
-                // ...AND EVERY HTML ELEMENT INTERFACE, FROM A CUSTOMIZED
-                // BUILT-IN: `class S extends HTMLScriptElement` with
-                // `customElements.define("s-1", S, {extends: "script"})`
-                // reaches `super()` here. HTML's "HTML element constructor"
-                // is one algorithm for all of them - HTMLElement's, with
-                // the check that the definition's local name has THIS
-                // interface (Node-appendChild-cereactions-vs-script).
-                const value self = c.current_this();
-                if (name.starts_with("HTML") && self.is_object()) {
-                    const std::size_t definition = custom_definition_of(c, self);
-                    if (definition != std::numeric_limits<std::size_t>::max()) {
-                        if (interface_for_tag(custom_definitions_[definition].local_name) != i) {
-                            c.throw_error("TypeError", "Illegal constructor: the custom element "
-                                                       "definition does not extend " +
-                                                           name);
-                            return value::undefined();
-                        }
-                        const value html_element = c.global("HTMLElement");
-                        if (html_element.is_callable()) { return c.call(html_element, args, self); }
+            auto * ctor = cx.allocate<script::native_object>(
+                name, [this, name, constructible](context & c, std::span<value> args) {
+                    if (constructible) { return construct_node_interface(c, name, args); }
+                    // ...AND EVERY HTML ELEMENT INTERFACE, FROM A CUSTOMIZED
+                    // BUILT-IN: `class S extends HTMLScriptElement` with
+                    // `customElements.define("s-1", S, {extends: "script"})`
+                    // reaches `super()` here. HTML's "HTML element constructor"
+                    // is one algorithm for all of them - HTMLElement's, with
+                    // the check that the definition's local name has THIS
+                    // interface (Node-appendChild-cereactions-vs-script).
+                    if (name.starts_with("HTML")) {
+                        return construct_html_element(c, c.current_this(), name);
                     }
-                }
-                c.throw_error("TypeError",
-                              "Illegal constructor: " + name + " cannot be constructed by a page");
-                return value::undefined();
-            });
+                    c.throw_error("TypeError", "Illegal constructor: " + name +
+                                                   " cannot be constructed by a page");
+                    return value::undefined();
+                });
             ctor->set("prototype", interface_prototypes_[i]);
             ctor->retained.push_back(keeper);
             ctor_value = value::object(ctor);
@@ -1097,6 +1089,8 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // mixins', the canvas three - on the prototype WebIDL names, through one
     // mechanism. See define_operation in element/methods.cpp.
     install_operations(cx);
+    // `style`, on the three prototypes that mix in ElementCSSInlineStyle.
+    install_style_accessor(cx);
 
     // `animate` and `getAnimations` on Element.prototype, and the Animation
     // interfaces beside them - here because this is where that prototype

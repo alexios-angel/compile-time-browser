@@ -40,15 +40,19 @@
 // select rules on the select/option/optgroup/hr/input start tags, and the
 // html5lib fixtures the WPT checkout carries expect that.
 //
-// WHAT IS NOT, named rather than silently missing: MathML. The DOM has no
-// MathML namespace (node_ns is html / svg / other), so `<math>` is parsed as
-// an HTML element and the MathML text integration points do not apply.
+// FOREIGN CONTENT IS BOTH VOCABULARIES. `<svg>` and `<math>` enter the rules
+// of 13.2.6.5; SVG is `node_ns::svg` and MathML is `node_ns::other` with the
+// MathML URI recorded on the document (node_ns says why there is no fourth
+// enumerator), and under either the case-adjustment tables of 13.2.6.1 put
+// `viewBox`, `foreignObject` and `definitionURL` back the way the author
+// wrote them. The integration points - SVG's foreignObject/desc/title,
+// MathML's mi/mo/mn/ms/mtext and an `<annotation-xml>` naming an HTML
+// encoding - hand their children back to the HTML rules.
 //
-// SVG is foreign content AND a capture: an <svg> subtree is parsed into
-// namespaced elements with their case preserved, and `foreign_sources()`
-// hands the exact bytes to whatever rasterises them - see dom/tokenizer.hpp.
-// Anything walking the tree for <title>, <style> or <script> must check
-// `element_ns`: SVG has all three.
+// SVG is ALSO a capture: `foreign_sources()` hands the exact bytes of each
+// <svg> to whatever rasterises them - see dom/tokenizer.hpp. Anything walking
+// the tree for <title>, <style> or <script> must check `element_ns`: SVG has
+// all three.
 
 namespace ctbrowser::html {
 
@@ -99,15 +103,41 @@ namespace ctbrowser::html {
 
 // --- foreign content ------------------------------------------------------
 
+// The two vocabularies the parser puts under the foreign-content rules: SVG,
+// and MathML - which is `node_ns::other` here, the only `other` the HTML
+// parser ever makes (see the header comment).
+[[nodiscard]] constexpr bool is_foreign(node_ns ns) noexcept {
+    return ns != node_ns::html;
+}
+[[nodiscard]] constexpr bool is_mathml(node_ns ns) noexcept {
+    return ns == node_ns::other;
+}
+
 // SVG elements whose CHILDREN are HTML again. `<foreignObject>` is the whole
 // reason SVG has these - it exists to embed a fragment of HTML inside a
 // graphic - and `<desc>` and `<title>` take flowing HTML for accessibility.
+// (MathML's `<annotation-xml>` is one too when its encoding names HTML, which
+// needs the attribute and is decided where the element is pushed.)
 //
-// Case-sensitive, because by this point names are not folded: `foreignObject`
-// with a lowercase o is a different element and not an integration point.
+// Case-sensitive, because by this point the tag has been adjusted:
+// `foreignObject` with a lowercase o cannot occur, `foreignobject` is what the
+// tokenizer emits and the table below turns into the real name.
 [[nodiscard]] inline bool is_html_integration_point(std::string_view tag) {
     return tag == "foreignObject" || tag == "desc" || tag == "title";
 }
+
+// MathML's counterpart: the five token elements whose children are HTML.
+[[nodiscard]] inline bool is_mathml_text_integration_point(std::string_view tag) {
+    return tag == "mi" || tag == "mo" || tag == "mn" || tag == "ms" || tag == "mtext";
+}
+
+// "Adjust SVG attributes" and the SVG tag-name adjustment of 13.2.6.5: the
+// tokenizer folds every name to lowercase (13.2.5.8), and these are the
+// names SVG spells in mixed case. Only listed names are adjusted - `solidColor`
+// is `solidcolor` after parsing, exactly as the specification and every
+// browser have it. Returns `lower` itself when there is nothing to adjust.
+[[nodiscard]] std::string_view adjust_svg_attribute(std::string_view lower);
+[[nodiscard]] std::string_view adjust_svg_tag(std::string_view lower);
 
 // HTML start tags that BREAK OUT of foreign content: seeing one closes the SVG
 // rather than nesting inside it. The spec's list, and it exists because pages
@@ -128,18 +158,22 @@ public:
     tree_builder(document & doc, atom_table & atoms)
         : doc_(&doc), atoms_(&atoms), held_builder_(doc) {}
 
-    [[nodiscard]] node_id parse(std::string_view input) { return parse(input, {}); }
+    [[nodiscard]] node_id parse(std::string_view input) { return parse(input, {}, node_ns::html); }
     // THE FRAGMENT CASE (13.2.9): `context` is the tag name of the context
     // element - what `innerHTML` was set on - and decides the tokenizer's
     // state (a <title>'s text, a <script>'s data) and the insertion mode (a
     // <tr> context makes `<td>` a cell rather than text). The parsed nodes
     // are the children of the returned root; the context element is NOT in
     // the tree.
-    [[nodiscard]] node_id parse_fragment(std::string_view input, std::string_view context) {
-        return parse(input, context.empty() ? std::string_view{"body"} : context);
+    // `context_ns` is the context element's namespace: a foreign one makes
+    // the context the "adjusted current node" while the stack holds only the
+    // root, so `<circle>` under an SVG `<g>` is SVG and `<![CDATA[` is text.
+    [[nodiscard]] node_id parse_fragment(std::string_view input, std::string_view context,
+                                         node_ns context_ns = node_ns::html) {
+        return parse(input, context.empty() ? std::string_view{"body"} : context, context_ns);
     }
     [[nodiscard]] node_id parse_body_fragment(std::string_view input) {
-        return parse(input, "body");
+        return parse(input, "body", node_ns::html);
     }
 
     // The verbatim source of each <svg> in the document, by the element it
@@ -214,10 +248,11 @@ public:
     [[nodiscard]] node_id document_element() const noexcept { return root_; }
 
 private:
-    [[nodiscard]] node_id parse(std::string_view input, std::string_view context);
+    [[nodiscard]] node_id parse(std::string_view input, std::string_view context,
+                                node_ns context_ns);
     // Set up the tree and the stream, without reading any of it. `context`
     // is empty for a document.
-    void start(std::string_view input, std::string_view context);
+    void start(std::string_view input, std::string_view context, node_ns context_ns);
     // Read tokens until the view runs out: the insertion point (return), or
     // EOF (finish). Refreshes the tokenizer's view every token, because a
     // script the tree builder ran may have grown the stream under it.
@@ -264,7 +299,17 @@ private:
         node_id id;
         std::string tag;
         node_ns ns = node_ns::html;
+        // An HTML integration point (13.2.6.5): SVG's three by name, and a
+        // MathML `<annotation-xml>` by its encoding attribute - decided when
+        // the element is pushed, because the attribute is on the token then.
+        bool html_integration_point = false;
     };
+    [[nodiscard]] static entry make_entry(node_id id, std::string tag, node_ns ns,
+                                          const std::vector<token_attribute> & attributes);
+    // "Special" (13.2.4.2), which includes the integration points of both
+    // foreign vocabularies: what the adoption agency's furthest block and
+    // "any other end tag" stop at.
+    [[nodiscard]] static bool is_special(const entry & e);
     // A formatting element remembered so it can be reconstructed. `marker`
     // entries are scope boundaries (a cell, a caption, a template) that
     // reconstruction stops at.
@@ -323,7 +368,7 @@ private:
         return !open_.empty() && open_.back().ns == node_ns::html && open_.back().tag == tag;
     }
     // The "adjusted current node": the context element for a fragment parse
-    // when the stack holds only the root.
+    // when the stack holds only the root, else the current node.
     [[nodiscard]] const entry * adjusted_current() const;
     void pop();
     // Pop until an HTML element with this tag has been popped.
@@ -397,10 +442,14 @@ private:
 
     // --- foreign content, 13.2.6.5, and the SVG capture -----------------------
 
-    [[nodiscard]] bool in_foreign_content() const;
     // Whether the tree builder should hand the next token to the foreign rules.
     [[nodiscard]] bool use_foreign_rules(const token & t) const;
+    // The tokenizer's CDATA flag follows the adjusted current node's namespace.
     void sync_foreign();
+    // Pop foreign elements until an HTML element or an integration point of
+    // either vocabulary is current: what a breakout start tag, `</br>` and
+    // `</p>` do before the HTML rules take the token.
+    void pop_to_html_context(std::size_t source_end);
     // begin/end of one captured subtree. Split out because the end also has to
     // run at EOF: an unclosed <svg> still has to reach the rasteriser, which
     // renders what it can, rather than being dropped for being malformed.
@@ -419,6 +468,9 @@ private:
     node_id form_;
     node_id body_;
     std::string context_;
+    // The fragment case's context element as a stack entry that is never on
+    // the stack: what adjusted_current() answers over the bare root.
+    entry context_entry_;
     bool frameset_ok_ = true;
     bool foster_parenting_ = false;
     // The newline after a <pre>, <listing> or <textarea> start tag is

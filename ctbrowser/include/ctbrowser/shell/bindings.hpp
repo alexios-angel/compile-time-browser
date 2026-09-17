@@ -282,6 +282,10 @@ public:
     // five properties that handler reads; only `message` is real here, and the
     // rest say so by being empty rather than by being absent.
     bool dispatch_error(std::string_view message);
+    // ...naming the script that failed: an external script's URL, resolved
+    // against the document's, is the ErrorEvent's `filename`; empty means the
+    // document's own (an inline script).
+    bool dispatch_error(std::string_view message, std::string_view script_src);
 
     // A MouseEvent. clientX/clientY are viewport coordinates, which is what
     // MDN's breakout reads to move its paddle.
@@ -321,6 +325,15 @@ public:
     // is resolved through the asset registry, so a frame loads from wherever
     // the page's other subresources load from and reaches no socket of its own.
     void reconcile_frames();
+    // A form submission (GET) aimed at a frame this document names by
+    // `target`: the frame navigates to the action with the entries as its
+    // query. False when the submission is not one of those - see frames.cpp.
+    bool navigate_form_target(node_id form,
+                              const std::vector<std::pair<std::string, std::string>> & entries);
+    // HTML 4.10.21.3 from the browser's activation: the entry list (with its
+    // `formdata` event), then the navigation above. control_methods.cpp
+    // installs it.
+    std::function<void(node_id form, node_id submitter)> submit_form_;
     // Paint Timing: `first-paint` and `first-contentful-paint`, at the page
     // clock's current reading, once. The browser calls it from its first frame.
     void record_first_paint();
@@ -407,6 +420,12 @@ private:
         // Set when a `once` listener has fired, so the pass that removes them
         // runs after the dispatch rather than mutating the list being walked.
         bool spent = false;
+        // THE EVENT HANDLER'S LISTENER (HTML 8.1.8.1): appended when the
+        // handler - the IDL attribute or the content attribute - was first
+        // set to something, removed when it is deactivated, and at its
+        // place in the list it runs the CURRENT handler property. `callback`
+        // is a placeholder object that gives it an identity.
+        bool handler = false;
     };
 
     // --- element wrappers -------------------------------------------------
@@ -430,6 +449,98 @@ private:
     void refresh_element(context & cx, script::object_object & obj, node_id id);
 
     [[nodiscard]] rect box_of(node_id id) const;
+
+    // --- CSSOM VIEW GEOMETRY (bindings/element/views.cpp) -------------------
+    // The first fragment for a node in tree order, with its absolute border
+    // box - what box_of answers, plus the fragment itself for the edges and
+    // the scrolling area. `f` is null when the node has no box.
+    struct located {
+        const layout::fragment * f = nullptr;
+        rect abs;
+        // What `transform: translate()` on the box and its ancestors moved it
+        // by - the part offsetTop and an image's `x` "ignore".
+        point translation;
+    };
+    // `scrolled` subtracts every scroll offset above the box - the viewport's
+    // (unless a fixed box is on the way) and each scrolled container's - which
+    // is what getBoundingClientRect answers in; offsetTop and its kin read
+    // the layout position and leave it false.
+    [[nodiscard]] located locate(node_id id, bool scrolled = false) const;
+    // Whether `id` is the element whose client rectangle and scrolling area
+    // are the VIEWPORT's (CSSOM View §7): the root element in a no-quirks
+    // document, the body in a quirks one - and, for the scrolling area, only
+    // a body that is not potentially scrollable.
+    [[nodiscard]] bool is_viewport_element(node_id id, bool scrolling);
+    // "Potentially scrollable" (§2): the body has a box and neither it nor
+    // its parent is `overflow: visible`/`clip` on the axis.
+    [[nodiscard]] bool potentially_scrollable(node_id body) const;
+    // `offsetParent`, §8 - empty where the specification says null.
+    [[nodiscard]] node_id offset_parent_of(node_id id);
+
+    // --- SCROLLING (bindings/element/views.cpp, bindings/window/scrolling.cpp)
+    //
+    // THE SCROLL STATE LIVES HERE. A scroll container's offset is a fact about
+    // the element the page reads and writes through this object model, and a
+    // frame's document has no browser behind it at all - so the offsets are
+    // the bindings', keyed by node, and every geometry read subtracts them
+    // (locate). The VIEWPORT's offset is the browser's for the page - the
+    // wheel and `window.scrollTo` must agree - reached through the two hooks
+    // below, and this object's own for a frame, where nothing else scrolls.
+    // A scroll queues a `scroll` event for the next tick, as "run the scroll
+    // steps" does. What is NOT here is paint: a scrolled container's content
+    // is drawn where layout put it (the recorder does not read these offsets).
+    [[nodiscard]] point viewport_scroll() const;
+    // "Perform a scroll of the viewport" (§3.1): clamped to the viewport's
+    // scrolling area, a `scroll` event at the document when it moved.
+    void scroll_viewport_to(double x, double y);
+    // The offset of a scroll container a script has scrolled; (0, 0) otherwise.
+    [[nodiscard]] point scroll_offset_of(node_id id) const;
+    // "Scroll an element to x, y" (§6): nothing for a box that is not a scroll
+    // container, else clamped to its scrolling area, with a `scroll` event at
+    // the element when it moved.
+    void scroll_element_to(node_id id, double x, double y);
+    // The scrollTop/scrollLeft setters' whole algorithm, root and quirks-body
+    // delegation to the window included; `axis` is 'x' or 'y'.
+    void set_scroll_position(node_id id, char axis, double v);
+    [[nodiscard]] double scroll_position(node_id id, char axis);
+    // "Scroll a target into view" (§6.1) over every scroll container above
+    // the element and then the viewport. `block` and `inline_` are "start",
+    // "center", "end" or "nearest"; `nearest_container` stops at the first
+    // scrolling box (the `container` option).
+    void scroll_into_view(node_id id, std::string_view block, std::string_view inline_,
+                          bool nearest_container);
+    // §5's scrollingElement: the body in quirks mode when it is not
+    // potentially scrollable, the root otherwise, empty for null.
+    [[nodiscard]] node_id scrolling_element();
+    // The border box in VIEWPORT coordinates - locate(id, true).
+    [[nodiscard]] rect client_rect_of(node_id id) const;
+    // The Promise a finished scroll returns, resolved with its ScrollResult.
+    [[nodiscard]] static value scroll_settled(context & cx);
+    void install_element_scrolling(context & cx);
+    void install_element_geometry(context & cx);
+    // `style` on the HTMLElement/SVGElement/MathMLElement prototypes, the
+    // declaration proxy built on first read; make_style_view is one
+    // element's. element/views.cpp.
+    void install_style_accessor(context & cx);
+    [[nodiscard]] value make_style_view(context & cx, node_id id);
+    // §7's client rects: one per fragment, viewport coordinates, tree order.
+    [[nodiscard]] std::vector<rect> client_rects_of(node_id self);
+    void install_window_scrolling(context & cx, script::object_object & window);
+    void install_document_geometry(context & cx, script::object_object & doc);
+    // §5's hit test over the fragment tree, topmost first: every element
+    // whose border box is under the viewport point, painted-last first, the
+    // root last. `all` false stops at the first.
+    [[nodiscard]] std::vector<node_id> elements_from_point(double x, double y, bool all);
+    // GeometryUtils (§10) and the geometry interfaces it answers in. A box of
+    // the node in viewport coordinates - "margin", "border", "padding" or
+    // "content" - or nothing when it has none; a Document names the viewport.
+    [[nodiscard]] std::optional<rect> box_rect_of(context & cx, value node, std::string_view box);
+    [[nodiscard]] static value make_dom_point(context & cx, double x, double y);
+    [[nodiscard]] static value make_dom_rect(context & cx, const rect & r);
+    [[nodiscard]] static value make_dom_quad(context & cx, const rect & r);
+    void install_geometry_interfaces(context & cx);
+    // The computed value of `property` for `id` from the cascade's map, or "".
+    [[nodiscard]] std::string_view cascade_value(node_id id, std::string_view property) const;
 
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
@@ -565,6 +676,43 @@ private:
     // `bindings/exceptions.cpp` owns the exception hierarchy every DOM method
     // throws through, `bindings/css.cpp` the `CSS` namespace object.
     void install_dom_exception(context & cx);
+    // `AbortController` and `AbortSignal`, DOM §3.2 - bindings/abort.cpp. A
+    // signal is an EventTarget; aborting one removes every listener added
+    // with it, fires `abort`, and reaches the signals `AbortSignal.any` made
+    // from it. AFTER install_event_interfaces and install_dom_exception.
+    void install_abort(context & cx);
+    // The `autocomplete` IDL attribute of input/select/textarea, HTML
+    // 4.10.18.7.1 - element/autocomplete.cpp. AFTER the interface table.
+    void install_autocomplete(context & cx);
+    [[nodiscard]] value make_abort_signal(context & cx);
+    [[nodiscard]] bool is_abort_signal(value v) const;
+    void signal_abort(context & cx, value signal, value reason);
+    // `matchMedia` and `MediaQueryList`, CSSOM View §4.2 - bindings/
+    // media_queries.cpp. A list is an EventTarget whose `matches` is live
+    // against ITS document's environment (a frame's list reads the frame's);
+    // `report_media_query_changes` is §13's "evaluate media queries and
+    // report changes", run by whoever changed the environment - the browser
+    // on a resize, the frame layout when a frame's box moved - and it fires
+    // `change` one tick later, as the scroll steps do. AFTER install_abort.
+    void install_media_queries(context & cx);
+    [[nodiscard]] value match_media(context & cx, std::string_view text);
+    // HTML 8.1.7.x "unhandled promise rejections" - bindings/promise_rejections
+    // .cpp. The VM's HostPromiseRejectionTracker (context::set_rejection_
+    // tracker) feeds the about-to-be-notified list; a task fires
+    // `unhandledrejection` (cancelable) at the window for each promise still
+    // unhandled, and `rejectionhandled` for one handled after that. AFTER
+    // install_event_interfaces (PromiseRejectionEvent).
+    void install_promise_rejections(context & cx);
+    void track_promise_rejection(value promise, bool handled);
+    std::vector<value> rejections_to_notify_;    // roots until the task ran
+    std::vector<value> outstanding_rejections_;  // notified, still unhandled
+    std::vector<value> rejections_handled_late_; // roots until the task ran
+    bool rejection_task_queued_ = false;
+    [[nodiscard]] bool is_media_query_list(value v) const;
+    // Which bindings' document a list names - the page's, or a frame's - and
+    // the list's media text evaluated against that document's environment.
+    [[nodiscard]] dom_bindings & owner_of_media_query_list(value list);
+    [[nodiscard]] bool media_query_matches(std::string_view media);
     // A DOMException instance with the right `name`, `code` and `message`, on
     // `DOMException.prototype` - which is what `assert_throws_dom` checks and
     // what `context::throw_error` cannot build, because an engine-raised error
@@ -694,7 +842,7 @@ public:
     // Costs nothing when no page script has ever constructed a
     // MutationObserver, which is the overwhelmingly common case: the first line
     // returns on an empty registration list.
-    void record_mutations();
+    void record_mutations(const std::vector<document::write_note> & writes);
 
 private:
     // ONE `observe()` CALL'S OPTIONS, after the dictionary's own defaulting.
@@ -777,6 +925,12 @@ private:
     // which is what makes several mutations in one script turn arrive as ONE
     // callback holding several records.
     bool mutation_delivery_queued_ = false;
+    // Set while the mutation observer microtask runs (callbacks and the
+    // slotchange events after them): a dispatch inside it must not drain
+    // the microtask queue, which HTML's "performing a microtask checkpoint"
+    // flag forbids - a queueMicrotask() queued before the delivery would
+    // otherwise run between two slotchange events.
+    bool delivering_mutations_ = false;
     // END mutation observers
 
     // BEGIN web animations (bindings/animations.cpp)
@@ -987,11 +1141,36 @@ public:
     // before returning, which is what [CEReactions] means. Returns on the first
     // line when nothing was ever defined.
     void react_custom_elements();
+    // A SUBTREE A NATIVE JUST MADE - cloneNode, importNode, a fragment parse
+    // into a detached element: DOM "create an element" enqueues an upgrade for
+    // every candidate it makes whether or not the result is connected, and
+    // the scan cannot see a detached subtree it has never been told about.
+    void upgrade_created_subtree(node_id root);
+    // THIS DOCUMENT'S OWN `customElements`. A frame's document has a browsing
+    // context and so a registry of its own (HTML 4.13.3) even though the realm
+    // - HTMLElement, every prototype - is the page's: frames.cpp hangs this
+    // on `contentWindow`, and asking for it marks the document as a frame's.
+    // The primary's is the `customElements` global.
+    [[nodiscard]] value custom_elements_registry(context & cx);
 
 private:
+    // ONE CustomElementRegistry: the page's, a frame document's, or a scoped
+    // one a page made with `new CustomElementRegistry()` (HTML 4.13.3) -
+    // which belongs to no document, so nothing is looked up in it and only
+    // `new C()` reaches its definitions. Owned by the primary, so a pointer
+    // is stable for the life of the page.
+    struct custom_element_registry {
+        dom_bindings * document = nullptr; // whose global registry, or null
+        value object;                      // the JS CustomElementRegistry
+        flat_map<std::string, value> when_defined;
+        bool running = false; // HTML 4.13.4's "element definition is running"
+    };
     struct custom_element_definition {
         std::string name;
         std::string local_name; // the `extends` name, or `name` itself
+        // THE REGISTRY IT WAS DEFINED IN. Every definition of the realm lives
+        // in the primary's vector, so an index means the same thing everywhere.
+        custom_element_registry * registry = nullptr;
         value constructor;
         value prototype;
         // The lifecycle callbacks, captured at define time as the
@@ -1001,66 +1180,193 @@ private:
         value adopted;
         value attribute_changed;
         value connected_move;
+        value form_associated_callback;
+        value form_reset;
+        value form_disabled;
+        value form_state_restore;
         std::vector<std::string> observed_attributes;
+        bool form_associated = false;
+        bool disable_internals = false;
+        bool disable_shadow = false;
+        // HTML 4.13.4's CONSTRUCTION STACK: the element an upgrade is running
+        // the constructor for, and whether `super()` has reached the HTML
+        // element constructor for it yet (the "already constructed marker").
+        struct construction {
+            node_id element;
+            bool constructed = false;
+        };
+        std::vector<construction> construction_stack;
     };
     // ONE UPGRADED OR CONSTRUCTED ELEMENT AS IT WAS, which is what a reaction
     // is a difference from - the same shape record_mutations diffs against.
     struct custom_element_state {
+        // HTML 4.13.1's custom element state, the three that matter here: an
+        // upgrade that threw is `failed` and is never tried again, one whose
+        // constructor is running is `precustomized`, and `custom` is an
+        // element whose callbacks fire.
+        enum class status : std::uint8_t {
+            failed,
+            precustomized,
+            custom
+        };
         std::size_t definition = 0;
+        status state = status::custom;
         bool connected = false;
-        bool visited = false; // scratch for one scan
+        std::uint32_t seen = 0; // the scan generation that last walked it
+        // A FORM-ASSOCIATED element's form owner and disabledness as they
+        // were, which formAssociatedCallback and formDisabledCallback are a
+        // difference from (HTML 4.13.7.2).
+        bool disabled = false;
         node_id parent;
-        std::vector<std::pair<atom, std::string>> attributes; // observed only
+        node_id form;
+        std::vector<attribute> attributes; // observed only
     };
     struct custom_element_reaction {
         enum class kind : std::uint8_t {
             upgrade,
             connected,
             disconnected,
+            adopted,
             connected_move,
-            attribute_changed
+            attribute_changed,
+            form_associated,
+            form_disabled
         };
         node_id target;
+        std::size_t definition = 0;
         kind what = kind::upgrade;
+        node_id form;      // formAssociatedCallback's form, or none
+        bool flag = false; // formDisabledCallback's disabled
         // Strings rather than `value`s: a reaction waits in this queue while
         // the ones before it run script, and nothing would root a heap string.
-        std::string name;
+        std::string name; // the attribute's LOCAL name
+        std::string ns;   // its namespace, "" for none
         std::string old_value;
         std::string new_value;
         bool has_old = false;
         bool has_new = false;
+        // adoptedCallback's two documents: the `document` values of the two
+        // bindings, which are roots already.
+        value old_document;
+        value new_document;
     };
 
     void install_custom_elements(context & cx);
-    // `document.createElement(name)`: a defined name is constructed through
-    // the author's class, anything else is a plain node wrapped.
-    [[nodiscard]] value create_html_element(context & cx, const std::string & name);
+    // WHERE THE DEFINITIONS LIVE: the primary's vector, whichever registry
+    // took them. A document a page made (createHTMLDocument, DOMParser) has
+    // no browsing context and so no registry (HTML 4.13.3) - it never
+    // upgrades a candidate - but an element adopted into it keeps its
+    // definition, and that definition is found here.
+    [[nodiscard]] dom_bindings & primary() noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
+    [[nodiscard]] const dom_bindings & primary() const noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
+    // The registry a `customElements`-shaped receiver is - the page's for
+    // anything that is not one of them.
+    [[nodiscard]] custom_element_registry & registry_of(value receiver);
+    // A new registry record on the primary, for `object`.
+    custom_element_registry & make_registry(dom_bindings * document, value object);
+    // `document.createElement(name, options)`: a defined name is constructed
+    // through the author's class, anything else is a plain node wrapped;
+    // `options.is` names a customized built-in's definition.
+    [[nodiscard]] value create_html_element(context & cx, const std::string & name,
+                                            value options = value::undefined());
     // The definition this element's (local name, `is`) pair belongs to, or
     // npos.
     [[nodiscard]] std::size_t custom_definition_for(const read_txn & txn, node_id id) const;
-    // The definition whose prototype is on this object's chain, or npos - how
-    // the HTMLElement constructor learns which class `super()` came from.
-    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver) const;
-    // One subtree in tree order: upgrade what is new, diff what is tracked.
-    // `upgrade` is false for the pass over DETACHED elements: a candidate that
-    // is not in a document is not upgraded (HTML 4.13.5 upgrades on insertion
-    // and on `customElements.upgrade`), but one that was already upgraded
-    // still gets its attributeChanged and disconnected reactions.
-    void walk_custom_elements(const read_txn & txn, node_id start, bool connected,
-                              bool upgrade = true);
+    // The definition an HTML element constructor is running for: for a
+    // receiver that is an element already, the definition whose construction
+    // stack holds it (an upgrade); otherwise the definition whose prototype is
+    // EXACTLY the receiver's, which is what `new C()` made it. npos when no
+    // definition - the "Illegal constructor" every such call is.
+    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver);
+    // The HTML element constructor, HTML 4.13.4, for the receiver `super()` or
+    // `new` handed a native: what HTMLElement and every HTML*Element interface
+    // object share. `interface_name` is the interface whose constructor was
+    // called, checked against the definition's local name.
+    [[nodiscard]] value construct_html_element(context & cx, value receiver,
+                                               std::string_view interface_name);
+    // The interface an HTML tag is, by name - "HTMLUnknownElement" for a tag no
+    // interface claims (bindings/element/interfaces.cpp owns the table).
+    [[nodiscard]] static std::string_view interface_name_for_tag(std::string_view tag);
+    // One subtree in shadow-including tree order: upgrade what is new, diff
+    // what is tracked. `upgrade` is false for the pass over DETACHED elements:
+    // a candidate that is not in a document is not upgraded (HTML 4.13.5
+    // upgrades on insertion and on `customElements.upgrade`), but one that
+    // was already upgraded still gets its attributeChanged and disconnected
+    // reactions. `roots_seen` collects the shadow roots the walk crossed.
+    void walk_custom_elements(const read_txn & txn, node_id start, bool connected, bool upgrade,
+                              flat_map<std::uint64_t, bool> & roots_seen);
     void scan_custom_elements();
-    void flush_custom_element_reactions();
+    // Keep `loose_watch_` right for one tracked element's state.
+    void watch_loose(std::uint64_t key, const custom_element_state & state);
+    // Run the reactions enqueued at index `from` and after - one [CEReactions]
+    // native's element queue - see the definition.
+    void flush_custom_element_reactions(std::size_t from);
+    // Run one upgrade reaction: HTML 4.13.5 "upgrade an element", with the
+    // constructor fenced so an exception is reported and the element fails.
+    void run_upgrade(context & cx, std::size_t definition, node_id target, value wrapper);
+    // "Report the exception" for a callback or constructor that threw: the
+    // window's error event, with the value.
+    void report_custom_element_exception(context & cx, value thrown, std::string_view where);
+    // `new C()` inside a JavaScript try/catch, so a throw from the author's
+    // constructor comes back as a value rather than unwinding through the
+    // native that asked. Compiled on first use, like the listener fence.
+    [[nodiscard]] value construct_fenced(context & cx, value constructor, bool & threw,
+                                         value & thrown);
     void sync_custom_element_roots();
+    // A document with a browsing context has a registry: the page's, and a
+    // frame's once frames.cpp asked for it.
+    [[nodiscard]] bool has_browsing_context() const noexcept { return registry_ != nullptr; }
 
-    std::vector<custom_element_definition> custom_definitions_;
+    std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
+    // THE DETACHED ELEMENTS A SCAN MUST STILL WALK - see watch_loose - and
+    // the generation the current scan stamps on what it reaches.
+    flat_map<std::uint64_t, bool> loose_watch_;
+    std::uint32_t scan_generation_ = 0;
+    std::size_t sweep_at_ = 64; // when the map is this big, sweep the gone nodes
     std::vector<custom_element_reaction> custom_reactions_;
-    flat_map<std::string, std::vector<value>> when_defined_;
+    std::vector<std::size_t> reaction_floors_; // the flushes in progress, outermost first
+    // Documents that received an adopted reaction from this scan, with the
+    // floor their queue had - flushed once this scan's own reactions ran.
+    std::vector<std::pair<dom_bindings *, std::size_t>> adoptees_;
+    value construct_fence_;                    // the primary's
+    value custom_elements_registry_prototype_; // the primary's
+    // THIS DOCUMENT'S GLOBAL REGISTRY - null for a document a page made,
+    // which has no browsing context and looks nothing up.
+    custom_element_registry * registry_ = nullptr;
+    // Every registry of the realm, on the primary, and the map from a
+    // registry object to its record - how a method on the shared prototype
+    // learns which registry it was called on.
+    std::vector<std::unique_ptr<custom_element_registry>> registries_;
+    flat_map<std::uint64_t, custom_element_registry *> registry_objects_;
     // The CustomElementRegistry interface object, whose `retained` list roots
     // every constructor, prototype, callback and pending promise above - the
     // arrangement install_mutation_observer uses, for the same reason.
     script::native_object * custom_elements_interface_ = nullptr;
     // END custom elements
+    // BEGIN element internals (bindings/element_internals.cpp)
+    // `HTMLElement.prototype.attachInternals` and the ElementInternals it
+    // answers with (HTML 4.13.7): the shadow root, the form-associated
+    // members, the ARIA mixin, the CustomStateSet. Installed by
+    // install_custom_elements, which owns HTMLElement.prototype.
+    void install_element_internals(context & cx, script::object_object & html_element_proto);
+    // A form-associated custom element's submission value (undefined for an
+    // element that is not one) - what "construct the entry list" appends.
+    std::function<value(node_id)> face_submission_value_;
+    // HTML 4.10.17.3, the form owner of a form-associated element: the form
+    // its `form` attribute names in the same tree, else the nearest <form>
+    // ancestor.
+    [[nodiscard]] node_id form_owner_of(const read_txn & txn, node_id id) const;
+    // HTML 4.10.18.5: a `disabled` attribute, or a disabled <fieldset>
+    // ancestor the element is not inside the first <legend> of.
+    [[nodiscard]] bool form_control_disabled(const read_txn & txn, node_id id) const;
+    value element_internals_prototype_;
+    value custom_state_set_prototype_;
+    // END element internals
 
     // BEGIN style sheets (bindings/stylesheets/)
 public:
@@ -1542,6 +1848,20 @@ private:
     void settle_fetch(context & cx, const pending_fetch & waiting);
 
     [[nodiscard]] value fetch_now(context & cx, const std::string & url);
+    // WHERE A URL'S BYTES COME FROM - the asset registry, a file beside the
+    // page, the network when allowed - one answer for fetch() and
+    // XMLHttpRequest. `failure` is set when nothing was fetched at all (a
+    // network error); a 404 is a status.
+    struct loaded_resource {
+        int status = 200;
+        std::string type;
+        std::vector<std::byte> body;
+        std::string failure;
+    };
+    [[nodiscard]] loaded_resource load_resource(const std::string & url);
+    // `XMLHttpRequest`, XHR Standard §4 - bindings/xhr.cpp. AFTER the event
+    // interfaces (it is an EventTarget) and install_dom_exception.
+    void install_xhr(context & cx);
 
     [[nodiscard]] static value make_rejection(context & cx, const std::string & message);
 
@@ -1579,7 +1899,8 @@ private:
     // The `error` event a faulting callback produces, carrying the VALUE the
     // throw left behind beside its text. `dispatch_error` is this with no value,
     // which is what a fault that was never an exception has to hand a page.
-    bool dispatch_error_value(std::string_view message, value error);
+    bool dispatch_error_value(std::string_view message, value error,
+                              std::string_view script_src = {});
     // The MouseEvent (or PointerEvent) the engine sends for one input event:
     // the coordinates, the button and the modifiers, on the right prototype so
     // dispatch can tell it from a plain `new Event("click")`.
@@ -1692,6 +2013,8 @@ private:
     [[nodiscard]] value make_xml_document(context & cx, std::string_view ns,
                                           std::string_view qualified_name,
                                           bool as_xml_document = true);
+    // A made document's URL is its maker's (HTML 8.6.2, DOMParser).
+    void take_url_of(context & cx, const dom_bindings & maker);
     // WHICH BINDINGS A WRAPPER BELONGS TO: this one, the primary, or one of the
     // primary's other secondaries. Null for anything that is not a node of any
     // document in the realm. `handle_of` answers only for this one's own
@@ -1759,6 +2082,7 @@ private:
     canvas_store * canvases_;
     form_store * forms_;
     std::function<void()> on_mutation_;
+    bool settling_types_ = false; // mutated() is settling <input> types (see it)
     std::function<void(node_id)> on_focus_;
     std::function<void(const std::string &)> on_alert_;
     std::function<void(node_id)> on_activate_;
@@ -1776,6 +2100,19 @@ private:
     // element or a text node - is decided when the list is read, so moving a
     // node out of the host un-assigns it without a hook.
     flat_map<std::uint64_t, std::vector<node_id>> manual_slots_;
+    // THE SLOTCHANGE SIGNALS, DOM 4.2.2.4. An assignment is computed, not
+    // stored (shadow_dom.cpp), so a change is found by diffing: `mutated()`
+    // recomputes every slot's assigned nodes and a slot whose list moved is
+    // "signalled" - queued for a `slotchange` at the next mutation observer
+    // microtask, after the observers' callbacks (DOM 4.3.3 step 5), even if
+    // it has left its tree since. ponytail: every slot of every shadow tree
+    // is recomputed per mutation; a per-host dirty bit if a page carries
+    // thousands of slots.
+    flat_map<std::uint64_t, std::vector<node_id>> slot_assignments_;
+    std::vector<node_id> signal_slots_;
+    std::vector<node_id> slot_roots_dirty_; // slot.assign() named these trees
+    void signal_slot_changes(const std::vector<document::write_note> & writes);
+    void fire_signalled_slots();
     // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
     // the `nonce` attribute's text at the time - see reflection.cpp's
     // `cryptographic_nonce` for why the pair. Empty until a page assigns one.
@@ -1842,6 +2179,12 @@ private:
     // than random for the same reason Math.random is seeded: a page that prints
     // one could not otherwise have a golden.
     std::uint32_t next_object_url_ = 0;
+    // The media type each object URL was made with (File API §10.3: a
+    // `blob:` response carries the Blob's `type`), because the asset
+    // registry stores bytes only and `mime_for_path` has no extension to go
+    // on. Both live on the PRIMARY: a frame's `URL.createObjectURL` hands out
+    // a name from the same series, and the frame loader asks the same table.
+    std::vector<std::pair<std::string, std::string>> object_url_types_;
     // Blob.prototype, kept so canvas.toBlob's Blob is one too - `x instanceof
     // Blob` has to be true whoever made it.
     value blob_prototype_;
@@ -1874,6 +2217,9 @@ private:
     // `EventTarget.prototype`, where the three methods a standalone target
     // inherits live.
     value event_target_prototype_;
+    // AbortSignal.prototype, marked as a root like the two above.
+    value abort_signal_prototype_;
+    value media_query_list_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
     // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not
@@ -1893,6 +2239,17 @@ private:
     const layout::box_node * boxes_ = nullptr;
     int viewport_width_ = 0;
     int viewport_height_ = 0;
+    // The scroll state: see set_viewport_scroll_hooks.
+    flat_map<std::uint64_t, point> element_scrolls_;
+    point viewport_scroll_;
+    std::function<point()> viewport_scroll_get_;
+    std::function<void(point)> viewport_scroll_set_;
+    std::vector<node_id> pending_scroll_targets_;
+    bool scroll_events_queued_ = false;
+    // The lists whose `matches` flipped since the last report, GC roots
+    // until their `change` events go out.
+    std::vector<value> pending_media_changes_;
+    bool media_changes_queued_ = false;
     // A POSITIVE TIME ORIGIN, not zero. `performance.now()` and every event's
     // `timeStamp` read this, and `dom/events/Event-constructors.any.js` asserts
     // `timeStamp > 0` twice - which is the only thing between that file and a
@@ -1916,7 +2273,17 @@ private:
 
     std::vector<listener> listeners_;
     std::vector<timer> timers_;
-    std::vector<value> animation_callbacks_;
+    // The map of animation frame callbacks (HTML 8.9.2): handle -> callback,
+    // in registration order. `cancelAnimationFrame` removes an entry, and
+    // "run the animation frame callbacks" runs the entries of a COPY that are
+    // still in the map - so a callback cancelled by an earlier one this frame
+    // does not run.
+    struct animation_frame_callback {
+        std::uint32_t id = 0;
+        value callback;
+    };
+    std::vector<animation_frame_callback> animation_callbacks_;
+    std::vector<std::uint32_t> cancelled_frames_; // cancelled during this frame's run
     std::vector<std::string> console_;
     std::uint32_t next_timer_id_ = 0;
 
@@ -1979,6 +2346,18 @@ private:
     // content attribute if that is where it still is.
     [[nodiscard]] value event_handler_get(context & cx, value self, const std::string & name);
     void event_handler_set(context & cx, value self, const std::string & name, value given);
+    // The event handler's listener for `on<type>` at a step (HTML 8.1.8.1,
+    // "activate"/"deactivate an event handler"): appended to the listener
+    // list the first time the handler is set to something - by the IDL
+    // attribute, or by the content attribute as `mutated()` sees it written -
+    // so it fires in registration order among addEventListener's, and
+    // removed when the handler goes back to null.
+    void activate_event_handler(context & cx, path_step at, std::string_view type);
+    void deactivate_event_handler(path_step at, std::string_view type);
+    [[nodiscard]] bool has_handler_listener(path_step at, std::string_view type) const;
+    // The content attributes `mutated()` saw written since the last time: an
+    // `on*` attribute (de)activates its handler, an input's `type` its state.
+    void settle_attribute_writes(const std::vector<document::write_note> & writes);
     // `onclick="doThing()"` as a function, compiled once and cached on the
     // object it belongs to. Undefined when the attribute is absent or will not
     // compile - HTML says a handler that fails to compile is null.
@@ -2097,8 +2476,38 @@ public:
     // installs the same flush its getComputedStyle wrapper does; anything
     // reading `box_of` calls this first. Only what is stale runs.
     void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
+    // WebIDL's iterable declaration on a collection prototype: `@@iterator`,
+    // and keys/values/entries/forEach unless `named_only` (a named collection
+    // has the first alone). document/collections.cpp; public because the
+    // file-local prototype builder there calls it.
+    static void install_iterable_declaration(context & cx, script::object_object & proto,
+                                             bool named_only);
+    // WHERE THE VIEWPORT'S SCROLL POSITION LIVES for this document: the
+    // browser's, for the page. Unset, the bindings keep one of their own (a
+    // frame's document). See the SCROLLING section above.
+    void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set) {
+        viewport_scroll_get_ = std::move(get);
+        viewport_scroll_set_ = std::move(set);
+    }
+    // A `scroll` event at `target` (the document when empty) on the next
+    // tick, once however many times it is asked for before then (§13.1's
+    // pending scroll event targets). The browser calls it for a scroll the
+    // user made; the bindings call it for their own.
+    void queue_scroll_event(node_id target);
+    // "Evaluate media queries and report changes" (§13) for THIS document's
+    // MediaQueryLists, after whoever changed its environment: a `change` at
+    // each list whose answer flipped, one tick later. bindings/media_queries.cpp.
+    void report_media_query_changes();
+    // A FRAME'S DOCUMENT FLUSHES THROUGH THE PAGE'S HOOK: only the primary
+    // bindings are given one, and the browser's flush lays out every frame
+    // whose document moved (frames_stale) - so a frame's `scrollWidth` read
+    // right after an innerHTML write answered from no layout at all.
     void flush_layout() {
-        if (flush_layout_) { flush_layout_(); }
+        if (flush_layout_) {
+            flush_layout_();
+        } else if (primary_ != nullptr && primary_->flush_layout_) {
+            primary_->flush_layout_();
+        }
     }
     std::function<void()> flush_layout_;
     // SCRIPTS A PAGE MADE AND HAS NOT RUN. HTML's "prepare the script element"
@@ -2108,6 +2517,9 @@ public:
     // was never started, so text appended later runs it. See document/entry.cpp.
     std::vector<node_id> unstarted_scripts_;
     void run_inserted_scripts();
+    // "Execute the script element" for a classic script's source text:
+    // currentScript set and restored, an uncaught throw reported.
+    void execute_script_element(context & cx, node_id id, const std::string & source);
 
 public:
     void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }
@@ -2117,6 +2529,40 @@ private:
     // prototype, and the document's `createRange`.
     void install_range(context & cx);
     [[nodiscard]] value create_range(context & cx);
+    // THE LIVE RANGES (DOM 5.5): every Range of the realm, on the primary.
+    // `settle_live_ranges` runs the specification's range steps for the tree
+    // and data edits the document logged since the last mutation - the
+    // pre-remove steps, the insertion steps, "replace data" - from
+    // mutated(), before any script can read a boundary. splitText and
+    // normalize carry their own steps in their bindings.
+    // ponytail: a range is held for the life of the page (a Range that the
+    // collector could see go would need a weak list); prune if a page makes
+    // them in a loop.
+    void register_live_range(value range);
+    void settle_live_ranges(const std::vector<document::write_note> & writes);
+    // "Split a Text node" steps 7.2-7.5 (DOM 4.11): a boundary in `node` past
+    // `offset` moves into `made` (at index `made_index` under `parent`), and one
+    // on the parent at exactly made_index moves past it.
+    void split_live_ranges(node_id node, node_id made, double offset, node_id parent,
+                           double made_index);
+    // normalize() step 7.5-7.8 (DOM 4.7): a boundary in `current` (the text
+    // sibling about to be absorbed, at `index` under `parent`) moves into
+    // `node` at `length` plus its offset; one on the parent at `index` to
+    // (node, length).
+    void absorb_live_ranges(node_id current, node_id parent, double index, node_id node,
+                            double length);
+    // Every boundary of every live range that is a node of THIS document:
+    // the range, its two slot names and the boundary.
+    struct live_boundary {
+        script::object_object * range = nullptr;
+        std::string_view node_slot;
+        std::string_view offset_slot;
+        node_id node;
+        double offset = 0;
+    };
+    void each_live_boundary(const std::function<void(const live_boundary &)> & fn);
+    void move_live_boundary(const live_boundary & at, node_id node, double offset);
+    std::vector<value> live_ranges_; // the primary's
     // The Selection API - bindings/selection.cpp. `Selection` the global,
     // `getSelection()` on the window and on Document.prototype, and the one
     // selection object they both answer with.

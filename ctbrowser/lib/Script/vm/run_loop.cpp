@@ -931,7 +931,12 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                                 state != nullptr && truthy(*state)) {
                                 rejected = true;
                             }
-                            if (value * settled = obj->find("__value")) { with = *settled; }
+                            if (value * settled = obj->find("__value")) {
+                                with = *settled;
+                                // An await IS a PerformPromiseThen (27.7.5.3
+                                // step 3): a rejection awaited is a handled one.
+                                mark_promise_handled(awaited);
+                            }
                         }
                         queue_microtask(await_job(),
                                         {value::object(saved), with, value::boolean(rejected)});
@@ -944,6 +949,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 reg(in.a) = awaited;
                 if (awaited.is_object()) {
                     auto * obj = static_cast<object_object *>(awaited.as_heap());
+                    if (obj->find("__settled") != nullptr) { mark_promise_handled(awaited); }
                     if (value * state = obj->find("__rejected");
                         state != nullptr && truthy(*state)) {
                         thrown_ = obj->find("__value") != nullptr ? *obj->find("__value")

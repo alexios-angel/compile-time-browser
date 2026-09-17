@@ -409,6 +409,29 @@ void test_timers() {
     check(page.tick(200) == 1, "the 100ms timer fires later");
     check(log_of(page).back() == "late", "in the right order");
     check(page.tick(1000) == 0, "a one-shot timer does not fire twice");
+
+    // A THROW IN A CALLBACK IS REPORTED TO THE PAGE (HTML 8.6: the timer task
+    // reports the exception), a string handler runs as a script, and one that
+    // does not parse is a SyntaxError reported the same way.
+    (void)page.run_script(
+        "window.onerror = function (m, u, l, c, e) { console.log('onerror:' + (typeof m) + ':' +"
+        " (e && e.message)); return true; };"
+        "setTimeout(function () { throw new Error('boom'); }, 1);"
+        "setTimeout('console.log(\"string:\" + (this === window))', 2);"
+        "setTimeout('this is not js', 3);"
+        "setTimeout(function () { console.log('after'); }, 4);");
+    (void)page.tick(20);
+    const auto & lines = log_of(page);
+    check(lines.size() >= 4, "four lines from the four timers");
+    if (lines.size() >= 4) {
+        const std::size_t n = lines.size();
+        check(lines[n - 4] == "onerror:string:boom",
+              "the throw reached window.onerror: " + lines[n - 4]);
+        check(lines[n - 3] == "string:true", "the string handler ran as a script: " + lines[n - 3]);
+        check(lines[n - 2].starts_with("onerror:string:"),
+              "the parse error was reported: " + lines[n - 2]);
+        check(lines[n - 1] == "after", "and the next timer still ran");
+    }
 }
 
 void test_interval_repeats_and_can_be_cleared() {
@@ -443,7 +466,73 @@ void test_request_animation_frame() {
     check(page.bindings().pending_animation_frames() == 0, "and stops when it stops asking");
 }
 
+// cancel-pending.html and callback-exception.html: a callback cancelled by
+// an earlier one in the same frame does not run, and a throw in one is
+// reported to `window.onerror` without stopping the rest.
+void test_cancel_animation_frame_and_a_throw() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><script>
+    var seen = [];
+    addEventListener('error', function (e) { seen.push('error:' + e.error.message); });
+    function one() { cancelAnimationFrame(two); seen.push('one'); }
+    function throws() { throw new Error('boom'); }
+    function three() { seen.push('three'); }
+    requestAnimationFrame(one);
+    var two = requestAnimationFrame(function () { seen.push('two'); });
+    requestAnimationFrame(throws);
+    requestAnimationFrame(three);
+    var gone = requestAnimationFrame(function () { seen.push('gone'); });
+    cancelAnimationFrame(gone);
+    requestAnimationFrame(function () { console.log(seen.join(',')); });
+    </script></body></html>)");
+    for (int i = 0; i < 3; ++i) { (void)page.tick(16); }
+    check(log_of(page).size() == 1 && log_of(page).front() == "one,error:boom,three",
+          "cancelAnimationFrame from a callback, and a reported throw");
+}
+
 } // namespace
+
+// XMLHttpRequest over the same resource loading as fetch: the state walk
+// with its events on a later turn for an async send, in one call for a sync
+// one, the response types, a 404 as a status and abort() as an event.
+void test_xhr() {
+    browser page{browser_options{300, 200}};
+    page.assets().add("data.json", bytes_of(R"({"n":3})"));
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        var x = new XMLHttpRequest();
+        log += (x instanceof XMLHttpRequest) + ',' + (x instanceof EventTarget) + ',' +
+               x.readyState + ',' + XMLHttpRequest.DONE + ';';
+        var states = [];
+        x.onreadystatechange = function () { states.push(x.readyState); };
+        x.addEventListener('load', function (e) {
+          log += 'load:' + x.status + ':' + x.responseText + ':' + e.lengthComputable + ';';
+        });
+        x.onloadend = function () { log += 'end:' + states.join('') + ';'; };
+        x.open('get', 'data.json');
+        log += 'opened:' + x.readyState + ':' + x.responseText.length + ';';
+        x.send();
+        log += 'sent:' + x.readyState + ';';
+        var s = new XMLHttpRequest(); s.open('GET', 'data.json', false);
+        s.responseType = 'json'; s.send();
+        log += 'sync:' + s.readyState + ':' + s.response.n + ':' + s.getResponseHeader('Content-Type') + ';';
+        var m = new XMLHttpRequest(); m.open('GET', 'missing.json', false); m.send();
+        log += 'missing:' + m.status + ':' + m.statusText + ';';
+        var a = new XMLHttpRequest(); a.open('GET', 'data.json');
+        a.onabort = function () { log += 'abort:' + a.readyState + ';'; };
+        a.send(); a.abort(); log += 'after:' + a.readyState + ';';
+        var bad = ''; try { new XMLHttpRequest().send(); } catch (e) { bad = e.name; }
+        log += bad + ';';
+        function report() { console.log(log); }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() ==
+              "true,true,0,4;opened:1:0;sent:1;sync:4:3:application/json;missing:404:Not Found;"
+              "abort:4;after:0;InvalidStateError;load:200:{\"n\":3}:true;end:1234;",
+          "XMLHttpRequest walks its states and answers its response: " + log_of(page).back());
+}
 
 int main() {
     test_collection_keeps_what_the_page_still_uses();
@@ -451,9 +540,11 @@ int main() {
     test_timers();
     test_interval_repeats_and_can_be_cleared();
     test_request_animation_frame();
+    test_cancel_animation_frame_and_a_throw();
     test_fetch_is_async();
     test_fetch_await_and_bytes();
     test_fetch_abort();
+    test_xhr();
     test_await_suspends_and_resumes();
     test_a_promise_made_during_a_resumption_survives();
     test_a_suspended_frame_survives_collection();

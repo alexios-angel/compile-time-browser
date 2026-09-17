@@ -34,6 +34,37 @@ namespace {
     return is_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
 
+// Namespaces in XML 1.0, section 3: an element or attribute name is a QName -
+// at most one colon, and neither half empty. `:a`, `a:` and `a::b` are
+// namespace-well-formedness violations, which a browser reports as it does
+// any other fatal error (DOMParser-parseFromString-xml-parsererror.html).
+// A lone surrogate is not an XML Char. The engine's strings carry one as the
+// three bytes ED A0-BF xx (a JS string's unpaired half, handed to DOMParser),
+// and a browser makes it U+FFFD in character data rather than a fatal error
+// (DOMParser-parseFromString-xml-parsererror.html, after crbug.com/40814739).
+[[nodiscard]] std::string without_surrogates(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto b = static_cast<unsigned char>(text[i]);
+        if (b == 0xED && i + 2 < text.size() && static_cast<unsigned char>(text[i + 1]) >= 0xA0 &&
+            static_cast<unsigned char>(text[i + 1]) <= 0xBF) {
+            out += "\xEF\xBF\xBD";
+            i += 2;
+            continue;
+        }
+        out += text[i];
+    }
+    return out;
+}
+
+[[nodiscard]] bool is_qname(std::string_view name) {
+    const std::size_t colon = name.find(':');
+    if (colon == std::string_view::npos) { return true; }
+    return colon != 0 && colon + 1 < name.size() &&
+           name.find(':', colon + 1) == std::string_view::npos;
+}
+
 // One element's namespace bindings. A vector rather than a map: an element
 // declares nought or one namespace in almost every document, and a linear
 // scan of a handful of entries beats hashing a prefix on every lookup.
@@ -442,6 +473,10 @@ private:
             fail("an element name is empty");
             return;
         }
+        if (!is_qname(qualified)) {
+            fail("<" + qualified + "> is not a qualified name");
+            return;
+        }
         std::vector<std::pair<std::string, std::string>> attrs;
         bool empty_element = false;
         for (;;) {
@@ -467,6 +502,10 @@ private:
             std::string attr_name = name();
             if (attr_name.empty()) {
                 fail("an attribute name is empty in <" + qualified + ">");
+                return;
+            }
+            if (!is_qname(attr_name)) {
+                fail("attribute " + attr_name + " is not a qualified name in <" + qualified + ">");
                 return;
             }
             skip_space();
@@ -509,6 +548,7 @@ private:
         const std::string_view uri = resolve(prefix_of(qualified), true);
         const node_id id = doc_.create_element(atoms_.intern(qualified), ns_of(uri),
                                                !prefix_of(qualified).empty());
+        if (ns_of(uri) == node_ns::other) { doc_.set_element_namespace(id, atoms_.intern(uri)); }
         if (open_.empty()) {
             root_ = id;
             doc_.set_document_element(id);
@@ -523,8 +563,11 @@ private:
             // `(null, class)` or `(xhtml, class)`, and every browser says the
             // first.
             const std::string_view prefix = prefix_of(attr_name);
-            const std::string_view attr_uri =
-                prefix.empty() ? std::string_view{} : resolve(prefix, false);
+            // ...but `xmlns` itself is in the XMLNS namespace (Namespaces in
+            // XML 6.1, DOM's "xmlns" attribute), like `xmlns:p`.
+            const std::string_view attr_uri = attr_name == "xmlns" ? xmlns_namespace
+                                              : prefix.empty()     ? std::string_view{}
+                                                                   : resolve(prefix, false);
             if (!prefix.empty() && attr_uri.empty()) {
                 fail("undeclared namespace prefix " + std::string{prefix} + " on " + attr_name);
                 return;
@@ -585,7 +628,7 @@ private:
             fail("CDATA section outside the document element");
             return;
         }
-        builder_.append(open_.back().id, doc_.create_cdata_section(text));
+        builder_.append(open_.back().id, doc_.create_cdata_section(without_surrogates(text)));
     }
 
     // Text up to the next `<`, with references resolved. A bare `&` or a
@@ -606,7 +649,7 @@ private:
             advance();
         }
         if (text.empty() || open_.empty()) { return; }
-        const node_id id = doc_.create_text(text);
+        const node_id id = doc_.create_text(without_surrogates(text));
         builder_.append(open_.back().id, id);
     }
 
@@ -713,13 +756,17 @@ private:
         return {};
     }
 
-    // The two vocabularies this engine distinguishes. Everything else is
-    // `other`: `node` has no room for a URI - see dom/node.hpp - so an element
-    // in a third namespace keeps its tag and loses its URI, which is the same
-    // deal `createElementNS` already strikes for one.
+    // The two vocabularies `node` distinguishes. Everything else is `other`
+    // with its URI recorded on the document (document::element_namespace) -
+    // `node` has no room for one, see dom/node.hpp. THE NULL NAMESPACE IS
+    // `other` TOO: `<root>` in a document with no default namespace is in no
+    // namespace at all (Namespaces in XML 6.2), not an HTML element - it
+    // serialises without an `xmlns`, matches no HTML interface, runs no
+    // script. It used to come out as HTML, so every DOMParser-made XML
+    // document re-serialised with `xmlns="http://www.w3.org/1999/xhtml"`.
     [[nodiscard]] static node_ns ns_of(std::string_view uri) {
         if (uri == svg_namespace) { return node_ns::svg; }
-        if (uri.empty() || uri == xhtml_namespace) { return node_ns::html; }
+        if (uri == xhtml_namespace) { return node_ns::html; }
         return node_ns::other;
     }
 

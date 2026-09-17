@@ -224,6 +224,7 @@ void dom_bindings::deliver_mutation_records() {
     // what `MutationObserver-nested-crash.html` observes from the inside.
     mutation_delivery_queued_ = false;
     if (cx_ == nullptr) { return; }
+    delivering_mutations_ = true;
     // By index with the bound re-read: a callback may construct observers.
     for (std::size_t i = 0; i < mutation_observers_.size(); ++i) {
         script::object_object * observer = mutation_observer_at(i);
@@ -244,6 +245,13 @@ void dom_bindings::deliver_mutation_records() {
         note_callback_fault("MutationObserver");
     }
     sync_mutation_roots();
+    // "Notify mutation observers" step 5: the signalled slots' `slotchange`,
+    // after the callbacks - this document's and every one it made.
+    fire_signalled_slots();
+    for (std::size_t i = 0; i < secondary_documents_.size(); ++i) {
+        secondary_documents_[i]->fire_signalled_slots();
+    }
+    delivering_mutations_ = false;
 }
 
 // --- the snapshot -----------------------------------------------------------
@@ -274,7 +282,9 @@ void dom_bindings::take_mutation_snapshot() {
     if (doc_ == nullptr) { return; }
     // The write log runs exactly while something observes, and a snapshot
     // starts it afresh: what was written before `observe()` is nobody's record.
-    doc_->log_writes(!mutation_registrations_.empty());
+    // ALWAYS ON: mutated() drains it on every write, the event handler
+    // attributes read it (settle_attribute_writes), and it costs one push.
+    doc_->log_writes(true);
     (void)doc_->take_writes();
     if (mutation_registrations_.empty()) { return; }
     const auto txn = doc_->read();
@@ -323,14 +333,13 @@ value dom_bindings::make_mutation_record(context & cx, std::string_view type, no
 
 // --- the diff ---------------------------------------------------------------
 
-void dom_bindings::record_mutations() {
+void dom_bindings::record_mutations(const std::vector<document::write_note> & writes) {
     // THE FAST PATH, and the reason a page that never constructs a
     // MutationObserver pays nothing for this file: `mutated()` runs on every
     // DOM write a script makes.
     if (mutation_registrations_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
     context & cx = *cx_;
     const auto txn = doc_->read();
-    const std::vector<document::write_note> writes = doc_->take_writes();
 
     // ONE RECORD PER (observer, node, kind, attribute) FOR THIS MUTATION. An
     // observer that registered on both a node and an ancestor with `subtree`
@@ -596,7 +605,9 @@ void dom_bindings::record_mutations() {
                 // THE WRITES THAT CHANGED NOTHING - see the write log. Each
                 // is reported once per observer, after anything the diff saw.
                 for (const document::write_note & note : writes) {
-                    if (note.text || note.node != at) { continue; }
+                    if (note.kind != document::write_note::edit::attribute || note.node != at) {
+                        continue;
+                    }
                     const attribute * held = txn.find_attribute(at, note.name);
                     if (held == nullptr) { continue; }
                     report(*held, &held->value);

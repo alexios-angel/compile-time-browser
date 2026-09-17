@@ -257,6 +257,11 @@ void settle(context & cx, value promise, value with, bool rejected) {
     p->define(value_slot, with, attr_builtin);
     p->define(rejected_slot, value::boolean(rejected), attr_builtin);
     p->define(settled_slot, value::boolean(true), attr_builtin);
+    // RejectPromise step 7: HostPromiseRejectionTracker(promise, "reject")
+    // when nothing has reacted to it yet.
+    if (rejected && !context::promise_is_handled(promise)) {
+        cx.track_promise_rejection(promise, false);
+    }
     value * handlers = p->find(handlers_slot);
     if (handlers == nullptr || !handlers->is_array()) { return; }
     // COPIED before draining: a handler may register another on this same
@@ -323,10 +328,12 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
             static_cast<array_object *>(handlers->as_heap())
                 ->items.push_back(value::object(record));
         }
+        cx.mark_promise_handled(promise); // step 11
         return;
     }
     enqueue_reaction(cx, value::object(record), slot(p, value_slot),
                      context::truthy(slot(p, rejected_slot)));
+    cx.mark_promise_handled(promise); // steps 9 and 11
 }
 
 [[nodiscard]] value intrinsic_promise(context & cx) {
@@ -968,8 +975,60 @@ constexpr std::string_view async_iterator_key = "@#AsyncIteratorPrototype";
     }
     object_object * table = detail::new_table(cx);
     promise_proto->define(async_iterator_key, value::object(table), attr_none);
-    detail::method(cx, table, "@@asyncIterator", 0,
-                   [](context & c, std::span<value>) { return c.current_this(); });
+    {
+        auto * self =
+            detail::method_native(cx, "[Symbol.asyncIterator]",
+                                  [](context & c, std::span<value>) { return c.current_this(); });
+        detail::install_arity(cx, self, 0);
+        table->define("@@asyncIterator", value::object(self), attr_builtin);
+    }
+    // %AsyncIteratorPrototype%[@@asyncDispose] (explicit resource management,
+    // 27.1.3.2): a promise of undefined once the iterator's `return`, if it
+    // has one, has been called and its answer awaited; a throw from either
+    // step is the rejection.
+    {
+        auto * dispose =
+            detail::method_native(cx, "[Symbol.asyncDispose]", [](context & c, std::span<value>) {
+                capability cap;
+                if (!detail::new_capability(c, detail::intrinsic_promise(c), cap)) {
+                    return value::undefined();
+                }
+                const context::rooted keep{c, cap.promise};
+                const value self = c.current_this();
+                const detail::completion got = detail::fenced(c, [&](context & cc) -> value {
+                    const value back = cc.lookup_property(self, "return");
+                    if (cc.throw_pending()) { return value::undefined(); }
+                    if (back.is_nullish()) { return value::undefined(); }
+                    if (!back.is_callable()) {
+                        cc.throw_error("TypeError", "iterator.return is not a function");
+                        return value::undefined();
+                    }
+                    const value result = cc.call(back, {}, self);
+                    if (cc.throw_pending()) { return value::undefined(); }
+                    value wrapped = value::undefined();
+                    (void)detail::promise_resolve(cc, detail::intrinsic_promise(cc), result,
+                                                  wrapped);
+                    return wrapped;
+                });
+                if (got.threw) {
+                    detail::settle_capability(c, cap, got.result, true);
+                    return cap.promise;
+                }
+                if (!got.result.is_object_like()) { // no `return`: undefined, at once
+                    detail::settle_capability(c, cap, value::undefined(), false);
+                    return cap.promise;
+                }
+                auto * unwrap = c.allocate<native_object>(
+                    "", [](context &, std::span<value>) { return value::undefined(); });
+                unwrap->is_constructor = false;
+                detail::install_arity(c, unwrap, 1);
+                const context::rooted keep_unwrap{c, value::object(unwrap)};
+                detail::perform_then(c, got.result, value::object(unwrap), value::undefined(), cap);
+                return cap.promise;
+            });
+        detail::install_arity(cx, dispose, 0);
+        table->define("@@asyncDispose", value::object(dispose), attr_builtin);
+    }
     return table;
 }
 

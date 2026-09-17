@@ -30,6 +30,7 @@ struct parse_result {
 [[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source,
                                              bool scripting = true) {
     html::tree_builder builder{doc, doc.atoms()};
+    doc.set_scripting(scripting);
     builder.set_scripting(scripting);
     parse_result out;
     out.root = builder.parse(source);
@@ -38,15 +39,22 @@ struct parse_result {
 }
 
 // THE FRAGMENT PARSING ALGORITHM (HTML 13.2.9) into a fresh scratch document:
-// `context` is the tag name of the element the markup is being set on - which
-// is what makes `<td>` inside a `<tr>` a cell, and `<b>` inside a `<title>` or
-// `<script>` text - and the parsed nodes are the children of the returned
-// node, to be moved under the real element. The context element itself is
-// not in the scratch tree.
+// `context` is the local name of the element the markup is being set on and
+// `context_ns` its namespace - which is what makes `<td>` inside a `<tr>` a
+// cell, `<b>` inside a `<title>` or `<script>` text, and `<circle>` inside an
+// SVG `<g>` an SVG element - and the parsed nodes are the children of the
+// returned node, to be moved under the real element. The context element
+// itself is not in the scratch tree.
+// `scripting` is the flag of the document the fragment is FOR (the scratch
+// document here is nobody's): a `<noscript>` in a DOMParser document's
+// innerHTML holds elements, in the page's it is raw text.
 [[nodiscard]] inline node_id parse_html_fragment(document & doc, std::string_view source,
-                                                 std::string_view context) {
+                                                 std::string_view context,
+                                                 node_ns context_ns = node_ns::html,
+                                                 bool scripting = true) {
     html::tree_builder builder{doc, doc.atoms()};
-    return builder.parse_fragment(source, context);
+    builder.set_scripting(scripting);
+    return builder.parse_fragment(source, context, context_ns);
 }
 
 // The fragment above with a <body> context: what every innerHTML on an

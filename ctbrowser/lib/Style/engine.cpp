@@ -1208,6 +1208,21 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             if (want.ranges.front() != (rtl ? "rtl" : "ltr")) { return false; }
             break;
         }
+        case pseudo_kind::heading: {
+            // An HTML h1-h6, its level the digit; the list, when there is
+            // one, has to name it.
+            if (txn.element_ns(node) != node_ns::html) { return false; }
+            const std::string_view local = txn.local_name(node);
+            if (local.size() != 2 || local[0] != 'h' || local[1] < '1' || local[1] > '6') {
+                return false;
+            }
+            const std::int32_t level = local[1] - '0';
+            if (!want.levels.empty() &&
+                std::ranges::find(want.levels, level) == want.levels.end()) {
+                return false;
+            }
+            break;
+        }
         }
     }
     return true;
@@ -1733,8 +1748,29 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         });
     }
     if (!parent) { root_line_height_ = own_line_height; }
-    const css::length_context lengths =
-        font_context(own_font_size, own_line_height, own_zero_advance);
+    // THE ELEMENT'S OWN WRITING MODE, settled before any length resolves:
+    // `vi`/`vb` swap axes in a vertical one (CSS Values 4 §6.1.2), and the
+    // property inherits, so the parent's answer stands until a declaration
+    // says otherwise - a keyword, never a length, so nothing to fold.
+    bool vertical = parent && parent->inherited &&
+                    !parent->inherited->get(writing_mode_).starts_with("horizontal") &&
+                    !parent->inherited->get(writing_mode_).empty();
+    fold([&](const declaration & d) {
+        if (d.property != writing_mode_) { return; }
+        const std::string_view text = trim(d.value, html_whitespace);
+        if (css::may_have_var(text)) { return; }
+        // `initial` is horizontal-tb; the other wide keywords keep the
+        // parent's answer on an inherited property.
+        if (ascii_iequals(text, "initial")) {
+            vertical = false;
+            return;
+        }
+        if (css::is_wide_keyword(text)) { return; }
+        const std::string lowered = ascii_lower_copy(text);
+        vertical = lowered.starts_with("vertical-") || lowered.starts_with("sideways-");
+    });
+    css::length_context lengths = font_context(own_font_size, own_line_height, own_zero_advance);
+    lengths.vertical = vertical;
     // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
     // `line-height: 2lh` folded against its own answer would double it -
     // and `line_height_lengths` above is what that property folds with; and

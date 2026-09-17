@@ -37,8 +37,24 @@ void test_class_strings_and_iterators() {
         try { CSS.escape(); } catch (e) { caught = e.name; }
         console.log('escape=' + CSS.escape.length + ',' + caught + ',' +
                     CSS.hasOwnProperty(Symbol.toStringTag));
+        // DOMTokenList is iterable<DOMString>: keys/values/entries/forEach and
+        // @@iterator, live over the attribute.
+        const cl = document.body.classList; document.body.className = 'x y';
+        const seen = []; cl.forEach((t, i) => seen.push(i + t));
+        document.body.className = 'x y z';
+        console.log('tokens=' + [...cl.keys()].join() + '|' + [...cl.values()].join() + '|' +
+                    [...cl.entries()].map(e => e.join(':')).join() + '|' + seen.join() + '|' +
+                    (DOMTokenList.prototype.forEach === Array.prototype.forEach));
+        // The other token-list attributes: relList, output.htmlFor, iframe.sandbox, link.sizes.
+        const a = document.createElement('a'); a.rel = 'noopener nofollow';
+        const o = document.createElement('output'); o.htmlFor = 'x y';
+        console.log('lists=' + a.relList.length + ',' + a.relList.contains('nofollow') + ',' +
+                    Object.prototype.toString.call(document.createElement('iframe').sandbox) + ',' +
+                    o.getAttribute('for') + ',' + document.createElement('link').sizes.length);
     </script></body></html>)");
     CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "tokens="), std::string{"tokens=0,1,2|x,y,z|0:x,1:y,2:z|0x,1y|true"});
+    CHECK_EQ(logged(page, "lists="), std::string{"lists=2,true,[object DOMTokenList],x y,0"});
     CHECK_EQ(logged(page, "tag="),
              std::string{"tag=[object CSSStyleRule],[object CSSStyleProperties],[object CSS]"});
     CHECK_EQ(logged(page, "iter="), std::string{"iter=true,color,true"});
@@ -118,6 +134,12 @@ void test_declaration_blocks() {
         const el = document.body.style;
         el.COLOR = 'red'; el.unknown = 'unknown'; el.color = 'red'; el.fontSize = '10pt';
         console.log('expando=' + el.cssText + '|' + el.unknown + '|' + el.COLOR + '|' + el.length);
+        // `in`: every supported property in both spellings, set or not (CSSOM
+        // 6.7.2), the indices below length, the expandos - and no custom
+        // property or unknown name.
+        console.log('in=' + [('zIndex' in el), ('z-index' in el), ('webkitTransform' in el),
+                    ('WebkitTransform' in el), ('unknown' in el), ('nothing' in el),
+                    ('--x' in el), (1 in el), (2 in el), ('setProperty' in el)].join());
     </script></body></html>)");
     CHECK_EQ(page.script_error(), std::string{});
     // `transform` is not a page-context property; `cssFloat` is not a page
@@ -133,6 +155,8 @@ void test_declaration_blocks() {
     CHECK_EQ(logged(page, "undef="), std::string{"undef=green|"});
     CHECK_EQ(logged(page, "expando="),
              std::string{"expando=color: red; font-size: 10pt;|unknown|red|2"});
+    CHECK_EQ(logged(page, "in="),
+             std::string{"in=true,true,true,true,true,false,false,true,false,true"});
 }
 
 // style-sheet-interfaces-001, stylesheet-same-origin: `sheet` on the

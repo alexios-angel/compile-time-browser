@@ -229,12 +229,17 @@ void dom_bindings::install_node_methods(context & cx) {
                // IN ORDER, because each node goes before the SAME reference rather
                // than before the one just added. copy_subtree appends to the parent it
                // is given, so the move is a no-op when the reference is empty.
+               std::vector<node_id> added;
                for (const node_id child : from.children(body)) {
                    const node_id made = copy_subtree(from, child, place->first);
                    if (place->second) {
                        (void)doc_->insert_before(place->first, made, place->second);
                    }
+                   added.push_back(made);
                }
+               // [CEReactions]: what the fragment parser made is upgraded
+               // where it landed, connected or not - see upgrade_created_subtree.
+               for (const node_id made : added) { upgrade_created_subtree(made); }
                mutated();
                return value::undefined();
            });
@@ -742,8 +747,16 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::null();
         }
         const bool deep = !args.empty() && context::truthy(args[0]);
-        const auto txn = doc_->read();
-        return wrap(c, clone_node(txn, self, deep));
+        node_id made;
+        {
+            const auto txn = doc_->read();
+            made = clone_node(txn, self, deep);
+        }
+        // [CEReactions]: DOM 4.4's clone runs "create an element" for every
+        // element of the copy, which enqueues an upgrade for each candidate a
+        // definition covers - detached as the copy is.
+        upgrade_created_subtree(made);
+        return wrap(c, made);
     });
     // `contains` INCLUDES THE NODE ITSELF, which is the part that is easy to get
     // wrong: `el.contains(el)` is true in every browser.
@@ -812,12 +825,35 @@ void dom_bindings::install_node_methods(context & cx) {
     method(node, "normalize", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (!self) { return value::undefined(); }
-        std::vector<std::pair<node_id, std::string>> merged;
+        // One run of contiguous Text siblings: its first member, the data it
+        // ends up with, and each absorbed sibling with the code-unit length
+        // the first member had when it was appended - what the live ranges
+        // in it move to (DOM 4.7 steps 7.5-7.6).
+        struct absorbed {
+            node_id node;
+            double index;
+            double at;
+        };
+        struct run {
+            node_id node;
+            std::string data;
+            std::uint32_t units = 0;
+            node_id parent;
+            std::vector<absorbed> rest;
+        };
+        std::vector<run> merged;
         std::vector<node_id> removed;
         {
             const auto txn = doc_->read();
             const auto is_text = [&txn](node_id one) {
                 return txn.kind(one).value_or(node_kind::element) == node_kind::text;
+            };
+            const auto units_of = [](std::string_view text) {
+                std::size_t n = 0;
+                for (std::size_t at = 0; at < text.size();) {
+                    n += decode_utf8(text, at) >= 0x10000 ? 2 : 1;
+                }
+                return static_cast<double>(n);
             };
             const auto walk = [&](auto && again, node_id at) -> void {
                 const std::span<const node_id> kids = txn.children(at);
@@ -832,13 +868,17 @@ void dom_bindings::install_node_methods(context & cx) {
                         ++i;
                         continue;
                     }
-                    std::string data{txn.text(kids[i])};
+                    run one{kids[i], std::string{txn.text(kids[i])}, 0, at, {}};
+                    one.units = static_cast<std::uint32_t>(units_of(one.data));
+                    double length = one.units;
                     std::size_t j = i + 1;
                     for (; j < kids.size() && is_text(kids[j]); ++j) {
-                        data += txn.text(kids[j]);
+                        one.rest.push_back(absorbed{kids[j], static_cast<double>(j), length});
+                        length += units_of(txn.text(kids[j]));
+                        one.data += txn.text(kids[j]);
                         removed.push_back(kids[j]);
                     }
-                    if (j > i + 1) { merged.emplace_back(kids[i], std::move(data)); }
+                    if (j > i + 1) { merged.push_back(std::move(one)); }
                     i = j;
                 }
             };
@@ -847,10 +887,25 @@ void dom_bindings::install_node_methods(context & cx) {
         if (merged.empty() && removed.empty()) { return value::undefined(); }
         // ONE MUTATION EACH, as DOM 4.4's normalize has them: the data change
         // is a record and every removal is its own, with the siblings the node
-        // had when it went - MutationObserver-childList.html counts them.
-        for (const auto & [node, data] : merged) {
-            (void)doc_->set_text(node, data);
+        // had when it went - MutationObserver-childList.html counts them. The
+        // data is APPENDED (a replace at the old length, of nothing) and the
+        // absorbed siblings' boundaries move into the node before they go.
+        for (const run & one : merged) {
+            std::size_t added = 0;
+            for (std::size_t at = one.units; at < one.data.size();) {
+                added += decode_utf8(one.data, at) >= 0x10000 ? 2 : 1;
+            }
+            (void)doc_->set_text(
+                one.node, one.data,
+                document::data_edit{one.units, 0, static_cast<std::uint32_t>(added)});
+            // The data step's range moves (7.3) settle BEFORE the absorbed
+            // siblings' boundaries move into the node (7.5-7.8), or a
+            // boundary just moved to (node, length + offset) would be pushed
+            // along by the append it was placed after.
             mutated();
+            for (const absorbed & gone : one.rest) {
+                absorb_live_ranges(gone.node, one.parent, gone.index, one.node, gone.at);
+            }
         }
         for (const node_id node : removed) {
             (void)doc_->remove_child(node);
@@ -863,24 +918,6 @@ void dom_bindings::install_node_methods(context & cx) {
         const node_id other = handle_of(arg(args, 0));
         if (!self || !other) { return value::boolean(false); }
         return value::boolean(doc_->read().is_ancestor_of(self, other));
-    });
-    method(element, "getBoundingClientRect", 0, [this](context & c, std::span<value>) {
-        const rect box = box_of(receiver(c));
-        auto * out = c.allocate<script::object_object>();
-        const auto set = [&](const char * name, float v) {
-            out->set(name, value::number(static_cast<double>(v)));
-        };
-        set("x", box.x);
-        set("y", box.y);
-        set("left", box.x);
-        set("top", box.y);
-        set("width", box.width);
-        set("height", box.height);
-        // right and bottom are DERIVED, and pages read them directly rather
-        // than adding the width themselves.
-        set("right", box.x + box.width);
-        set("bottom", box.y + box.height);
-        return value::object(out);
     });
     method(node, "appendChild", 1, [this, insertable](context & c, std::span<value> args) {
         // THROUGH insert_node, which is where a DocumentFragment is flattened:

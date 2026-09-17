@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -9,6 +10,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/shell/page/input_types.hpp>
 #include <ctbrowser/style/style.hpp>
 
 // Form control state.
@@ -53,6 +55,16 @@ struct control_state {
     std::size_t selection = 0; // anchor; equal to caret means no selection
     bool checked = false;
     bool value_edited = false; // once true, the `value` attribute stops being the answer
+    // THE INPUT TYPE STATE `value` WAS LAST SANITISED FOR (HTML 4.10.5.1), so
+    // state_of notices a type change on the next read and runs the "type
+    // attribute changes" steps and the new state's sanitization. Empty until
+    // first seeded; the tag for a control that is not an <input>.
+    std::string type;
+    // A `value` content attribute those steps want written (step 1: a value
+    // carried into the default modes). The store reads under a read
+    // transaction and cannot write; the bindings' `value` accessor does, and
+    // until then this IS the value the default mode reads.
+    std::optional<std::string> pending_attribute;
     // WHERE THE FIELD IS LOOKING. A control's value can be bigger than the box
     // it is drawn in, in either direction, and these say which part of it is on
     // screen. View state, so it belongs here beside the caret rather than on
@@ -80,6 +92,31 @@ public:
 
     [[nodiscard]] const control_state * find(node_id id) const;
 
+    // HTML 4.10.5 / 4.10.11's cloning steps: the copy takes the source's
+    // value, dirty value flag, checkedness and dirty checkedness - and NOT
+    // its selection, which is a fresh control's, collapsed at 0
+    // (select-event.html reads the clone's selectionEnd as 0 and expects a
+    // `select()` on it to be a change). A source nobody has touched has no
+    // state and the copy seeds from its attributes, which is the same answer.
+    void clone_state(node_id source, node_id made) {
+        if (const auto it = states_.find(source.key()); it != states_.end()) {
+            control_state copy = it->second;
+            copy.pending_attribute.reset();
+            copy.caret = 0;
+            copy.selection = 0;
+            states_.insert_or_assign(made.key(), std::move(copy));
+        }
+    }
+
+    // After a DOM write: every seeded <input> whose type attribute moved runs
+    // its type-change steps now (state_of does), and the `value` attributes
+    // those steps left pending are handed to `write` - the store cannot write
+    // under its read transaction, so the caller does, outside one.
+    // ponytail: O(seeded controls) per mutation; index by type write if a
+    // page with thousands of controls ever mutates in a storm.
+    [[nodiscard]] std::vector<std::pair<node_id, std::string>> settle_types(const read_txn & txn,
+                                                                            atom_table & atoms);
+
     void clear() { states_.clear(); }
 
     // --- editing ----------------------------------------------------------
@@ -97,17 +134,43 @@ public:
         return text;
     }
 
+    // HTML 4.10.7 "list of options": the option descendants in tree order,
+    // excluding those inside another select, an option, an hr, or an
+    // optgroup nested in an optgroup (select-selectedOptions-nesting.html).
+    [[nodiscard]] static std::vector<node_id> list_of_options(const read_txn & txn,
+                                                              atom_table & atoms, node_id select) {
+        const atom option_tag = atoms.intern_lower("option");
+        const atom optgroup_tag = atoms.intern_lower("optgroup");
+        const atom select_tag = atoms.intern_lower("select");
+        const atom datalist_tag = atoms.intern_lower("datalist");
+        const atom hr_tag = atoms.intern_lower("hr");
+        std::vector<node_id> out;
+        const auto walk = [&](auto && self, node_id at, bool in_group) -> void {
+            for (const node_id child : txn.children(at)) {
+                const atom tag = txn.tag(child).value_or(atom{});
+                if (tag == option_tag) {
+                    out.push_back(child);
+                    continue;
+                }
+                if (tag == select_tag || tag == datalist_tag || tag == hr_tag) { continue; }
+                const bool group = tag == optgroup_tag;
+                if (group && in_group) { continue; }
+                self(self, child, in_group || group);
+            }
+        };
+        walk(walk, select, false);
+        return out;
+    }
+
     // The value a <select> starts with: the `selected` option's, else the
     // first one's, which is what a browser shows in a select nobody has
     // touched.
     [[nodiscard]] static std::string selected_option_value(const read_txn & txn, atom_table & atoms,
                                                            node_id select) {
-        const atom option_tag = atoms.intern_lower("option");
         const atom selected = atoms.intern("selected");
         std::string first;
         bool have_first = false;
-        for (const node_id child : txn.children(select)) {
-            if (txn.tag(child).value_or(atom{}) != option_tag) { continue; }
+        for (const node_id child : list_of_options(txn, atoms, select)) {
             if (!have_first) {
                 first = option_value(txn, atoms, child);
                 have_first = true;
@@ -120,7 +183,14 @@ public:
     // Replace the whole value - what `input.value = "x"` does. The caret goes
     // to the end, which is where a browser puts it, and the control counts as
     // edited so the `value` attribute stops being the answer.
-    static void set_value(control_state & control, std::string text);
+    // Answers whether the value CHANGED: HTML 4.10.5.3 moves the caret to the
+    // end (and resets the selection direction) only when the new value
+    // differs from the old (selection-after-content-change.html).
+    static bool set_value(control_state & control, std::string text);
+    // The same through the input's type state: the value sanitization
+    // algorithm runs over `text` first (HTML 4.10.5.1 - `input.value = "a\nb"`
+    // is "ab" on a text input and "" on a number one).
+    bool assign_value(const read_txn & txn, atom_table & atoms, node_id id, std::string text);
 
     // Insert typed text at the caret, replacing any selection.
     void insert_text(control_state & control, std::string_view text);

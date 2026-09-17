@@ -470,6 +470,14 @@ void document::detach(node * child_node, node_id child) {
     if (!old_parent) { return; }
     node * parent_node = find(old_parent);
     if (parent_node == nullptr) { return; }
+    if (log_writes_) {
+        // Its index BEFORE it goes: what the live ranges on the parent move
+        // against (std::ranges::remove's subrange begins at the new end, not
+        // at the removed element).
+        const auto at = std::ranges::find(parent_node->children, child);
+        note_edit(write_note::edit::removed, old_parent, child,
+                  static_cast<std::size_t>(at - parent_node->children.begin()));
+    }
     // std::erase/erase_if only overload for std containers, not Boost's
     const auto gone = std::ranges::remove(parent_node->children, child);
     parent_node->children.erase(gone.begin(), gone.end());
@@ -488,6 +496,7 @@ std::expected<void, dom_error> document::append_child(node_id parent, node_id ch
     detach(child_node, child);
     parent_node->children.push_back(child);
     child_node->parent = parent;
+    note_edit(write_note::edit::inserted, parent, child, parent_node->children.size() - 1);
     bump_version();
     return {};
 }
@@ -512,8 +521,11 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
         before = self == items.end() || self + 1 == items.end() ? node_id{} : *(self + 1);
     }
     detach(child_node, child);
-    items.insert(std::ranges::find(items, before), child); // end() when absent: append
+    const auto at =
+        items.insert(std::ranges::find(items, before), child); // end() when absent: append
     child_node->parent = parent;
+    note_edit(write_note::edit::inserted, parent, child,
+              static_cast<std::size_t>(at - items.begin()));
     bump_version();
     return {};
 }
@@ -611,15 +623,34 @@ std::expected<void, dom_error> document::remove_attribute_ns(node_id id, std::st
     return {};
 }
 
-std::expected<void, dom_error> document::set_text(node_id id, std::string_view value) {
+namespace {
+// UTF-16 code units of UTF-8 text: what a data write's offsets count.
+[[nodiscard]] std::uint32_t units_length(std::string_view text) {
+    std::size_t n = 0;
+    for (std::size_t at = 0; at < text.size();) { n += decode_utf8(text, at) >= 0x10000 ? 2 : 1; }
+    return static_cast<std::uint32_t>(n);
+}
+} // namespace
+
+std::expected<void, dom_error> document::set_text(node_id id, std::string_view value,
+                                                  std::optional<data_edit> edit) {
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
+    // The whole data replaced, unless the caller said which part.
+    if (log_writes_ && !edit) { edit = data_edit{0, units_length(n->text), units_length(value)}; }
     // Copied before it is assigned, and the node's own copy goes to the PI
     // parser below: a caller may have passed this node's previous text.
     n->text = std::string{value};
     if (n->kind == node_kind::processing_instruction) { update_pi_attributes(*n, n->text); }
     bump_version();
-    note_write(id, atom{}, true);
+    if (log_writes_) {
+        write_note note;
+        note.node = id;
+        note.text = true;
+        note.kind = write_note::edit::data;
+        note.data = *edit;
+        writes_log_.push_back(note);
+    }
     return {};
 }
 
@@ -633,7 +664,24 @@ std::vector<document::write_note> document::take_writes() {
 }
 
 void document::note_write(node_id id, atom name, bool text) {
-    if (log_writes_) { writes_log_.push_back(write_note{id, name, text}); }
+    if (log_writes_) {
+        write_note note;
+        note.node = id;
+        note.name = name;
+        note.text = text;
+        if (text) { note.kind = write_note::edit::data; }
+        writes_log_.push_back(note);
+    }
+}
+
+void document::note_edit(write_note::edit kind, node_id parent, node_id child, std::size_t index) {
+    if (!log_writes_) { return; }
+    write_note note;
+    note.node = parent;
+    note.kind = kind;
+    note.child = child;
+    note.index = static_cast<std::uint32_t>(index);
+    writes_log_.push_back(note);
 }
 
 node_id document::template_content(node_id element) const {
@@ -651,6 +699,23 @@ void document::set_template_content(node_id element, node_id fragment) {
         }
     }
     template_contents_.emplace_back(element, fragment);
+}
+
+atom document::element_namespace(node_id element) const {
+    const auto it = element_namespaces_.find(shadow_key(element));
+    return it == element_namespaces_.end() ? atom{} : it->second;
+}
+
+atom read_txn::element_namespace(node_id id) const noexcept {
+    return doc_->element_namespace(id);
+}
+
+node_id read_txn::template_content(node_id id) const noexcept {
+    return doc_->template_content(id);
+}
+
+void document::set_element_namespace(node_id element, atom uri) {
+    element_namespaces_.insert_or_assign(shadow_key(element), uri);
 }
 
 std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_tree how) {
@@ -729,7 +794,7 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
 }
 
 atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
-    if (element_ns != node_ns::svg) { return atom{}; }
+    if (element_ns == node_ns::html) { return atom{}; }
     const std::string_view text = atoms_->text(name);
     // `xmlns` ALONE is the one unprefixed name in the table, and the colon test
     // is what keeps every ordinary SVG attribute - `d`, `viewBox`, `fill` - to
@@ -738,10 +803,21 @@ atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
     if (colon == std::string_view::npos) {
         return text == "xmlns" ? atoms_->intern(xmlns_namespace) : atom{};
     }
+    // THE TEN NAMES, EXACTLY: `xml:base` and `xlink:foo` are not in the table
+    // and stay unprefixed attributes in no namespace (webkit02.dat).
     const std::string_view prefix = text.substr(0, colon);
-    if (prefix == "xlink") { return atoms_->intern(xlink_namespace); }
-    if (prefix == "xml") { return atoms_->intern(xml_namespace); }
-    if (prefix == "xmlns") { return atoms_->intern(xmlns_namespace); }
+    const std::string_view local = text.substr(colon + 1);
+    if (prefix == "xlink") {
+        for (const std::string_view known :
+             {"actuate", "arcrole", "href", "role", "show", "title", "type"}) {
+            if (local == known) { return atoms_->intern(xlink_namespace); }
+        }
+        return atom{};
+    }
+    if (prefix == "xml") {
+        return local == "lang" || local == "space" ? atoms_->intern(xml_namespace) : atom{};
+    }
+    if (prefix == "xmlns") { return local == "xlink" ? atoms_->intern(xmlns_namespace) : atom{}; }
     return atom{};
 }
 

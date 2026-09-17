@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regenerate the single-byte decoder indexes in
-ctbrowser/lib/Shell/bindings/window/encoding_tables.inc.
+ctbrowser/include/ctbrowser/dom/encoding_tables.inc.
 
 The Encoding Standard publishes one index per legacy single-byte encoding as a
 plain text file; each maps the 128 bytes 0x80-0xFF to a code point, with gaps
@@ -9,7 +9,7 @@ how a wrong one gets in and stays in - so this fetches them and prints the
 table. Run it when the Standard republishes an index:
 
     python3 tools/gen/encoding_tables.py > \\
-        ctbrowser/lib/Shell/bindings/window/encoding_tables.inc
+        ctbrowser/include/ctbrowser/dom/encoding_tables.inc
 
 U+0000 in a row means "this byte has no mapping": the decoder's error, which
 is U+FFFD or, when fatal, a TypeError. No index maps a byte to U+0000, so the

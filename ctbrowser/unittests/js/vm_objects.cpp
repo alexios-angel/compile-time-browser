@@ -361,6 +361,43 @@ void test_proxy() {
                   "base");
     expect_result("return typeof Reflect.get({ a: 5 }, 'a');", "number");
     expect_result("return Reflect.get({ a: 5 }, 'a');", "5");
+    // A TRAP IS READ THROUGH [[Get]] (GetMethod): one the handler inherits
+    // counts, a non-callable one is a TypeError, a revoked proxy is a
+    // TypeError rather than a silent pass-through.
+    expect_result("const h = Object.create({ get(t, k) { return 'inherited'; } });"
+                  "return new Proxy({}, h).x;",
+                  "inherited");
+    expect_result("try { new Proxy({}, { get: 1 }).x; } catch (e) { return e.name; }", "TypeError");
+    expect_result("const r = Proxy.revocable({}, {}); r.revoke();"
+                  "try { r.proxy.x; } catch (e) { return e.name; }",
+                  "TypeError");
+    // [[Construct]]: new.target is the third argument, the answer must be an
+    // object, and a forwarded `new` still sees the proxy as new.target.
+    expect_result("let seen; function T() {} const P = new Proxy(T, { construct(t, a, nt) {"
+                  " seen = nt; return {}; } }); new P(); return seen === P;",
+                  "true");
+    expect_result("const P = new Proxy(function () {}, { construct() { return 1; } });"
+                  "try { new P(); } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result("let seen; function T() { seen = new.target; } const P = new Proxy(T, {});"
+                  "new P(); return seen === P;",
+                  "true");
+    // The invariants: a `get` answering the wrong value for a frozen data
+    // property, a `set` answering true over one, a `has` hiding one.
+    expect_result("const t = Object.freeze({ x: 1 });"
+                  "try { new Proxy(t, { get() { return 2; } }).x; } catch (e) { return e.name; }",
+                  "TypeError");
+    expect_result(
+        "const t = Object.freeze({ x: 1 }); const p = new Proxy(t, { set() { return true; "
+        "} }); try { p.x = 2; } catch (e) { return e.name; } return 'no throw';",
+        "TypeError");
+    expect_result("const t = Object.freeze({ x: 1 });"
+                  "try { 'x' in new Proxy(t, { has() { return false; } }); } catch (e) { return "
+                  "e.name; }",
+                  "TypeError");
+    // Reflect.set answers what the trap answered.
+    expect_result("return Reflect.set(new Proxy({}, { set() { return false; } }), 'x', 1);",
+                  "false");
 }
 
 // `Object.defineProperty` with a descriptor that has no value, get or set

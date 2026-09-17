@@ -52,8 +52,37 @@ void test_serialize_to_string() {
                   "</script></body></html>"),
              "<root xmlns=\"urn:x\"><a b=\"1&amp;2\"/><c>t&lt;u</c></root>;"
              "<root xmlns=\"urn:x\"><a b=\"1&amp;2\"/><c>t&lt;u</c></root>;"
-             "<div xmlns=\"http://www.w3.org/1999/xhtml\" x=\"a&#9;b\"/>;"
+             "<div xmlns=\"http://www.w3.org/1999/xhtml\" x=\"a&#9;b\"></div>;"
              "function");
+}
+
+// XMLSerializer-serializeToString.html: the namespace prefix map. A null
+// namespace root writes no xmlns; a prefix in scope for the namespace is
+// reused; an attribute in a namespace nobody declared gets `ns1`; the XML
+// namespace is `xml:`; a redundant declaration is dropped.
+void test_serialize_namespaces() {
+    CHECK_EQ(
+        said("<html><body><script>"
+             "var s = new XMLSerializer(), p = new DOMParser();"
+             "var d = p.parseFromString('<root><child1>value1</child1></root>', 'text/xml');"
+             "alert(s.serializeToString(d) + '|' + d.documentElement.namespaceURI + '|' +"
+             " (d instanceof XMLDocument) + '|' + (d.URL === document.URL));"
+             "var r = d.createElementNS('uri', 'p:root'); r.setAttributeNS('uri2', 'q:a', 'v');"
+             "alert(s.serializeToString(r));"
+             "var e = d.createElement('r'); e.setAttributeNS('http://www.w3.org/2000/xmlns/',"
+             " 'xmlns:xx', 'uri'); e.setAttributeNS('uri', 'p:name', 'v');"
+             "alert(s.serializeToString(e));"
+             "var f = p.parseFromString('<root><xml:foo/></root>', 'text/xml');"
+             "alert(s.serializeToString(f));"
+             "var g = p.parseFromString('<root xmlns=\"u\"><child xmlns=\"u\"/></root>',"
+             " 'text/xml');"
+             "alert(s.serializeToString(g));"
+             "</script></body></html>"),
+        "<root><child1>value1</child1></root>|null|false|true;"
+        "<p:root xmlns:p=\"uri\" xmlns:ns1=\"uri2\" ns1:a=\"v\"/>;"
+        "<r xmlns:xx=\"uri\" xx:name=\"v\"/>;"
+        "<root><xml:foo/></root>;"
+        "<root xmlns=\"u\"><child/></root>");
 }
 
 // The scripting flag is the DOCUMENT's: a DOMParser document can never run a
@@ -77,6 +106,7 @@ void test_noscript_follows_the_documents_scripting_flag() {
 
 int main() {
     test_serialize_to_string();
+    test_serialize_namespaces();
     test_noscript_follows_the_documents_scripting_flag();
     REPORT("domparsing");
 }

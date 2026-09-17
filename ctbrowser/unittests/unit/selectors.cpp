@@ -160,6 +160,23 @@ void test_the_rest_of_the_grammar() {
     is("ids('ul li:nth-of-type(3)')", "li3");
 }
 
+// `:heading` and `:heading(<integer>#)`, Selectors 5 (css/selectors/heading.html,
+// parsing/parse-heading.html): h1-h6 by level, integers only in the list.
+void test_heading() {
+    is_in("<html><body><h1 id=a></h1><h2 id=b></h2><section><h6 id=c></h6></section>"
+          "<h7 id=d></h7><p id=e role=heading aria-level=1></p>"
+          "<style>h2:heading(2) { color: rgb(1, 2, 3) }</style></body></html>",
+          "(function () { var q = function (s) { return Array.from(document.querySelectorAll(s))"
+          ".map(function (e) { return e.id; }).join(); };"
+          " var bad = function (s) { try { document.querySelector(s); return 'ok'; }"
+          " catch (e) { return e.name; } };"
+          " return [q(':heading'), q(':heading(1)'), q(':heading(0, 2, 6)'), q(':heading(7)'),"
+          " q('h1:heading(2)'), bad(':heading()'), bad(':heading(1.0)'), bad(':heading(2n)'),"
+          " bad(':heading(-1)'), document.styleSheets[0].cssRules[0].selectorText,"
+          " getComputedStyle(document.getElementById('b')).color].join('|'); })()",
+          "a,b,c|a|b,c|||SyntaxError|SyntaxError|SyntaxError|ok|h2:heading(2)|rgb(1, 2, 3)");
+}
+
 // --- every spelling of An+B ------------------------------------------------
 //
 // The tokenizer has no An+B token: `4n-1` is one dimension whose unit is `n-1`,
@@ -475,6 +492,7 @@ int main() {
     test_the_four_combinators();
     test_the_rest_of_the_grammar();
     test_an_plus_b_spellings();
+    test_heading();
     test_scope_and_has();
     test_scoped_queries_and_matches();
     test_a_detached_element_matches_against_itself();

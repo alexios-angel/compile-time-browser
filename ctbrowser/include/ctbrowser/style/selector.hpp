@@ -169,6 +169,9 @@ enum class pseudo_kind : std::uint8_t {
     // does the walk.
     lang,
     dir,
+    // `:heading` and `:heading(<integer>#)`, Selectors 5 §heading: an h1-h6,
+    // or one whose level is in the list (`levels`; empty for the bare form).
+    heading,
 };
 
 struct pseudo_ref {
@@ -197,6 +200,8 @@ struct pseudo_ref {
     // interning it would put a wildcard in the atom table. `:dir()` stores its one
     // keyword here too, ASCII-lowercased.
     std::vector<std::string> ranges;
+    // `:heading(1, 2)`'s levels; empty for the bare `:heading`.
+    std::vector<std::int32_t> levels;
 };
 
 // One compound selector: `div#id.a.b[x=y]:hover` - a tag, an id, some classes,

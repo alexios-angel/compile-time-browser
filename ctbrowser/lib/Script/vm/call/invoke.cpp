@@ -287,11 +287,37 @@ std::string context::describe_thrown(value thrown) {
     return "exception: " + to_string(thrown);
 }
 
-value context::proxy_trap(value proxy, const std::string & name) {
+// GetMethod(handler, name) (7.3.10) with 10.5's step 1-3 around it: a revoked
+// proxy (null handler) is the TypeError; the trap is read through [[Get]], so
+// one inherited from the handler's prototype or answered by a getter counts
+// (test262 drives most traps that way); null/undefined is "no trap" and
+// anything else that is not callable is the TypeError. THE CALLER CHECKS
+// throw_pending() before forwarding to the target: undefined here means
+// either "no trap" or "a throw is in flight".
+value context::proxy_trap(value proxy, const std::string & name, bool * failed) {
+    // `failed` is how a caller learns of a throw THIS function raised: a
+    // throw_error here has landed on the page's handler by the time it
+    // returns, and throw_pending cannot see it (context::unwinds). A throw a
+    // getter raised across lookup_property's call is parked, and throw_pending
+    // does see that one; `failed` reports both.
+    const std::size_t before = unwinds();
+    const auto fail = [&] {
+        if (failed != nullptr) { *failed = true; }
+        return value::undefined();
+    };
     auto * p = static_cast<proxy_object *>(proxy.as_heap());
-    if (!p->handler.is_object()) { return value::undefined(); }
-    value * found = static_cast<object_object *>(p->handler.as_heap())->find(name);
-    return found == nullptr ? value::undefined() : *found;
+    if (!p->handler.is_object_like()) {
+        throw_error("TypeError", "Cannot perform '" + name + "' on a proxy that has been revoked");
+        return fail();
+    }
+    const value trap = lookup_property(p->handler, name);
+    if (throw_pending() || unwinds() != before) { return fail(); }
+    if (trap.is_nullish()) { return value::undefined(); }
+    if (!trap.is_callable()) {
+        throw_error("TypeError", "proxy trap '" + name + "' is not a function");
+        return fail();
+    }
+    return trap;
 }
 
 value context::spread_values(value v) {
@@ -549,6 +575,24 @@ value context::call_spread(value callee, value arg_array, value receiver) {
     return call(callee, args, receiver);
 }
 
+value context::throw_type_error() {
+    if (!throw_type_error_.is_undefined()) { return throw_type_error_; }
+    auto * made = allocate<native_object>("", [](context & c, std::span<value>) {
+        c.throw_error("TypeError", "'caller', 'callee', and 'arguments' properties may not be "
+                                   "accessed on strict mode functions or the arguments objects "
+                                   "for calls to them");
+        return value::undefined();
+    });
+    made->is_constructor = false;
+    // 10.2.4.1 steps 2-4: length 0 and name "" both { false, false, false },
+    // in that order, and [[Extensible]] false.
+    made->define("length", value::number(0), attr_none);
+    made->define("name", string(""), attr_none);
+    made->extensible = false;
+    throw_type_error_ = value::object(made);
+    return throw_type_error_;
+}
+
 value context::make_arguments_object(call_frame & fr, const value * slots, std::uint32_t argc) {
     // The FRAME knows how many arguments ARRIVED; the proto only knows how many
     // were declared, and those are different numbers whenever `arguments` is
@@ -557,6 +601,33 @@ value context::make_arguments_object(call_frame & fr, const value * slots, std::
     auto * items = static_cast<array_object *>(list.as_heap());
     items->items.reserve(argc);
     for (std::uint32_t i = 0; i < argc; ++i) { items->items.push_back(slots[i]); }
+    // AN ARGUMENTS OBJECT IS NOT AN ARRAY (10.4.4): an array_object here for
+    // its indices and `length` (type_record pins the kind), on Object.prototype
+    // rather than Array.prototype - so `arguments.map` is undefined, as it is
+    // everywhere - with @@iterator = Array.prototype.values (10.4.4.6 step
+    // 6/7), `callee` (the function when mapped; the %ThrowTypeError% accessor
+    // when strict or the parameters are not simple, 10.4.4.7 step 8), and a
+    // private marker Array.isArray and Object.prototype.toString read. The
+    // parameter MAP of 10.4.4.6 is not made: a write to `arguments[0]` does
+    // not reach the parameter.
+    if (object_object * table = prototype(proto_kind::object)) {
+        items->prototype = value::object(table);
+    }
+    object_object & named = items->named_table();
+    named.define("@#Arguments", value::boolean(true), attr_none);
+    if (object_object * table = prototype(proto_kind::array)) {
+        if (value * values = table->find("values")) {
+            named.define("@@iterator", *values, attr_writable | attr_configurable);
+        }
+    }
+    const function_proto * proto = fr.proto;
+    const bool unmapped =
+        proto == nullptr || proto->is_strict || proto->length != proto->param_count;
+    if (unmapped) {
+        named.define_accessor("callee", throw_type_error(), throw_type_error(), attr_none);
+    } else if (fr.closure != nullptr) {
+        named.define("callee", value::object(fr.closure), attr_writable | attr_configurable);
+    }
     // ON THE FRAME TOO, and inside this member rather than at the call: this
     // claims a register an extra argument may be in, so whatever still needs
     // the raw ones reads them from here.

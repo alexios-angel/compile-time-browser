@@ -5,14 +5,15 @@
 
 #include "internal.hpp"
 
+#include <ctbrowser/shell/page/input_types.hpp>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
+// THE FORMS' NUMBERS AND TEXT, HTML 4.10.5.1 and 2.3.5, are
+// shell/page/input_types.hpp - the form store sanitises with them too.
+using namespace input_types;
 
-// ============================================================================
-// THE FORMS' NUMBERS AND TEXT, HTML 4.10.5.1 and 2.3.5 - file-local because
-// only the form bindings below read them.
-// ============================================================================
 namespace {
 
 // --- UTF-16 code units over the store's UTF-8 value ---------------------------
@@ -38,370 +39,6 @@ namespace {
         seen += width;
     }
     return at;
-}
-
-// A "valid floating-point number" (HTML 2.3.5.2) when `lenient` is false:
-// an optional minus, digits, an optional fraction, an optional exponent, and
-// nothing else. The "rules for parsing floating-point number values" when
-// true: leading whitespace and a plus sign allowed, trailing garbage ignored.
-[[nodiscard]] bool parse_float(std::string_view text, double & out, bool lenient) {
-    std::size_t at = 0;
-    if (lenient) {
-        while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) {
-            ++at;
-        }
-    }
-    std::string canonical;
-    if (at < text.size() && (text[at] == '-' || (lenient && text[at] == '+'))) {
-        if (text[at] == '-') { canonical += '-'; }
-        ++at;
-    }
-    const auto digit = [&](std::size_t i) {
-        return i < text.size() && text[i] >= '0' && text[i] <= '9';
-    };
-    if (!digit(at)) {
-        if (!lenient || !(at < text.size() && text[at] == '.' && digit(at + 1))) { return false; }
-        canonical += '0';
-    }
-    while (digit(at)) { canonical += text[at++]; }
-    if (at < text.size() && text[at] == '.') {
-        if (!lenient && !digit(at + 1)) { return false; }
-        ++at;
-        canonical += '.';
-        if (!digit(at)) { canonical += '0'; }
-        while (digit(at)) { canonical += text[at++]; }
-    }
-    if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
-        std::size_t look = at + 1;
-        std::string exponent = "e";
-        if (look < text.size() && (text[look] == '-' || text[look] == '+')) {
-            if (text[look] == '-') { exponent += '-'; }
-            ++look;
-        }
-        if (digit(look)) {
-            while (digit(look)) { exponent += text[look++]; }
-            canonical += exponent;
-            at = look;
-        } else if (!lenient) {
-            return false;
-        }
-    }
-    if (!lenient && at != text.size()) { return false; }
-    const auto result = std::from_chars(canonical.data(), canonical.data() + canonical.size(), out);
-    return result.ec == std::errc{} && std::isfinite(out);
-}
-
-// --- the calendar, proleptic Gregorian, days from 1970-01-01 ----------------------
-[[nodiscard]] long long days_from_civil(long long y, unsigned m, unsigned d) {
-    y -= m <= 2;
-    const long long era = (y >= 0 ? y : y - 399) / 400;
-    const auto yoe = static_cast<unsigned long long>(y - era * 400);
-    const unsigned mp = m > 2 ? m - 3 : m + 9;
-    const unsigned long long doy = (153ull * mp + 2) / 5 + d - 1;
-    const unsigned long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + static_cast<long long>(doe) - 719468;
-}
-struct civil {
-    long long year;
-    unsigned month;
-    unsigned day;
-};
-[[nodiscard]] civil civil_from_days(long long z) {
-    z += 719468;
-    const long long era = (z >= 0 ? z : z - 146096) / 146097;
-    const auto doe = static_cast<unsigned long long>(z - era * 146097);
-    const unsigned long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    const long long y = static_cast<long long>(yoe) + era * 400;
-    const unsigned long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const unsigned long long mp = (5 * doy + 2) / 153;
-    const auto d = static_cast<unsigned>(doy - (153 * mp + 2) / 5 + 1);
-    const auto m = static_cast<unsigned>(mp < 10 ? mp + 3 : mp - 9);
-    return {y + (m <= 2), m, d};
-}
-[[nodiscard]] unsigned days_in_month(long long y, unsigned m) {
-    static constexpr unsigned lengths[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    return m == 2 && leap ? 29 : lengths[m - 1];
-}
-// Monday-based day of week, 0..6, of a day count (1970-01-01 was a Thursday).
-[[nodiscard]] unsigned weekday_of(long long days) {
-    return static_cast<unsigned>(((days + 3) % 7 + 7) % 7);
-}
-[[nodiscard]] unsigned weeks_in_year(long long y) {
-    const unsigned jan1 = weekday_of(days_from_civil(y, 1, 1));
-    const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    return jan1 == 3 || (leap && jan1 == 2) ? 53 : 52;
-}
-constexpr double ms_per_day = 86400000.0;
-
-// A run of exactly `n` digits at `at`, advanced past.
-[[nodiscard]] bool digits(std::string_view text, std::size_t & at, std::size_t n, long long & out) {
-    if (at + n > text.size()) { return false; }
-    out = 0;
-    for (std::size_t i = 0; i < n; ++i) {
-        const char ch = text[at + i];
-        if (ch < '0' || ch > '9') { return false; }
-        out = out * 10 + (ch - '0');
-    }
-    at += n;
-    return true;
-}
-// At least four digits: a year.
-[[nodiscard]] bool year_digits(std::string_view text, std::size_t & at, long long & out) {
-    std::size_t n = 0;
-    while (at + n < text.size() && text[at + n] >= '0' && text[at + n] <= '9') { ++n; }
-    if (n < 4) { return false; }
-    return digits(text, at, n, out) && out > 0;
-}
-[[nodiscard]] std::optional<double> parse_date_ms(std::string_view text, std::size_t & at) {
-    long long y = 0;
-    long long m = 0;
-    long long d = 0;
-    if (!year_digits(text, at, y) || at >= text.size() || text[at] != '-') { return std::nullopt; }
-    ++at;
-    if (!digits(text, at, 2, m) || m < 1 || m > 12) { return std::nullopt; }
-    if (at >= text.size() || text[at] != '-') { return std::nullopt; }
-    ++at;
-    if (!digits(text, at, 2, d) || d < 1 || d > days_in_month(y, static_cast<unsigned>(m))) {
-        return std::nullopt;
-    }
-    return static_cast<double>(
-               days_from_civil(y, static_cast<unsigned>(m), static_cast<unsigned>(d))) *
-           ms_per_day;
-}
-[[nodiscard]] std::optional<double> parse_time_ms(std::string_view text, std::size_t & at) {
-    long long h = 0;
-    long long mi = 0;
-    if (!digits(text, at, 2, h) || h > 23 || at >= text.size() || text[at] != ':') {
-        return std::nullopt;
-    }
-    ++at;
-    if (!digits(text, at, 2, mi) || mi > 59) { return std::nullopt; }
-    double ms = static_cast<double>(h * 3600000 + mi * 60000);
-    if (at < text.size() && text[at] == ':') {
-        ++at;
-        long long s = 0;
-        if (!digits(text, at, 2, s) || s > 59) { return std::nullopt; }
-        ms += static_cast<double>(s) * 1000;
-        if (at < text.size() && text[at] == '.') {
-            ++at;
-            std::size_t n = 0;
-            while (n < 3 && at + n < text.size() && text[at + n] >= '0' && text[at + n] <= '9') {
-                ++n;
-            }
-            if (n == 0) { return std::nullopt; }
-            long long fraction = 0;
-            (void)digits(text, at, n, fraction);
-            for (std::size_t i = n; i < 3; ++i) { fraction *= 10; }
-            ms += static_cast<double>(fraction);
-        }
-    }
-    return ms;
-}
-// The value of a typed input as its number: ms for the date and time types,
-// months since 1970-01 for month, the number itself for number and range.
-[[nodiscard]] std::optional<double> type_value_to_number(std::string_view type,
-                                                         std::string_view text) {
-    std::size_t at = 0;
-    if (type == "number" || type == "range") {
-        double out = 0;
-        if (!parse_float(text, out, false)) { return std::nullopt; }
-        return out;
-    }
-    if (type == "date") {
-        const std::optional<double> ms = parse_date_ms(text, at);
-        return at == text.size() ? ms : std::nullopt;
-    }
-    if (type == "month") {
-        long long y = 0;
-        long long m = 0;
-        if (!year_digits(text, at, y) || at >= text.size() || text[at] != '-') {
-            return std::nullopt;
-        }
-        ++at;
-        if (!digits(text, at, 2, m) || m < 1 || m > 12 || at != text.size()) {
-            return std::nullopt;
-        }
-        return static_cast<double>((y - 1970) * 12 + (m - 1));
-    }
-    if (type == "week") {
-        long long y = 0;
-        long long w = 0;
-        if (!year_digits(text, at, y) || at + 1 >= text.size() || text[at] != '-' ||
-            text[at + 1] != 'W') {
-            return std::nullopt;
-        }
-        at += 2;
-        if (!digits(text, at, 2, w) || w < 1 || w > weeks_in_year(y) || at != text.size()) {
-            return std::nullopt;
-        }
-        const long long jan4 = days_from_civil(y, 1, 4);
-        const long long monday = jan4 - weekday_of(jan4) + (w - 1) * 7;
-        return static_cast<double>(monday) * ms_per_day;
-    }
-    if (type == "time") {
-        const std::optional<double> ms = parse_time_ms(text, at);
-        return at == text.size() ? ms : std::nullopt;
-    }
-    if (type == "datetime-local") {
-        const std::optional<double> day = parse_date_ms(text, at);
-        if (!day || at >= text.size() || (text[at] != 'T' && text[at] != ' ')) {
-            return std::nullopt;
-        }
-        ++at;
-        const std::optional<double> time = parse_time_ms(text, at);
-        if (!time || at != text.size()) { return std::nullopt; }
-        return *day + *time;
-    }
-    return std::nullopt;
-}
-[[nodiscard]] std::string two(long long n) {
-    return (n < 10 ? "0" : "") + std::to_string(n);
-}
-[[nodiscard]] std::string date_text(double ms) {
-    const civil when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
-    std::string year = std::to_string(when.year);
-    while (year.size() < 4) { year.insert(0, "0"); }
-    return year + "-" + two(when.month) + "-" + two(when.day);
-}
-[[nodiscard]] std::string time_text(double ms_in_day) {
-    const auto total = static_cast<long long>(ms_in_day);
-    const long long h = total / 3600000;
-    const long long mi = (total / 60000) % 60;
-    const long long s = (total / 1000) % 60;
-    const long long fraction = total % 1000;
-    std::string out = two(h) + ":" + two(mi);
-    if (s != 0 || fraction != 0) {
-        out += ":" + two(s);
-        if (fraction != 0) {
-            std::string f = std::to_string(fraction);
-            while (f.size() < 3) { f.insert(0, "0"); }
-            while (f.back() == '0') { f.pop_back(); }
-            out += "." + f;
-        }
-    }
-    return out;
-}
-// The number of a typed input written back as its value; "" when it does
-// not fit the type.
-[[nodiscard]] std::string type_number_to_text(std::string_view type, double number) {
-    if (!std::isfinite(number)) { return {}; }
-    if (type == "number" || type == "range") {
-        // JavaScript's Number-to-string, close enough for a finite value:
-        // an integer prints without a fraction, the rest shortest-round-trip.
-        char buffer[64];
-        const auto result = std::to_chars(buffer, buffer + sizeof buffer, number);
-        return std::string{buffer, result.ptr};
-    }
-    if (type == "date") { return date_text(number); }
-    if (type == "month") {
-        const auto months = static_cast<long long>(std::floor(number));
-        long long y = 1970 + months / 12;
-        long long m = months % 12;
-        if (m < 0) {
-            m += 12;
-            --y;
-        }
-        if (y < 1) { return {}; }
-        std::string year = std::to_string(y);
-        while (year.size() < 4) { year.insert(0, "0"); }
-        return year + "-" + two(m + 1);
-    }
-    if (type == "week") {
-        const auto days = static_cast<long long>(std::floor(number / ms_per_day));
-        const long long monday = days - weekday_of(days);
-        const long long thursday = monday + 3;
-        const long long y = civil_from_days(thursday).year;
-        const long long jan4 = days_from_civil(y, 1, 4);
-        const long long week1 = jan4 - weekday_of(jan4);
-        const long long w = (monday - week1) / 7 + 1;
-        if (y < 1) { return {}; }
-        std::string year = std::to_string(y);
-        while (year.size() < 4) { year.insert(0, "0"); }
-        return year + "-W" + two(w);
-    }
-    if (type == "time") {
-        const double in_day = std::fmod(std::fmod(number, ms_per_day) + ms_per_day, ms_per_day);
-        return time_text(std::floor(in_day));
-    }
-    if (type == "datetime-local") {
-        const double day = std::floor(number / ms_per_day) * ms_per_day;
-        return date_text(number) + "T" + time_text(std::floor(number - day));
-    }
-    return {};
-}
-[[nodiscard]] double month_index_to_ms(double months) {
-    const auto m = static_cast<long long>(std::floor(months));
-    long long y = 1970 + m / 12;
-    long long mo = m % 12;
-    if (mo < 0) {
-        mo += 12;
-        --y;
-    }
-    return static_cast<double>(days_from_civil(y, static_cast<unsigned>(mo + 1), 1)) * ms_per_day;
-}
-[[nodiscard]] double ms_to_month_index(double ms) {
-    const civil when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
-    return static_cast<double>((when.year - 1970) * 12 + (when.month - 1));
-}
-// The step scale factor and the default step, HTML 4.10.5.1, in the type's
-// unit (ms, months, or the number).
-[[nodiscard]] double step_scale_of(std::string_view type) {
-    if (type == "date") { return ms_per_day; }
-    if (type == "week") { return 7 * ms_per_day; }
-    if (type == "time" || type == "datetime-local") { return 1000; }
-    return 1;
-}
-[[nodiscard]] double default_step_of(std::string_view type) {
-    if (type == "time" || type == "datetime-local") { return 60; }
-    return 1;
-}
-
-// A "valid e-mail address", HTML 4.10.5.1.5's regular expression by hand.
-[[nodiscard]] bool is_valid_email(std::string_view text) {
-    const std::size_t at = text.find('@');
-    if (at == std::string_view::npos || at == 0 || at + 1 >= text.size()) { return false; }
-    constexpr std::string_view local_extra = ".!#$%&'*+/=?^_`{|}~-";
-    const auto alnum = [](char ch) {
-        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9');
-    };
-    for (const char ch : text.substr(0, at)) {
-        if (!alnum(ch) && local_extra.find(ch) == std::string_view::npos) { return false; }
-    }
-    const std::string_view domain = text.substr(at + 1);
-    std::size_t start = 0;
-    while (true) {
-        const std::size_t dot = domain.find('.', start);
-        const std::string_view label = domain.substr(
-            start, dot == std::string_view::npos ? std::string_view::npos : dot - start);
-        if (label.empty() || label.size() > 63 || !alnum(label.front()) || !alnum(label.back())) {
-            return false;
-        }
-        for (const char ch : label) {
-            if (!alnum(ch) && ch != '-') { return false; }
-        }
-        if (dot == std::string_view::npos) { return true; }
-        start = dot + 1;
-    }
-}
-// A "valid URL potentially surrounded by spaces" that is absolute: a scheme,
-// a colon, and no whitespace inside.
-[[nodiscard]] bool is_valid_url(std::string_view text) {
-    const std::string_view trimmed = trim(text, html_whitespace);
-    const std::size_t colon = trimmed.find(':');
-    if (colon == std::string_view::npos || colon == 0) { return false; }
-    const char first = trimmed.front();
-    if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z'))) { return false; }
-    for (const char ch : trimmed.substr(0, colon)) {
-        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-              ch == '+' || ch == '-' || ch == '.')) {
-            return false;
-        }
-    }
-    for (const char ch : trimmed) {
-        if (html_whitespace.find(ch) != std::string_view::npos) { return false; }
-    }
-    return true;
 }
 
 // The hidden slots on a wrapper the forms keep their non-attribute state in:
@@ -1039,11 +676,7 @@ void dom_bindings::install_control_methods(context & cx) {
     };
     // An input's type STATE, HTML 4.10.5: the attribute's keyword, else text.
     const auto input_type = [](const read_txn & txn, dom_bindings * b, node_id id) {
-        std::string type = ascii_lower_copy(txn.attribute_value(id, b->atoms_->intern("type")));
-        constexpr std::string_view known =
-            "hidden text search tel url email password date month week time datetime-local "
-            "number range color checkbox radio file submit image reset button";
-        return lists_token(known, type) ? type : std::string{"text"};
+        return type_state_of(txn.attribute_value(id, b->atoms_->intern("type")));
     };
     // A form control's value as the store holds it.
     const auto value_of = [](const read_txn & txn, dom_bindings * b, node_id id) {
@@ -1171,18 +804,10 @@ void dom_bindings::install_control_methods(context & cx) {
     // change of selectedness here is written through to that value - and a
     // store value the chrome or the shadowing `value` setter changed is read
     // back into selectedness when the two disagree (`reconcile`).
-    const auto options_of = [is](const read_txn & txn, dom_bindings * b, node_id select) {
-        std::vector<node_id> out;
-        const auto walk = [&](auto && self, node_id at2) -> void {
-            for (const node_id child : txn.children(at2)) {
-                if (is(txn, child, "option")) { out.push_back(child); }
-                if (is(txn, child, "select") || is(txn, child, "datalist")) { continue; }
-                self(self, child);
-            }
-        };
-        (void)b;
-        walk(walk, select);
-        return out;
+    // HTML 4.10.7 "list of options" - the store's walk, so the value the
+    // chrome paints and the options this model selects agree.
+    const auto options_of = [](const read_txn & txn, dom_bindings * b, node_id select) {
+        return form_store::list_of_options(txn, *b->atoms_, select);
     };
     const auto option_value = [](const read_txn & txn, dom_bindings * b, node_id option) {
         return form_store::option_value(txn, *b->atoms_, option);
@@ -1474,12 +1099,21 @@ void dom_bindings::install_control_methods(context & cx) {
     // --- HTMLOptionElement --------------------------------------------------------
     accessor(
         "HTMLOptionElement", "selected",
-        [at, option_selected](context & c, std::span<value>) {
+        [at, option_selected, select_of, selected_flags](context & c, std::span<value>) {
             const auto where = at(c);
             dom_bindings * b = where.first;
             const node_id id = where.second;
             if (!id) { return value::boolean(false); }
             const auto txn = b->doc_->read();
+            // THROUGH THE SELECT'S RECONCILIATION FIRST: `select.value = x`
+            // writes the store, and the option slots learn of it when the
+            // flags are next computed - which a read of ONE option's
+            // selectedness must do too, or `slt.value = "2"` left
+            // `slt.options[1].selected` false (reset-form.html).
+            if (const node_id select = select_of(txn, id)) {
+                std::vector<node_id> options;
+                (void)selected_flags(c, txn, b, select, options);
+            }
             return value::boolean(option_selected(c, txn, b, id));
         },
         [at, set_selected](context & c, std::span<value> a) {
@@ -2471,16 +2105,20 @@ void dom_bindings::install_control_methods(context & cx) {
         return context::truthy(c.call(test, std::span<const value>{&subject, 1}, re));
     };
     // Every flag of a control, as a bit set.
-    const auto validity_flags = [input_type, attribute_of, has_attribute, value_of, to_number,
-                                 bound_of, step_of, step_base_of, is_step_aligned, matches_pattern,
-                                 slot_of, selected_flags, option_value, display_size, form_owner,
-                                 tree_top, walk_tree,
-                                 is](context & c, dom_bindings * b, node_id id) -> unsigned {
+    const auto validity_flags =
+        [input_type, attribute_of, has_attribute, value_of, to_number, bound_of, step_of,
+         step_base_of, is_step_aligned, matches_pattern, slot_of, selected_flags, option_value,
+         display_size, form_owner, tree_top, walk_tree, is,
+         will_validate](context & c, dom_bindings * b, node_id id) -> unsigned {
         unsigned flags = 0;
         const auto txn = b->doc_->read();
         if (!txn.contains(id)) { return flags; }
         const value custom = slot_of(c, b, id, custom_slot);
         if (custom.is_string() && !c.to_string(custom).empty()) { flags |= custom_error; }
+        // BARRED FROM CONSTRAINT VALIDATION - disabled, readonly, hidden -
+        // leaves every flag but customError false: the browsers agree and
+        // form-validation-validity-*.html assert it for each state.
+        if (!will_validate(txn, b, id)) { return flags; }
         const std::string_view local = txn.local_name(id);
         const bool required = has_attribute(txn, b, id, "required");
         if (local == "select") {
@@ -2532,7 +2170,10 @@ void dom_bindings::install_control_methods(context & cx) {
             const std::string name = attribute_of(txn, b, id, "name");
             bool any_required = required;
             bool any_checked = checked;
-            if (!name.empty()) {
+            // A radio with no name is in no group, and the requirement is
+            // the group's (4.10.5.1.16) - so it is never missing.
+            if (name.empty()) { return flags; }
+            {
                 const node_id owner = form_owner(txn, b, id);
                 walk_tree(txn, tree_top(txn, b, id), [&](node_id other) {
                     if (other == id || !is(txn, other, "input") ||
@@ -2799,9 +2440,30 @@ void dom_bindings::install_control_methods(context & cx) {
         };
         for (const node_id one : elements_of_form(b, form)) {
             const auto txn = b->doc_->read();
-            if (!txn.contains(one) || !is_submittable(txn, one) || is_disabled(txn, b, one)) {
+            if (!txn.contains(one) || is_disabled(txn, b, one)) { continue; }
+            // A FORM-ASSOCIATED CUSTOM ELEMENT (step 5.5-5.7): its submission
+            // value - nothing for null, a FormData's entries, else the value
+            // under its name.
+            if (const value face =
+                    b->face_submission_value_ ? b->face_submission_value_(one) : value::undefined();
+                !face.is_undefined()) {
+                if (face.is_null()) { continue; }
+                if (face.is_object()) {
+                    if (const value * held = static_cast<script::object_object *>(face.as_heap())
+                                                 ->find(entries_slot);
+                        held != nullptr && held->is_array()) {
+                        for (const value & pair :
+                             static_cast<script::array_object *>(held->as_heap())->items) {
+                            list->items.push_back(pair);
+                        }
+                        continue;
+                    }
+                }
+                const std::string name = attribute_of(txn, b, one, "name");
+                if (!name.empty()) { add(name, face); }
                 continue;
             }
+            if (!is_submittable(txn, one)) { continue; }
             bool in_datalist = false;
             for (node_id up = txn.parent(one); up; up = txn.parent(up)) {
                 if (is(txn, up, "datalist")) { in_datalist = true; }
@@ -3068,10 +2730,31 @@ void dom_bindings::install_control_methods(context & cx) {
     // built (which fires `formdata`), and nothing navigates. `submit()`
     // fires no `submit` event; `requestSubmit()` validates, fires it, and
     // builds the list unless it was cancelled.
-    const auto build_submission = [new_form_data, entry_list](context & c, dom_bindings * b,
-                                                              node_id form, node_id submitter) {
+    const auto build_submission = [new_form_data, entry_list, entry_name,
+                                   entry_value](context & c, dom_bindings * b, node_id form,
+                                                node_id submitter) {
         const value data = new_form_data(c);
-        if (data.is_object()) { entry_list(c, b, form, submitter, data); }
+        if (!data.is_object()) { return; }
+        entry_list(c, b, form, submitter, data);
+        if (c.throw_pending()) { return; }
+        // ...AND THE NAVIGATION, when the form aims a GET at a frame this
+        // document names (frames.cpp): the entries as strings - a File by
+        // its name, as the urlencoded serialiser says.
+        std::vector<std::pair<std::string, std::string>> pairs;
+        const value * held =
+            static_cast<script::object_object *>(data.as_heap())->find(entries_slot);
+        if (held != nullptr && held->is_array()) {
+            for (const value & pair : static_cast<script::array_object *>(held->as_heap())->items) {
+                const value v = entry_value(pair);
+                std::string text =
+                    v.is_object_like() ? c.to_string(c.lookup_property(v, "name")) : c.to_string(v);
+                pairs.emplace_back(entry_name(c, pair), std::move(text));
+            }
+        }
+        (void)b->navigate_form_target(form, pairs);
+    };
+    submit_form_ = [this, build_submission](node_id form, node_id submitter) {
+        if (cx_ != nullptr) { build_submission(*cx_, this, form, submitter); }
     };
     operation("HTMLFormElement", "submit", 0,
               [this, build_submission](context & c, std::span<value>) {
@@ -3353,8 +3036,8 @@ void dom_bindings::install_control_methods(context & cx) {
         // mode says.
         operation(
             which, "setRangeText", 1,
-            [this, at, selection_applies, selection_of, set_selection,
-             store_value](context & c, std::span<value> a) {
+            [this, at, selection_applies, selection_of, set_selection](context & c,
+                                                                       std::span<value> a) {
                 const auto where = at(c);
                 dom_bindings * b = where.first;
                 const node_id id = where.second;
@@ -3425,8 +3108,22 @@ void dom_bindings::install_control_methods(context & cx) {
                     if (old_end > start && old_end < end) { e = new_end; }
                 }
                 {
+                    // The value, with the selection LEFT WHERE IT WAS: the
+                    // replacement itself moves no boundary (HTML 4.10.19.7
+                    // step 12 sets the range afterwards), so `select` fires
+                    // only when that range differs from the one before the
+                    // call - a second identical setRangeText fires nothing
+                    // (select-event.html). store_value would have put the
+                    // caret at the end and made every call a change.
                     const auto txn = b->doc_->read();
-                    store_value(txn, b, id, text);
+                    control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+                    const std::size_t caret = std::min(held.caret, text.size());
+                    const std::size_t anchor = std::min(held.selection, text.size());
+                    held.value = std::move(text);
+                    held.caret = caret;
+                    held.selection = anchor;
+                    held.value_edited = true;
+                    b->wrote_to_control_ = true;
                 }
                 set_selection(c, b, id, static_cast<double>(s), static_cast<double>(e),
                               current.direction);

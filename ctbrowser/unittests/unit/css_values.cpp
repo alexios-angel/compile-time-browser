@@ -645,7 +645,16 @@ void test_important_and_the_empty_value() {
     // A `!` INSIDE A BLOCK IS A DELIM, not a priority: `if(style(--x!): a; else:
     // b)` is a value whose condition is false (if-conditionals 39, 117, 118).
     CHECK(check_declaration("--p", "if(style(--x!): 1px; else: 2px)").valid);
-    CHECK(check_declaration("width", "calc(1px * var(--x!))").valid);
+    CHECK(check_declaration("width", "calc(1px * var(--x, a!b))").valid);
+    // ...and var()'s first argument is exactly one custom property name
+    // (var-parsing.html).
+    CHECK(!check_declaration("width", "var(--x!)").valid);
+    CHECK(!check_declaration("width", "var()").valid);
+    CHECK(!check_declaration("width", "var({})").valid);
+    CHECK(!check_declaration("width", "var(, 10px)").valid);
+    CHECK(!check_declaration("width", "var(--x {--y}, 10px)").valid);
+    CHECK(check_declaration("width", "var(--x,)").valid);
+    CHECK(check_declaration("width", "var(--x, var(--y, 1px))").valid);
     CHECK(!check_declaration("--p", "1px !").valid);
     CHECK(!check_declaration("width", "1px !").valid);
     // ...and the value is still STORED, which is the difference between the two

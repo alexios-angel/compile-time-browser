@@ -174,14 +174,41 @@ void context::store_property(value target, const std::string & name, value v) {
     // write does not land on the target at all, which is the point of it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "set");
+        bool failed = false;
+        const value trap = proxy_trap(target, "set", &failed);
+        if (failed || throw_pending()) { return; }
         if (trap.is_callable()) {
             const value args[4] = {p->target, key_value(name), v, target};
             // 10.5.9 step 9: a trap answering false is a REJECTED write -
             // silent here, the TypeError in strict code (strict_store_check).
             // An HTMLCollection's index is the everyday case.
-            if (!truthy(call(trap, args, p->handler)) && !throw_pending()) {
+            const std::size_t before = unwinds();
+            const bool answered = truthy(call(trap, args, p->handler));
+            if (throw_pending() || unwinds() != before) { return; }
+            if (!answered) {
                 store_rejected_ = true;
+                return;
+            }
+            // Steps 10-12, the invariants: a true answer over a target property
+            // that is non-configurable and either non-writable data holding a
+            // different value, or an accessor with no setter, is the TypeError.
+            property_descriptor held;
+            if (own_property(p->target, name, held) && held.has_configurable &&
+                !held.configurable) {
+                if (held.is_data() && held.has_writable && !held.writable &&
+                    !held.held.same_value(v)) {
+                    throw_error("TypeError", "'set' on proxy: trap returned truish for property '" +
+                                                 name +
+                                                 "' which exists in the proxy target as a "
+                                                 "non-configurable and non-writable data "
+                                                 "property with a different value");
+                } else if (held.is_accessor() && !held.setter.is_callable()) {
+                    throw_error("TypeError", "'set' on proxy: trap returned truish for property '" +
+                                                 name +
+                                                 "' which exists in the proxy target as a "
+                                                 "non-configurable and non-writable "
+                                                 "accessor property without a setter");
+                }
             }
             return;
         }
@@ -257,7 +284,15 @@ void context::store_property(value target, const std::string & name, value v) {
             store_index(target, value::number(static_cast<double>(at)), v);
             return;
         }
-        if (name != "length") {
+        // A TYPED ARRAY'S `length` is %TypedArray%.prototype's getter, so an
+        // OWN one a page defined is a named property like any other, and
+        // without one the write finds no setter: a no-op (10.4.5 / OrdinarySet).
+        const bool typed_length = name == "length" && arr->elements != element_kind::none;
+        if (typed_length && (!arr->named || (arr->named->find(name) == nullptr &&
+                                             arr->named->find_accessor(name) == nullptr))) {
+            return;
+        }
+        if (name != "length" || typed_length) {
             // A NAMED PROPERTY, in the array's own table - see
             // array_object::named. The same three checks as an object's: an
             // own accessor's setter, a non-writable own data property, and

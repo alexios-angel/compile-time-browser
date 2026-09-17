@@ -479,11 +479,23 @@ void test_what_a_page_reads_back() {
                     cs.getPropertyValue('--x') + '|' + cs.backgroundPosition + '|' + cs.tabSize);
         document.getElementById('t').style.opacity = 'calc(log(0))';
         console.log('clamped=' + cs.opacity);
+        // `vi`/`vb` follow the ELEMENT'S writing mode (the root's does not
+        // matter): a 400x200 viewport.
+        const v = document.createElement('div');
+        v.style.height = '100vi'; v.style.width = '100vb'; v.style.writingMode = 'initial';
+        document.body.appendChild(v);
+        const vs = getComputedStyle(v);
+        const before = vs.height + ' ' + vs.width;
+        document.documentElement.style.writingMode = 'vertical-rl';
+        const rootOnly = vs.height + ' ' + vs.width;
+        v.style.writingMode = 'vertical-lr';
+        console.log('vi=' + before + '|' + rootOnly + '|' + vs.height + ' ' + vs.width);
     </script></body></html>)html");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "read="),
              std::string{"read=100% 50%|0.9|10px 11px|calc(0% + 320px) 50%|0"});
     CHECK_EQ(logged(page, "clamped="), std::string{"clamped=0"});
+    CHECK_EQ(logged(page, "vi="), std::string{"vi=400px 200px|400px 200px|200px 400px"});
 }
 
 // exp-log-serialize, minmax-number-serialize, progress-serialize and their

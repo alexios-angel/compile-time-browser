@@ -216,8 +216,17 @@ void browser::submit(node_id form) {
     // it does not submit - and does not fire `submit` either.
     if (!form || !bindings_->is_connected(form)) { return; }
     if (bindings_->dispatch("submit", form)) { return; } // cancelled
-    const auto txn = doc_->read();
-    last_submission_ = forms_.form_data(txn, atoms_, form);
+    {
+        const auto txn = doc_->read();
+        last_submission_ = forms_.form_data(txn, atoms_, form);
+    }
+    // The entry list with its `formdata` event, and a GET aimed at a named
+    // frame navigating that frame (the bindings'); the store's data above is
+    // what the embedder reads back for every other submission.
+    if (bindings_->submit_form_) {
+        bindings_->submit_form_(form, node_id{});
+        mark(dirty::layout);
+    }
 }
 
 // HTML 4.10.21.4 "reset the form": fire a cancelable `reset` event at the form

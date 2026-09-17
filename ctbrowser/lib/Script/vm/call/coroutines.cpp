@@ -7,6 +7,7 @@
 // include/ctbrowser/script/vm.hpp - so they split across translation units
 // with nothing to declare.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -514,8 +515,21 @@ void context::suspend_frame(coroutine_object * saved, std::uint16_t await_reg) {
         saved->handlers.push_back(moved);
     }
     handlers_.resize(frame.handler_base);
-    registers_.resize(base);
     frames_.pop_back();
+    // NOT BELOW THE CALLER'S OWN WINDOW. An interpreted callee's frame starts
+    // INSIDE its caller's (op::call: base + a + 1), so cutting the stack at
+    // this frame's base threw away every caller register above the callee
+    // slot - and the next call's `resize(needed, undefined)` refilled them
+    // with undefined. `f(1); g(2);` with both async: g read `v` as undefined,
+    // and every test262 file that starts two async functions before the first
+    // settles read the same. The caller keeps frame_size + 8 as the call
+    // opcode reserved it; a native between the two frames has no window here.
+    std::size_t keep = base;
+    if (!frames_.empty() && frames_.back().proto != nullptr) {
+        const call_frame & caller = frames_.back();
+        keep = std::max(keep, caller.base + caller.proto->frame_size + 8u);
+    }
+    if (registers_.size() > keep) { registers_.resize(keep); }
 }
 
 std::size_t context::restore_frame(coroutine_object * saved) {
@@ -632,6 +646,12 @@ void context::resume(value coroutine, value with, bool rejected) {
             value * state = obj->find("__rejected");
             outcome = held == nullptr ? value::undefined() : *held;
             failed_outcome = state != nullptr && truthy(*state);
+            // ADOPTED, as far as the host's rejection tracker is concerned:
+            // this is the `then` a PromiseResolveThenableJob would have
+            // called (PerformPromiseThen step 9), and without it the fence's
+            // `Promise.reject(e)` - rejected, consumed here, never reacted to
+            // - was reported to the page as an unhandled rejection.
+            mark_promise_handled(returned);
         }
     }
     promise_settler_(*this, saved->promise, outcome, failed_outcome);

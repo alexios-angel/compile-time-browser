@@ -24,6 +24,8 @@ void dom_bindings::install_window(context & cx) {
     window->set("innerWidth", value::number(viewport_width_));
     window->set("innerHeight", value::number(viewport_height_));
     window->set("devicePixelRatio", value::number(1));
+    install_window_scrolling(cx,
+                             *window); // scrollX/scrollY, scroll/scrollTo/scrollBy (scrolling.cpp)
     // ON THE WINDOW AND AS A BARE GLOBAL, which is one function reachable by two
     // names rather than two functions. The window IS the global object in a
     // browser, so `addEventListener("error", f)` with no receiver is the same
@@ -123,46 +125,21 @@ void dom_bindings::install_window(context & cx) {
     storage("localStorage");
     storage("sessionStorage");
 
-    // `new AbortController()`. p5.js makes one in its constructor and passes
-    // its signal to every listener it installs, so that removing a sketch can
-    // remove them all at once.
-    //
-    // The signal is carried and honoured by removeEventListener via `abort`;
-    // TODO: aborting should cancel an in-flight fetch once fetch stops blocking
-    // the frame. Today there is nothing in flight to cancel.
-    // what is NOT modelled is aborting an in-flight fetch, because a fetch here
-    // does not overlap with anything. A page that aborts one gets a request
-    // that already finished, which is a difference worth knowing about.
-    cx.define_native("AbortController", [this](context & c, std::span<value>) {
-        auto * controller = c.allocate<script::object_object>();
-        auto * signal = c.allocate<script::object_object>();
-        signal->set("aborted", value::boolean(false));
-        signal->set("reason", value::undefined());
-        const value signal_value = value::object(signal);
-        controller->set("signal", signal_value);
-        auto * abort = c.allocate<script::native_object>(
-            "abort", [this, signal_value](context & inner, std::span<value> args) {
-                auto * s = static_cast<script::object_object *>(signal_value.as_heap());
-                s->set("aborted", value::boolean(true));
-                s->set("reason", arg(args, 0));
-                // Every listener registered with this signal goes.
-                std::erase_if(listeners_, [&](const listener & l) {
-                    return l.abort_signal.is_heap() &&
-                           l.abort_signal.as_heap() == signal_value.as_heap();
-                });
-                (void)inner;
-                return value::undefined();
-            });
-        // THE SIGNAL IS IN A C++ CAPTURE AND NOWHERE ELSE THE COLLECTOR LOOKS.
-        // It is a property of the CONTROLLER, so the pair survives as long as
-        // the controller does - but a page that keeps only `abort` (or only
-        // the signal and `abort`, having dropped the controller) leaves this
-        // lambda holding the sole reference, and abort() then writes `aborted`
-        // into freed memory. Found by the sweep of every native capture list,
-        // not by a failing test. See native_object::retained.
-        abort->retained.push_back(signal_value);
-        controller->set("abort", value::object(abort));
-        return value::object(controller);
+    // `AbortController` and `AbortSignal` are bindings/abort.cpp, installed
+    // after the event interfaces they build on.
+
+    // `reportError(e)`, HTML 8.1.3.3: "report an exception" for a value the
+    // page hands over, as if it had been thrown uncaught - an `error` event
+    // at the window whose `error` is the value. The message is not read off
+    // the value (its getters must not run; reporterror.any.js asserts so), and
+    // the argument is required.
+    cx.define_native("reportError", [this](context & c, std::span<value> a) {
+        if (a.empty()) {
+            c.throw_error("TypeError", "reportError: 1 argument required, but only 0 present.");
+            return value::undefined();
+        }
+        (void)dispatch_error_value("Uncaught exception", a[0]);
+        return value::undefined();
     });
 
     // `new Event(type)` and `window.dispatchEvent(event)`.
@@ -390,8 +367,12 @@ void dom_bindings::install_window(context & cx) {
             // Counted rather than random: `Math.random` is seeded here so a
             // golden can exist, and a URL that changed between runs would defeat
             // that for any page that prints one.
-            const std::string name = "blob:ctbrowser/" + std::to_string(++next_object_url_);
+            dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+            const std::string name = "blob:ctbrowser/" + std::to_string(++top.next_object_url_);
             assets_->add(name, std::move(bytes));
+            const value type = c.lookup_property(a[0], "type");
+            top.object_url_types_.emplace_back(name, type.is_string() ? c.to_string(type)
+                                                                      : std::string{});
             return c.string(name);
         });
         set_method(cx, *url, "revokeObjectURL", [this](context & c, std::span<value> a) {
@@ -657,6 +638,33 @@ void dom_bindings::install_window(context & cx) {
         auto * languages = static_cast<script::array_object *>(cx.make_array().as_heap());
         languages->items.push_back(cx.string("en-US"));
         navigator->set("languages", value::object(languages));
+        // THE NavigatorID CONSTANTS, HTML 8.9.1.1: every browser answers these
+        // four fixed strings, because twenty years of sniffing reads them, and
+        // the specification now says so in as many words. `taintEnabled` is
+        // the legacy method that is always false, `pdfViewerEnabled` false
+        // here, and `plugins`/`mimeTypes` are the two always-empty lists.
+        navigator->set("appCodeName", cx.string("Mozilla"));
+        navigator->set("appName", cx.string("Netscape"));
+        navigator->set("product", cx.string("Gecko"));
+        navigator->set("productSub", cx.string("20100101"));
+        navigator->set("vendorSub", cx.string(""));
+        navigator->set("pdfViewerEnabled", value::boolean(false));
+        navigator->set("cookieEnabled", value::boolean(true));
+        set_method(cx, *navigator, "taintEnabled",
+                   [](context &, std::span<value>) { return value::boolean(false); });
+        set_method(cx, *navigator, "javaEnabled",
+                   [](context &, std::span<value>) { return value::boolean(false); });
+        for (const char * list : {"plugins", "mimeTypes"}) {
+            auto * empty = cx.allocate<script::object_object>();
+            empty->set("length", value::number(0));
+            set_method(cx, *empty, "item",
+                       [](context &, std::span<value>) { return value::null(); });
+            set_method(cx, *empty, "namedItem",
+                       [](context &, std::span<value>) { return value::null(); });
+            set_method(cx, *empty, "refresh",
+                       [](context &, std::span<value>) { return value::undefined(); });
+            navigator->set(list, value::object(empty));
+        }
         // mediaDevices and getUserMedia are ABSENT rather than stubbed: a page
         // feature-detects them, and a stub that exists but cannot deliver a
         // stream fails later and worse than one that was never there.

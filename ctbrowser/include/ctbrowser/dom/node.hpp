@@ -84,14 +84,18 @@ enum class node_kind : std::uint8_t {
 enum class node_ns : std::uint8_t {
     html,
     svg,
-    // NEITHER, which `document.createElementNS` can ask for and the parser
-    // never produces. The exact URI is not here - it lives beside the element
-    // wrapper, because a fourth field on `node` is not free and this is the
-    // most replicated object in the engine. What
-    // the enumerator buys is the distinction every consumer actually tests for:
-    // `element_ns == html` gates script execution, <style> collection and the
-    // tagName case fold, and an element in some page-invented namespace must
-    // fail all three.
+    // NEITHER: what `document.createElementNS` asks for with any other URI,
+    // what the XML parser makes of a page's own vocabulary, and what the HTML
+    // parser makes of MathML (`<math>` and everything under it). The exact
+    // URI is not here - the document records it (document::element_namespace)
+    // and the element wrapper records createElementNS's - because a fourth
+    // field on `node` is not free and this is the most replicated object in
+    // the engine; a `mathml` enumerator would cost nothing here but is
+    // switched on in ctcompile's document comparator, which this tree may
+    // not edit. What the enumerator buys is the distinction every consumer
+    // actually tests for: `element_ns == html` gates script execution,
+    // <style> collection and the tagName case fold, and an element in some
+    // page-invented namespace must fail all three.
     other
 };
 

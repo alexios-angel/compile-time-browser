@@ -93,7 +93,9 @@ value context::get_with_receiver(value base, const std::string & name, value rec
     for (value at = base; at.is_object_like() && depth < 64; ++depth) {
         if (at.is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(at.as_heap());
-            const value trap = proxy_trap(at, "get");
+            bool failed = false;
+            const value trap = proxy_trap(at, "get", &failed);
+            if (failed || throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[3] = {p->target, key_value(name), receiver};
                 return call(trap, args, p->handler);
@@ -202,12 +204,42 @@ value context::lookup_property(value target, const std::string & name) {
     // else looks at the object underneath it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "get");
+        bool failed = false;
+        const value trap = proxy_trap(target, "get", &failed);
+        if (failed || throw_pending()) { return value::undefined(); }
         if (trap.is_callable()) {
             const value args[3] = {p->target, key_value(name), target};
-            return call(trap, args, p->handler);
+            const std::size_t before = unwinds();
+            const value answered = call(trap, args, p->handler);
+            if (throw_pending() || unwinds() != before) { return value::undefined(); }
+            // 10.5.8 steps 8-10, the invariants: over a non-configurable target
+            // property the answer must be a non-writable data property's own
+            // value, and undefined for an accessor with no getter.
+            property_descriptor held;
+            if (own_property(p->target, name, held) && held.has_configurable &&
+                !held.configurable) {
+                if (held.is_data() && held.has_writable && !held.writable &&
+                    !held.held.same_value(answered)) {
+                    throw_error("TypeError", "'get' on proxy: property '" + name +
+                                                 "' is a read-only and non-configurable data "
+                                                 "property on the proxy target but the proxy did "
+                                                 "not return its actual value");
+                    return value::undefined();
+                }
+                if (held.is_accessor() && !held.getter.is_callable() && !answered.is_undefined()) {
+                    throw_error("TypeError",
+                                "'get' on proxy: property '" + name +
+                                    "' is a non-configurable accessor property on the "
+                                    "proxy target and does not have a getter function, "
+                                    "but the trap did not return 'undefined'");
+                    return value::undefined();
+                }
+            }
+            return answered;
         }
-        return lookup_property(p->target, name);
+        // 10.5.8 step 6: target.[[Get]](P, Receiver) with the PROXY as the
+        // receiver - a getter on the target sees the proxy as `this`.
+        return get_with_receiver(p->target, name, target);
     }
     // Own properties first: a page that writes `arr.length = 0` or shadows a
     // method on one object must not be overridden by the prototype.
@@ -271,7 +303,13 @@ value context::lookup_property(value target, const std::string & name) {
         // js_length, NOT length(): an index too far out to materialise raises
         // `length` without allocating for it, and this is the one read that has
         // to see that. Everything else keeps items.size() and its bounds.
-        if (name == "length") { return value::number(static_cast<double>(arr->js_length())); }
+        // A typed array's `length` is a prototype getter (23.2.3.19), so an own
+        // property of that name a page defined shadows it; an Array's is its own.
+        if (name == "length" &&
+            (arr->elements == element_kind::none || !arr->named ||
+             (arr->named->find(name) == nullptr && arr->named->find_accessor(name) == nullptr))) {
+            return value::number(static_cast<double>(arr->js_length()));
+        }
         // A CANONICAL INDEX SPELLED AS A STRING is the element: `a["0"]`, and
         // `for (i in a) a[i]` where i is always a string. It went to the
         // prototype (and, since the named table, would have gone there) - p5's
@@ -279,27 +317,10 @@ value context::lookup_property(value target, const std::string & name) {
         if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
             return lookup_index(target, value::number(static_cast<double>(at)));
         }
-        // WHAT A VIEW KNOWS ABOUT ITS BUFFER. `new Uint8Array(f32.buffer)` is
-        // how a page makes a second view of a different width over storage it
-        // already has - Phaser does exactly that - and it needs `buffer` to
-        // hand back something the constructor recognises as one.
-        if (arr->is_view()) {
-            const auto width = bytes_per_element(arr->elements);
-            if (name == "byteLength") {
-                return value::number(static_cast<double>(arr->view_length * width));
-            }
-            if (name == "byteOffset") { return value::number(arr->byte_offset); }
-            if (name == "BYTES_PER_ELEMENT") { return value::number(static_cast<double>(width)); }
-            if (name == "buffer") {
-                value made = make_object();
-                auto * buffer = static_cast<object_object *>(made.as_heap());
-                const auto * bytes = static_cast<const array_object *>(arr->viewed.as_heap());
-                buffer->set("byteLength", value::number(static_cast<double>(bytes->items.size())));
-                buffer->set("length", value::number(static_cast<double>(bytes->items.size())));
-                buffer->set("__bytes", arr->viewed);
-                return made;
-            }
-        }
+        // A VIEW'S `buffer`, `byteLength` AND `byteOffset` ARE %TypedArray%.
+        // prototype's getters (23.2.3.2-4), reached below: an inline answer
+        // here used to make a FRESH bare object per `buffer` read, so
+        // `ta.buffer === ta.buffer` was false and the answer was no ArrayBuffer.
         if (arr->is_match) { // an exec() result carries index/input/groups
             if (name == "index") { return arr->index; }
             if (name == "input") { return arr->input; }
@@ -312,6 +333,19 @@ value context::lookup_property(value target, const std::string & name) {
             if (accessor_entry * entry = arr->named->find_accessor(name)) {
                 return call_getter(*this, *entry, target);
             }
+        }
+        // AN EXPLICIT [[Prototype]] - a subclass instance's, or one a page
+        // set - is the whole chain from here: it reaches Array.prototype (or
+        // the kind's) through its own links. See array_object::prototype.
+        if (!arr->prototype.is_null()) [[unlikely]] {
+            if (arr->prototype.is_object()) {
+                return lookup_along(static_cast<object_object *>(arr->prototype.as_heap()), target,
+                                    name);
+            }
+            if (arr->prototype.is_heap() && !arr->prototype.is_string()) {
+                return lookup_property(arr->prototype, name);
+            }
+            return value::undefined(); // an explicit null
         }
         // A TYPED array's own methods first, then every array's, then every
         // object's - which is the chain JavaScript actually has, and the reason
@@ -528,6 +562,26 @@ value context::lookup_property(value target, const std::string & name) {
 // `Object.prototype.__proto__` (B.2.2.1) was invisible to `({}).__proto__` and
 // visible to an object whose chain happened to reach the table by hand. The
 // getter runs with the ORIGINAL receiver, as a getter anywhere on a chain does.
+value context::lookup_along(object_object * obj, value receiver, const std::string & name) {
+    const prehashed_name key{name, hash_name(name)};
+    for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
+        if (value * found = obj->find(key)) { return *found; }
+        if (accessor_entry * entry = obj->find_accessor(name)) {
+            return call_getter(*this, *entry, receiver);
+        }
+        if (obj->prototype.is_object()) {
+            obj = static_cast<object_object *>(obj->prototype.as_heap());
+            continue;
+        }
+        if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
+            return lookup_property(obj->prototype, name);
+        }
+        if (obj->prototype.is_undefined()) { return value::undefined(); }
+        obj = nullptr;
+    }
+    return from_object_prototype(receiver, name);
+}
+
 value context::from_object_prototype(value receiver, const std::string & name) {
     object_object * table = prototype(proto_kind::object);
     if (table == nullptr) { return value::undefined(); }

@@ -70,15 +70,6 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // nothing at all. It read `undefined` on the other side and
             // said nothing, which is the failure this whole ladder exists
             // to make loud.
-            if (at(n.a).kind == vp::nk::var_decl) {
-                for (const std::int32_t d : kids(at(n.a))) {
-                    if (at(d).text.empty()) {
-                        fail("`export` of a destructuring declaration is not implemented yet - "
-                             "ES modules are staged in docs/plans/modules.md");
-                        break;
-                    }
-                }
-            }
             // AND THAT IS ALL: the declaration compiles as itself. Its
             // names were bound to their export cells at module entry, so
             // there is nothing left to publish here - see bind_export.
@@ -93,6 +84,10 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
     case vp::nk::expr_stmt: {
         const std::uint16_t r = alloc_reg();
         compile_expr(n.a, r);
+        // An eval's completion value: this statement's, until a later one.
+        if (tracking_completion()) {
+            proto().emit(instruction{op::move, static_cast<std::uint16_t>(completion_reg_), r});
+        }
         break;
     }
     case vp::nk::var_decl:
@@ -217,6 +212,24 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // decides the ReferenceError from this offset (as
             // predeclare_locals records it for a function body's own).
             if (!function_scoped) { fn().locals.back().initialized_at = decl.end; }
+            if (fn().locals.back().boxed && decl.a >= 0 && contains_closure(decl.a)) {
+                // THE CELL FIRST when the initialiser makes a closure: `{ let
+                // y = () => y; }` has the arrow capture `y` while it is being
+                // initialised, and op::closure takes what is in the register
+                // at that moment - boxing afterwards made a second cell the
+                // arrow never saw, so `y()` read undefined (at a function's
+                // top level the name is hoisted and boxed at entry, which is
+                // this same order). The value goes in through the cell.
+                proto().emit(instruction{op::load_undef, r});
+                proto().emit(instruction{op::new_cell, r});
+                const std::uint32_t mark = reg_mark();
+                const std::uint16_t tmp = alloc_reg();
+                compile_named_expr(decl.a, tmp, decl.text);
+                if (is_using_decl(n)) { emit_using_add(tmp, n.text == "await using"); }
+                proto().emit(instruction{op::cell_set, r, tmp});
+                release_to(mark);
+                continue;
+            }
             if (decl.a >= 0) {
                 compile_named_expr(decl.a, r, decl.text);
             } else {
@@ -235,10 +248,25 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         compile_statement_list(kids(n), false);
         pop_scope();
         break;
-    case vp::nk::if_stmt: compile_if(n); break;
-    case vp::nk::while_stmt: compile_while(n); break;
-    case vp::nk::do_stmt: compile_do_while(n); break;
-    case vp::nk::forof_stmt: compile_for_of(n); break;
+    // UpdateEmpty(_, undefined) constructs (14.6.2, 14.7.1.1, 14.12.4,
+    // 14.15.3, 14.11.2): the completion is what their body produces, or
+    // undefined - never what came before.
+    case vp::nk::if_stmt:
+        clear_completion();
+        compile_if(n);
+        break;
+    case vp::nk::while_stmt:
+        clear_completion();
+        compile_while(n);
+        break;
+    case vp::nk::do_stmt:
+        clear_completion();
+        compile_do_while(n);
+        break;
+    case vp::nk::forof_stmt:
+        clear_completion();
+        compile_for_of(n);
+        break;
     case vp::nk::class_decl: {
         const std::uint16_t r = alloc_reg();
         // A DECLARATION, so its name is a binding of this scope - which is
@@ -252,14 +280,26 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         }
         break;
     }
-    case vp::nk::switch_stmt: compile_switch(n); break;
-    case vp::nk::for_stmt: compile_for(n); break;
+    case vp::nk::switch_stmt:
+        clear_completion();
+        compile_switch(n);
+        break;
+    case vp::nk::for_stmt:
+        clear_completion();
+        compile_for(n);
+        break;
     case vp::nk::break_stmt: compile_break(n); break;
     case vp::nk::continue_stmt: compile_continue(n); break;
     case vp::nk::labeled: compile_labeled(n); break;
-    case vp::nk::try_stmt: compile_try(n); break;
+    case vp::nk::try_stmt:
+        clear_completion();
+        compile_try(n);
+        break;
     case vp::nk::throw_stmt: compile_throw(n); break;
-    case vp::nk::with_stmt: compile_with(n); break;
+    case vp::nk::with_stmt:
+        clear_completion();
+        compile_with(n);
+        break;
     case vp::nk::return_stmt: {
         const std::uint16_t r = alloc_reg();
         if (n.a >= 0) {

@@ -34,6 +34,7 @@ void install_array(context & cx) {
         } else {
             made->items.assign(a.begin(), a.end());
         }
+        detail::adopt_subclass_prototype(c, out, c.prototype(context::proto_kind::array));
         return out;
     });
     const auto static_method = [&](const char * name, double arity, native_fn fn) {

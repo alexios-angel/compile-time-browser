@@ -449,9 +449,16 @@ public:
     // The payoff of the whole architecture: this touches no stage but the
     // compositor.
     void scroll_by(float dy) { scroll_to(scroll_y_ + dy); }
-    void scroll_to(float y);
+    void scroll_to(float y) { scroll_to(scroll_x_, y); }
+    // Both axes. The wheel and the keys move y alone; `window.scrollTo` and
+    // the CSSOM View setters (through the bindings' viewport scroll hooks)
+    // move either. Clamped to the viewport's scrolling area.
+    void scroll_to(float x, float y);
     [[nodiscard]] float scroll_y() const noexcept { return scroll_y_; }
+    [[nodiscard]] float scroll_x() const noexcept { return scroll_x_; }
+    [[nodiscard]] point scroll_position() const noexcept { return point{scroll_x_, scroll_y_}; }
     [[nodiscard]] float content_height() const noexcept { return content_height_; }
+    [[nodiscard]] float content_width() const noexcept { return content_width_; }
     // What the pointer should look like at a viewport point: the CSS `cursor`
     // of the element under it, with the UA's defaults - a link is a pointer, an
     // editable is a text beam. A name rather than a handle, so the engine needs
@@ -463,6 +470,12 @@ public:
     // asks it to choose a cursor.
     [[nodiscard]] bool on_scrollbar(float x) const noexcept;
     [[nodiscard]] float max_scroll() const noexcept;
+    [[nodiscard]] float max_scroll_x() const noexcept;
+    // Whether the page shows its scrollbar: it overflows, the chrome has one,
+    // and the viewport's overflow is not hidden (run_layout decides that).
+    [[nodiscard]] bool has_scrollbar() const noexcept {
+        return scrollbar_shown_ && max_scroll() > 0 && options_.scrollbar_width > 0;
+    }
 
     // --- input -----------------------------------------------------------
 
@@ -1252,7 +1265,15 @@ private:
     std::vector<node_id> announced_loads_;
     std::string title_;
     float scroll_y_ = 0;
+    float scroll_x_ = 0;
     float content_height_ = 0;
+    // False when the viewport's propagated overflow is hidden or clip: the
+    // page still scrolls programmatically but reserves and draws no bar.
+    bool scrollbar_shown_ = true;
+    // The viewport scrolling area's width (CSSOM View §2): the layout width,
+    // or further right when something overflows it. content_height_ stays
+    // the document's own height, which is what the scrollbar is drawn from.
+    float content_width_ = 0;
     // The width the last layout ran at: the window's, less the scrollbar when the
     // page overflows. `clientWidth` and getComputedStyle percentages are relative
     // to this and not to options_.width.

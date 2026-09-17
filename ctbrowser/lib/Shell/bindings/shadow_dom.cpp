@@ -14,13 +14,18 @@
 // stored: the assignment is a function of the two trees, so it is computed
 // when it is asked for and cannot go stale the way a cached list would.
 //
-// ponytail: no `slotchange` event - it needs the microtask queue signals do -
-// and nothing here reaches the FLAT TREE that layout would render: a slot's
-// assigned nodes are an answer to a question, not a rearrangement of the
-// boxes. See the report.
+// `slotchange` (DOM 4.2.2.4) is found by DIFFING that answer: mutated()
+// recomputes every slot's list and signals the ones that moved
+// (signal_slot_changes), and the mutation observer microtask fires the
+// events after the observers' callbacks (fire_signalled_slots).
+//
+// ponytail: nothing here reaches the FLAT TREE that layout would render: a
+// slot's assigned nodes are an answer to a question, not a rearrangement of
+// the boxes. See the report.
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <algorithm>
 #include <span>
 #include <string>
 #include <string_view>
@@ -95,6 +100,93 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
         if (slot_name_of(txn, *atoms_, child, "slot") == name) { out.push_back(child); }
     }
     return out;
+}
+
+// "Signal a slot change" for every slot whose assigned nodes moved since the
+// last mutation: the slots of every shadow tree, each list recomputed and
+// compared with the one kept. A slot new to the map with nothing assigned
+// has not changed; one that has left its tree keeps the signal it earned.
+void dom_bindings::signal_slot_changes(const std::vector<document::write_note> & writes) {
+    if (doc_ == nullptr || cx_ == nullptr || !doc_->has_shadow_roots()) { return; }
+    // ONLY THE TREES THE WRITES COULD HAVE MOVED AN ASSIGNMENT IN: a host's
+    // child list (its shadow root's slots), a shadow tree's own content (a
+    // slot inserted or removed, at any depth), a `slot` or `name` attribute
+    // (the child's host's root, or the slot's tree) - and, for slot.assign(),
+    // the root it named. A page with ten thousand hosts that appends one
+    // element must not recompute ten thousand trees.
+    std::vector<node_id> roots;
+    const auto note_root = [&](node_id root) {
+        if (root && shadow_tree_of(root) != nullptr &&
+            std::ranges::find(roots, root) == roots.end()) {
+            roots.push_back(root);
+        }
+    };
+    {
+        const auto txn = doc_->read();
+        const atom slot_attr = atoms_->intern("slot");
+        const atom name_attr = atoms_->intern("name");
+        for (const document::write_note & note : writes) {
+            using edit = document::write_note::edit;
+            if (note.kind == edit::data || !note.node || !txn.contains(note.node)) { continue; }
+            if (note.kind == edit::attribute && note.name != slot_attr && note.name != name_attr) {
+                continue;
+            }
+            // The node's own tree, when it is a shadow tree...
+            note_root(root_of_tree(txn, note.node, false));
+            // ...and the shadow root of the host whose child it is, or is.
+            note_root(shadow_root_of(note.node));
+            if (const node_id parent = txn.parent(note.node)) { note_root(shadow_root_of(parent)); }
+            if (note.kind == edit::attribute) { continue; }
+            if (note.child && txn.contains(note.child)) {
+                note_root(root_of_tree(txn, note.child, false));
+                note_root(shadow_root_of(note.child));
+            }
+        }
+        for (const node_id root : slot_roots_dirty_) { note_root(root); }
+    }
+    slot_roots_dirty_.clear();
+    if (roots.empty()) { return; }
+    flat_map<std::uint64_t, std::vector<node_id>> now;
+    {
+        const auto txn = doc_->read();
+        const auto walk = [&](auto && self, node_id at) -> void {
+            for (const node_id child : txn.children(at)) {
+                if (is_slot(txn, child)) { now[child.key()] = assigned_nodes_of(child); }
+                self(self, child);
+            }
+        };
+        for (const node_id root : roots) { walk(walk, root); }
+    }
+    bool any = false;
+    for (const auto & [key, assigned] : now) {
+        const auto before = slot_assignments_.find(key);
+        const bool moved =
+            before == slot_assignments_.end() ? !assigned.empty() : before->second != assigned;
+        slot_assignments_.insert_or_assign(key, assigned);
+        if (!moved) { continue; }
+        const node_id slot = unpack(key);
+        if (std::ranges::find(signal_slots_, slot) == signal_slots_.end()) {
+            signal_slots_.push_back(slot);
+            any = true;
+        }
+    }
+    if (any) { queue_mutation_delivery(); }
+}
+
+// The `slotchange` events of the signalled slots: bubbles, not cancelable,
+// not composed, at each slot in the order they were signalled.
+void dom_bindings::fire_signalled_slots() {
+    if (cx_ == nullptr || signal_slots_.empty()) { return; }
+    std::vector<node_id> due;
+    due.swap(signal_slots_);
+    for (const node_id slot : due) {
+        if (!doc_->read().contains(slot)) { continue; }
+        const value event = make_event(*cx_, "slotchange", slot);
+        auto * object = static_cast<script::object_object *>(event.as_heap());
+        object->set("bubbles", value::boolean(true));
+        object->set("cancelable", value::boolean(false));
+        (void)dispatch_event("slotchange", slot, event);
+    }
 }
 
 // The <slot> a slottable is assigned to, mode-agnostic. Its host is the node's
@@ -238,7 +330,15 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
     document scratch{*atoms_};
-    const node_id body = parse_html_body_fragment(scratch, markup);
+    // The fragment case with the ELEMENT as its context (HTML 12.4 step 5:
+    // "with context element"), not a body's - `table.setHTMLUnsafe("<tr>")`
+    // keeps its row - and the document's own scripting flag.
+    node_id body;
+    {
+        const auto txn = doc_->read();
+        body = parse_html_fragment(scratch, markup, txn.local_name(target), txn.element_ns(target),
+                                   doc_->scripting());
+    }
     attach_declarative_shadow_roots(scratch, body);
     const auto from = scratch.read();
     const std::span<const node_id> kids = from.children(body);
@@ -250,6 +350,26 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup) {
 }
 
 void dom_bindings::install_shadow_dom(context & cx) {
+    // `Document.parseHTMLUnsafe(html)`, HTML 8.6.1: a new document, parsed
+    // with scripting off and the declarative shadow roots attached - the
+    // static twin of setHTMLUnsafe, on the Document interface object.
+    // (The interface object is a NATIVE, not a plain object - `is_object()`
+    // is heap_kind::object exactly.)
+    if (const value ctor = cx.global("Document"); ctor.is_kind(script::heap_kind::native)) {
+        set_method(cx, *static_cast<script::native_object *>(ctor.as_heap()), "parseHTMLUnsafe",
+                   [this](context & c, std::span<value> a) {
+                       const std::string markup = arg_string(c, a, 0);
+                       const value made = parse_from_string(c, markup, "text/html");
+                       dom_bindings * top = primary_ == nullptr ? this : primary_;
+                       for (const auto & owner : top->secondary_documents_) {
+                           if (!owner->is_the_document(made)) { continue; }
+                           owner->attach_declarative_shadow_roots(*owner->doc_,
+                                                                  owner->doc_->root());
+                           owner->observe_location("about:blank", "");
+                       }
+                       return made;
+                   });
+    }
     // --- HTMLSlotElement ------------------------------------------------------
     if (const value slot_proto = interface_prototype("HTMLSlotElement"); slot_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(slot_proto.as_heap());
@@ -321,11 +441,23 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 }
                 // A node may be assigned to ONE slot: taking it here takes it
                 // from wherever it was.
-                for (auto & [key, held] : manual_slots_) {
-                    if (key == slot.key()) { continue; }
-                    std::erase_if(held, [&](node_id one) {
-                        return std::ranges::find(assigned, one) != assigned.end();
-                    });
+                {
+                    const auto txn = doc_->read();
+                    for (auto & [key, held] : manual_slots_) {
+                        if (key == slot.key()) { continue; }
+                        const std::size_t before = held.size();
+                        std::erase_if(held, [&](node_id one) {
+                            return std::ranges::find(assigned, one) != assigned.end();
+                        });
+                        // A slot that lost a node - in this tree or another -
+                        // reports the loss as a slotchange too.
+                        if (held.size() != before && txn.contains(unpack(key))) {
+                            slot_roots_dirty_.push_back(root_of_tree(txn, unpack(key), false));
+                        }
+                    }
+                    // A manual assignment moves nothing the write log sees:
+                    // the slot's tree is recomputed on this mutation regardless.
+                    slot_roots_dirty_.push_back(root_of_tree(txn, slot, false));
                 }
                 manual_slots_.insert_or_assign(slot.key(), std::move(assigned));
                 mutated();

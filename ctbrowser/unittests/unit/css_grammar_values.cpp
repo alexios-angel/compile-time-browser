@@ -110,6 +110,15 @@ void test_the_small_shorthands() {
     CHECK(set_declaration(block, "text-wrap", "nowrap balance", false));
     CHECK_EQ(declaration_value(block, "text-wrap-style"), std::string{"balance"});
     CHECK_EQ(declaration_value(block, "text-wrap"), std::string{"nowrap balance"});
+    // `container: <'container-name'> [ / <'container-type'> ]?`
+    CHECK(set_declaration(block, "container", "card / inline-size", false));
+    CHECK_EQ(declaration_value(block, "container-name"), std::string{"card"});
+    CHECK_EQ(declaration_value(block, "container-type"), std::string{"inline-size"});
+    CHECK_EQ(declaration_value(block, "container"), std::string{"card / inline-size"});
+    CHECK(set_declaration(block, "container", "a b", false));
+    CHECK_EQ(declaration_value(block, "container-type"), std::string{"normal"});
+    CHECK_EQ(declaration_value(block, "container"), std::string{"a b"});
+    CHECK(!set_declaration(block, "container", "a / b", false));
 }
 
 void test_grid() {
@@ -178,6 +187,28 @@ void test_keyword_combinations() {
     ok("contain", "style layout paint", "content");
     ok("contain", "paint layout", "layout paint");
     bad("contain", "size inline-size");
+    // `<urange>#`, the unicode-range descriptor (urange-parsing.html).
+    ok("unicode-range", "u+abc", "U+ABC");
+    ok("unicode-range", "u/**/+/**/a/**/?", "U+A0-AF");
+    ok("unicode-range", "u+0a????", "U+A0000-AFFFF");
+    ok("unicode-range", "u+1e9a", "U+1E9A");
+    ok("unicode-range", "U+0-7F, u+a0-ff", "U+0-7F, U+A0-FF");
+    ok("unicode-range", "u+?", "U+0-F");
+    bad("unicode-range", "u+efg");
+    bad("unicode-range", "u+ abc");
+    bad("unicode-range", "u+aaaaaaa");
+    bad("unicode-range", "u+a?a");
+    bad("unicode-range", "u+22222a");
+    bad("unicode-range", "u+ff-a");
+    bad("unicode-range", "u+a u+b");
+    ok("container-type", "scroll-state size", "size scroll-state");
+    ok("container-type", "INLINE-SIZE", "inline-size");
+    bad("container-type", "size inline-size");
+    bad("container-type", "normal size");
+    ok("container-name", "Foo bar", "Foo bar");
+    bad("container-name", "none foo");
+    bad("container-name", "and");
+    bad("container-name", "default");
     ok("font-variant-numeric", "slashed-zero ordinal", "ordinal slashed-zero");
     ok("text-underline-position", "left under", "under left");
     ok("hanging-punctuation", "allow-end first", "allow-end first");

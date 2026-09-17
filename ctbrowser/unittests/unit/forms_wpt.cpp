@@ -54,6 +54,11 @@ void test_select_options_and_selectedness() {
        " s.value = 'b'; o.push(s.selectedIndex, s.options[1].selected);"
        " return o.join(); })()",
        "2,false,c,-1,true,a,1,a,1,true");
+    // reset-form.html's precondition: the FIRST read after `value =` is one
+    // option's selectedness, with nothing else having reconciled the store.
+    is("(function () { var s = document.getElementById('s'); s.value = 'c';"
+       " return [s.options[2].selected, s.options[1].selected].join(); })()",
+       "true,false");
     // add/remove, on the select and on its options collection; length as a
     // setter. Inserting a selected option beside a selected one keeps the
     // LAST selected - "ask for a reset" - so `b` stays.
@@ -117,14 +122,14 @@ void test_validity() {
        " n.value = '5'; o.push(n.validity.stepMismatch, n.validity.valid);"
        " n.value = '12'; o.push(n.validity.rangeOverflow); n.value = '1'; "
        "o.push(n.validity.rangeUnderflow);"
-       " n.value = 'abc'; o.push(n.validity.badInput);"
+       " n.value = 'abc'; o.push(n.validity.badInput); /* sanitised to '' - not bad input */"
        " e.value = 'nope'; o.push(e.validity.typeMismatch, e.validity.valueMissing);"
        " e.value = 'a@b.c'; o.push(e.validity.valid, e.validationMessage === '');"
        " e.setCustomValidity('bad'); o.push(e.validity.customError, e.validationMessage, "
        "e.validity.valid);"
        " e.setCustomValidity(''); o.push(e.validity.valid);"
        " return o.join(); })()",
-       "true,true,false,false,true,false,true,true,false,true,true,true,true,false,true,true,true,"
+       "true,true,false,false,true,false,true,true,false,true,true,false,true,false,true,true,true,"
        "bad,false,true");
     // The barred ones: disabled, readonly, a disabled fieldset's descendants
     // but not its first legend's, hidden, and the never-candidates.
@@ -136,8 +141,13 @@ void test_validity() {
        " o.push(fs.willValidate, document.getElementById('o').willValidate,"
        " document.getElementById('btn').willValidate);"
        " var h = document.createElement('input'); h.type = 'hidden'; o.push(h.willValidate);"
+       " var e = document.getElementById('e'); e.disabled = true; e.setCustomValidity('c');"
+       " o.push(e.validity.valueMissing, e.validity.customError, e.validationMessage === '');"
+       " e.disabled = false; e.setCustomValidity(''); o.push(e.validity.valueMissing);"
+       " var r = document.createElement('input'); r.type = 'radio'; r.required = true;"
+       " o.push(r.validity.valueMissing); r.name = 'g'; o.push(r.validity.valueMissing);"
        " return o.join(); })()",
-       "true,false,false,false,true,false,false,true,false");
+       "true,false,false,false,true,false,false,true,false,false,true,true,true,false,true");
     // The `invalid` event, checkValidity on the form, and the pattern.
     is("(function () { var f = document.getElementById('f'), e = document.getElementById('e');"
        " var fired = []; e.addEventListener('invalid', function (ev) { fired.push(ev.type, "
@@ -180,7 +190,7 @@ void test_input_numbers_and_dates() {
     is("(function () { var h = document.getElementById('hid'); var o = [h.value, h.files, h.list,"
        " h.willValidate, h.indeterminate]; h.value = 'w'; h.indeterminate = true;"
        " o.push(h.value, h.getAttribute('value'), h.indeterminate); return o.join(); })()",
-       "q,,,false,false,w,q,true");
+       "q,,,false,false,w,w,true");
     is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
        "'2020-02-29';"
        " var o = [d.valueAsNumber, d.valueAsDate.getUTCFullYear(), d.valueAsDate.getUTCDate()];"
@@ -283,12 +293,117 @@ void test_output_and_textarea() {
 
 } // namespace
 
+// --- the form owner, HTML 4.10.17.3 ----------------------------------------------------
+
+void test_form_owner_attribute() {
+    // form_attribute.html: `form=""` names nothing, a detached form holding
+    // the control is its tree, a non-form with the id earlier wins nothing.
+    is("(function () { var f = document.getElementById('f'); var b = "
+       "document.createElement('button');"
+       " f.appendChild(b); var o = [b.form === f]; b.setAttribute('form', ''); o.push(b.form);"
+       " b.setAttribute('form', 'f'); o.push(b.form === f);"
+       " var d = document.createElement('div'); var f2 = document.createElement('form');"
+       " f2.id = 'f2'; d.appendChild(f2); var c = document.createElement('input');"
+       " c.setAttribute('form', 'f2'); f2.appendChild(c); o.push(c.form === f2);"
+       " var s = document.createElement('span'); s.id = 'f2'; d.insertBefore(s, f2);"
+       " o.push(c.form); return o.join(); })()",
+       "true,,true,true,");
+}
+
+// --- the selection across a value change, HTML 4.10.5.3 ------------------------------
+
+void test_selection_survives_the_same_value() {
+    // selection-after-content-change.html: the same value leaves the
+    // selection alone; a different one moves the caret to the end and resets
+    // the direction.
+    is("(function () { var i = document.createElement('input'); i.value = 'hello';"
+       " i.setSelectionRange(1, 3, 'backward'); i.value = 'hello';"
+       " var o = [i.selectionStart, i.selectionEnd, i.selectionDirection];"
+       " i.value = 'hello!'; o.push(i.selectionStart, i.selectionEnd, i.selectionDirection);"
+       " return o.join(); })()",
+       "1,3,backward,6,6,none");
+}
+
+// --- the list of options, HTML 4.10.7 -------------------------------------------------
+
+void test_list_of_options_nesting() {
+    // select-selectedOptions-nesting.window.js: an option inside another
+    // option, an hr, a nested select or a nested optgroup is not in the list.
+    is("(function () { var o = []; for (var parent of ['option', 'hr', 'select', 'optgroup']) {"
+       " var s = document.createElement('select'); s.innerHTML = '<optgroup><option>1';"
+       " var p = s.firstChild.appendChild(document.createElement(parent));"
+       " var x = p.appendChild(document.createElement('option')); x.setAttribute('selected', '');"
+       " x.textContent = '2';"
+       " o.push(s.selectedOptions.length + ':' + s.value + ':' + s.options.length); }"
+       " var d = document.createElement('select'); d.innerHTML = '<div><optgroup><div><option>1';"
+       " o.push(d.value + ':' + d.options.length); return o.join(); })()",
+       "1:1:2,1:1:1,1:1:1,1:1:1,1:1");
+}
+
+// --- the autocomplete IDL attribute, HTML 4.10.18.7.1 --------------------------------
+
+void test_autocomplete_tokens() {
+    // form-autocomplete.html.
+    is("(function () { var i = document.createElement('input'); var o = [i.autocomplete];"
+       " i.setAttribute('autocomplete', ' ON\\t'); o.push(i.autocomplete);"
+       " i.setAttribute('autocomplete', 'foo off'); o.push(i.autocomplete === '');"
+       " i.type = 'hidden'; i.setAttribute('autocomplete', 'off'); o.push(i.autocomplete === '');"
+       " var t = document.createElement('textarea');"
+       " t.setAttribute('autocomplete', ' HOME\\ntel'); o.push(t.autocomplete);"
+       " t.setAttribute('autocomplete', '  section-FOO  billing work email webauthn');"
+       " o.push(t.autocomplete);"
+       " t.setAttribute('autocomplete', 'foo section-foo billing name'); o.push(t.autocomplete === "
+       "'');"
+       " t.setAttribute('autocomplete', 'call-sign'); o.push(t.autocomplete === '');"
+       " t.autocomplete = 'given-name'; o.push(t.getAttribute('autocomplete'));"
+       " return o.join('|'); })()",
+       "|on|true|true|home tel|section-foo billing work email webauthn|true|true|given-name");
+}
+
+// --- the value sanitization algorithm and the value modes, HTML 4.10.5.1 ----------
+
+void test_value_sanitization_and_type_change() {
+    // type-change-state.html, valueMode.html, number.html, range.html, color.html.
+    is("(function () { var i = document.createElement('input'); var o = [];"
+       " i.value = '  foo\\rbar  '; o.push(JSON.stringify(i.value));"
+       " i.type = 'url'; o.push(i.value); i.type = 'number'; o.push(i.value === '');"
+       " i.value = '50'; i.type = 'range'; o.push(i.value); i.type = 'color'; o.push(i.value);"
+       " i.value = '#ABCDEF'; o.push(i.value); i.type = 'submit'; o.push(i.value, "
+       "i.getAttribute('value'));"
+       " i.type = 'text'; o.push(i.value); i.value = 'typed'; i.type = 'checkbox'; "
+       "o.push(i.getAttribute('value'));"
+       " i.removeAttribute('value'); o.push(i.value); i.type = 'file'; o.push(i.value === '');"
+       " try { i.value = 'x'; } catch (e) { o.push(e.name); }"
+       " var n = document.createElement('input'); n.type = 'number'; n.value = 'abc'; "
+       "o.push(n.value === '');"
+       " n = document.createElement('input'); n.type = 'number';"
+       " n.setAttribute('value', '1e3'); o.push(n.value); n.setAttribute('value', '1d+2'); "
+       "o.push(n.value === '');"
+       " var r = document.createElement('input'); r.type = 'range'; r.min = '10'; r.max = '20';"
+       " r.value = '5'; o.push(r.value); r.value = 'junk'; o.push(r.value);"
+       " var d = document.createElement('input'); d.type = 'datetime-local'; d.value = "
+       "'2014-01-01 11:11:00'; o.push(d.value);"
+       " var t = document.createElement('input'); t.value = null; o.push(t.value === '');"
+       " var c = document.createElement('input'); c.value = 'foo bar'; var cc = c.cloneNode();"
+       " cc.setAttribute('value', 'other'); o.push(cc.value);"
+       " var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;"
+       " o.push(cb.cloneNode().checked);"
+       " return o.join(); })()",
+       "\"  foobar  \",foobar,true,50,#000000,#abcdef,#abcdef,#abcdef,#abcdef,typed,on,true,"
+       "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true,foo bar,true");
+}
+
 int main() {
     test_select_options_and_selectedness();
     test_form_elements_and_named_access();
     test_labels_and_control();
     test_validity();
     test_input_numbers_and_dates();
+    test_value_sanitization_and_type_change();
+    test_autocomplete_tokens();
+    test_list_of_options_nesting();
+    test_selection_survives_the_same_value();
+    test_form_owner_attribute();
     test_selection_api();
     test_form_data_and_submission();
     test_output_and_textarea();

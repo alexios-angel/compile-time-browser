@@ -18,6 +18,8 @@ dom_bindings & dom_bindings::target_owner(value self) {
     for (const auto & made : top->secondary_documents_) {
         if (made->is_the_document(self)) { return *made; }
     }
+    // A frame's MediaQueryList dispatches changes from its own document.
+    if (is_media_query_list(self)) { return owner_of_media_query_list(self); }
     return *this;
 }
 
@@ -717,6 +719,29 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("propertyName", c.string(dict_string(c, init, "propertyName")));
                      e.set("elapsedTime", value::number(dict_number(c, init, "elapsedTime")));
                      e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
+                 });
+
+    // `PromiseRejectionEvent` (HTML 8.1.7.x): the promise - a required
+    // member, so `new PromiseRejectionEvent("x")` is a TypeError - and its
+    // reason.
+    interface_of("PromiseRejectionEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     const value promise = dict_member(c, init, "promise");
+                     if (promise.is_undefined()) {
+                         c.throw_error("TypeError", "Failed to construct 'PromiseRejectionEvent': "
+                                                    "the 'promise' member is required");
+                         return;
+                     }
+                     e.set("promise", promise);
+                     e.set("reason", dict_member(c, init, "reason"));
+                 });
+
+    // `MediaQueryListEvent` (CSSOM View §4.2): the list's media and whether it
+    // matches now. Dispatched by media_queries.cpp's report.
+    interface_of("MediaQueryListEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("media", c.string(dict_string(c, init, "media")));
+                     e.set("matches", value::boolean(dict_flag(c, init, "matches")));
                  });
 
     // `HashChangeEvent` (HTML 7.4.6.2): two USVStrings defaulting to "".

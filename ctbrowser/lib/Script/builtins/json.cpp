@@ -30,7 +30,26 @@ constexpr std::string_view raw_json_slot = "@#IsRawJSON";
 // non-ASCII code point would be legal and is not what any other engine emits.
 void quote_json(std::string_view text, std::string & out) {
     out += '"';
-    for (const char c : text) {
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        // 25.5.2.3 QuoteJSONString step 2.b: a LONE SURROGATE is escaped as
+        // \uXXXX (well-formed JSON.stringify). The text is WTF-8, so one is the
+        // three bytes ED A0..BF xx; a pair's halves arrive as one four-byte
+        // scalar and never take this arm.
+        if (static_cast<unsigned char>(c) == 0xED && i + 2 < text.size() &&
+            static_cast<unsigned char>(text[i + 1]) >= 0xA0) {
+            const unsigned cp = ((static_cast<unsigned char>(c) & 0x0Fu) << 12) |
+                                ((static_cast<unsigned char>(text[i + 1]) & 0x3Fu) << 6) |
+                                (static_cast<unsigned char>(text[i + 2]) & 0x3Fu);
+            static constexpr char hex[] = "0123456789abcdef";
+            out += "\\u";
+            out += hex[(cp >> 12) & 0xF];
+            out += hex[(cp >> 8) & 0xF];
+            out += hex[(cp >> 4) & 0xF];
+            out += hex[cp & 0xF];
+            i += 2;
+            continue;
+        }
         switch (c) {
         case '"': out += "\\\""; break;
         case '\\': out += "\\\\"; break;
@@ -98,7 +117,18 @@ struct json_writer {
         // Steps 2-3: an Object or a BigInt is asked for `toJSON` FIRST, before
         // the replacer sees it. A Date's ISO string comes from there.
         if (v.is_object_like() || v.is_kind(heap_kind::bigint)) {
-            const value to_json = cx.lookup_property(v, "toJSON");
+            // GetV (7.3.3): a BigInt reads through BigInt.prototype with the
+            // primitive as the receiver, so a getter there sees `this` as
+            // the bigint.
+            const value to_json =
+                cx.get_with_receiver(v.is_kind(heap_kind::bigint)
+                                         ? value::object(cx.prototype(context::proto_kind::bigint))
+                                         : v,
+                                     "toJSON", v);
+            if (cx.throw_pending()) {
+                failed = true;
+                return false;
+            }
             if (to_json.is_callable()) {
                 const value args[1] = {cx.string(key)};
                 v = cx.call(to_json, args, v);
@@ -524,7 +554,13 @@ void install_json(context & cx) {
         return c.string(out);
     });
     method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
-        const auto parsed = parse_json(str_at(c, a, 0));
+        // 25.5.1 step 1, ToString(text): a Symbol is the TypeError, before
+        // the text is looked at - and that throw has LANDED by the next line
+        // (context::unwinds says why throw_pending cannot see it).
+        if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const std::string text = c.to_string(arg_at(a, 0));
+        if (c.throw_pending()) { return value::undefined(); }
+        const auto parsed = parse_json(text);
         // 25.5.1 step 3: a document that does not fit the JSON grammar is a
         // SyntaxError. It used to be `undefined`, which is a value a page can
         // and does mistake for a successfully parsed `null`-ish document.

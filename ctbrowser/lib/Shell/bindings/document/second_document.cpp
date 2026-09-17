@@ -83,7 +83,7 @@ dom_bindings & dom_bindings::adopt_second_document(context & cx, document & fres
 value dom_bindings::make_html_document(context & cx, const std::string * title) {
     document & fresh = *(primary_ == nullptr ? *this : *primary_)
                             .owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
+    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>", false);
     dom_bindings & made = adopt_second_document(cx, fresh);
     if (title != nullptr) {
         const node_id head = made.first_html_element("head");
@@ -183,6 +183,7 @@ value dom_bindings::parse_from_string(context & cx, std::string_view markup,
         (void)parse_html(fresh, markup, false);
         dom_bindings & made = adopt_second_document(cx, fresh);
         made.install_document(cx);
+        made.take_url_of(cx, *this);
         return made.document_;
     }
     const xml_parse_result read = parse_xml(fresh, markup);
@@ -200,10 +201,22 @@ value dom_bindings::parse_from_string(context & cx, std::string_view markup,
             error.key(), std::string{"http://www.mozilla.org/newlayout/xml/parsererror.xml"});
     }
     made.install_document(cx);
-    if (const value proto = interface_prototype("XMLDocument"); proto.is_object()) {
-        made.document_object()->prototype = proto;
-    }
+    // A `Document`, NOT an XMLDocument, whatever the type (HTML 8.6.2 step
+    // 1: "a new Document, whose content type is type") - and its URL is the
+    // parsing document's (DOMParser-parseFromString-xml.html, -url.html).
+    made.take_url_of(cx, *this);
     return made.document_;
+}
+
+// HTML 8.6.2's "URL is this's relevant global object's associated Document's
+// URL": the three spellings, from the document that made this one.
+void dom_bindings::take_url_of(context & cx, const dom_bindings & maker) {
+    if (auto * doc = document_object()) {
+        for (const char * name : {"URL", "documentURI", "baseURI"}) {
+            doc->set(name, cx.string(maker.location_href_));
+        }
+    }
+    location_href_ = maker.location_href_;
 }
 
 unsigned dom_bindings::foreign_document_position(value given) {

@@ -1,6 +1,9 @@
 #include <ctbrowser/dom/treebuilder.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/dom/xml.hpp>
+
+#include <span>
 
 // treebuilder: the method bodies, in the order of HTML 13.2.6.
 // The header says what these do; this says how, and each mode says which
@@ -30,19 +33,142 @@ namespace {
     return one_of(tag, {"tbody", "tfoot", "thead"});
 }
 
+struct adjustment {
+    std::string_view lower;
+    std::string_view adjusted;
+};
+
+// 13.2.6.5 "adjust SVG attributes": the table as the specification lists it.
+constexpr adjustment svg_attributes[] = {
+    {"attributename", "attributeName"},
+    {"attributetype", "attributeType"},
+    {"basefrequency", "baseFrequency"},
+    {"baseprofile", "baseProfile"},
+    {"calcmode", "calcMode"},
+    {"clippathunits", "clipPathUnits"},
+    {"diffuseconstant", "diffuseConstant"},
+    {"edgemode", "edgeMode"},
+    {"filterunits", "filterUnits"},
+    {"glyphref", "glyphRef"},
+    {"gradienttransform", "gradientTransform"},
+    {"gradientunits", "gradientUnits"},
+    {"kernelmatrix", "kernelMatrix"},
+    {"kernelunitlength", "kernelUnitLength"},
+    {"keypoints", "keyPoints"},
+    {"keysplines", "keySplines"},
+    {"keytimes", "keyTimes"},
+    {"lengthadjust", "lengthAdjust"},
+    {"limitingconeangle", "limitingConeAngle"},
+    {"markerheight", "markerHeight"},
+    {"markerunits", "markerUnits"},
+    {"markerwidth", "markerWidth"},
+    {"maskcontentunits", "maskContentUnits"},
+    {"maskunits", "maskUnits"},
+    {"numoctaves", "numOctaves"},
+    {"pathlength", "pathLength"},
+    {"patterncontentunits", "patternContentUnits"},
+    {"patterntransform", "patternTransform"},
+    {"patternunits", "patternUnits"},
+    {"pointsatx", "pointsAtX"},
+    {"pointsaty", "pointsAtY"},
+    {"pointsatz", "pointsAtZ"},
+    {"preservealpha", "preserveAlpha"},
+    {"preserveaspectratio", "preserveAspectRatio"},
+    {"primitiveunits", "primitiveUnits"},
+    {"refx", "refX"},
+    {"refy", "refY"},
+    {"repeatcount", "repeatCount"},
+    {"repeatdur", "repeatDur"},
+    {"requiredextensions", "requiredExtensions"},
+    {"requiredfeatures", "requiredFeatures"},
+    {"specularconstant", "specularConstant"},
+    {"specularexponent", "specularExponent"},
+    {"spreadmethod", "spreadMethod"},
+    {"startoffset", "startOffset"},
+    {"stddeviation", "stdDeviation"},
+    {"stitchtiles", "stitchTiles"},
+    {"surfacescale", "surfaceScale"},
+    {"systemlanguage", "systemLanguage"},
+    {"tablevalues", "tableValues"},
+    {"targetx", "targetX"},
+    {"targety", "targetY"},
+    {"textlength", "textLength"},
+    {"viewbox", "viewBox"},
+    {"viewtarget", "viewTarget"},
+    {"xchannelselector", "xChannelSelector"},
+    {"ychannelselector", "yChannelSelector"},
+    {"zoomandpan", "zoomAndPan"},
+};
+
+// 13.2.6.5, the SVG start tag's tag-name table.
+constexpr adjustment svg_tags[] = {
+    {"altglyph", "altGlyph"},
+    {"altglyphdef", "altGlyphDef"},
+    {"altglyphitem", "altGlyphItem"},
+    {"animatecolor", "animateColor"},
+    {"animatemotion", "animateMotion"},
+    {"animatetransform", "animateTransform"},
+    {"clippath", "clipPath"},
+    {"feblend", "feBlend"},
+    {"fecolormatrix", "feColorMatrix"},
+    {"fecomponenttransfer", "feComponentTransfer"},
+    {"fecomposite", "feComposite"},
+    {"feconvolvematrix", "feConvolveMatrix"},
+    {"fediffuselighting", "feDiffuseLighting"},
+    {"fedisplacementmap", "feDisplacementMap"},
+    {"fedistantlight", "feDistantLight"},
+    {"fedropshadow", "feDropShadow"},
+    {"feflood", "feFlood"},
+    {"fefunca", "feFuncA"},
+    {"fefuncb", "feFuncB"},
+    {"fefuncg", "feFuncG"},
+    {"fefuncr", "feFuncR"},
+    {"fegaussianblur", "feGaussianBlur"},
+    {"feimage", "feImage"},
+    {"femerge", "feMerge"},
+    {"femergenode", "feMergeNode"},
+    {"femorphology", "feMorphology"},
+    {"feoffset", "feOffset"},
+    {"fepointlight", "fePointLight"},
+    {"fespecularlighting", "feSpecularLighting"},
+    {"fespotlight", "feSpotLight"},
+    {"fetile", "feTile"},
+    {"feturbulence", "feTurbulence"},
+    {"foreignobject", "foreignObject"},
+    {"glyphref", "glyphRef"},
+    {"lineargradient", "linearGradient"},
+    {"radialgradient", "radialGradient"},
+    {"textpath", "textPath"},
+};
+
+[[nodiscard]] std::string_view adjust(std::span<const adjustment> table, std::string_view lower) {
+    for (const adjustment & a : table) {
+        if (a.lower == lower) { return a.adjusted; }
+    }
+    return lower;
+}
+
 } // namespace
+
+std::string_view adjust_svg_attribute(std::string_view lower) {
+    return adjust(svg_attributes, lower);
+}
+
+std::string_view adjust_svg_tag(std::string_view lower) {
+    return adjust(svg_tags, lower);
+}
 
 // ============================================================================
 // THE PARSE, AND THE PARSER-DRIVEN ENTRY POINTS
 // ============================================================================
 
-node_id tree_builder::parse(std::string_view input, std::string_view context) {
-    start(input, context);
+node_id tree_builder::parse(std::string_view input, std::string_view context, node_ns context_ns) {
+    start(input, context, context_ns);
     pump();
     return root_;
 }
 
-void tree_builder::start(std::string_view input, std::string_view context) {
+void tree_builder::start(std::string_view input, std::string_view context, node_ns context_ns) {
     builder_ = &held_builder_;
     stream_.assign(input);
     input_ = stream_;
@@ -66,6 +192,7 @@ void tree_builder::start(std::string_view input, std::string_view context) {
 
     root_ = node_id{};
     context_ = std::string{context};
+    context_entry_ = entry{};
     if (context_.empty()) {
         // The <html> element is the "before html" mode's to make, when the
         // first token that needs it arrives - so `document.open()` followed
@@ -80,15 +207,23 @@ void tree_builder::start(std::string_view input, std::string_view context) {
     // algorithm asks about "the adjusted current node" or resets the mode -
     // and what is parsed lands under the root, for the caller to move.
     open_.push_back(entry{root_, "html"});
-    if (const content_model model = content_model_for(context_); model != content_model::data) {
-        lexer_.set_content_model(model, context_);
+    context_entry_ = make_entry(node_id{}, context_, context_ns, {});
+    // The tokenizer starts in the context element's state - an HTML one's:
+    // an SVG <title> is not RCDATA - and with NO appropriate end tag, since
+    // no start tag has been emitted: `</title>` inside a <title>'s innerHTML
+    // is text (13.2.5, "appropriate end tag token").
+    const content_model model =
+        context_ns == node_ns::html ? content_model_for(context_) : content_model::data;
+    if (model != content_model::data) { lexer_.set_content_model(model, {}); }
+    if (context_ns == node_ns::html && context_ == "template") {
+        template_modes_.push_back(mode::in_template);
     }
-    if (context_ == "template") { template_modes_.push_back(mode::in_template); }
     reset_insertion_mode();
+    sync_foreign();
 }
 
 void tree_builder::begin(std::string_view input, bool open, bool eager_root) {
-    start(input, {});
+    start(input, {}, node_ns::html);
     open_stream_ = open;
     // THE PAGE'S OWN DOCUMENT ALWAYS HAS AN ELEMENT: every walk in the style,
     // layout and paint engines starts at `document::root()` and expects one,
@@ -172,25 +307,50 @@ void tree_builder::run_script(node_id script) {
 // ============================================================================
 
 const tree_builder::entry * tree_builder::adjusted_current() const {
-    return open_.empty() ? nullptr : &open_.back();
+    if (open_.empty()) { return nullptr; }
+    if (open_.size() == 1 && !context_.empty()) { return &context_entry_; }
+    return &open_.back();
 }
 
-bool tree_builder::in_foreign_content() const {
-    if (open_.empty() || open_.back().ns != node_ns::svg) { return false; }
-    return !is_html_integration_point(open_.back().tag);
-}
-
+// 13.2.6, the tree construction dispatcher's list.
 bool tree_builder::use_foreign_rules(const token & t) const {
     const entry * node = adjusted_current();
     if (node == nullptr || node->ns == node_ns::html) { return false; }
     if (t.kind == token_kind::end_of_file) { return false; }
-    // An HTML integration point takes HTML for a start tag or characters;
-    // its own end tag and everything else go the foreign way.
-    if (is_html_integration_point(node->tag) &&
-        (t.kind == token_kind::start_tag || t.kind == token_kind::character)) {
+    const bool start = t.kind == token_kind::start_tag;
+    const bool text = t.kind == token_kind::character;
+    if (is_mathml(node->ns) && is_mathml_text_integration_point(node->tag)) {
+        if (start && t.name != "mglyph" && t.name != "malignmark") { return false; }
+        if (text) { return false; }
+    }
+    if (is_mathml(node->ns) && node->tag == "annotation-xml" && start && t.name == "svg") {
         return false;
     }
+    // An HTML integration point takes HTML for a start tag or characters;
+    // its own end tag and everything else go the foreign way.
+    if (node->html_integration_point && (start || text)) { return false; }
     return true;
+}
+
+tree_builder::entry tree_builder::make_entry(node_id id, std::string tag, node_ns ns,
+                                             const std::vector<token_attribute> & attributes) {
+    entry e{id, std::move(tag), ns};
+    if (ns == node_ns::svg) {
+        e.html_integration_point = is_html_integration_point(e.tag);
+    } else if (is_mathml(ns) && e.tag == "annotation-xml") {
+        const auto encoding = std::ranges::find_if(
+            attributes, [](const token_attribute & a) { return a.name == "encoding"; });
+        e.html_integration_point = encoding != attributes.end() &&
+                                   (ascii_iequals(encoding->value, "text/html") ||
+                                    ascii_iequals(encoding->value, "application/xhtml+xml"));
+    }
+    return e;
+}
+
+bool tree_builder::is_special(const entry & e) {
+    if (e.ns == node_ns::html) { return is_special_element(e.tag); }
+    if (e.ns == node_ns::svg) { return is_html_integration_point(e.tag); }
+    return is_mathml_text_integration_point(e.tag) || e.tag == "annotation-xml";
 }
 
 void tree_builder::handle(const token & t) {
@@ -212,8 +372,10 @@ void tree_builder::handle(const token & t) {
 }
 
 void tree_builder::sync_foreign() {
-    lexer_.set_preserve_case(in_foreign_content());
-    lexer_.set_cdata_allowed(!open_.empty() && open_.back().ns != node_ns::html);
+    // 13.2.5.42: a CDATA section wherever the ADJUSTED current node is not
+    // HTML - an integration point included, and a foreign fragment context.
+    const entry * node = adjusted_current();
+    lexer_.set_cdata_allowed(node != nullptr && node->ns != node_ns::html);
 }
 
 void tree_builder::process(const token & t, mode in) {
@@ -321,9 +483,7 @@ void tree_builder::remove_from_stack(node_id id) {
 }
 
 bool tree_builder::is_scope_boundary(const entry & e, scope which) {
-    if (e.ns == node_ns::svg) {
-        return which != scope::table && one_of(e.tag, {"foreignObject", "desc", "title"});
-    }
+    if (e.ns != node_ns::html) { return which != scope::table && is_special(e); }
     switch (which) {
     case scope::table: return one_of(e.tag, {"html", "table", "template"});
     case scope::list_item:
@@ -510,6 +670,12 @@ tree_builder::insertion_point tree_builder::appropriate_place(node_id override_t
             }
             const node_id table = open_[last_table].id;
             const node_id parent = doc_->read().parent(table);
+            // A script may have moved the table under a <template>: the
+            // location is then inside its contents, after the last child
+            // (13.2.6.1's last step), and "before the table" means nothing.
+            if (const node_id contents = doc_->template_content(parent)) {
+                return insertion_point{contents, node_id{}};
+            }
             if (parent) { return insertion_point{parent, table}; }
             return insertion_point{insertion_parent(open_[last_table - 1].id), node_id{}};
         }
@@ -578,20 +744,25 @@ void tree_builder::insert_comment(const token & t, node_id parent, bool before_r
     insert_at(appropriate_place(), comment);
 }
 
+// "Create an element for a token" (13.2.6.1) with 13.2.6.5's adjustments
+// applied: an SVG name from its table, a MathML `definitionurl` as
+// `definitionURL`, and the foreign attributes (`xlink:`, `xml:`, `xmlns`)
+// into their namespaces - that last step is the builder's, see
+// document::foreign_namespace_of. The tokenizer folded every name to
+// lowercase, so the tables are exact lookups.
 node_id tree_builder::create_element(const std::string & tag,
                                      const std::vector<token_attribute> & attributes, node_ns ns) {
-    // intern vs intern_lower, and BOTH CALLS MATTER. Doing only the tag is
-    // the natural half-implementation: `linearGradient` survives while
-    // every attribute on it is still folded, so `viewBox` and
-    // `gradientUnits` are gone and the graphic is subtly wrong rather than
-    // visibly broken. The tokenizer already preserved the case; this is
-    // where it would be thrown away again.
-    const bool foreign = ns == node_ns::svg;
-    const node_id element =
-        doc_->create_element(foreign ? atoms_->intern(tag) : atoms_->intern_lower(tag), ns);
+    const node_id element = doc_->create_element(
+        ns == node_ns::svg ? atoms_->intern(adjust_svg_tag(tag)) : atoms_->intern_lower(tag), ns);
+    if (is_mathml(ns)) { doc_->set_element_namespace(element, atoms_->intern(mathml_namespace)); }
     for (const token_attribute & a : attributes) {
-        builder_->set_attribute(
-            element, foreign ? atoms_->intern(a.name) : atoms_->intern_lower(a.name), a.value);
+        std::string_view name = a.name;
+        if (ns == node_ns::svg) {
+            name = adjust_svg_attribute(name);
+        } else if (is_mathml(ns) && name == "definitionurl") {
+            name = "definitionURL";
+        }
+        builder_->set_attribute(element, atoms_->intern(name), a.value);
     }
     return element;
 }
@@ -600,7 +771,9 @@ node_id tree_builder::insert_element(const std::string & tag,
                                      const std::vector<token_attribute> & attributes, node_ns ns) {
     const node_id element = create_element(tag, attributes, ns);
     insert_at(appropriate_place(), element);
-    open_.push_back(entry{element, tag, ns});
+    open_.push_back(make_entry(
+        element, std::string{ns == node_ns::svg ? adjust_svg_tag(tag) : std::string_view{tag}}, ns,
+        attributes));
     return element;
 }
 
@@ -733,7 +906,7 @@ bool tree_builder::adoption_agency(const std::string & subject) {
         // Step 4.9: the furthest block - the topmost special element below it.
         std::size_t fb_stack = open_.size();
         for (std::size_t i = fe_stack + 1; i < open_.size(); ++i) {
-            if (open_[i].ns == node_ns::html && is_special_element(open_[i].tag)) {
+            if (is_special(open_[i])) {
                 fb_stack = i;
                 break;
             }
@@ -1174,10 +1347,7 @@ void tree_builder::in_body_start(const token & t) {
                 pop_until("li");
                 break;
             }
-            if (node.ns == node_ns::html && is_special_element(node.tag) &&
-                !one_of(node.tag, {"address", "div", "p"})) {
-                break;
-            }
+            if (is_special(node) && !one_of(node.tag, {"address", "div", "p"})) { break; }
         }
         if (has_in_scope("p", scope::button)) { close_p_element(); }
         (void)insert_element(t);
@@ -1193,10 +1363,7 @@ void tree_builder::in_body_start(const token & t) {
                 pop_until(found);
                 break;
             }
-            if (node.ns == node_ns::html && is_special_element(node.tag) &&
-                !one_of(node.tag, {"address", "div", "p"})) {
-                break;
-            }
+            if (is_special(node) && !one_of(node.tag, {"address", "div", "p"})) { break; }
         }
         if (has_in_scope("p", scope::button)) { close_p_element(); }
         (void)insert_element(t);
@@ -1370,10 +1537,10 @@ void tree_builder::in_body_start(const token & t) {
         return;
     }
     if (tag == "math") {
-        // NO MATHML NAMESPACE in this DOM (see the header): parsed as an
-        // ordinary HTML element, with the self-closing flag honoured.
+        // MathML: foreign content from here to the matching end tag or a
+        // breakout, in `node_ns::other` with its URI on the document.
         reconstruct_formatting();
-        (void)insert_element(t);
+        (void)insert_element(t, node_ns::other);
         if (t.self_closing) { pop(); }
         return;
     }
@@ -1487,7 +1654,7 @@ void tree_builder::in_body_any_other_end_tag(const std::string & tag) {
             while (open_.size() > i) { pop(); }
             return;
         }
-        if (node.ns == node_ns::html && is_special_element(node.tag)) { return; }
+        if (is_special(node)) { return; }
     }
 }
 
@@ -2052,20 +2219,21 @@ void tree_builder::process_foreign(const token & t) {
             });
         }
         if (breakout) {
-            while (!open_.empty() && open_.back().ns == node_ns::svg &&
-                   !is_html_integration_point(open_.back().tag)) {
-                close_foreign(t.source_begin);
-                pop();
-            }
+            pop_to_html_context(t.source_begin);
             return process(t, mode_);
         }
         // An ordinary foreign element, in the namespace of the adjusted
-        // current node. The tokenizer kept its case (see dom/tokenizer.hpp).
-        (void)insert_element(t, node_ns::svg);
-        if (tag == "svg") { open_foreign(t); }
+        // current node - which is the context element for a fragment parsed
+        // on an SVG or MathML element - with its names adjusted in
+        // create_element.
+        const node_ns ns = adjusted_current()->ns;
+        const node_id element = insert_element(t, ns);
+        if (ns == node_ns::svg && tag == "svg") { open_foreign(t); }
         if (t.self_closing) {
-            if (tag == "svg") { close_foreign(t.source_end); }
+            if (ns == node_ns::svg && tag == "svg") { close_foreign(t.source_end); }
             pop();
+            // `<script/>` in SVG runs, as the end tag would (13.2.6.5).
+            if (ns == node_ns::svg && tag == "script") { run_script(element); }
         }
         return;
     }
@@ -2074,31 +2242,41 @@ void tree_builder::process_foreign(const token & t) {
         // `</br>` and `</p>`: out of the foreign elements, then the HTML
         // rules - which make a <br> or a <p> beside the graphic.
         if (tag == "br" || tag == "p") {
-            while (!open_.empty() && open_.back().ns != node_ns::html &&
-                   !is_html_integration_point(open_.back().tag)) {
-                close_foreign(t.source_begin);
-                pop();
-            }
+            pop_to_html_context(t.source_begin);
             return process(t, mode_);
         }
         // An SVG <script> end tag runs the script (13.2.6.5 says so
         // explicitly); everything else walks the stack for a matching
         // foreign element, case-insensitively, and pops to it - or hands the
-        // tag to the HTML rules at the first HTML element.
+        // tag to the HTML rules at the first HTML element. The root of a
+        // fragment parse is never popped (the "node is the topmost" step).
         for (std::size_t i = open_.size(); i-- > 0;) {
             const entry & node = open_[i];
+            if (i == 0 && !context_.empty()) { return; }
             if (node.ns == node_ns::html) { return process(t, mode_); }
             if (ascii_iequals(node.tag, tag)) {
                 const node_id closed = node.id;
-                if (node.tag == "svg") { close_foreign(t.source_end); }
+                if (node.ns == node_ns::svg && node.tag == "svg") { close_foreign(t.source_end); }
                 while (open_.size() > i) { pop(); }
-                if (ascii_iequals(tag, "script")) { run_script(closed); }
+                if (node.ns == node_ns::svg && tag == "script") { run_script(closed); }
                 return;
             }
         }
         return;
     }
     default: return;
+    }
+}
+
+void tree_builder::pop_to_html_context(std::size_t source_end) {
+    while (!open_.empty()) {
+        const entry & top = open_.back();
+        if (top.ns == node_ns::html || top.html_integration_point ||
+            (is_mathml(top.ns) && is_mathml_text_integration_point(top.tag))) {
+            return;
+        }
+        if (top.ns == node_ns::svg && top.tag == "svg") { close_foreign(source_end); }
+        pop();
     }
 }
 
@@ -2206,9 +2384,11 @@ bool tree_builder::quirks_for(const token & doctype) {
     for (const std::string_view prefix : prefixes) {
         if (public_id.starts_with(prefix)) { return true; }
     }
-    if (!doctype.system_id_present &&
-        (public_id.starts_with("-//w3c//dtd html 4.01 frameset//") ||
-         public_id.starts_with("-//w3c//dtd html 4.01 transitional//"))) {
+    // "The system identifier is missing or the empty string" - an empty one
+    // reads as missing here (doctype-system-identifier-distinction.html),
+    // and a non-empty one puts the same public identifier in limited quirks.
+    if (system_id.empty() && (public_id.starts_with("-//w3c//dtd html 4.01 frameset//") ||
+                              public_id.starts_with("-//w3c//dtd html 4.01 transitional//"))) {
         return true;
     }
     return false;
