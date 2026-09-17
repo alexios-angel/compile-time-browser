@@ -286,7 +286,9 @@ void test_hidden_viewport_overflow_keeps_no_scrollbar() {
         </script></body></html>)");
     CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "width="), std::string{"width=400,400"});
-    CHECK_EQ(logged(page, "null="), std::string{"null=1000,1000"});
+    // block "start" puts the box's top at the viewport's; inline "nearest"
+    // (the default) brings its right edge to the viewport's: 1050 - 400.
+    CHECK_EQ(logged(page, "null="), std::string{"null=650,1000"});
     // end: the box's far edges against the viewport's: 1050 - 400, 1050 - 300.
     CHECK_EQ(logged(page, "false="), std::string{"false=650,750"});
     CHECK(!page.has_scrollbar());
