@@ -84,8 +84,9 @@ void test_change_events_on_the_page() {
 // reports the change.
 void test_a_frame_has_its_own_lists() {
     browser page{browser_options{400, 300}};
+    page.assets().add("frame.html", bytes_of("<!doctype html><html><body></body></html>"));
     page.load_html(R"html(<!doctype html><html><body>
-        <iframe id=f srcdoc="" width=200 height=100 style="border:none"></iframe>
+        <iframe id=f src=frame.html width=200 height=100 style="border:none"></iframe>
         <script>
         const f = document.getElementById('f');
         f.addEventListener('load', () => {
@@ -102,12 +103,15 @@ void test_a_frame_has_its_own_lists() {
             mql.addEventListener('change', e => console.log('changed=' + e.matches + ',' +
                 (e instanceof w.MediaQueryListEvent) + ',' + mql.matches));
             f.width = "250";
+            // tick() runs callbacks; this read flushes the resized frame's layout.
+            console.log('resized=' + f.getAttribute('width') + ',' + f.offsetWidth + ',' + mql.matches);
         });
         </script></body></html>)html");
     for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
     CHECK_EQ(page.script_error(), std::string{});
     CHECK_EQ(logged(page, "probe="), std::string{"probe=200x100,200x100"});
     CHECK_EQ(logged(page, "frame="), std::string{"frame=true,false,true,false,true"});
+    CHECK_EQ(logged(page, "resized="), std::string{"resized=250,250,false"});
     CHECK_EQ(logged(page, "changed="), std::string{"changed=false,true,false"});
 }
 

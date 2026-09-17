@@ -18,6 +18,8 @@ dom_bindings & dom_bindings::target_owner(value self) {
     for (const auto & made : top->secondary_documents_) {
         if (made->is_the_document(self)) { return *made; }
     }
+    // A frame's MediaQueryList dispatches changes from its own document.
+    if (is_media_query_list(self)) { return owner_of_media_query_list(self); }
     return *this;
 }
 
