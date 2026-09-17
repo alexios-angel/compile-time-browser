@@ -93,7 +93,8 @@ void test_what_a_page_reads_back() {
            border-inline-start-width: 4px; border-inline-start-style: solid }
       #e { direction: rtl; padding-inline-start: 7px }
       #f { margin-left: 8px; margin-inline-start: var(--nothing) }
-      #g { inline-size: 50px; block-size: 20px; max-inline-size: 70px }
+      #g { inline-size: 50px; block-size: 20px; max-inline-size: 70px; max-block-size: none;
+           border-end-end-radius: 10px 20px }
     </style></head><body style="width: 200px">
     <div id=a></div><div id=b></div><div id=c></div><div id=d></div><div id=e></div>
     <div id=f></div><div id=g></div>
@@ -110,15 +111,17 @@ void test_what_a_page_reads_back() {
                                    d.borderTopWidth].join('|'));
         const g = cs('g');
         console.log('size=' + [g.width, g.inlineSize, g.height, g.blockSize, g.maxWidth,
-                               g.maxInlineSize].join('|'));
+                               g.maxInlineSize, g.maxBlockSize, g.borderBottomRightRadius,
+                               g.borderEndEndRadius].join('|'));
         console.log('rtl=' + cs('e').paddingRight + '|' + cs('e').paddingLeft);
         console.log('unset=' + cs('f').marginLeft);
         const s = document.getElementById('a').style;
         s.borderBlock = '1px dotted red';
         s.borderInlineEnd = 'green double thin';
+        const whole = s.borderBlock;
         s.borderBlockWidth = '2px 3px';
-        console.log('cssom=' + [s.borderBlock, s.borderBlockStartStyle, s.borderInlineEnd,
-                                s.borderBlockWidth, s.borderBlockEndWidth].join('|'));
+        console.log('cssom=' + [whole, s.borderBlockStartStyle, s.borderInlineEnd,
+                                s.borderBlockWidth, s.borderBlockEndWidth, s.borderBlock].join('|'));
         console.log('mapped=' + a.borderTopStyle + '|' + a.borderBottomWidth + '|' +
                     a.borderRightStyle);
     </script></body></html>)html");
@@ -128,13 +131,14 @@ void test_what_a_page_reads_back() {
                          "rgb(255, 0, 0)"});
     CHECK_EQ(logged(page, "group="), std::string{"group=2px|1px"});
     CHECK_EQ(logged(page, "vertical="), std::string{"vertical=5px|5px|0px|4px"});
-    CHECK_EQ(logged(page, "size="), std::string{"size=50px|50px|20px|20px|70px|70px"});
+    CHECK_EQ(logged(page, "size="),
+             std::string{"size=50px|50px|20px|20px|70px|70px|none|10px 20px|10px 20px"});
     CHECK_EQ(logged(page, "rtl="), std::string{"rtl=7px|0px"});
     // A logical declaration invalid at computed-value time unsets the
     // physical side it maps to, the inline `margin-left` included.
     CHECK_EQ(logged(page, "unset="), std::string{"unset=0px"});
     CHECK_EQ(logged(page, "cssom="),
-             std::string{"cssom=1px dotted red|dotted|thin double green|2px 3px|3px"});
+             std::string{"cssom=1px dotted red|dotted|thin double green|2px 3px|3px|"});
     CHECK_EQ(logged(page, "mapped="), std::string{"mapped=dotted|3px|double"});
 }
 

@@ -535,7 +535,17 @@ void dom_bindings::update_css_transitions(
     // is in force, plus the ones named, plus the ones a transition already
     // runs on (so a name dropped from the list cancels it).
     std::vector<std::string> candidates;
-    const auto consider = [&candidates](std::string_view name) {
+    // A logical property transitions as the physical one the cascade stored
+    // it under (CSS Logical 1 §4): `margin-block-start` is `margin-top` here,
+    // on this element's writing mode and direction.
+    const auto physical_of = [&](std::string_view name) {
+        std::string physical =
+            style::css::physical_property_of(name, after.get(atoms_->intern("writing-mode")),
+                                             after.get(atoms_->intern("direction")));
+        return physical.empty() ? std::string{name} : physical;
+    };
+    const auto consider = [&](std::string_view logical) {
+        const std::string name = physical_of(logical);
         if (std::ranges::find(candidates, name) == candidates.end()) {
             candidates.emplace_back(name);
         }
@@ -576,11 +586,11 @@ void dom_bindings::update_css_transitions(
         std::size_t match = properties.size();
         for (std::size_t i = 0; i < properties.size(); ++i) {
             const std::string & item = properties[i];
-            bool names_it = ascii_iequals(item, property) ||
+            bool names_it = ascii_iequals(physical_of(ascii_lower_copy(item)), property) ||
                             (ascii_iequals(item, "all") && covered_by_all(property));
             for (const std::string_view longhand :
                  style::css::longhands_of(ascii_lower_copy(item))) {
-                if (longhand == property) { names_it = true; }
+                if (physical_of(longhand) == property) { names_it = true; }
             }
             if (names_it) { match = i; }
         }

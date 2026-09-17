@@ -1820,8 +1820,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     const auto physical = [&](atom property) -> atom {
         const std::string_view name = atoms_->text(property);
         if (name.find("block") == std::string_view::npos &&
-            name.find("inline") == std::string_view::npos) {
-            return property;
+            name.find("inline") == std::string_view::npos &&
+            name.find("start") == std::string_view::npos &&
+            name.find("end") == std::string_view::npos) {
+            return property; // nothing flow-relative in the name
         }
         const std::string mapped = css::physical_property_of(name, writing_mode, direction);
         return mapped.empty() ? property : atoms_->intern_lower(mapped);
@@ -1990,6 +1992,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 value = std::move(checked.serialized);
             }
         }
+        // ...BUT THE DECLARATION BLOCK SPLITS THE UNFOLDED VALUE: its grammars
+        // take a math function as a component, and each longhand's is folded
+        // below against the LONGHAND's own bases and range - a shorthand has
+        // neither (`border-block-width: 3px calc(10px - 0.5em)` is 3px and a
+        // width clamped to 0px, not a refused `-10px`).
+        const std::string unfolded = value;
         // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
         // argument as the shorthands: `-1 * var(x)` has no arithmetic to do
         // before substitution, and `border: calc(var(w) * 2) solid red` cannot
@@ -2069,16 +2077,26 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         };
         const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {
-            if (const css::declaration_block block = split_via_block(property, value);
+            if (const css::declaration_block block = split_via_block(property, unfolded);
                 !block.empty()) {
                 for (const css::declaration & one : block) {
                     const atom longhand = atoms_->intern_lower(one.name);
-                    // The size a `font` carries was resolved by the pre-pass.
-                    const std::string text =
-                        longhand == font_size_ && font_size_resolved
-                            ? css::serialize_calc(css::calc_result{own_font_size, 0.0f, false})
-                            : folded(one.value, longhand);
-                    put(declaration{physical(longhand), text});
+                    std::string text = one.value;
+                    if (longhand == font_size_ && font_size_resolved) {
+                        // The size a `font` carries was resolved by the pre-pass.
+                        text = css::serialize_calc(css::calc_result{own_font_size, 0.0f, false});
+                    } else if (css::may_have_math(text)) {
+                        css::length_context bases = lengths_for(longhand);
+                        bases.property = one.name;
+                        const css::folded_value done =
+                            css::fold_math(text, bases, css::math_context_of(one.name));
+                        if (done.ok) { text = std::move(done.text); }
+                        if (const css::property_syntax * known = css::find_property(one.name);
+                            known != nullptr && known->nonnegative) {
+                            text = css::non_negative(text);
+                        }
+                    }
+                    put(declaration{physical(longhand), folded(std::move(text), longhand)});
                 }
                 // ponytail: layout reads `white-space` itself (layout/box.hpp),
                 // so the shorthand's canonical value stays beside its longhands

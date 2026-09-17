@@ -320,10 +320,32 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // containing block, an inset's used value - runs on the interpolated text
     // exactly as it runs on a declared one. The underlying value it may need
     // is the cascade's own answer for the same element.
-    const std::vector<std::pair<std::string, std::string>> animated =
+    std::vector<std::pair<std::string, std::string>> animated =
         animated_values(id, at.font_size, [&](std::string_view property) {
             return declared_on(at.chain.front(), property);
         });
+    // ...FILED UNDER THE PHYSICAL LONGHANDS the cascade stores, so an
+    // animation on `margin-block` or `margin-block-start` is read where the
+    // rules below look for it: a shorthand split by the declaration block, a
+    // logical name mapped on this element's writing mode and direction.
+    if (!animated.empty() && !at.chain.empty()) {
+        const std::string writing_mode{declared_on(at.chain.front(), "writing-mode")};
+        const std::string direction{declared_on(at.chain.front(), "direction")};
+        std::vector<std::pair<std::string, std::string>> physical;
+        for (auto & [name, text] : animated) {
+            style::css::declaration_block block;
+            if (style::css::longhands_of(name).empty() ||
+                !style::css::set_declaration(block, name, text, false)) {
+                block.push_back({name, text, false});
+            }
+            for (const style::css::declaration & one : block) {
+                std::string mapped =
+                    style::css::physical_property_of(one.name, writing_mode, direction);
+                physical.emplace_back(mapped.empty() ? one.name : std::move(mapped), one.value);
+            }
+        }
+        animated = std::move(physical);
+    }
     const auto declared = [declared_on, at, atoms,
                            &animated](std::string_view property) -> std::string_view {
         if (at.chain.empty()) { return {}; }
@@ -839,8 +861,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             const layout::length len = layout::parse_length(text);
             // A sizing keyword on a min/max property is its own computed value
-            // (min-width: min-content); the used size it clamps to is layout's.
-            if (len.is_intrinsic()) { return std::string{text}; }
+            // (min-width: min-content, max-width: none); the used size it
+            // clamps to is layout's. `none` is a max's initial value and not
+            // the `auto` parse_length reads it as (max-block-size-computed).
+            if (len.is_intrinsic() ||
+                (is_min_or_max_property(property) && ascii_iequals(text, "none"))) {
+                return std::string{text};
+            }
             if (len.is_auto()) {
                 // A MARGIN'S USED VALUE IS A NUMBER, and `auto` is a value only
                 // for a box no flow has placed: a centred block's `margin: 0
