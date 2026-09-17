@@ -138,7 +138,7 @@ constexpr std::string_view slot_flags = "@#RegExpFlags";
     if (program.indices) {
         // MakeMatchIndicesIndexPairArray, 22.2.7.8: `[start, end]` per group,
         // undefined for one that did not participate, and its own `groups`.
-        value indices = cx.make_array();
+        const value indices = cx.make_array();
         arr->named_table().set("indices", indices); // rooted through the result
         auto * list = static_cast<array_object *>(indices.as_heap());
         const auto pair = [&](std::ptrdiff_t from, std::ptrdiff_t to) {
@@ -462,7 +462,7 @@ value regexp_create(context & cx, value pattern, value flags) {
 void install_regexp(context & cx) {
     using detail::method;
     using detail::new_table;
-    auto cache = std::make_shared<regex_cache>();
+    const auto cache = std::make_shared<regex_cache>();
 
     object_object * regexp_proto = new_table(cx);
     cx.set_prototype(context::proto_kind::regexp, regexp_proto);
@@ -830,7 +830,7 @@ void install_regexp(context & cx) {
         const bool full_unicode =
             flags.find('u') != std::string::npos || flags.find('v') != std::string::npos;
         if (!set_last_index(c, rx, 0)) { return value::undefined(); }
-        value list = c.make_array();
+        const value list = c.make_array();
         const context::rooted keep_list{c, list};
         auto * items = static_cast<array_object *>(list.as_heap());
         while (true) {
@@ -913,7 +913,7 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const value subject = c.string(s);
         const context::rooted keep{c, subject};
-        value replace_value = arg_at(a, 1);
+        const value replace_value = arg_at(a, 1);
         const bool functional = replace_value.is_callable();
         std::string tpl;
         if (!functional) {
@@ -930,7 +930,7 @@ void install_regexp(context & cx) {
         // Every match is collected FIRST (steps 11-12), then the replacements
         // are built (step 14): a replacer function runs after the matching
         // is over and cannot change what matched.
-        value results = c.make_array();
+        const value results = c.make_array();
         const context::rooted keep_results{c, results};
         auto * list = static_cast<array_object *>(results.as_heap());
         while (true) {

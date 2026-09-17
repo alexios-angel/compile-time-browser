@@ -23,7 +23,7 @@ namespace ctbrowser::script::builtins_detail {
 void install_symbol(context & cx) {
     using detail::method;
     using detail::new_table;
-    auto counter = std::make_shared<std::uint64_t>(0);
+    const auto counter = std::make_shared<std::uint64_t>(0);
 
     object_object * symbol_proto = new_table(cx);
     // thisSymbolValue (20.4.3): the symbol, or a wrapper's (`Object(sym)`,
@@ -156,7 +156,7 @@ void install_symbol(context & cx) {
     // native_object::retained would only root what was registered by the time
     // the native was built. Both natives retain the one array handle, so
     // neither can be left reading the other's freed entries.
-    auto keys = std::make_shared<std::vector<std::string>>();
+    const auto keys = std::make_shared<std::vector<std::string>>();
     const value registry = cx.make_array();
     auto * symbol_for =
         cx.allocate<native_object>("for", [keys, registry](context & c, std::span<value> a) {
