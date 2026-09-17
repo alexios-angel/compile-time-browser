@@ -5,10 +5,17 @@
 #include <ctbrowser/style/css/token.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <numbers>
+#include <numeric>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -178,41 +185,83 @@ namespace {
 
 // --- interpolation ------------------------------------------------------------
 
-// (1 - p) * from + p * to, the specification's own formula, which is also the
-// one that extrapolates sensibly: `p` is outside [0, 1] whenever the easing
-// overshoots, and a `p` of 0 or 1 hands back the endpoint's own text so its
-// computed value is exactly the declared one.
-[[nodiscard]] std::string interpolate_text(std::string_view property, std::string_view from,
-                                           std::string_view to, double p,
-                                           const css::length_context & ctx) {
-    const auto lerp = [p](double a, double b) { return (1 - p) * a + p * b; };
+namespace {
+
+// --- numbers, lengths, percentages and their calc() mixes ---
+
+struct numeric_pair {
+    css::calc_result a, b;
+};
+
+// Both endpoints as one numeric type, or nothing: `10px` and `2s` do not pair,
+// nor `auto` and anything.
+[[nodiscard]] std::optional<numeric_pair> numeric_of(std::string_view from, std::string_view to,
+                                                     const css::length_context & ctx) {
     const css::math_answer a = css::evaluate_math(from, ctx);
     const css::math_answer b = css::evaluate_math(to, ctx);
-    const bool numeric = a.outcome == css::math_outcome::resolved &&
-                         b.outcome == css::math_outcome::resolved && a.value.type == b.value.type &&
-                         a.value.is_number == b.value.is_number;
-    // An endpoint's own text at 0 and 1 when it is not arithmetic, so a
-    // keyword's computed value is exactly the declared one. A numeric endpoint
-    // goes through the interpolation like every other progress: its value is
-    // the same and its text is the COMPUTED spelling - `random(300, 100)` is
-    // `300` at progress 1 and not the function (random-in-animations) - and
-    // an infinity is clamped below like every value on the way there
-    // (calc-interpolation).
-    // ponytail: colours, transforms and lists flip at the midpoint; add a
-    // colour lerp beside this when a test reads an animated colour.
-    if (!numeric) { return std::string{p < 0.5 ? from : to}; }
+    if (a.outcome != css::math_outcome::resolved || b.outcome != css::math_outcome::resolved) {
+        return std::nullopt;
+    }
+    numeric_pair out{a.value, b.value};
+    // A unitless `0` is a <length> where one is wanted (CSS Values 4 §6.1):
+    // `left: 0` transitions to `400px`.
+    const auto zero_as_length = [](css::calc_result & zero, const css::calc_result & other) {
+        if (zero.is_number && zero.px == 0 && !other.is_number &&
+            other.type == css::numeric_type::length) {
+            zero.is_number = false;
+            zero.type = css::numeric_type::length;
+        }
+    };
+    zero_as_length(out.a, out.b);
+    zero_as_length(out.b, out.a);
+    if (out.a.type != out.b.type || out.a.is_number != out.b.is_number) { return std::nullopt; }
+    return out;
+}
+
+// (1 - p) * a + p * b, the specification's own formula, which is also the one
+// that extrapolates sensibly: `p` is outside [0, 1] whenever the easing
+// overshoots. A numeric endpoint goes through the arithmetic at 0 and 1 too:
+// its value is the same and its text is the COMPUTED spelling -
+// `random(300, 100)` is `300` at progress 1 and not the function
+// (random-in-animations).
+[[nodiscard]] css::calc_result mix(const css::calc_result & a, const css::calc_result & b,
+                                   double p) {
+    // A mix keeps both terms at 0 and 1 too: `10%` to `20px` ends at
+    // `calc(0% + 20px)`, which is what a computed length-percentage is.
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
     css::calc_result out;
-    out.type = a.value.type;
-    out.is_number = a.value.is_number;
-    out.px = lerp(a.value.px, b.value.px);
-    out.has_percent = a.value.has_percent || b.value.has_percent;
-    out.percent = lerp(a.value.has_percent ? a.value.percent : 0.0,
-                       b.value.has_percent ? b.value.percent : 0.0);
-    // CLAMPED AS A COMPUTED VALUE IS: an infinity lands on the bound it
-    // overflowed and a NaN is zero (CSS Values 4 §10.10), after the
-    // interpolation rather than before - `0px` to `calc(infinity * 1px)`
-    // is the bound at every progress past zero, which is what the corpus
-    // reads. The bound is the fold's (lib/Style/css/calc/fold.cpp).
+    out.type = a.type;
+    out.is_number = a.is_number;
+    out.px = lerp(a.px, b.px);
+    out.has_percent = a.has_percent || b.has_percent;
+    out.percent = lerp(a.has_percent ? a.percent : 0.0, b.has_percent ? b.percent : 0.0);
+    return out;
+}
+
+// CSS Values 4 §4.3: addition of two numerics of one type is the sum, term
+// by term for a percentage mix. Accumulation is the same for every type here.
+[[nodiscard]] css::calc_result sum(const css::calc_result & a, const css::calc_result & b) {
+    css::calc_result out;
+    out.type = a.type;
+    out.is_number = a.is_number;
+    out.px = a.px + b.px;
+    out.has_percent = a.has_percent || b.has_percent;
+    out.percent = (a.has_percent ? a.percent : 0.0) + (b.has_percent ? b.percent : 0.0);
+    return out;
+}
+
+// The text of a numeric result, CLAMPED AS A COMPUTED VALUE IS: an infinity
+// lands on the bound it overflowed and a NaN is zero (CSS Values 4 §10.10) -
+// after the arithmetic rather than before, so `0px` to `calc(infinity * 1px)`
+// is the bound at every progress past zero, which is what the corpus reads.
+// The bound is the fold's (lib/Style/css/calc/fold.cpp). Then an <integer>
+// rounds half up (§3.2), and the property's own range applies: the table's
+// floor at zero - only when no percentage is left to resolve, since
+// `calc(-50px + 40%)` cannot be judged before its basis exists - and
+// font-weight's [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
+// ponytail: the one property with a range that is not "non-negative"; give
+// the table a range when a second one animates.
+[[nodiscard]] std::string numeric_text(std::string_view property, css::calc_result out) {
     constexpr double bound = 33554432.0;
     const auto clamped = [](double v) {
         if (std::isnan(v)) { return 0.0; }
@@ -220,19 +269,1081 @@ namespace {
     };
     out.px = clamped(out.px);
     out.percent = clamped(out.percent);
-    // CSS Values 4 §3.2: an interpolated <integer> rounds half up.
     const css::property_syntax * known = css::find_property(property);
     if (out.is_number && known != nullptr && known->kind == css::value_kind::integer) {
         out.px = std::floor(out.px + 0.5);
     }
-    // ...AND IS CLAMPED TO THE PROPERTY'S RANGE, as a computed value is
-    // (CSS Values 4 §10.10): the table's floor at zero, and font-weight's own
-    // [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
-    // ponytail: the one property with a range that is not "non-negative";
-    // give the table a range when a second one animates.
-    if (known != nullptr && known->nonnegative && out.px < 0) { out.px = 0; }
+    if (known != nullptr && known->nonnegative && out.px < 0 && !out.has_percent) { out.px = 0; }
     if (property == "font-weight") { out.px = std::clamp(out.px, 1.0, 1000.0); }
     return css::serialize_calc(out);
+}
+
+// --- colours ---
+
+// A colour as sRGB with alpha, premultiplied: CSS Color 4 §17 interpolates
+// legacy colours in sRGB with the channels weighted by alpha, so a transparent
+// endpoint contributes no hue. Through style's resolver rather than paint's:
+// paint holds a channel in eight bits, and an alpha of 0.5 read back as
+// 128/255 - which put the midpoint of blue and half-transparent red at 0.753
+// rather than 0.75.
+struct premultiplied {
+    double r, g, b, a;
+};
+
+[[nodiscard]] premultiplied premultiply(const css::srgb_color & c) {
+    return {c.r * c.a, c.g * c.a, c.b * c.a, c.a};
+}
+
+// Back to `rgba()` text, clamped to the gamut as a computed colour is. The
+// text goes through the same `rgb()` parser the computed-style serialiser
+// reads, which rounds.
+[[nodiscard]] std::string color_text(const premultiplied & c) {
+    const double alpha = std::clamp(c.a, 0.0, 1.0);
+    const auto channel = [alpha](double v) {
+        return std::clamp(alpha == 0 ? 0.0 : v / alpha, 0.0, 1.0) * 255.0;
+    };
+    const auto number = [](double v) {
+        char buffer[32];
+        const auto [end, ec] =
+            std::to_chars(buffer, buffer + sizeof buffer, v, std::chars_format::fixed, 4);
+        return ec == std::errc{} ? std::string{buffer, end} : std::string{"0"};
+    };
+    return "rgba(" + number(channel(c.r)) + ", " + number(channel(c.g)) + ", " +
+           number(channel(c.b)) + ", " + number(alpha) + ")";
+}
+
+[[nodiscard]] std::string lerp_color(const css::srgb_color & from, const css::srgb_color & to,
+                                     double p) {
+    const premultiplied a = premultiply(from);
+    const premultiplied b = premultiply(to);
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
+    return color_text({lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b), lerp(a.a, b.a)});
+}
+
+// A LEGACY COLOUR - named, hex, rgb(), hsl(), hwb() - interpolates in sRGB;
+// a pair with a modern one in it interpolates in Oklab (CSS Color 4 §12.1)
+// and reads back as `oklab()`.
+[[nodiscard]] bool legacy_color(std::string_view text) {
+    const std::string_view lowered_start = text.substr(0, std::min<std::size_t>(text.size(), 12));
+    const std::string head = ascii_lower_copy(lowered_start);
+    for (const std::string_view modern : {"color(", "lab(", "lch(", "oklab(", "oklch(",
+                                          "color-mix(", "light-dark(", "device-cmyk("}) {
+        if (head.starts_with(modern)) { return false; }
+    }
+    return true;
+}
+
+// sRGB to Oklab (Björn Ottosson's matrices, as CSS Color 4 §17.4 gives them),
+// with a channel outside the gamut carried through sign-preserved.
+struct oklab {
+    double l, a, b;
+};
+
+[[nodiscard]] oklab oklab_of(const css::srgb_color & c) {
+    const auto linear = [](double v) {
+        const double m = std::fabs(v);
+        const double out = m <= 0.04045 ? m / 12.92 : std::pow((m + 0.055) / 1.055, 2.4);
+        return v < 0 ? -out : out;
+    };
+    const double r = linear(c.r), g = linear(c.g), b = linear(c.b);
+    const double l = std::cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const double m = std::cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const double s = std::cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return {0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s};
+}
+
+[[nodiscard]] std::string lerp_oklab(const css::srgb_color & from, const css::srgb_color & to,
+                                     double p) {
+    const oklab x = oklab_of(from), y = oklab_of(to);
+    const auto lerp = [p](double a, double b) { return (1 - p) * a + p * b; };
+    const double alpha = std::clamp(lerp(from.a, to.a), 0.0, 1.0);
+    const auto channel = [&](double a, double b) {
+        const double premultiplied = lerp(a * from.a, b * to.a);
+        const double v = alpha == 0 ? 0.0 : premultiplied / alpha;
+        return std::fabs(v) < 5e-7 ? 0.0 : v; // no `-0` for a grey's chroma
+    };
+    std::string out = "oklab(" + css::serialize_number(std::clamp(channel(x.l, y.l), 0.0, 1.0)) +
+                      " " + css::serialize_number(channel(x.a, y.a)) + " " +
+                      css::serialize_number(channel(x.b, y.b));
+    if (alpha < 1) { out += " / " + css::serialize_number(alpha); }
+    return out + ')';
+}
+
+// CSS Color 4 §12.4: colours add channel by channel, premultiplied, the alpha
+// summed and clamped.
+[[nodiscard]] std::string add_color(const css::srgb_color & x, const css::srgb_color & y) {
+    const premultiplied a = premultiply(x);
+    const premultiplied b = premultiply(y);
+    return color_text({a.r + b.r, a.g + b.g, a.b + b.b, a.a + b.a});
+}
+
+// --- the computed shape of a list item ---
+
+[[nodiscard]] bool is_shadow(std::string_view property) {
+    return property == "box-shadow" || property == "text-shadow";
+}
+
+// A LIST WHOSE ADDITION IS CONCATENATION: a shadow list, a transform list and
+// a filter list append (CSS Backgrounds 3 §7.2, CSS Transforms 1 §12, Filter
+// Effects 1 §11); every other comma list adds item by item.
+[[nodiscard]] bool appends(std::string_view property) {
+    return is_shadow(property) || property == "transform" || property == "filter" ||
+           property == "backdrop-filter";
+}
+
+// THE COMPUTED SHAPE OF A VALUE WHOSE GRAMMAR LETS THE AUTHOR REORDER OR OMIT:
+// a shadow is `<color> <x> <y> <blur> <spread> inset?` with the colour first
+// and the omitted lengths zero (CSS Backgrounds 3 §7.2, the order the
+// computed-style serialiser prints), a corner radius is two lengths. Paired
+// as written, `10px 30px orange` against `green 20px 20px 20px` has nothing
+// to interpolate; in computed shape it has a colour and three lengths. A
+// shadow list's `none` is the empty list.
+// A LIST THAT REPEATS TO MATCH (CSS Values 4 §4.1, "repeatable list"): the
+// background and mask layer lists pair the shorter with the longer by
+// repeating it, to the least common multiple of the two lengths.
+[[nodiscard]] bool repeatable(std::string_view property) {
+    return property.starts_with("background-") || property.starts_with("mask-");
+}
+
+template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & b) {
+    if (a.empty() || b.empty() || a.size() == b.size()) { return; }
+    const std::size_t n = std::lcm(a.size(), b.size());
+    for (std::size_t i = a.size(); i < n; ++i) { a.push_back(a[i % a.size()]); }
+    for (std::size_t i = b.size(); i < n; ++i) { b.push_back(b[i % b.size()]); }
+}
+
+[[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
+                                         const css::length_context & ctx) {
+    if (repeatable(property)) {
+        // Keywords as percentages, a size's second `auto` written, so
+        // `left 20px top 20px` and `20px 20px` are one shape.
+        css::color_context cc;
+        cc.lengths = &ctx;
+        const std::string computed = css::computed_background_list(property, text, cc);
+        return computed.empty() ? std::string{text} : computed;
+    }
+    if (is_shadow(property)) {
+        if (ascii_iequals(text, "none")) { return {}; }
+        const bool box = property == "box-shadow";
+        std::string out;
+        for (const std::string_view shadow : split_top_level(text, ",")) {
+            std::string colour;
+            std::vector<std::string> lengths;
+            bool inset = false;
+            for (const std::string_view raw : split_top_level(shadow, html_whitespace)) {
+                const std::string_view part = trim(raw, html_whitespace);
+                if (part.empty()) { continue; }
+                if (ascii_iequals(part, "inset")) {
+                    inset = true;
+                } else if (ascii_iequals(part, "currentcolor") || css::resolve_color(part, {})) {
+                    colour = std::string{part};
+                } else {
+                    lengths.emplace_back(part);
+                }
+            }
+            const std::size_t wanted = box ? 4 : 3;
+            if (lengths.size() < 2 || lengths.size() > wanted) { return std::string{text}; }
+            while (lengths.size() < wanted) { lengths.emplace_back("0px"); }
+            if (!out.empty()) { out += ", "; }
+            out += colour.empty() ? std::string{"currentcolor"} : colour;
+            for (const std::string & len : lengths) { out += ' ' + len; }
+            if (inset) { out += " inset"; }
+        }
+        return out.empty() ? std::string{text} : out;
+    }
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
+        if (parts.size() == 1) { return std::string{parts[0]} + ' ' + std::string{parts[0]}; }
+    }
+    // THE INDIVIDUAL TRANSFORM PROPERTIES (CSS Transforms 2 §7): `scale` is
+    // three numbers, `none` is `1 1 1` and one value is both axes; `translate`
+    // is three lengths, `none` is zero; `rotate: none` is `0deg`. The computed
+    // serialiser drops the defaults again on the way out.
+    if (property == "scale" || property == "translate") {
+        const bool is_scale = property == "scale";
+        std::vector<std::string> parts;
+        if (!ascii_iequals(text, "none")) {
+            for (const std::string_view part : split_top_level(text, html_whitespace)) {
+                if (!part.empty()) { parts.emplace_back(part); }
+            }
+        }
+        if (parts.size() > 3) { return std::string{text}; }
+        if (is_scale && parts.size() == 1) { parts.push_back(parts[0]); }
+        while (parts.size() < 3) { parts.emplace_back(is_scale ? "1" : "0px"); }
+        return parts[0] + ' ' + parts[1] + ' ' + parts[2];
+    }
+    if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
+    // A line width keyword is its length (CSS Backgrounds 3 §4.2), so
+    // `border-left-width: initial` - `medium` - pairs with `23px`.
+    if (property.ends_with("-width")) {
+        if (ascii_iequals(text, "thin")) { return "1px"; }
+        if (ascii_iequals(text, "medium")) { return "3px"; }
+        if (ascii_iequals(text, "thick")) { return "5px"; }
+    }
+    return std::string{text};
+}
+
+// The shadow a shorter list is padded with: transparent, every length zero,
+// inset when the shadow it pairs with is (CSS Backgrounds 3 §7.2).
+[[nodiscard]] std::string blank_shadow(bool box, std::string_view like) {
+    std::string out = box ? "rgba(0, 0, 0, 0) 0px 0px 0px 0px" : "rgba(0, 0, 0, 0) 0px 0px 0px";
+    if (like.ends_with("inset")) { out += " inset"; }
+    return out;
+}
+
+[[nodiscard]] std::vector<std::string_view> comma_items(std::string_view text) {
+    std::vector<std::string_view> out;
+    for (const std::string_view item : split_top_level(text, ",")) {
+        const std::string_view trimmed = trim(item, html_whitespace);
+        if (!trimmed.empty()) { out.push_back(trimmed); }
+    }
+    return out;
+}
+
+// --- transform lists (CSS Transforms 1 §12) ---
+
+// One 2D transform function with its arguments as numbers: lengths in px,
+// angles in degrees. `scale(2)` is `scale(2, 2)`, `translate(1px)` is
+// `translate(1px, 0px)`, so two functions of one primitive always pair.
+struct transform_fn {
+    std::string name;
+    std::vector<double> args;
+    // A translate's percentage part per argument, kept in step with `args`
+    // (the px part): `translate(12px, 70%)` keeps its percentages and reads
+    // back as written, which is how the computed serialiser prints it.
+    std::vector<double> pct;
+};
+
+[[nodiscard]] std::string_view primitive_of(std::string_view name) {
+    if (name.starts_with("translate")) { return "translate"; }
+    if (name.starts_with("scale")) { return "scale"; }
+    return name;
+}
+
+// A 2D transform list, or nothing for `none`, or nullopt for one this does
+// not model - a 3D function, a percentage, an `em` - which stays discrete.
+// ponytail: 2D only, matching the computed-style serialiser; a 3D list
+// needs matrix3d() there first.
+[[nodiscard]] std::optional<std::vector<transform_fn>> parse_transforms(std::string_view text) {
+    using css::token_type;
+    std::vector<transform_fn> out;
+    if (ascii_iequals(text, "none")) { return out; }
+    const css::token_stream ts = css::tokenize(text);
+    std::size_t at = 0;
+    for (;;) {
+        while (ts.tokens[at].type == token_type::whitespace) { ++at; }
+        if (ts.tokens[at].type == token_type::eof) { break; }
+        if (ts.tokens[at].type != token_type::function) { return std::nullopt; }
+        const std::string_view raw = ts.text_of(ts.tokens[at]);
+        transform_fn fn;
+        fn.name = ascii_lower_copy(raw.substr(0, raw.size() - 1));
+        ++at;
+        std::vector<bool> is_length;
+        for (;;) {
+            while (ts.tokens[at].type == token_type::whitespace) { ++at; }
+            const css::css_token & t = ts.tokens[at];
+            if (t.type == token_type::eof) { return std::nullopt; }
+            ++at;
+            if (t.type == token_type::close_paren) { break; }
+            if (t.type == token_type::comma) { continue; }
+            fn.pct.push_back(0);
+            if (t.type == token_type::number) {
+                fn.args.push_back(t.number);
+                is_length.push_back(false);
+            } else if (t.type == token_type::percentage) {
+                fn.args.push_back(0);
+                fn.pct.back() = t.number;
+                is_length.push_back(true);
+            } else if (t.type == token_type::dimension) {
+                const std::string unit = ascii_lower_copy(ts.unit_of(t));
+                if (unit == "px") {
+                    fn.args.push_back(t.number);
+                    is_length.push_back(true);
+                } else if (unit == "deg") {
+                    fn.args.push_back(t.number);
+                    is_length.push_back(false);
+                } else if (unit == "rad") {
+                    fn.args.push_back(t.number * 180.0 / std::numbers::pi);
+                    is_length.push_back(false);
+                } else if (unit == "grad") {
+                    fn.args.push_back(t.number * 0.9);
+                    is_length.push_back(false);
+                } else if (unit == "turn") {
+                    fn.args.push_back(t.number * 360.0);
+                    is_length.push_back(false);
+                } else {
+                    return std::nullopt;
+                }
+            } else {
+                return std::nullopt;
+            }
+        }
+        const std::size_t n = fn.args.size();
+        const bool translate = fn.name.starts_with("translate");
+        for (std::size_t i = 0; i < n; ++i) {
+            if (is_length[i] != translate && !(translate && fn.args[i] == 0.0)) {
+                return std::nullopt;
+            }
+            if (!translate && fn.pct[i] != 0) { return std::nullopt; }
+        }
+        // Canonical two-argument forms, so the same primitive always pairs.
+        const auto append = [&fn](double v) { fn.args.push_back(v), fn.pct.push_back(0); };
+        const auto prepend = [&fn](double v) {
+            fn.args.insert(fn.args.begin(), v), fn.pct.insert(fn.pct.begin(), 0);
+        };
+        if (fn.name == "translatex" && n == 1) {
+            fn.name = "translate", append(0);
+        } else if (fn.name == "translatey" && n == 1) {
+            fn.name = "translate", prepend(0);
+        } else if (fn.name == "translate" && n == 1) {
+            append(0);
+        } else if (fn.name == "scalex" && n == 1) {
+            fn.name = "scale", append(1);
+        } else if (fn.name == "scaley" && n == 1) {
+            fn.name = "scale", prepend(1);
+        } else if (fn.name == "scale" && n == 1) {
+            append(fn.args[0]);
+        } else if (fn.name == "skew" && n == 1) {
+            append(0);
+        }
+        const std::size_t count = fn.args.size();
+        const bool shaped =
+            (fn.name == "matrix" && count == 6) || (fn.name == "translate" && count == 2) ||
+            (fn.name == "scale" && count == 2) || (fn.name == "rotate" && count == 1) ||
+            (fn.name == "skew" && count == 2) || (fn.name == "skewx" && count == 1) ||
+            (fn.name == "skewy" && count == 1);
+        if (!shaped) { return std::nullopt; }
+        out.push_back(std::move(fn));
+    }
+    return out;
+}
+
+// The affine matrix as CSS writes it: x' = a*x + c*y + e, y' = b*x + d*y + f.
+using matrix2d = std::array<double, 6>;
+
+[[nodiscard]] matrix2d multiply(const matrix2d & m, const matrix2d & n) {
+    return {m[0] * n[0] + m[2] * n[1],        m[1] * n[0] + m[3] * n[1],
+            m[0] * n[2] + m[2] * n[3],        m[1] * n[2] + m[3] * n[3],
+            m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]};
+}
+
+[[nodiscard]] double radians(double deg) {
+    return deg * std::numbers::pi / 180.0;
+}
+
+[[nodiscard]] matrix2d matrix_of(const transform_fn & fn) {
+    const std::vector<double> & a = fn.args;
+    if (fn.name == "matrix") { return {a[0], a[1], a[2], a[3], a[4], a[5]}; }
+    if (fn.name == "translate") { return {1, 0, 0, 1, a[0], a[1]}; }
+    if (fn.name == "scale") { return {a[0], 0, 0, a[1], 0, 0}; }
+    if (fn.name == "rotate") {
+        const double r = radians(a[0]);
+        return {std::cos(r), std::sin(r), -std::sin(r), std::cos(r), 0, 0};
+    }
+    if (fn.name == "skew") {
+        return {1, std::tan(radians(a[1])), std::tan(radians(a[0])), 1, 0, 0};
+    }
+    if (fn.name == "skewx") { return {1, 0, std::tan(radians(a[0])), 1, 0, 0}; }
+    return {1, std::tan(radians(a[0])), 0, 1, 0, 0}; // skewy
+}
+
+[[nodiscard]] matrix2d matrix_of(const std::vector<transform_fn> & list) {
+    matrix2d m{1, 0, 0, 1, 0, 0};
+    for (const transform_fn & fn : list) { m = multiply(m, matrix_of(fn)); }
+    return m;
+}
+
+// §12.2, the 2D decomposition: translation, scale, rotation and the
+// residual matrix, interpolated separately and recomposed.
+struct decomposed2d {
+    double tx, ty, sx, sy, angle, m11, m12, m21, m22;
+};
+
+[[nodiscard]] decomposed2d decompose(const matrix2d & m) {
+    double row0x = m[0], row0y = m[1], row1x = m[2], row1y = m[3];
+    decomposed2d d{m[4], m[5], 0, 0, 0, 1, 0, 0, 1};
+    d.sx = std::hypot(row0x, row0y);
+    if (d.sx != 0) { row0x /= d.sx, row0y /= d.sx; }
+    double skew = row0x * row1x + row0y * row1y;
+    row1x -= row0x * skew, row1y -= row0y * skew;
+    d.sy = std::hypot(row1x, row1y);
+    if (d.sy != 0) { row1x /= d.sy, row1y /= d.sy, skew /= d.sy; }
+    if (row0x * row1y - row0y * row1x < 0) {
+        d.sx = -d.sx;
+        row0x = -row0x, row0y = -row0y;
+    }
+    d.angle = std::atan2(row0y, row0x) * 180.0 / std::numbers::pi;
+    // The residual is the matrix with its rotation taken back out, so that
+    // recomposing rotate(angle) * residual gives the rows back.
+    const double sn = -row0y, cs = row0x;
+    const double m11 = row0x, m12 = row0y, m21 = row1x, m22 = row1y;
+    d.m11 = cs * m11 + sn * m21, d.m12 = cs * m12 + sn * m22;
+    d.m21 = -sn * m11 + cs * m21, d.m22 = -sn * m12 + cs * m22;
+    return d;
+}
+
+[[nodiscard]] matrix2d recompose(const decomposed2d & d) {
+    matrix2d m{1, 0, 0, 1, d.tx, d.ty};
+    const double r = radians(d.angle);
+    m = multiply(m, {std::cos(r), std::sin(r), -std::sin(r), std::cos(r), 0, 0});
+    m = multiply(m, {d.m11, d.m12, d.m21, d.m22, 0, 0});
+    return multiply(m, {d.sx, 0, 0, d.sy, 0, 0});
+}
+
+[[nodiscard]] std::string matrix_text(const matrix2d & m) {
+    std::string out{"matrix("};
+    for (std::size_t i = 0; i < 6; ++i) {
+        if (i != 0) { out += ", "; }
+        // Six decimals, which is where the computed serialiser rounds anyway.
+        out += css::serialize_number(std::round(m[i] * 1e6) / 1e6);
+    }
+    return out + ')';
+}
+
+[[nodiscard]] std::string function_text(const transform_fn & fn) {
+    std::string out = fn.name + '(';
+    const bool translate = fn.name == "translate";
+    const bool angles = fn.name == "rotate" || fn.name.starts_with("skew");
+    for (std::size_t i = 0; i < fn.args.size(); ++i) {
+        if (i != 0) { out += ", "; }
+        if (translate) {
+            css::calc_result length;
+            length.px = fn.args[i];
+            length.percent = fn.pct[i];
+            length.has_percent = fn.pct[i] != 0;
+            out += css::serialize_calc(length);
+            continue;
+        }
+        out += css::serialize_number(fn.args[i]);
+        if (angles) { out += "deg"; }
+    }
+    return out + ')';
+}
+
+[[nodiscard]] transform_fn identity_like(const transform_fn & fn) {
+    transform_fn out{fn.name, {}, {}};
+    if (fn.name == "matrix") {
+        out.args = {1, 0, 0, 1, 0, 0};
+    } else if (fn.name == "scale") {
+        out.args = {1, 1};
+    } else {
+        out.args.assign(fn.args.size(), 0.0);
+    }
+    out.pct.assign(out.args.size(), 0.0);
+    return out;
+}
+
+// §12: function by function while the lists match - the shorter padded
+// with the identity of its partner - else the whole lists as matrices,
+// decomposed. `none` on both sides stays `none`.
+[[nodiscard]] std::optional<std::string> interpolate_transform(std::string_view from,
+                                                               std::string_view to, double p) {
+    std::optional<std::vector<transform_fn>> a = parse_transforms(from);
+    std::optional<std::vector<transform_fn>> b = parse_transforms(to);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty() && b->empty()) { return "none"; }
+    // The endpoints are themselves, as written: `translateY(90%)` at 1 is
+    // `translateY(90%)` and not its two-argument spelling.
+    if (p == 0 && !a->empty()) { return std::string{from}; }
+    if (p == 1 && !b->empty()) { return std::string{to}; }
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
+    const std::size_t shorter = std::min(a->size(), b->size());
+    bool matched = true;
+    for (std::size_t i = 0; i < shorter && matched; ++i) {
+        // Two matrix() functions interpolate by decomposition (§12.1), not
+        // term by term: they send the whole lists down the matrix path.
+        matched = primitive_of((*a)[i].name) == primitive_of((*b)[i].name) &&
+                  ((*a)[i].name != "matrix" || (*a)[i].args == (*b)[i].args);
+    }
+    if (matched) {
+        for (std::size_t i = a->size(); i < b->size(); ++i) {
+            a->push_back(identity_like((*b)[i]));
+        }
+        for (std::size_t i = b->size(); i < a->size(); ++i) {
+            b->push_back(identity_like((*a)[i]));
+        }
+        std::string out;
+        for (std::size_t i = 0; i < a->size(); ++i) {
+            transform_fn fn = (*a)[i];
+            for (std::size_t k = 0; k < fn.args.size(); ++k) {
+                fn.args[k] = lerp((*a)[i].args[k], (*b)[i].args[k]);
+                fn.pct[k] = lerp((*a)[i].pct[k], (*b)[i].pct[k]);
+            }
+            if (i != 0) { out += ' '; }
+            out += function_text(fn);
+        }
+        return out;
+    }
+    // A percentage has no matrix until the box exists: such a pair that does
+    // not match function by function stays discrete.
+    for (const std::vector<transform_fn> * list : {&*a, &*b}) {
+        for (const transform_fn & fn : *list) {
+            if (std::ranges::any_of(fn.pct, [](double v) { return v != 0; })) {
+                return std::nullopt;
+            }
+        }
+    }
+    decomposed2d x = decompose(matrix_of(*a));
+    const decomposed2d y = decompose(matrix_of(*b));
+    // The rotation goes the short way round, and a flip of scale on one
+    // side is undone on the other (§12.2).
+    if ((x.sx < 0 && y.sy < 0) || (x.sy < 0 && y.sx < 0)) {
+        x.sx = -x.sx, x.sy = -x.sy;
+        x.angle += x.angle < 0 ? 180 : -180;
+    }
+    if (std::fabs(x.angle - y.angle) > 180) {
+        if (x.angle > y.angle) {
+            x.angle -= 360;
+        } else {
+            x.angle += 360;
+        }
+    }
+    const decomposed2d z{lerp(x.tx, y.tx),   lerp(x.ty, y.ty),       lerp(x.sx, y.sx),
+                         lerp(x.sy, y.sy),   lerp(x.angle, y.angle), lerp(x.m11, y.m11),
+                         lerp(x.m12, y.m12), lerp(x.m21, y.m21),     lerp(x.m22, y.m22)};
+    return matrix_text(recompose(z));
+}
+
+// --- filter lists (Filter Effects 1 §11) ---
+
+[[nodiscard]] std::string interpolate_pair(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const css::length_context & ctx, bool & interpolable);
+
+struct filter_fn {
+    std::string name;
+    std::string args;
+};
+
+// A filter list in computed form - percentages as numbers, lengths in px -
+// as its functions; `none` is the empty list; nothing for a list this does
+// not model (a `url()`).
+[[nodiscard]] std::optional<std::vector<filter_fn>> parse_filters(std::string_view text) {
+    std::vector<filter_fn> out;
+    if (text.empty() || ascii_iequals(text, "none")) { return out; }
+    const std::string computed = css::computed_filter(text, {});
+    for (const std::string_view raw :
+         split_top_level(computed.empty() ? text : computed, html_whitespace)) {
+        const std::string_view item = trim(raw, html_whitespace);
+        if (item.empty()) { continue; }
+        const std::size_t open = item.find('(');
+        if (open == std::string_view::npos || !item.ends_with(')')) { return std::nullopt; }
+        filter_fn fn{
+            ascii_lower_copy(item.substr(0, open)),
+            std::string{trim(item.substr(open + 1, item.size() - open - 2), html_whitespace)}};
+        if (fn.name == "url" || fn.name == "src") { return std::nullopt; }
+        out.push_back(std::move(fn));
+    }
+    return out;
+}
+
+// The value a missing or empty function argument means (§11.2's lacuna).
+[[nodiscard]] std::string_view filter_identity(std::string_view name) {
+    if (name == "blur") { return "0px"; }
+    if (name == "hue-rotate") { return "0deg"; }
+    if (name == "drop-shadow") { return "rgba(0, 0, 0, 0) 0px 0px 0px"; }
+    if (name == "grayscale" || name == "invert" || name == "sepia") { return "0"; }
+    return "1"; // brightness, contrast, opacity, saturate
+}
+
+// §11.2: function by function while the lists match, the shorter padded
+// with the missing functions' lacuna values; a drop-shadow is a shadow. No
+// result goes negative, and the four amounts that saturate at 1 stop there.
+[[nodiscard]] std::optional<std::string> interpolate_filter(std::string_view from,
+                                                            std::string_view to, double p,
+                                                            const css::length_context & ctx) {
+    std::optional<std::vector<filter_fn>> a = parse_filters(from);
+    std::optional<std::vector<filter_fn>> b = parse_filters(to);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty() && b->empty()) { return "none"; }
+    for (std::size_t i = 0; i < std::min(a->size(), b->size()); ++i) {
+        if ((*a)[i].name != (*b)[i].name) { return std::nullopt; }
+    }
+    for (std::size_t i = a->size(); i < b->size(); ++i) { a->push_back({(*b)[i].name, ""}); }
+    for (std::size_t i = b->size(); i < a->size(); ++i) { b->push_back({(*a)[i].name, ""}); }
+    std::string out;
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        const std::string & name = (*a)[i].name;
+        const std::string_view x = (*a)[i].args.empty() ? filter_identity(name) : (*a)[i].args;
+        const std::string_view y = (*b)[i].args.empty() ? filter_identity(name) : (*b)[i].args;
+        bool ok = true;
+        std::string piece;
+        if (name == "drop-shadow") {
+            piece = interpolate_pair("text-shadow", computed_shape("text-shadow", x, ctx),
+                                     computed_shape("text-shadow", y, ctx), p, ctx, ok);
+        } else {
+            const std::optional<numeric_pair> n = numeric_of(x, y, ctx);
+            if (!n) { return std::nullopt; }
+            css::calc_result mixed = mix(n->a, n->b, p);
+            mixed.px = std::max(mixed.px, 0.0);
+            if (name == "grayscale" || name == "invert" || name == "opacity" || name == "sepia") {
+                mixed.px = std::min(mixed.px, 1.0);
+            }
+            piece = css::serialize_calc(mixed);
+        }
+        if (!ok) { return std::nullopt; }
+        if (i != 0) { out += ' '; }
+        out += name + '(' + piece + ')';
+    }
+    return out;
+}
+
+// CSS Transforms 2 §14, accumulation of two transform lists: function by
+// function when the lists match in length and primitive - a translate sums,
+// a scale sums its excess over 1, a rotate or skew sums its angles, a matrix
+// pair is decomposed, summed the same way and recomposed - and otherwise the
+// keyframe's list is appended to the underlying one. A matrix that cannot
+// be decomposed (singular) leaves the keyframe's value alone.
+[[nodiscard]] std::optional<std::string> accumulate_transform(std::string_view underlying,
+                                                              std::string_view value) {
+    const std::optional<std::vector<transform_fn>> a = parse_transforms(underlying);
+    const std::optional<std::vector<transform_fn>> b = parse_transforms(value);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty()) { return std::string{value}; }
+    if (b->empty()) { return std::string{underlying}; }
+    if (a->size() != b->size()) { return std::nullopt; }
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        if (primitive_of((*a)[i].name) != primitive_of((*b)[i].name)) { return std::nullopt; }
+    }
+    std::string out;
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        const transform_fn & x = (*a)[i];
+        const transform_fn & y = (*b)[i];
+        transform_fn fn = x;
+        if (fn.name == "matrix") {
+            const matrix2d mx = matrix_of(x), my = matrix_of(y);
+            if (mx[0] * mx[3] - mx[1] * mx[2] == 0 || my[0] * my[3] - my[1] * my[2] == 0) {
+                return std::string{value};
+            }
+            const decomposed2d dx = decompose(mx), dy = decompose(my);
+            const decomposed2d sum{dx.tx + dy.tx,     dx.ty + dy.ty,       dx.sx + dy.sx - 1,
+                                   dx.sy + dy.sy - 1, dx.angle + dy.angle, dx.m11 + dy.m11 - 1,
+                                   dx.m12 + dy.m12,   dx.m21 + dy.m21,     dx.m22 + dy.m22 - 1};
+            if (i != 0) { out += ' '; }
+            out += matrix_text(recompose(sum));
+            continue;
+        }
+        for (std::size_t k = 0; k < fn.args.size(); ++k) {
+            fn.args[k] = fn.name == "scale" ? x.args[k] + y.args[k] - 1 : x.args[k] + y.args[k];
+            fn.pct[k] = x.pct[k] + y.pct[k];
+        }
+        if (i != 0) { out += ' '; }
+        out += function_text(fn);
+    }
+    return out;
+}
+
+// --- the rotate property (CSS Transforms 2 §7.2) ---
+
+struct rotation {
+    double x = 0, y = 0, z = 1, angle = 0;
+};
+
+// `none`, `<angle>`, `x|y|z <angle>` or `<number>{3} <angle>`, the axis as
+// given; nothing for anything else.
+[[nodiscard]] std::optional<rotation> rotation_of(std::string_view text,
+                                                  const css::length_context & ctx) {
+    rotation out;
+    if (ascii_iequals(text, "none")) { return out; }
+    std::vector<std::string_view> parts;
+    for (const std::string_view part : split_top_level(text, html_whitespace)) {
+        if (!part.empty()) { parts.push_back(part); }
+    }
+    if (parts.empty() || parts.size() == 3 || parts.size() > 4) { return std::nullopt; }
+    const css::math_answer angle = css::evaluate_math(parts.back(), ctx);
+    if (angle.outcome != css::math_outcome::resolved ||
+        angle.value.type != css::numeric_type::angle) {
+        return std::nullopt;
+    }
+    out.angle = angle.value.px;
+    if (parts.size() == 2) {
+        const std::string axis = ascii_lower_copy(parts[0]);
+        if (axis == "x") {
+            out.x = 1, out.z = 0;
+        } else if (axis == "y") {
+            out.y = 1, out.z = 0;
+        } else if (axis != "z") {
+            return std::nullopt;
+        }
+    } else if (parts.size() == 4) {
+        double v[3];
+        for (std::size_t i = 0; i < 3; ++i) {
+            const std::optional<double> n = number_of(parts[i]);
+            if (!n) { return std::nullopt; }
+            v[i] = *n;
+        }
+        out.x = v[0], out.y = v[1], out.z = v[2];
+    }
+    return out;
+}
+
+// Two rotations about one axis - or one of them by nothing, which takes the
+// other's axis - interpolate by angle; different axes stay discrete.
+// ponytail: the spec's quaternion slerp for differing axes, when a test
+// reads one.
+[[nodiscard]] std::optional<std::string> interpolate_rotate(std::string_view from,
+                                                            std::string_view to, double p,
+                                                            const css::length_context & ctx) {
+    std::optional<rotation> a = rotation_of(from, ctx);
+    std::optional<rotation> b = rotation_of(to, ctx);
+    if (!a || !b) { return std::nullopt; }
+    const auto unit = [](rotation & r) {
+        const double n = std::hypot(r.x, r.y, r.z);
+        if (n == 0) { return false; }
+        r.x /= n, r.y /= n, r.z /= n;
+        return true;
+    };
+    if (!unit(*a) || !unit(*b)) { return std::nullopt; }
+    if (a->angle == 0) { a->x = b->x, a->y = b->y, a->z = b->z; }
+    if (b->angle == 0) { b->x = a->x, b->y = a->y, b->z = a->z; }
+    const auto text = [](double x, double y, double z, double angle) {
+        const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // no `-0`
+        return css::serialize_number(tidy(x)) + " " + css::serialize_number(tidy(y)) + " " +
+               css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) + "deg";
+    };
+    const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+    if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
+        return text(a->x, a->y, a->z, (1 - p) * a->angle + p * b->angle);
+    }
+    // Different axes: the two rotations as unit quaternions, slerped
+    // (CSS Transforms 2 §9's interpolation of rotate3d()), then back to an
+    // axis and an angle.
+    const auto quaternion = [](const rotation & r) {
+        const double half = radians(r.angle) / 2;
+        return std::array<double, 4>{r.x * std::sin(half), r.y * std::sin(half),
+                                     r.z * std::sin(half), std::cos(half)};
+    };
+    std::array<double, 4> q1 = quaternion(*a), q2 = quaternion(*b);
+    double dot = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
+    if (dot < 0) {
+        for (double & v : q2) { v = -v; }
+        dot = -dot;
+    }
+    dot = std::min(dot, 1.0);
+    const double theta = std::acos(dot);
+    std::array<double, 4> q;
+    for (std::size_t i = 0; i < 4; ++i) {
+        q[i] = theta < 1e-6 ? (1 - p) * q1[i] + p * q2[i]
+                            : (std::sin((1 - p) * theta) * q1[i] + std::sin(p * theta) * q2[i]) /
+                                  std::sin(theta);
+    }
+    const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    for (double & v : q) { v /= norm; }
+    // The canonical spelling of a rotation is the one under a half turn.
+    if (q[3] < 0) {
+        for (double & v : q) { v = -v; }
+    }
+    const double angle = 2 * std::acos(std::clamp(q[3], -1.0, 1.0));
+    const double s = std::sin(angle / 2);
+    if (std::fabs(s) < 1e-9) { return text(0, 0, 1, 0); }
+    return text(q[0] / s, q[1] / s, q[2] / s, angle * 180.0 / std::numbers::pi);
+}
+
+// --- ratios ---
+
+// A `<ratio>` as one number: `1 / 2`, `0.5`, `2 / 0` is infinite. Nothing
+// for `auto` or a degenerate pair, which stay discrete.
+[[nodiscard]] std::optional<double> ratio_of(std::string_view text) {
+    const std::vector<std::string_view> parts = split_top_level(text, "/");
+    if (parts.empty() || parts.size() > 2) { return std::nullopt; }
+    double n[2] = {1, 1};
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const std::optional<double> v = number_of(trim(parts[i], html_whitespace));
+        if (!v || *v < 0) { return std::nullopt; }
+        n[i] = *v;
+    }
+    if (n[1] == 0 || n[0] == 0) { return std::nullopt; }
+    return n[0] / n[1];
+}
+
+// CSS Sizing 4 §7.1: a ratio interpolates as the logarithm of its value,
+// and the answer is written as `<number> / 1`.
+[[nodiscard]] std::optional<std::string> interpolate_ratio(std::string_view from,
+                                                           std::string_view to, double p) {
+    const std::optional<double> a = ratio_of(from);
+    const std::optional<double> b = ratio_of(to);
+    if (!a || !b) { return std::nullopt; }
+    const double mixed = std::exp((1 - p) * std::log(*a) + p * std::log(*b));
+    return css::serialize_number(mixed) + " / 1";
+}
+
+// --- the pair ---
+
+// CSS Values 4 §4.1: two values interpolate when they are one number, length
+// or percentage each; two colours; or LISTS of the same shape -
+// comma-separated, then space-separated - whose items pair off as one of
+// those or as identical text (`inset`, `/`, `auto`). `border-width: 20px
+// 40px`, `box-shadow: red 2px 2px`, `background-size: 10px 20%` are all that.
+// When the pair does not, `interpolable` is false and the answer flips at the
+// midpoint.
+[[nodiscard]] std::string interpolate_pair(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const css::length_context & ctx, bool & interpolable) {
+    from = trim(from, html_whitespace);
+    to = trim(to, html_whitespace);
+    interpolable = true;
+    if (property == "transform") {
+        if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
+    }
+    if (property == "aspect-ratio") {
+        // `auto <ratio>` on both sides keeps `auto` and interpolates the
+        // ratio; `auto` on one side only is discrete.
+        const bool auto_a = ascii_istarts_with(from, "auto");
+        const bool auto_b = ascii_istarts_with(to, "auto");
+        if (auto_a == auto_b) {
+            const std::string_view ra = auto_a ? trim(from.substr(4), html_whitespace) : from;
+            const std::string_view rb = auto_b ? trim(to.substr(4), html_whitespace) : to;
+            if (const std::optional<std::string> r = interpolate_ratio(ra, rb, p)) {
+                return auto_a ? "auto " + *r : *r;
+            }
+        }
+    }
+    if (property == "rotate") {
+        if (const std::optional<std::string> r = interpolate_rotate(from, to, p, ctx)) {
+            return *r;
+        }
+    }
+    if (property == "filter" || property == "backdrop-filter") {
+        if (const std::optional<std::string> f = interpolate_filter(from, to, p, ctx)) {
+            return *f;
+        }
+    }
+    if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
+        return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
+                                                      : lerp_oklab(*a, *b, p);
+    }
+    if (const std::optional<numeric_pair> n = numeric_of(from, to, ctx)) {
+        return numeric_text(property, mix(n->a, n->b, p));
+    }
+    std::vector<std::string> lists_a;
+    std::vector<std::string> lists_b;
+    for (const std::string_view item : comma_items(from)) { lists_a.emplace_back(item); }
+    for (const std::string_view item : comma_items(to)) { lists_b.emplace_back(item); }
+    const auto discrete = [&] {
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    };
+    if (repeatable(property)) { repeat_to_match(lists_a, lists_b); }
+    const bool shadow = is_shadow(property);
+    if (shadow) {
+        // The shorter shadow list is padded at its end to the longer one's
+        // length, each blank shadow inset when its partner is.
+        while (lists_a.size() < lists_b.size()) {
+            lists_a.push_back(blank_shadow(property == "box-shadow", lists_b[lists_a.size()]));
+        }
+        while (lists_b.size() < lists_a.size()) {
+            lists_b.push_back(blank_shadow(property == "box-shadow", lists_a[lists_b.size()]));
+        }
+    }
+    if (lists_a.size() != lists_b.size() || lists_a.empty()) { return discrete(); }
+    std::string out;
+    for (std::size_t i = 0; i < lists_a.size(); ++i) {
+        const std::vector<std::string_view> items_a = split_top_level(lists_a[i], html_whitespace);
+        const std::vector<std::string_view> items_b = split_top_level(lists_b[i], html_whitespace);
+        if (items_a.size() != items_b.size() || items_a.empty()) { return discrete(); }
+        // A single item on each side is the pair itself, already refused above.
+        if (items_a.size() == 1 && lists_a.size() == 1) { return discrete(); }
+        if (i != 0) { out += ", "; }
+        std::size_t k_out = 0;
+        for (std::size_t k = 0; k < items_a.size(); ++k) {
+            const std::string_view x = trim(items_a[k], html_whitespace);
+            const std::string_view y = trim(items_b[k], html_whitespace);
+            if (x.empty() && y.empty()) { continue; }
+            if (k_out++ != 0) { out += ' '; }
+            if (x == y) {
+                out += x;
+                continue;
+            }
+            bool item_ok = true;
+            std::string piece = interpolate_pair(property, x, y, p, ctx, item_ok);
+            if (!item_ok) { return discrete(); }
+            // A shadow's blur - the third length, in computed shape - cannot
+            // go negative (CSS Backgrounds 3 §7.2): the extrapolated one is zero.
+            if (shadow && k_out == 4 && piece.starts_with('-')) { piece = "0px"; }
+            out += piece;
+        }
+    }
+    return out;
+}
+
+// Web Animations 1 §4.5.1 over one item: numerics sum, colours sum, identical
+// keywords keep, a list adds item by item, and anything else is `value`.
+[[nodiscard]] std::string add_pair(std::string_view property, std::string_view underlying,
+                                   std::string_view value, const css::length_context & ctx) {
+    underlying = trim(underlying, html_whitespace);
+    value = trim(value, html_whitespace);
+    if (underlying.empty()) { return std::string{value}; }
+    if (const auto a = css::resolve_color(underlying, {}), b = css::resolve_color(value, {});
+        a && b) {
+        return add_color(*a, *b);
+    }
+    if (const std::optional<numeric_pair> n = numeric_of(underlying, value, ctx)) {
+        return numeric_text(property, sum(n->a, n->b));
+    }
+    std::vector<std::string_view> lists_a = comma_items(underlying);
+    std::vector<std::string_view> lists_b = comma_items(value);
+    if (repeatable(property)) { repeat_to_match(lists_a, lists_b); }
+    if (lists_a.size() != lists_b.size() || lists_a.empty()) { return std::string{value}; }
+    std::string out;
+    for (std::size_t i = 0; i < lists_a.size(); ++i) {
+        const std::vector<std::string_view> items_a = split_top_level(lists_a[i], html_whitespace);
+        const std::vector<std::string_view> items_b = split_top_level(lists_b[i], html_whitespace);
+        if (items_a.size() != items_b.size() || items_a.empty()) { return std::string{value}; }
+        if (items_a.size() == 1 && lists_a.size() == 1) { return std::string{value}; }
+        if (i != 0) { out += ", "; }
+        std::size_t k_out = 0;
+        for (std::size_t k = 0; k < items_a.size(); ++k) {
+            const std::string_view x = trim(items_a[k], html_whitespace);
+            const std::string_view y = trim(items_b[k], html_whitespace);
+            if (x.empty() && y.empty()) { continue; }
+            if (k_out++ != 0) { out += ' '; }
+            if (x == y) {
+                out += x;
+                continue;
+            }
+            bool item_ok = true;
+            (void)interpolate_pair(property, x, y, 0.5, ctx, item_ok);
+            if (!item_ok) { return std::string{value}; }
+            out += add_pair(property, x, y, ctx);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+[[nodiscard]] std::string interpolate_text(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const css::length_context & ctx) {
+    // Identical endpoints are that value at every progress - `none` to
+    // `none` stays `none` rather than becoming its expanded shape.
+    if (trim(from, html_whitespace) == trim(to, html_whitespace)) {
+        return std::string{trim(from, html_whitespace)};
+    }
+    bool interpolable = true;
+    std::string out = interpolate_pair(property, computed_shape(property, from, ctx),
+                                       computed_shape(property, to, ctx), p, ctx, interpolable);
+    // A corner radius whose two halves came out equal is written once, as
+    // the computed serialiser writes a declared one.
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const std::vector<std::string_view> halves = split_top_level(out, html_whitespace);
+        if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
+    }
+    return out;
+}
+
+[[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
+                                     std::string_view to) {
+    bool interpolable = true;
+    const css::length_context ctx;
+    (void)interpolate_pair(property, computed_shape(property, from, ctx),
+                           computed_shape(property, to, ctx), 0.5, ctx, interpolable);
+    return interpolable;
+}
+
+[[nodiscard]] std::string with_currentcolor(std::string_view value, std::string_view color) {
+    static constexpr std::string_view word = "currentcolor";
+    std::string out;
+    std::size_t i = 0;
+    const auto boundary = [](char c) {
+        return !(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_');
+    };
+    while (i < value.size()) {
+        if (value.size() - i >= word.size() && ascii_iequals(value.substr(i, word.size()), word) &&
+            (i == 0 || boundary(value[i - 1])) &&
+            (i + word.size() == value.size() || boundary(value[i + word.size()]))) {
+            out += color;
+            i += word.size();
+            continue;
+        }
+        out += value[i++];
+    }
+    return out;
+}
+
+[[nodiscard]] std::string composite_text(std::string_view property, std::string_view underlying,
+                                         std::string_view value, composite_op op,
+                                         const css::length_context & ctx) {
+    if (op == composite_op::replace) { return std::string{value}; }
+    const std::string base = computed_shape(property, trim(underlying, html_whitespace), ctx);
+    const std::string added = computed_shape(property, trim(value, html_whitespace), ctx);
+    if (property == "transform" && op == composite_op::accumulate) {
+        if (const std::optional<std::string> sum = accumulate_transform(base, added)) {
+            return *sum;
+        }
+    }
+    if (appends(property)) {
+        // The underlying list first, then the keyframe's; `none` on either
+        // side is the empty list and contributes nothing.
+        const bool base_none = base.empty() || ascii_iequals(base, "none");
+        const bool added_none = added.empty() || ascii_iequals(added, "none");
+        if (base_none) { return added; }
+        if (added_none) { return base; }
+        return base + (is_shadow(property) ? ", " : " ") + added;
+    }
+    if (property == "rotate") {
+        // CSS Transforms 2 §7.2: `none` adds nothing; about one axis the
+        // angles sum; about two the rotations compose as quaternions.
+        std::optional<rotation> a = rotation_of(base, ctx);
+        std::optional<rotation> b = rotation_of(added, ctx);
+        if (!a || !b) { return added; }
+        if (b->angle == 0) { return base; }
+        if (a->angle == 0) { return added; }
+        const auto unit = [](rotation & r) {
+            const double n = std::hypot(r.x, r.y, r.z);
+            if (n == 0) { return false; }
+            r.x /= n, r.y /= n, r.z /= n;
+            return true;
+        };
+        if (!unit(*a) || !unit(*b)) { return added; }
+        const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
+        const auto text = [](double x, double y, double z, double angle) {
+            const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // no `-0`
+            return css::serialize_number(tidy(x)) + " " + css::serialize_number(tidy(y)) + " " +
+                   css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) +
+                   "deg";
+        };
+        if (near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z)) {
+            return text(a->x, a->y, a->z, a->angle + b->angle);
+        }
+        // q = qb * qa: the underlying rotation first, then the keyframe's.
+        const auto quaternion = [](const rotation & r) {
+            const double half = radians(r.angle) / 2;
+            return std::array<double, 4>{r.x * std::sin(half), r.y * std::sin(half),
+                                         r.z * std::sin(half), std::cos(half)};
+        };
+        const std::array<double, 4> qa = quaternion(*a), qb = quaternion(*b);
+        std::array<double, 4> q{qb[3] * qa[0] + qb[0] * qa[3] + qb[1] * qa[2] - qb[2] * qa[1],
+                                qb[3] * qa[1] - qb[0] * qa[2] + qb[1] * qa[3] + qb[2] * qa[0],
+                                qb[3] * qa[2] + qb[0] * qa[1] - qb[1] * qa[0] + qb[2] * qa[3],
+                                qb[3] * qa[3] - qb[0] * qa[0] - qb[1] * qa[1] - qb[2] * qa[2]};
+        if (q[3] < 0) {
+            for (double & v : q) { v = -v; }
+        }
+        const double angle = 2 * std::acos(std::clamp(q[3], -1.0, 1.0));
+        const double sn = std::sin(angle / 2);
+        if (std::fabs(sn) < 1e-9) { return text(0, 0, 1, 0); }
+        return text(q[0] / sn, q[1] / sn, q[2] / sn, angle * 180.0 / std::numbers::pi);
+    }
+    if (property == "scale") {
+        // CSS Transforms 2 §7: scales add by multiplying component by
+        // component, and accumulate by summing each one's excess over 1.
+        const std::vector<std::string_view> a = split_top_level(base, html_whitespace);
+        const std::vector<std::string_view> b = split_top_level(added, html_whitespace);
+        if (a.size() != 3 || b.size() != 3) { return added; }
+        std::string out;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const std::optional<numeric_pair> n = numeric_of(a[i], b[i], ctx);
+            if (!n || !n->a.is_number) { return added; }
+            css::calc_result product = n->a;
+            product.px = op == composite_op::add ? n->a.px * n->b.px : n->a.px + n->b.px - 1;
+            out += (i == 0 ? "" : " ") + css::serialize_calc(product);
+        }
+        return out;
+    }
+    return add_pair(property, base, added, ctx);
 }
 
 } // namespace ctbrowser::style
