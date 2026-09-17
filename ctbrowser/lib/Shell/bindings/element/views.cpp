@@ -468,7 +468,10 @@ void dom_bindings::install_element_scrolling(context & cx) {
                         return value::undefined();
                     }
                 }
-            } else if (!args.empty() && !args[0].is_undefined() && !context::truthy(args[0])) {
+            } else if (!args.empty() && !args[0].is_nullish() && !context::truthy(args[0])) {
+                // `null` is the (boolean or ScrollIntoViewOptions) union's
+                // dictionary arm - block "start" - and only a falsy boolean is
+                // "end".
                 block = "end";
             }
             if (self) { scroll_into_view(self, block, inline_, nearest_container); }

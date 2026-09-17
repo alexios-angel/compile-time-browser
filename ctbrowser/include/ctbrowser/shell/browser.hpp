@@ -471,6 +471,11 @@ public:
     [[nodiscard]] bool on_scrollbar(float x) const noexcept;
     [[nodiscard]] float max_scroll() const noexcept;
     [[nodiscard]] float max_scroll_x() const noexcept;
+    // Whether the page shows its scrollbar: it overflows, the chrome has one,
+    // and the viewport's overflow is not hidden (run_layout decides that).
+    [[nodiscard]] bool has_scrollbar() const noexcept {
+        return scrollbar_shown_ && max_scroll() > 0 && options_.scrollbar_width > 0;
+    }
 
     // --- input -----------------------------------------------------------
 
@@ -1262,6 +1267,9 @@ private:
     float scroll_y_ = 0;
     float scroll_x_ = 0;
     float content_height_ = 0;
+    // False when the viewport's propagated overflow is hidden or clip: the
+    // page still scrolls programmatically but reserves and draws no bar.
+    bool scrollbar_shown_ = true;
     // The viewport scrolling area's width (CSSOM View §2): the layout width,
     // or further right when something overflows it. content_height_ stays
     // the document's own height, which is what the scrollbar is drawn from.

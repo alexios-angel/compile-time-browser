@@ -5,6 +5,37 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// THE VIEWPORT'S OVERFLOW, CSS Overflow 3 §3.3: the root's `overflow-y`
+// propagates to the viewport, and when the root's is `visible` the body's
+// does instead. A viewport at `hidden` or `clip` shows no scrollbar - it
+// still scrolls programmatically, which is what scrollintoview.html's
+// `body { padding: 4000px; overflow: hidden }` measures against innerWidth.
+[[nodiscard]] bool viewport_hides_overflow(atom_table & atoms,
+                                           const ctbrowser::style::style_map & resolved,
+                                           const read_txn & txn) {
+    const auto overflow_y = [&](node_id id) -> std::string_view {
+        if (!id) { return {}; }
+        const auto found = resolved.find(ctbrowser::style::engine::key_of(id));
+        if (found == resolved.end() || !found->second) { return {}; }
+        return trim(found->second->get(atoms.intern("overflow-y")), html_whitespace);
+    };
+    const node_id root = txn.root();
+    std::string_view used = overflow_y(root);
+    if (used.empty() || ascii_iequals(used, "visible")) {
+        for (const node_id child : txn.children(root)) {
+            if (txn.element_ns(child) == node_ns::html && txn.local_name(child) == "body") {
+                used = overflow_y(child);
+                break;
+            }
+        }
+    }
+    return ascii_iequals(used, "hidden") || ascii_iequals(used, "clip");
+}
+
+} // namespace
+
 double browser::next_wakeup_ms() {
     double soonest = std::numeric_limits<double>::infinity();
     if (bindings_) {
@@ -157,8 +188,7 @@ void browser::scroll_to(float x, float y) {
 }
 
 bool browser::on_scrollbar(float x) const noexcept {
-    return max_scroll() > 0 && options_.scrollbar_width > 0 &&
-           x >= static_cast<float>(options_.width) - options_.scrollbar_width;
+    return has_scrollbar() && x >= static_cast<float>(options_.width) - options_.scrollbar_width;
 }
 
 float browser::max_scroll() const noexcept {
@@ -272,7 +302,9 @@ void browser::run_layout() {
     // TALLER, so a page that overflowed still overflows - it never
     // oscillates between needing a bar and not.
     layout_width_ = static_cast<float>(options_.width);
-    if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height)) {
+    scrollbar_shown_ = !viewport_hides_overflow(atoms_, resolved_, txn);
+    if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height) &&
+        scrollbar_shown_) {
         layout_width_ = static_cast<float>(options_.width) - options_.scrollbar_width;
         fragments_ = eng.run(boxes_, layout_width_, static_cast<float>(options_.height));
         content_height_ = fragments_.bounds.height;
