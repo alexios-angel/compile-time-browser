@@ -468,6 +468,60 @@ void test_async_dispose() {
                       "undefined");
 }
 
+// `async function*`: every request is a promise of the record, queued behind
+// the body; `yield` awaits its operand; a throw rejects the request; the body
+// may park on an `await` between two requests.
+void test_async_generators() {
+    expect_after_turn("var result = ''; async function* g() { yield 1; yield 2; }"
+                      "const it = g(); result = typeof it.next().then;",
+                      "function");
+    expect_after_turn("var result = ''; async function* g() { yield 1; yield 2; }"
+                      "const it = g();"
+                      "it.next().then(r => { result += r.value + ':' + r.done + ' '; });"
+                      "it.next().then(r => { result += r.value + ':' + r.done + ' '; });"
+                      "it.next().then(r => { result += r.value + ':' + r.done; });",
+                      "1:false 2:false undefined:true");
+    // `yield` awaits: a promise's value comes out, and the body sees `.next(v)`'s v.
+    expect_after_turn(
+        "var result = ''; async function* g() { const got = yield Promise.resolve(5); "
+        "  yield got * 2; }"
+        "const it = g(); it.next().then(r => { result += r.value; return it.next(7); })"
+        "  .then(r => { result += ',' + r.value; });",
+        "5,14");
+    // An await between requests: the second `.next()` waits for the first.
+    expect_after_turn(
+        "var result = ''; let go;"
+        "async function* g() { await new Promise(r => { go = r; }); yield 'a'; yield 'b'; }"
+        "const it = g();"
+        "it.next().then(r => { result += r.value; });"
+        "it.next().then(r => { result += r.value; });"
+        "Promise.resolve().then(() => { result += '|'; go(); });",
+        "|ab");
+    // A throw rejects the request, and the generator is done afterwards.
+    expect_after_turn(
+        "var result = ''; async function* g() { yield 1; throw new Error('x'); }"
+        "const it = g(); it.next().then(() => it.next()).then(() => { result = 'no'; },"
+        "  e => { result = e.message; return it.next(); }).then(r => { result += r.done; });",
+        "xtrue");
+    // `.throw()` at a yield lands in the body's catch; `.return()` finishes.
+    expect_after_turn(
+        "var result = ''; async function* g() { try { yield 1; } catch (e) { yield 'c' + e; } }"
+        "const it = g(); it.next().then(() => it.throw('!')).then(r => { result = r.value; });",
+        "c!");
+    expect_after_turn("var result = ''; async function* g() { yield 1; yield 2; }"
+                      "const it = g(); it.next().then(() => it.return('r')).then(r => { result = "
+                      "r.value + r.done; });",
+                      "rtrue");
+    expect_after_turn("var result = ''; async function* g() {}"
+                      "result = typeof g()[Symbol.asyncIterator];",
+                      "function");
+    // `.next` on something that is not an async generator rejects.
+    expect_after_turn(
+        "var result = ''; async function* g() {}"
+        "g().next.call({}).then(() => { result = 'no'; }, e => { result = e.name; });",
+        "TypeError");
+}
+
 // `for await (x of y)`: an async generator pulled lazily, a sync iterable
 // whose values are promises, `break`, and a rejection reaching the body's
 // caller.
