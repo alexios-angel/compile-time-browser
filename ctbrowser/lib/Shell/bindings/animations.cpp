@@ -344,27 +344,48 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 double offset;
                 std::string text;
                 std::string easing;
+                std::string composite;
             };
             std::vector<point> points;
             for (const animation_keyframe & k : e.keyframes) {
                 for (const auto & [name, text] : k.values) {
-                    if (name == property) { points.push_back(point{k.offset, text, k.easing}); }
-                }
-            }
-            // A NEUTRAL KEYFRAME AT EACH MISSING END: the underlying value,
-            // which is the cascade's text or the property's initial value.
-            if (points.front().offset != 0 || points.back().offset != 1) {
-                std::string base{trim(underlying(property), html_whitespace)};
-                if (base.empty()) {
-                    if (const auto * known = style::css::find_property(property)) {
-                        base = std::string{known->initial};
+                    if (name == property) {
+                        points.push_back(point{k.offset, text, k.easing, k.composite});
                     }
                 }
-                if (points.front().offset != 0) {
-                    points.insert(points.begin(), point{0, base, "linear"});
-                }
-                if (points.back().offset != 1) { points.push_back(point{1, base, "linear"}); }
             }
+            // THE UNDERLYING VALUE (§5.4.3): what the animations before this
+            // one in composite order left, else the cascade's text, else the
+            // property's initial value. It is the neutral keyframe at each
+            // missing end, and what a keyframe that adds or accumulates
+            // composites onto.
+            const auto seen = std::ranges::find_if(
+                out, [&property](const auto & entry) { return entry.first == property; });
+            std::string base = seen != out.end()
+                                   ? seen->second
+                                   : std::string{trim(underlying(property), html_whitespace)};
+            if (base.empty()) {
+                if (const auto * known = style::css::find_property(property)) {
+                    base = std::string{known->initial};
+                }
+            }
+            if (points.front().offset != 0) {
+                points.insert(points.begin(), point{0, base, "linear", "replace"});
+            }
+            if (points.back().offset != 1) {
+                points.push_back(point{1, base, "linear", "replace"});
+            }
+            // §4.5.1: a keyframe's composite operation - its own, or the
+            // effect's when `auto` - applies to its value against the
+            // underlying value BEFORE the interpolation.
+            const auto composited = [&](const point & pt) {
+                const std::string & op = pt.composite == "auto" ? e.composite : pt.composite;
+                return style::composite_text(property, base, pt.text,
+                                             op == "add"          ? style::composite_op::add
+                                             : op == "accumulate" ? style::composite_op::accumulate
+                                                                  : style::composite_op::replace,
+                                             ctx);
+            };
             std::size_t start = 0;
             std::size_t stop = 0;
             bool single = false;
@@ -401,17 +422,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             }
             std::string text;
             if (single) {
-                text = points[start].text;
+                text = composited(points[start]);
             } else {
                 const double span = points[stop].offset - points[start].offset;
                 const double distance = (progress - points[start].offset) / span;
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
-                text = interpolate_value(property, points[start].text, points[stop].text,
-                                         keyframe_easing(distance, false), ctx);
+                text =
+                    interpolate_value(property, composited(points[start]), composited(points[stop]),
+                                      keyframe_easing(distance, false), ctx);
             }
-            const auto seen = std::ranges::find_if(
-                out, [&property](const auto & entry) { return entry.first == property; });
             if (seen == out.end()) {
                 out.emplace_back(property, std::move(text));
             } else {
