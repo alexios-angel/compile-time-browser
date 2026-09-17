@@ -38,6 +38,26 @@ namespace {
 // at most one colon, and neither half empty. `:a`, `a:` and `a::b` are
 // namespace-well-formedness violations, which a browser reports as it does
 // any other fatal error (DOMParser-parseFromString-xml-parsererror.html).
+// A lone surrogate is not an XML Char. The engine's strings carry one as the
+// three bytes ED A0-BF xx (a JS string's unpaired half, handed to DOMParser),
+// and a browser makes it U+FFFD in character data rather than a fatal error
+// (DOMParser-parseFromString-xml-parsererror.html, after crbug.com/40814739).
+[[nodiscard]] std::string without_surrogates(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto b = static_cast<unsigned char>(text[i]);
+        if (b == 0xED && i + 2 < text.size() && static_cast<unsigned char>(text[i + 1]) >= 0xA0 &&
+            static_cast<unsigned char>(text[i + 1]) <= 0xBF) {
+            out += "\xEF\xBF\xBD";
+            i += 2;
+            continue;
+        }
+        out += text[i];
+    }
+    return out;
+}
+
 [[nodiscard]] bool is_qname(std::string_view name) {
     const std::size_t colon = name.find(':');
     if (colon == std::string_view::npos) { return true; }
@@ -605,7 +625,7 @@ private:
             fail("CDATA section outside the document element");
             return;
         }
-        builder_.append(open_.back().id, doc_.create_cdata_section(text));
+        builder_.append(open_.back().id, doc_.create_cdata_section(without_surrogates(text)));
     }
 
     // Text up to the next `<`, with references resolved. A bare `&` or a
@@ -626,7 +646,7 @@ private:
             advance();
         }
         if (text.empty() || open_.empty()) { return; }
-        const node_id id = doc_.create_text(text);
+        const node_id id = doc_.create_text(without_surrogates(text));
         builder_.append(open_.back().id, id);
     }
 
