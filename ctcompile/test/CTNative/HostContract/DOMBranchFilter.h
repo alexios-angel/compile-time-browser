@@ -2,12 +2,215 @@
 
 #include "HostContractFixtures.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Verifier.h"
 
 namespace ctcompile::test::host_contract {
+
+inline void checkDOMNestedHelpers(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"MLIR(
+module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %text = ctjs.constant #ctjs.string<"%7B%7D">
+    %flag = ctjs.constant #ctjs.boolean<false>
+    %condition = ctjs.truthy %flag
+    %helper = ctjs.create_closure %callee[1] this %u
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %parsed = ctjs.call %helper(%u, %text)
+      scf.yield %parsed : !ctjs.value
+    } else {
+      scf.yield %text : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+  ctjs.func private @parse$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %text: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %json = ctjs.load_global "JSON"
+    %key = ctjs.constant #ctjs.string<"parse">
+    %parse = ctjs.get_property %json[%key]
+    %decode = ctjs.load_global "decodeURIComponent"
+    %answer = ctjs.invoke {
+      %decoded = ctjs.call %decode(%u, %text)
+      ctjs.invoke_exit %decoded state()
+    } normal {
+    ^bb0(%decodedText: !ctjs.value):
+      %tree = ctjs.invoke {
+        %parsed = ctjs.call %parse(%json, %decodedText)
+        ctjs.invoke_exit %parsed state()
+      } normal {
+      ^bb0(%parsedTree: !ctjs.value):
+        ctjs.invoke_yield(%parsedTree)
+      } unwind {
+      ^bb0(%parseError: !ctjs.value):
+        ctjs.invoke_yield(%text)
+      } : !ctjs.value
+      ctjs.invoke_yield(%tree)
+    } unwind {
+    ^bb0(%decodeError: !ctjs.value):
+      ctjs.invoke_yield(%text)
+    } : !ctjs.value
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    const auto withCapture = [](std::string input) {
+        input = replaced(input, "%helper = ctjs.create_closure %callee[1] this %u",
+                         "%cell = ctjs.create_cell %u\n"
+                         "    %helper = ctjs.create_closure %callee[1] this %u captures %cell\n"
+                         "    ctjs.cell_set %cell, %text");
+        input = replaced(input, "%text: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0",
+                         "%unused: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1");
+        return replaced(input,
+                        "    %json =", "    %text = ctjs.load_upvalue %callee[0]\n    %json =");
+    };
+    const auto captured = withCapture(source);
+    auto loop = replaced(source, "%answer = scf.if", R"MLIR(
+    %answer = scf.while (%state = %text) : (!ctjs.value) -> !ctjs.value {
+      %selected = scf.if
+)MLIR");
+    loop = replaced(loop, "    ctjs.return %answer", R"MLIR(
+      scf.condition(%condition) %selected : !ctjs.value
+    } do {
+    ^bb0(%state: !ctjs.value):
+      scf.yield %state : !ctjs.value
+    }
+    ctjs.return %answer
+)MLIR");
+    auto loopAfter = replaced(source, "%answer = scf.if", R"MLIR(
+    %answer = scf.while (%state = %text) : (!ctjs.value) -> !ctjs.value {
+      scf.condition(%condition) %state : !ctjs.value
+    } do {
+    ^bb0(%state: !ctjs.value):
+      %selected = scf.if
+)MLIR");
+    loopAfter = replaced(loopAfter, "    ctjs.return %answer", R"MLIR(
+      scf.yield %selected : !ctjs.value
+    }
+    ctjs.return %answer
+)MLIR");
+    const auto capturedLoop = withCapture(loopAfter);
+    for (const auto & valid : {source, captured, loop, loopAfter, capturedLoop,
+                               replaced(source, "ctjs.call %helper(%u, %text)",
+                                        "ctjs.call_direct @parse$1(%u, %u, %helper, %text)")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "nested helper source fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "an enclosing helper and its initialized capture precede the nested call");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        check(mlir::succeeded(mlir::verify(*input)) &&
+                  !input->lookupSymbol<ctjs::FuncOp>("parse$1"),
+              "nested expansion leaves valid IR and retires only the expanded helper");
+        unsigned calls = 0, invocations = 0, closures = 0;
+        input->walk([&](ctjs::CreateClosureOp) { ++closures; });
+        input->walk([&](ctjs::CallOp) { ++calls; });
+        input->walk([&](ctjs::InvokeOp invoke) {
+            ++invocations;
+            check(static_cast<bool>(invoke->getParentOfType<mlir::scf::IfOp>()),
+                  "helper effects remain inside the original selected arm");
+            auto fallback =
+                llvm::cast<ctjs::InvokeYieldOp>(invoke.getUnwindBody().front().getTerminator());
+            auto constant = fallback.getValues().front().getDefiningOp<ctjs::ConstantOp>();
+            check(constant && ctjs::constantKey(constant.getResult()) == "%7B%7D",
+                  "both URI and JSON failures keep the original saved input");
+        });
+        check(calls == 2 && invocations == 2 && closures == 0,
+              "nested expansion preserves both fallible calls and their continuations");
+        if (valid == loop || valid == loopAfter || valid == capturedLoop) { continue; }
+        HostContract contract;
+        contract.entry = "entry$0";
+        contract.elementParameters = {0};
+        contract.initialIntrinsics = {"JSON", "decodeURIComponent"};
+        contract.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            contract.provider = provider;
+            DOMEntryAnalysis proof(*input, contract);
+            check(proof.proved(), "nested helper invokes receive complete DOM reproof");
+            if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+        }
+    }
+    auto varying = replaced(source, "      scf.yield %text : !ctjs.value",
+                            "      %other = ctjs.call %helper(%u, %element)\n"
+                            "      scf.yield %other : !ctjs.value");
+    auto varied = mlir::parseSourceString<mlir::ModuleOp>(varying, &context);
+    check(static_cast<bool>(varied), "differing nested arguments fixture parses");
+    if (varied) {
+        auto error = expandDOMHelpers(*varied, "entry$0", 100000);
+        check(!error, "a nonconstant nested input prevents shared argument specialization");
+        if (error) {
+            llvm::consumeError(std::move(error));
+        } else {
+            unsigned known = 0, unknown = 0;
+            auto argument =
+                varied->lookupSymbol<ctjs::FuncOp>("entry$0").getBody().front().getArgument(3);
+            varied->walk([&](ctjs::InvokeOp invoke) {
+                auto fallback =
+                    llvm::cast<ctjs::InvokeYieldOp>(invoke.getUnwindBody().front().getTerminator());
+                auto value = fallback.getValues().front();
+                known += ctjs::constantKey(value) == "%7B%7D";
+                unknown += value == argument;
+            });
+            check(known == 2 && unknown == 2 && mlir::succeeded(mlir::verify(*varied)),
+                  "each nested call retains its own saved input through both exception paths");
+        }
+    }
+    auto lateCapture = replaced(captured, "    ctjs.cell_set %cell, %text\n", "");
+    lateCapture = replaced(lateCapture, "    ctjs.return %answer",
+                           "    ctjs.cell_set %cell, %text\n    ctjs.return %answer");
+    auto callInInvoke = replaced(source, "%parsed = ctjs.call %helper(%u, %text)", R"MLIR(
+      %parsed = ctjs.invoke {
+        %called = ctjs.call %helper(%u, %text)
+        ctjs.invoke_exit %called state()
+      } normal {
+      ^bb0(%returned: !ctjs.value):
+        ctjs.invoke_yield(%returned)
+      } unwind {
+      ^bb0(%error: !ctjs.value):
+        ctjs.invoke_yield(%text)
+      } : !ctjs.value
+)MLIR");
+    for (const auto & invalid :
+         {lateCapture, callInInvoke,
+          replaced(captured, "    %answer = scf.if",
+                   "    ctjs.cell_set %cell, %u\n    %answer = scf.if"),
+          replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%element, %text)"),
+          replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%u)"),
+          replaced(source, "    %answer = scf.if",
+                   "    ctjs.store_global \"saved\", %helper\n    %answer = scf.if")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsupported nested helper fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error),
+              "late or mutable captures, receivers, arity, escapes and Invoke crossings refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+    }
+    bool completed = false;
+    for (unsigned budget = 0; budget < 10000; ++budget) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(loop, &context);
+        auto error = expandDOMHelpers(*input, "entry$0", budget);
+        if (!error) {
+            completed = true;
+            check(!input->lookupSymbol<ctjs::FuncOp>("parse$1") &&
+                      mlir::succeeded(mlir::verify(*input)),
+                  "the first complete nested budget produces fully expanded valid IR");
+            break;
+        }
+        check(llvm::toString(std::move(error)).find("budget") != std::string::npos,
+              "every incomplete nested ordering and cloning budget fails closed");
+    }
+    check(completed, "bounded nested helper expansion reaches completion");
+}
 
 inline void checkDOMBranchFilter(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
+    checkDOMNestedHelpers(context);
     const std::string source = R"MLIR(
 module {
   ctjs.func @branch$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
