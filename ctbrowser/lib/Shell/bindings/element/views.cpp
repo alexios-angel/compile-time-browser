@@ -868,6 +868,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         auto * list = cx.allocate<script::object_object>();
         if (const value proto = interface_prototype("DOMTokenList"); proto.is_object()) {
             list->prototype = proto;
+            // `iterable<DOMString>`: keys/values/entries/forEach and
+            // `@@iterator`, live over `length` and the indexed getter
+            // (DOMTokenList-Iterable.html, -iteration.html). Once.
+            install_iterable_declaration(cx, *static_cast<script::object_object *>(proto.as_heap()),
+                                         false);
         }
         const std::string attribute_name{attribute};
         const auto attribute_now = [this, id, attribute_name] {

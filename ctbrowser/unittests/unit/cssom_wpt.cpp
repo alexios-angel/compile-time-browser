@@ -37,8 +37,17 @@ void test_class_strings_and_iterators() {
         try { CSS.escape(); } catch (e) { caught = e.name; }
         console.log('escape=' + CSS.escape.length + ',' + caught + ',' +
                     CSS.hasOwnProperty(Symbol.toStringTag));
+        // DOMTokenList is iterable<DOMString>: keys/values/entries/forEach and
+        // @@iterator, live over the attribute.
+        const cl = document.body.classList; document.body.className = 'x y';
+        const seen = []; cl.forEach((t, i) => seen.push(i + t));
+        document.body.className = 'x y z';
+        console.log('tokens=' + [...cl.keys()].join() + '|' + [...cl.values()].join() + '|' +
+                    [...cl.entries()].map(e => e.join(':')).join() + '|' + seen.join() + '|' +
+                    (DOMTokenList.prototype.forEach === Array.prototype.forEach));
     </script></body></html>)");
     CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "tokens="), std::string{"tokens=0,1,2|x,y,z|0:x,1:y,2:z|0x,1y|true"});
     CHECK_EQ(logged(page, "tag="),
              std::string{"tag=[object CSSStyleRule],[object CSSStyleProperties],[object CSS]"});
     CHECK_EQ(logged(page, "iter="), std::string{"iter=true,color,true"});

@@ -283,8 +283,35 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
                             return found.is_undefined() ? value::null() : found;
                         }),
                  script::attr_default);
-    // THE ITERABLE DECLARATION: `[Symbol.iterator]` on both, and NodeList's
-    // forEach/keys/values/entries. Each hands back WebIDL's default iterator
+    dom_bindings::install_iterable_declaration(cx, proto, named);
+    if (named) {
+        proto.define("namedItem",
+                     native("namedItem", 1,
+                            [](context & c, std::span<value> a) {
+                                const value found =
+                                    ask_collection(c, c.current_this(), "namedItem", arg(a, 0));
+                                return found.is_undefined() ? value::null() : found;
+                            }),
+                     script::attr_default);
+    }
+}
+
+} // namespace
+
+// THE ITERABLE DECLARATION (WebIDL 3.7.10): `[Symbol.iterator]`, and for a
+// value iterable that is not a named collection - NodeList, DOMTokenList -
+// forEach/keys/values/entries too. Static because DOMTokenList.prototype is
+// built in element/views.cpp over the same shape: an object with `length`
+// and an indexed getter.
+void dom_bindings::install_iterable_declaration(context & cx, script::object_object & proto,
+                                                bool named_only) {
+    if (proto.find("@@iterator") != nullptr) { return; }
+    const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
+        auto * made = cx.allocate<script::native_object>(name, std::move(fn));
+        made->define("length", value::number(length), script::attr_configurable);
+        return value::object(made);
+    };
+    // Each hands back WebIDL's default iterator
     // object (3.7.10.2): `next` reads `length` and the index off the collection
     // ON EVERY STEP, so a for-of over `childNodes` sees what its own body
     // appended - NodeList-Iterable.html's live case - where an array snapshot
@@ -346,17 +373,7 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
         });
     };
     proto.define("@@iterator", live_iterator("values", 1), script::attr_builtin);
-    if (named) {
-        proto.define("namedItem",
-                     native("namedItem", 1,
-                            [](context & c, std::span<value> a) {
-                                const value found =
-                                    ask_collection(c, c.current_this(), "namedItem", arg(a, 0));
-                                return found.is_undefined() ? value::null() : found;
-                            }),
-                     script::attr_default);
-        return;
-    }
+    if (named_only) { return; }
     proto.define("keys", live_iterator("keys", 0), script::attr_default);
     proto.define("values", live_iterator("values", 1), script::attr_default);
     proto.define("entries", live_iterator("entries", 2), script::attr_default);
@@ -371,8 +388,6 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
         if (for_each.is_callable()) { proto.define("forEach", for_each, script::attr_default); }
     }
 }
-
-} // namespace
 
 value dom_bindings::make_live_collection(context & cx,
                                          std::function<std::vector<node_id>()> members,

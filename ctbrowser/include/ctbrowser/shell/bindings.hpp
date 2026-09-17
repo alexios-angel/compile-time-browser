@@ -2114,6 +2114,12 @@ public:
     // installs the same flush its getComputedStyle wrapper does; anything
     // reading `box_of` calls this first. Only what is stale runs.
     void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
+    // WebIDL's iterable declaration on a collection prototype: `@@iterator`,
+    // and keys/values/entries/forEach unless `named_only` (a named collection
+    // has the first alone). document/collections.cpp; public because the
+    // file-local prototype builder there calls it.
+    static void install_iterable_declaration(context & cx, script::object_object & proto,
+                                             bool named_only);
     void flush_layout() {
         if (flush_layout_) { flush_layout_(); }
     }
