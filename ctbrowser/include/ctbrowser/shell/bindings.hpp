@@ -2464,6 +2464,40 @@ private:
     // prototype, and the document's `createRange`.
     void install_range(context & cx);
     [[nodiscard]] value create_range(context & cx);
+    // THE LIVE RANGES (DOM 5.5): every Range of the realm, on the primary.
+    // `settle_live_ranges` runs the specification's range steps for the tree
+    // and data edits the document logged since the last mutation - the
+    // pre-remove steps, the insertion steps, "replace data" - from
+    // mutated(), before any script can read a boundary. splitText and
+    // normalize carry their own steps in their bindings.
+    // ponytail: a range is held for the life of the page (a Range that the
+    // collector could see go would need a weak list); prune if a page makes
+    // them in a loop.
+    void register_live_range(value range);
+    void settle_live_ranges(const std::vector<document::write_note> & writes);
+    // "Split a Text node" steps 7.2-7.5 (DOM 4.11): a boundary in `node` past
+    // `offset` moves into `made` (at index `made_index` under `parent`), and one
+    // on the parent at exactly made_index moves past it.
+    void split_live_ranges(node_id node, node_id made, double offset, node_id parent,
+                           double made_index);
+    // normalize() step 7.5-7.8 (DOM 4.7): a boundary in `current` (the text
+    // sibling about to be absorbed, at `index` under `parent`) moves into
+    // `node` at `length` plus its offset; one on the parent at `index` to
+    // (node, length).
+    void absorb_live_ranges(node_id current, node_id parent, double index, node_id node,
+                            double length);
+    // Every boundary of every live range that is a node of THIS document:
+    // the range, its two slot names and the boundary.
+    struct live_boundary {
+        script::object_object * range = nullptr;
+        std::string_view node_slot;
+        std::string_view offset_slot;
+        node_id node;
+        double offset = 0;
+    };
+    void each_live_boundary(const std::function<void(const live_boundary &)> & fn);
+    void move_live_boundary(const live_boundary & at, node_id node, double offset);
+    std::vector<value> live_ranges_; // the primary's
     // The Selection API - bindings/selection.cpp. `Selection` the global,
     // `getSelection()` on the window and on Document.prototype, and the one
     // selection object they both answer with.

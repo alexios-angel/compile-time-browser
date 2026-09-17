@@ -825,12 +825,35 @@ void dom_bindings::install_node_methods(context & cx) {
     method(node, "normalize", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (!self) { return value::undefined(); }
-        std::vector<std::pair<node_id, std::string>> merged;
+        // One run of contiguous Text siblings: its first member, the data it
+        // ends up with, and each absorbed sibling with the code-unit length
+        // the first member had when it was appended - what the live ranges
+        // in it move to (DOM 4.7 steps 7.5-7.6).
+        struct absorbed {
+            node_id node;
+            double index;
+            double at;
+        };
+        struct run {
+            node_id node;
+            std::string data;
+            std::uint32_t units = 0;
+            node_id parent;
+            std::vector<absorbed> rest;
+        };
+        std::vector<run> merged;
         std::vector<node_id> removed;
         {
             const auto txn = doc_->read();
             const auto is_text = [&txn](node_id one) {
                 return txn.kind(one).value_or(node_kind::element) == node_kind::text;
+            };
+            const auto units_of = [](std::string_view text) {
+                std::size_t n = 0;
+                for (std::size_t at = 0; at < text.size();) {
+                    n += decode_utf8(text, at) >= 0x10000 ? 2 : 1;
+                }
+                return static_cast<double>(n);
             };
             const auto walk = [&](auto && again, node_id at) -> void {
                 const std::span<const node_id> kids = txn.children(at);
@@ -845,13 +868,17 @@ void dom_bindings::install_node_methods(context & cx) {
                         ++i;
                         continue;
                     }
-                    std::string data{txn.text(kids[i])};
+                    run one{kids[i], std::string{txn.text(kids[i])}, 0, at, {}};
+                    one.units = static_cast<std::uint32_t>(units_of(one.data));
+                    double length = one.units;
                     std::size_t j = i + 1;
                     for (; j < kids.size() && is_text(kids[j]); ++j) {
-                        data += txn.text(kids[j]);
+                        one.rest.push_back(absorbed{kids[j], static_cast<double>(j), length});
+                        length += units_of(txn.text(kids[j]));
+                        one.data += txn.text(kids[j]);
                         removed.push_back(kids[j]);
                     }
-                    if (j > i + 1) { merged.emplace_back(kids[i], std::move(data)); }
+                    if (j > i + 1) { merged.push_back(std::move(one)); }
                     i = j;
                 }
             };
@@ -860,9 +887,20 @@ void dom_bindings::install_node_methods(context & cx) {
         if (merged.empty() && removed.empty()) { return value::undefined(); }
         // ONE MUTATION EACH, as DOM 4.4's normalize has them: the data change
         // is a record and every removal is its own, with the siblings the node
-        // had when it went - MutationObserver-childList.html counts them.
-        for (const auto & [node, data] : merged) {
-            (void)doc_->set_text(node, data);
+        // had when it went - MutationObserver-childList.html counts them. The
+        // data is APPENDED (a replace at the old length, of nothing) and the
+        // absorbed siblings' boundaries move into the node before they go.
+        for (const run & one : merged) {
+            std::size_t added = 0;
+            for (std::size_t at = one.units; at < one.data.size();) {
+                added += decode_utf8(one.data, at) >= 0x10000 ? 2 : 1;
+            }
+            (void)doc_->set_text(
+                one.node, one.data,
+                document::data_edit{one.units, 0, static_cast<std::uint32_t>(added)});
+            for (const absorbed & gone : one.rest) {
+                absorb_live_ranges(gone.node, one.parent, gone.index, one.node, gone.at);
+            }
             mutated();
         }
         for (const node_id node : removed) {

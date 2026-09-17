@@ -1597,7 +1597,7 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
 void dom_bindings::settle_attribute_writes(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr) { return; }
     for (const document::write_note & note : writes) {
-        if (note.text || !note.node) { continue; }
+        if (note.kind != document::write_note::edit::attribute || !note.node) { continue; }
         const std::string_view name = atoms_->text(note.name);
         if (name.size() < 3 || name[0] != 'o' || name[1] != 'n') { continue; }
         bool present = false;

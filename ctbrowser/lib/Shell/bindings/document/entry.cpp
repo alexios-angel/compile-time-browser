@@ -133,6 +133,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(event_target_prototype_);
     mark(abort_signal_prototype_);
     mark(media_query_list_prototype_);
+    for (const value & range : live_ranges_) { mark(range); }
     for (const value & list : pending_media_changes_) { mark(list); }
     // DOMException.prototype, for the same reason: `assert_throws_dom`
     // requires `e.constructor === DOMException`, and a prototype the
@@ -289,6 +290,7 @@ void dom_bindings::mutated() {
         doc_ == nullptr ? std::vector<document::write_note>{} : doc_->take_writes();
     record_mutations(writes);
     settle_attribute_writes(writes);
+    settle_live_ranges(writes);
     // A "replace all" note is for the mutation it preceded and no other.
     replace_all_.reset();
     // AN <input> WHOSE TYPE MOVED runs HTML 4.10.5's type-change steps now,

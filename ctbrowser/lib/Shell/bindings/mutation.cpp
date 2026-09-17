@@ -597,7 +597,9 @@ void dom_bindings::record_mutations(const std::vector<document::write_note> & wr
                 // THE WRITES THAT CHANGED NOTHING - see the write log. Each
                 // is reported once per observer, after anything the diff saw.
                 for (const document::write_note & note : writes) {
-                    if (note.text || note.node != at) { continue; }
+                    if (note.kind != document::write_note::edit::attribute || note.node != at) {
+                        continue;
+                    }
                     const attribute * held = txn.find_attribute(at, note.name);
                     if (held == nullptr) { continue; }
                     report(*held, &held->value);

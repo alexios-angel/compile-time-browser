@@ -148,10 +148,16 @@ void dom_bindings::install_character_data(context & cx) {
         }
         auto count = static_cast<unsigned long long>(to_uint32(count_arg));
         if (count > length - offset) { count = length - offset; }
+        const std::u16string added = to_units(with);
         std::u16string made = text.substr(0, static_cast<std::size_t>(offset));
-        made += to_units(with);
+        made += added;
         made += text.substr(static_cast<std::size_t>(offset + count));
-        (void)self.doc_->set_text(id, from_units(made));
+        // Said precisely, for the live ranges: which span, and how long the
+        // replacement is (DOM 4.10.2 steps 8-11).
+        (void)self.doc_->set_text(id, from_units(made),
+                                  document::data_edit{static_cast<std::uint32_t>(offset),
+                                                      static_cast<std::uint32_t>(count),
+                                                      static_cast<std::uint32_t>(added.size())});
         self.mutated();
         return true;
     };
@@ -306,20 +312,37 @@ void dom_bindings::install_character_data(context & cx) {
             }
             const auto at = static_cast<std::size_t>(offset);
             const node_id made = self->doc_->create_text(from_units(text.substr(at)));
-            (void)self->doc_->set_text(id, from_units(text.substr(0, at)));
             node_id parent;
             node_id next;
+            double index = 0;
             {
                 const auto txn = self->doc_->read();
                 parent = txn.parent(id);
                 if (parent) {
                     const std::span<const node_id> kids = txn.children(parent);
-                    for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
-                        if (kids[i] == id) { next = kids[i + 1]; }
+                    for (std::size_t i = 0; i < kids.size(); ++i) {
+                        if (kids[i] == id) {
+                            index = static_cast<double>(i);
+                            if (i + 1 < kids.size()) { next = kids[i + 1]; }
+                        }
                     }
                 }
             }
-            if (parent) { (void)self->insert_node(parent, made, next); }
+            // IN THE SPECIFICATION'S ORDER (DOM 4.11 "split a Text node"),
+            // because the live ranges watch each step: the new node is
+            // inserted (the insertion steps), then the boundaries past the
+            // offset move into it, and only then is the data truncated - as
+            // a replace of (offset, length - offset) with "", which moves no
+            // boundary that step 7 did not already.
+            if (parent) {
+                (void)self->insert_node(parent, made, next);
+                self->mutated();
+            }
+            self->split_live_ranges(id, made, static_cast<double>(at), parent, index + 1);
+            (void)self->doc_->set_text(id, from_units(text.substr(0, at)),
+                                       document::data_edit{static_cast<std::uint32_t>(at),
+                                                           static_cast<std::uint32_t>(length - at),
+                                                           0});
             self->mutated();
             return self->wrap(c, made);
         },
