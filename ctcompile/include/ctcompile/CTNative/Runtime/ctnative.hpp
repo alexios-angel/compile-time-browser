@@ -715,6 +715,14 @@ inline void set_json_property(ctbrowser::json_value & target, std::string key,
     members.insert(position, {std::move(key), std::move(value)});
 }
 
+// One fresh target, one traversal of unique keys, and only final own data
+// observations. The single __proto__ setter changes no own property. Its
+// value has already been evaluated, including any URI/JSON failure path.
+inline void assign_json_snapshot_property(ctbrowser::json_value & target, std::string key,
+                                          ctbrowser::json_value value) {
+    if (key != "__proto__") { set_json_property(target, std::move(key), std::move(value)); }
+}
+
 // Source is null/array/object, target is a distinct fresh object, and no
 // shallow alias can be observed. Both paths retain first key/last value order.
 inline void copy_json_properties(ctbrowser::json_value & target,

@@ -37,6 +37,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     llvm::SmallVector<ctjs::FuncOp> functions{entry.entry()};
     llvm::append_range(functions, entry.callbacks());
     for (ctjs::FuncOp function : functions) {
+        function.walk([&](ctjs::SetPropertyOp write) {
+            if (entry.jsonSnapshotAssignment(write)) { domSnapshotAssignments.insert(write); }
+        });
         function.walk([&](ctjs::CreateClosureOp closure) {
             if (entry.callback(closure)) { domReads.insert(closure); }
         });
@@ -280,7 +283,10 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
         write && write.getObject().getType() == jsonOwner) {
         ec::CallOpaqueOp::create(
-            at, where, mlir::TypeRange{}, at.getStringAttr("ctnative::set_json_property"),
+            at, where, mlir::TypeRange{},
+            at.getStringAttr(domSnapshotAssignments.contains(operation)
+                                 ? "ctnative::assign_json_snapshot_property"
+                                 : "ctnative::set_json_property"),
             mlir::ValueRange{
                 write.getObject(), write.getKey(),
                 convertScalar(at, where, write.getValue(), carrierType(context, carrier::json))});
