@@ -273,7 +273,7 @@ void bump_counter(object_object * state) {
                 state->set("innerAlive", value::boolean(false));
             }
             const value list = slot(state, "iterables");
-            auto & items = static_cast<array_object *>(list.as_heap())->items;
+            const auto & items = static_cast<array_object *>(list.as_heap())->items;
             const auto at = static_cast<std::size_t>(counter_of(state));
             if (at >= items.size()) {
                 done = true;
@@ -302,7 +302,7 @@ void bump_counter(object_object * state) {
         // [iterator, next, open] rows; `mode` is 0 shortest, 1 longest, 2
         // strict; `padding` fills a finished iterator under "longest".
         const value list = slot(state, "iters");
-        auto & rows = static_cast<array_object *>(list.as_heap())->items;
+        const auto & rows = static_cast<array_object *>(list.as_heap())->items;
         const std::size_t count = rows.size();
         if (count == 0) {
             done = true;
