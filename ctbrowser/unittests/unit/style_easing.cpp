@@ -111,6 +111,16 @@ void test_interpolation() {
     CHECK(interpolate_text("aspect-ratio", "0.5", "2", 0.5, context) == "1 / 1");
     CHECK(interpolate_text("aspect-ratio", "1 / 2", "2 / 1", 1.5, context) == "4 / 1");
     CHECK(interpolate_text("aspect-ratio", "auto", "2 / 1", 0.4, context) == "auto");
+    // A filter list function by function, padded with each function's lacuna
+    // and clamped (Filter Effects 1 §11.2).
+    CHECK(interpolate_text("filter", "hue-rotate(0deg) blur(6px)", "hue-rotate(180deg) blur(10px)",
+                           0.25, context) == "hue-rotate(45deg) blur(7px)");
+    CHECK(interpolate_text("filter", "none", "blur(10px)", -1, context) == "blur(0px)");
+    CHECK(interpolate_text("filter", "none", "grayscale(1)", 1.5, context) == "grayscale(1)");
+    CHECK(interpolate_text("filter", "brightness(0)", "none", 1.5, context) == "brightness(1.5)");
+    CHECK(interpolate_text("filter", "blur(6px)", "blur(10px) hue-rotate(180deg)", 0.5, context) ==
+          "blur(8px) hue-rotate(90deg)");
+    CHECK(interpolate_text("filter", "blur(6px)", "grayscale(1)", 0.5, context) == "grayscale(1)");
     // Colours premultiplied in sRGB, clamped to the gamut when extrapolated.
     CHECK(interpolate_text("color", "rgb(0, 0, 255)", "rgba(255, 0, 0, 0)", 0.5, context) ==
           "rgba(0.0000, 0.0000, 255.0000, 0.5000)");

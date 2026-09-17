@@ -739,6 +739,90 @@ struct decomposed2d {
     return matrix_text(recompose(z));
 }
 
+// --- filter lists (Filter Effects 1 §11) ---
+
+[[nodiscard]] std::string interpolate_pair(std::string_view property, std::string_view from,
+                                           std::string_view to, double p,
+                                           const css::length_context & ctx, bool & interpolable);
+
+struct filter_fn {
+    std::string name;
+    std::string args;
+};
+
+// A filter list in computed form - percentages as numbers, lengths in px -
+// as its functions; `none` is the empty list; nothing for a list this does
+// not model (a `url()`).
+[[nodiscard]] std::optional<std::vector<filter_fn>> parse_filters(std::string_view text) {
+    std::vector<filter_fn> out;
+    if (text.empty() || ascii_iequals(text, "none")) { return out; }
+    const std::string computed = css::computed_filter(text, {});
+    for (const std::string_view raw :
+         split_top_level(computed.empty() ? text : computed, html_whitespace)) {
+        const std::string_view item = trim(raw, html_whitespace);
+        if (item.empty()) { continue; }
+        const std::size_t open = item.find('(');
+        if (open == std::string_view::npos || !item.ends_with(')')) { return std::nullopt; }
+        filter_fn fn{
+            ascii_lower_copy(item.substr(0, open)),
+            std::string{trim(item.substr(open + 1, item.size() - open - 2), html_whitespace)}};
+        if (fn.name == "url" || fn.name == "src") { return std::nullopt; }
+        out.push_back(std::move(fn));
+    }
+    return out;
+}
+
+// The value a missing or empty function argument means (§11.2's lacuna).
+[[nodiscard]] std::string_view filter_identity(std::string_view name) {
+    if (name == "blur") { return "0px"; }
+    if (name == "hue-rotate") { return "0deg"; }
+    if (name == "drop-shadow") { return "rgba(0, 0, 0, 0) 0px 0px 0px"; }
+    if (name == "grayscale" || name == "invert" || name == "sepia") { return "0"; }
+    return "1"; // brightness, contrast, opacity, saturate
+}
+
+// §11.2: function by function while the lists match, the shorter padded
+// with the missing functions' lacuna values; a drop-shadow is a shadow. No
+// result goes negative, and the four amounts that saturate at 1 stop there.
+[[nodiscard]] std::optional<std::string> interpolate_filter(std::string_view from,
+                                                            std::string_view to, double p,
+                                                            const css::length_context & ctx) {
+    std::optional<std::vector<filter_fn>> a = parse_filters(from);
+    std::optional<std::vector<filter_fn>> b = parse_filters(to);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty() && b->empty()) { return "none"; }
+    for (std::size_t i = 0; i < std::min(a->size(), b->size()); ++i) {
+        if ((*a)[i].name != (*b)[i].name) { return std::nullopt; }
+    }
+    for (std::size_t i = a->size(); i < b->size(); ++i) { a->push_back({(*b)[i].name, ""}); }
+    for (std::size_t i = b->size(); i < a->size(); ++i) { b->push_back({(*a)[i].name, ""}); }
+    std::string out;
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        const std::string & name = (*a)[i].name;
+        const std::string_view x = (*a)[i].args.empty() ? filter_identity(name) : (*a)[i].args;
+        const std::string_view y = (*b)[i].args.empty() ? filter_identity(name) : (*b)[i].args;
+        bool ok = true;
+        std::string piece;
+        if (name == "drop-shadow") {
+            piece = interpolate_pair("text-shadow", computed_shape("text-shadow", x, ctx),
+                                     computed_shape("text-shadow", y, ctx), p, ctx, ok);
+        } else {
+            const std::optional<numeric_pair> n = numeric_of(x, y, ctx);
+            if (!n) { return std::nullopt; }
+            css::calc_result mixed = mix(n->a, n->b, p);
+            mixed.px = std::max(mixed.px, 0.0);
+            if (name == "grayscale" || name == "invert" || name == "opacity" || name == "sepia") {
+                mixed.px = std::min(mixed.px, 1.0);
+            }
+            piece = css::serialize_calc(mixed);
+        }
+        if (!ok) { return std::nullopt; }
+        if (i != 0) { out += ' '; }
+        out += name + '(' + piece + ')';
+    }
+    return out;
+}
+
 // --- ratios ---
 
 // A `<ratio>` as one number: `1 / 2`, `0.5`, `2 / 0` is infinite. Nothing
@@ -787,6 +871,11 @@ struct decomposed2d {
     }
     if (property == "aspect-ratio") {
         if (const std::optional<std::string> r = interpolate_ratio(from, to, p)) { return *r; }
+    }
+    if (property == "filter" || property == "backdrop-filter") {
+        if (const std::optional<std::string> f = interpolate_filter(from, to, p, ctx)) {
+            return *f;
+        }
     }
     if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
         return lerp_color(*a, *b, p);
