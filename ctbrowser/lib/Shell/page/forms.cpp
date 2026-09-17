@@ -6,7 +6,7 @@
 namespace ctbrowser::shell {
 
 control_state & form_store::state_of(const read_txn & txn, atom_table & atoms, node_id id) {
-    auto it = states_.find(id.key());
+    const auto it = states_.find(id.key());
     if (it != states_.end()) {
         // THE ATTRIBUTE IS STILL THE ANSWER UNTIL SOMETHING EDITS THE CONTROL.
         //
