@@ -64,6 +64,51 @@ value context::module_namespace(module_record & of) {
     return of.namespace_object;
 }
 
+// The deferred form. ORDINARY, NOT EXOTIC: a getter per export that runs
+// the module on its first read, which is [[Get]] of 16.2.2's namespace
+// object and the trigger every real program uses. What this ordinary object
+// does not do: [[HasProperty]], [[OwnPropertyKeys]], [[Delete]] and
+// [[GetOwnProperty]] of a string key also evaluate the module in the
+// specification, and a read of an export that does not exist does too.
+value context::deferred_module_namespace(module_record & of) {
+    if (of.deferred_namespace_object.is_kind(heap_kind::object)) {
+        return of.deferred_namespace_object;
+    }
+    object_object * const ns = allocate<object_object>();
+    of.deferred_namespace_object = value::object(ns);
+    const std::string key = of.specifier;
+    for (auto & [name, cell] : of.exports) {
+        if (name == "then") { continue; } // IsSymbolLikeNamespaceKey: never an export here
+        const value box = cell;
+        ns->define_accessor(
+            name,
+            value::object(allocate<native_object>(
+                "get " + name,
+                [key, box](context & c, std::span<value>) {
+                    const auto found = c.modules_.find(key);
+                    if (found != c.modules_.end() && !found->second.evaluated) {
+                        if (!c.module_evaluator_) {
+                            c.raise("a deferred module has no evaluator installed");
+                            return value::undefined();
+                        }
+                        if (!c.module_evaluator_(c, found->second)) {
+                            const value thrown = c.last_thrown();
+                            c.throw_value(thrown.is_undefined()
+                                              ? c.make_error("Error", "module `" + key +
+                                                                          "` failed to evaluate")
+                                              : thrown);
+                            return value::undefined();
+                        }
+                    }
+                    return box.is_kind(heap_kind::cell)
+                               ? static_cast<cell_object *>(box.as_heap())->slot
+                               : value::undefined();
+                })),
+            value::undefined());
+    }
+    return of.deferred_namespace_object;
+}
+
 namespace {
 
 // AS WRITTEN IS NOT AS KEYED: `./dep.js` in one module and in another are two
@@ -136,6 +181,16 @@ value context::module_namespace_for(const std::string & specifier) {
         return value::undefined();
     }
     return module_namespace(found->second);
+}
+
+value context::deferred_module_namespace_for(const std::string & specifier) {
+    const std::string & from = keyed_by(current_module_, specifier);
+    const auto found = modules_.find(from);
+    if (found == modules_.end()) {
+        raise("module `" + from + "` was not loaded");
+        return value::undefined();
+    }
+    return deferred_module_namespace(found->second);
 }
 
 value context::dynamic_import(value specifier, const std::string & referrer) {

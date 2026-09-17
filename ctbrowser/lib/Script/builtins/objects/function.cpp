@@ -800,6 +800,10 @@ void install_destructuring_iteration(context & cx) {
         }
         return value::undefined();
     });
+    // See import_defer_name.
+    cx.define_native(std::string{import_defer_name}, [](context & c, std::span<value> a) {
+        return c.deferred_module_namespace_for(a.empty() ? std::string{} : c.to_string(a[0]));
+    });
     cx.define_native(std::string{catch_filter_name}, [](context & c, std::span<value> a) {
         if (!a.empty() && c.is_return_marker(a[0])) { c.throw_value(a[0]); }
         return value::undefined();

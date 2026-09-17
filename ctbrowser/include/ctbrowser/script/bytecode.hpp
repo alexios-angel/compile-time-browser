@@ -501,6 +501,14 @@ struct program {
     // exactly as written - resolving them against the importing module's URL is
     // the loader's job, not the compiler's.
     std::vector<std::string> imports;
+    // THE SPECIFIERS THIS MODULE IMPORTS ONLY DEFERRED (`import defer * as
+    // ns`, 16.2.2): the loader links them with the graph and leaves them
+    // unevaluated until the namespace is first read (see
+    // context::deferred_module_namespace). A subset of `imports`. NOT in the
+    // program image - a module loaded from an image evaluates them eagerly,
+    // which is the specification's behaviour for a module that another,
+    // non-deferred import already forced.
+    std::vector<std::string> deferred_imports;
     // AND WHAT IT EXPORTS, likewise statically known. The loader needs these
     // BEFORE the module runs: every binding in a cyclic graph has to exist
     // before any of the graph is evaluated, or the module that imports first

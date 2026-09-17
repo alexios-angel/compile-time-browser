@@ -155,13 +155,25 @@ void compiler_impl::bind_imports(std::int32_t idx) {
     if (std::ranges::find(out_.imports, specifier) == out_.imports.end()) {
         out_.imports.push_back(specifier);
     }
+    // `import defer * as ns` defers the module's evaluation - unless the
+    // same module is imported eagerly somewhere in this one, in which case
+    // the eager import runs it anyway (16.2.2: a deferred request is only
+    // that request's).
+    const bool deferred = kids(n).size() == 1 && at(kids(n).front()).c == 3;
+    const auto listed = std::ranges::find(out_.deferred_imports, specifier);
+    if (deferred && listed == out_.deferred_imports.end()) {
+        out_.deferred_imports.push_back(specifier);
+    } else if (!deferred && listed != out_.deferred_imports.end()) {
+        out_.deferred_imports.erase(listed);
+    }
     const std::uint16_t from = name_operand(specifier);
     for (const std::int32_t spec_index : kids(n)) {
         const vp::node & spec = at(spec_index);
-        // `c`: 0 named, 1 default, 2 namespace. A namespace import wants
-        // the whole module object, which is stage 4 work - it is refused by
-        // name rather than bound to nothing.
-        if (spec.c == 2) {
+        // `c`: 0 named, 1 default, 2 namespace, 3 a deferred namespace,
+        // which is the same binding holding the object that evaluates the
+        // module on its first read - made by a hidden native, so the
+        // bytecode's shape is one call the compiled tier already knows.
+        if (spec.c == 2 || spec.c == 3) {
             // `import * as ns`: one binding, holding the exporter's
             // namespace object. NOT a cell - the namespace is itself the
             // live thing, because each of its properties reads a cell.
@@ -180,14 +192,19 @@ void compiler_impl::bind_imports(std::int32_t idx) {
             for (const local & each : fn().locals) {
                 if (each.name == spec.text) { boxed = each.boxed; }
             }
-            if (boxed) {
-                const std::uint16_t temp = alloc_reg();
+            const std::uint16_t temp = alloc_reg();
+            if (spec.c == 3) {
+                const std::uint16_t key = alloc_reg();
+                emit_string(key, specifier);
+                emit_iterator_native(import_defer_name, temp, key);
+            } else {
                 proto().emit(instruction{op::load_namespace, temp, from});
+            }
+            if (boxed) {
                 proto().emit(
                     instruction{op::cell_set, static_cast<std::uint16_t>(hoisted_ns), temp});
             } else {
-                proto().emit(
-                    instruction{op::load_namespace, static_cast<std::uint16_t>(hoisted_ns), from});
+                proto().emit(instruction{op::move, static_cast<std::uint16_t>(hoisted_ns), temp});
             }
             continue;
         }

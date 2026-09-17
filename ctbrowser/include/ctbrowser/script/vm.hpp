@@ -295,6 +295,8 @@ struct module_record {
     // ONE PER MODULE, made on demand: two `import * as` of the same module must
     // give the same object. See context::module_namespace.
     value namespace_object = value::undefined();
+    // And the DEFERRED one (`import defer * as ns`, 16.2.2), likewise once.
+    value deferred_namespace_object = value::undefined();
     // Evaluated ONCE, however many modules import it. The flag is the whole of
     // "a module is a singleton".
     bool evaluated = false;
@@ -582,6 +584,21 @@ public:
     // RESULT KIND differs: an ordinary object whose properties are accessors
     // over the cells, not a cell.
     [[nodiscard]] value module_namespace_for(const std::string & specifier);
+    // THE DEFERRED NAMESPACE (16.2.2, `import defer * as ns`): the module's
+    // live namespace, except that the first read of an export EVALUATES the
+    // module first, through the hook the loader installed (EvaluateSync) -
+    // an evaluation that throws is that read's throw. A symbol key and
+    // `then` never trigger it (IsSymbolLikeNamespaceKey). What the hidden
+    // native import_defer_name answers; see the definition for what of the
+    // exotic object this ordinary one does not do.
+    [[nodiscard]] value deferred_module_namespace(module_record & of);
+    [[nodiscard]] value deferred_module_namespace_for(const std::string & specifier);
+    // WHAT A DEFERRED NAMESPACE CALLS TO RUN ITS MODULE: the loader's own
+    // post-order evaluation, so the module's not-yet-run dependencies run
+    // first. Answers false when the evaluation threw (last_thrown says what).
+    void set_module_evaluator(std::function<bool(context &, module_record &)> evaluator) {
+        module_evaluator_ = std::move(evaluator);
+    }
 
     // `a = import(specifier)` - a promise for the namespace object.
     //
@@ -2457,6 +2474,7 @@ private:
     // needs a program evaluated from inside the interpreter.
     run_result run_reentrant(const program & prog);
     std::function<value(context &, const std::string &, const std::string &)> module_loader_;
+    std::function<bool(context &, module_record &)> module_evaluator_;
     // Set by a frame that suspended, so `resume` can tell "awaited again" from
     // "returned" - both leave run_loop the same way.
     bool suspended_ = false;

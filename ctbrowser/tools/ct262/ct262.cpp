@@ -46,6 +46,7 @@
 // not parse. 3 is never a test result.
 #include <ctbrowser.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -401,6 +402,13 @@ public:
         const program * const compiled = found->second.compiled;
         std::vector<std::string> needed;
         for (const std::string & written : compiled->imports) {
+            // `import defer` (16.2.2): linked, left for its namespace's
+            // first read - context::deferred_module_namespace calls back
+            // into this very function through set_module_evaluator.
+            if (std::find(compiled->deferred_imports.begin(), compiled->deferred_imports.end(),
+                          written) != compiled->deferred_imports.end()) {
+                continue;
+            }
             const auto mapped = found->second.resolved.find(written);
             needed.push_back(mapped == found->second.resolved.end() ? written : mapped->second);
         }
@@ -526,6 +534,9 @@ int main(int argc, char ** argv) {
     // threw. Settled at once, like the shell's, because the filesystem is
     // synchronous. A referrer that is not a module - the test script - is
     // resolved beside the test file.
+    cx.set_module_evaluator([&loader](context &, ctbrowser::script::module_record & record) {
+        return loader.evaluate(std::filesystem::path{record.specifier}).ok;
+    });
     cx.set_module_loader([&loader, &opts](context & c, const std::string & specifier,
                                           const std::string & referrer) {
         const std::filesystem::path base = referrer.empty()
