@@ -248,7 +248,7 @@ namespace {
             ns = txn.element_ns(context);
         }
     }
-    return parse_html_fragment(scratch, markup, tag, ns);
+    return parse_html_fragment(scratch, markup, tag, ns, doc.scripting());
 }
 } // namespace
 
@@ -315,12 +315,14 @@ namespace {
     }
     return out;
 }
-[[nodiscard]] bool serializes_raw(std::string_view tag) {
+// Whose children are written unescaped - `<noscript>`'s only while
+// scripting is enabled, since only then did the parser read them as text.
+[[nodiscard]] bool serializes_raw(std::string_view tag, bool scripting) {
     for (const std::string_view raw :
-         {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript"}) {
+         {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext"}) {
         if (tag == raw) { return true; }
     }
-    return false;
+    return tag == "noscript" && scripting;
 }
 // "Serializes as void": the void elements and four obsolete ones that never
 // had children either. Their children are not written, and innerHTML on one
@@ -486,7 +488,7 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
         out += ">";
         if (html && serializes_as_void(tag)) { return; }
         emit_shadow(node, [&](node_id c) { self(self, c, false); });
-        const bool raw_below = html && serializes_raw(tag);
+        const bool raw_below = html && serializes_raw(tag, doc_->scripting());
         for (const node_id child : children_of(node)) { self(self, child, raw_below); }
         out += "</";
         out += tag;
@@ -504,7 +506,7 @@ std::string dom_bindings::serialize_html(node_id target, bool outer, bool serial
                              txn.element_ns(target) == node_ns::html;
     const std::string_view target_tag = atoms_->text(txn.tag(target).value_or(atom{}));
     if (target_html && serializes_as_void(target_tag)) { return out; }
-    const bool raw = target_html && serializes_raw(target_tag);
+    const bool raw = target_html && serializes_raw(target_tag, doc_->scripting());
     emit_shadow(target, [&](node_id c) { write(write, c, false); });
     for (const node_id child : children_of(target)) { write(write, child, raw); }
     return out;

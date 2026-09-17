@@ -30,6 +30,7 @@ struct parse_result {
 [[nodiscard]] inline parse_result parse_html(document & doc, std::string_view source,
                                              bool scripting = true) {
     html::tree_builder builder{doc, doc.atoms()};
+    doc.set_scripting(scripting);
     builder.set_scripting(scripting);
     parse_result out;
     out.root = builder.parse(source);
@@ -44,10 +45,15 @@ struct parse_result {
 // SVG `<g>` an SVG element - and the parsed nodes are the children of the
 // returned node, to be moved under the real element. The context element
 // itself is not in the scratch tree.
+// `scripting` is the flag of the document the fragment is FOR (the scratch
+// document here is nobody's): a `<noscript>` in a DOMParser document's
+// innerHTML holds elements, in the page's it is raw text.
 [[nodiscard]] inline node_id parse_html_fragment(document & doc, std::string_view source,
                                                  std::string_view context,
-                                                 node_ns context_ns = node_ns::html) {
+                                                 node_ns context_ns = node_ns::html,
+                                                 bool scripting = true) {
     html::tree_builder builder{doc, doc.atoms()};
+    builder.set_scripting(scripting);
     return builder.parse_fragment(source, context, context_ns);
 }
 

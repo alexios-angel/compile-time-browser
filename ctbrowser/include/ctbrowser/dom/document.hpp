@@ -333,6 +333,15 @@ public:
     [[nodiscard]] bool xml() const noexcept { return xml_; }
     void set_xml(bool on) noexcept { xml_ = on; }
 
+    // THE SCRIPTING FLAG (HTML 13.2.6.4.4), which is the document's: on for a
+    // document with a browsing context, off for one nothing will ever run a
+    // script in - DOMParser's, createHTMLDocument's. The parser reads it for
+    // `<noscript>` (raw text when on, elements when off), and so must every
+    // fragment parse on the document afterwards, which is why it is kept
+    // rather than passed. `parse_html` records the flag it was given.
+    [[nodiscard]] bool scripting() const noexcept { return scripting_; }
+    void set_scripting(bool on) noexcept { scripting_ = on; }
+
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
     // that is what a page observes anyway); the loader that has the bytes sets
@@ -349,6 +358,7 @@ private:
     // FALSE by default: every document this engine has ever built came from the
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
     bool xml_ = false;
+    bool scripting_ = true;
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }

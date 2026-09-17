@@ -670,6 +670,12 @@ tree_builder::insertion_point tree_builder::appropriate_place(node_id override_t
             }
             const node_id table = open_[last_table].id;
             const node_id parent = doc_->read().parent(table);
+            // A script may have moved the table under a <template>: the
+            // location is then inside its contents, after the last child
+            // (13.2.6.1's last step), and "before the table" means nothing.
+            if (const node_id contents = doc_->template_content(parent)) {
+                return insertion_point{contents, node_id{}};
+            }
             if (parent) { return insertion_point{parent, table}; }
             return insertion_point{insertion_parent(open_[last_table - 1].id), node_id{}};
         }
@@ -2378,9 +2384,11 @@ bool tree_builder::quirks_for(const token & doctype) {
     for (const std::string_view prefix : prefixes) {
         if (public_id.starts_with(prefix)) { return true; }
     }
-    if (!doctype.system_id_present &&
-        (public_id.starts_with("-//w3c//dtd html 4.01 frameset//") ||
-         public_id.starts_with("-//w3c//dtd html 4.01 transitional//"))) {
+    // "The system identifier is missing or the empty string" - an empty one
+    // reads as missing here (doctype-system-identifier-distinction.html),
+    // and a non-empty one puts the same public identifier in limited quirks.
+    if (system_id.empty() && (public_id.starts_with("-//w3c//dtd html 4.01 frameset//") ||
+                              public_id.starts_with("-//w3c//dtd html 4.01 transitional//"))) {
         return true;
     }
     return false;
