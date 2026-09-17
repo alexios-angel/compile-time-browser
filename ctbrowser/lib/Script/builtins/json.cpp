@@ -555,8 +555,10 @@ void install_json(context & cx) {
     });
     method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
         // 25.5.1 step 1, ToString(text): a Symbol is the TypeError, before
-        // the text is looked at.
-        const std::string text = str_at(c, a, 0);
+        // the text is looked at - and that throw has LANDED by the next line
+        // (context::unwinds says why throw_pending cannot see it).
+        if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
+        const std::string text = c.to_string(arg_at(a, 0));
         if (c.throw_pending()) { return value::undefined(); }
         const auto parsed = parse_json(text);
         // 25.5.1 step 3: a document that does not fit the JSON grammar is a
