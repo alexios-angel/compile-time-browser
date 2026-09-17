@@ -136,8 +136,13 @@ void test_validity() {
        " o.push(fs.willValidate, document.getElementById('o').willValidate,"
        " document.getElementById('btn').willValidate);"
        " var h = document.createElement('input'); h.type = 'hidden'; o.push(h.willValidate);"
+       " var e = document.getElementById('e'); e.disabled = true; e.setCustomValidity('c');"
+       " o.push(e.validity.valueMissing, e.validity.customError, e.validationMessage === '');"
+       " e.disabled = false; e.setCustomValidity(''); o.push(e.validity.valueMissing);"
+       " var r = document.createElement('input'); r.type = 'radio'; r.required = true;"
+       " o.push(r.validity.valueMissing); r.name = 'g'; o.push(r.validity.valueMissing);"
        " return o.join(); })()",
-       "true,false,false,false,true,false,false,true,false");
+       "true,false,false,false,true,false,false,true,false,false,true,true,true,false,true");
     // The `invalid` event, checkValidity on the form, and the pattern.
     is("(function () { var f = document.getElementById('f'), e = document.getElementById('e');"
        " var fired = []; e.addEventListener('invalid', function (ev) { fired.push(ev.type, "

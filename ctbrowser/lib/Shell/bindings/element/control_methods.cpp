@@ -2096,16 +2096,20 @@ void dom_bindings::install_control_methods(context & cx) {
         return context::truthy(c.call(test, std::span<const value>{&subject, 1}, re));
     };
     // Every flag of a control, as a bit set.
-    const auto validity_flags = [input_type, attribute_of, has_attribute, value_of, to_number,
-                                 bound_of, step_of, step_base_of, is_step_aligned, matches_pattern,
-                                 slot_of, selected_flags, option_value, display_size, form_owner,
-                                 tree_top, walk_tree,
-                                 is](context & c, dom_bindings * b, node_id id) -> unsigned {
+    const auto validity_flags =
+        [input_type, attribute_of, has_attribute, value_of, to_number, bound_of, step_of,
+         step_base_of, is_step_aligned, matches_pattern, slot_of, selected_flags, option_value,
+         display_size, form_owner, tree_top, walk_tree, is,
+         will_validate](context & c, dom_bindings * b, node_id id) -> unsigned {
         unsigned flags = 0;
         const auto txn = b->doc_->read();
         if (!txn.contains(id)) { return flags; }
         const value custom = slot_of(c, b, id, custom_slot);
         if (custom.is_string() && !c.to_string(custom).empty()) { flags |= custom_error; }
+        // BARRED FROM CONSTRAINT VALIDATION - disabled, readonly, hidden -
+        // leaves every flag but customError false: the browsers agree and
+        // form-validation-validity-*.html assert it for each state.
+        if (!will_validate(txn, b, id)) { return flags; }
         const std::string_view local = txn.local_name(id);
         const bool required = has_attribute(txn, b, id, "required");
         if (local == "select") {
@@ -2157,7 +2161,10 @@ void dom_bindings::install_control_methods(context & cx) {
             const std::string name = attribute_of(txn, b, id, "name");
             bool any_required = required;
             bool any_checked = checked;
-            if (!name.empty()) {
+            // A radio with no name is in no group, and the requirement is
+            // the group's (4.10.5.1.16) - so it is never missing.
+            if (name.empty()) { return flags; }
+            {
                 const node_id owner = form_owner(txn, b, id);
                 walk_tree(txn, tree_top(txn, b, id), [&](node_id other) {
                     if (other == id || !is(txn, other, "input") ||
