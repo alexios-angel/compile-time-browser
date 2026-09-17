@@ -1684,13 +1684,27 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    const bool negative = a.has_value() != b.has_value();
+                    if (!a) {
+                        a = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                       : boundedNumber(lhs, true);
+                    }
+                    if (!b) {
+                        b = right.negativeIntegerNumber ? right.negativeIntegerNumber
+                                                        : boundedNumber(rhs, true);
+                    }
                     // Exact Number operands and a bounded product exclude rounding
                     // and wrap. Zero keeps its original signed value as the origin.
                     if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = *a * *b;
+                        const auto product = *a * *b;
+                        if (negative && product != 0) {
+                            result.negativeIntegerNumber = product;
+                        } else {
+                            result.integerNumber = product;
+                        }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Div ||
