@@ -1826,6 +1826,11 @@ public:
         // carry.
         bool async_gen = false;
         bool awaiting = false;
+        // A `.return(v)` whose v is being AWAITED (27.6.3.8 / 27.6.3.9)
+        // before the body sees it: 1 = the frame is at a yield and resumes
+        // with a return completion of the awaited value, 2 = the generator
+        // is finished and the request settles with it directly.
+        std::uint8_t return_pending = 0;
         value self;
         // THE ITERATOR RECORD OF A `yield*` IN PROGRESS (see yield_delegate_open_name),
         // undefined otherwise. While it is set, `.next()` on a sync generator
@@ -1853,6 +1858,15 @@ public:
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
+    // 27.7.5.3 Await steps 1-2 for a frame ALREADY parked: PromiseResolve
+    // (%Promise%, v), then resume() when it settles - from the promise's
+    // handler list, or from a job when it already has. A `constructor`
+    // getter that throws rejects on the spot, as PromiseResolve's `?` says.
+    void await_for(coroutine_object * saved, value v);
+    // What an async generator's `.throw(e)` / `.return(v)` becomes at a
+    // `yield*`: the value handed to the delegate loop, which forwards it to
+    // the inner iterator's own method (14.4.14 step 7.b / 7.c).
+    [[nodiscard]] value make_resume_record(std::string_view how, value v);
     // LIFT THE TOP FRAME INTO A COROUTINE (await and yield are the same
     // suspension): its register window is copied out, its handlers travel
     // with it with reg_top made RELATIVE - it comes back somewhere else in

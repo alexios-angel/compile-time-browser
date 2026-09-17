@@ -190,6 +190,28 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         throw_error("TypeError", "this generator is already running");
         return iter_result(value::undefined(), true);
     }
+    // AN ASYNC GENERATOR'S `.return(v)` AWAITS v FIRST - 27.6.3.8
+    // AsyncGeneratorUnwrapYieldResumption at a yield, 27.6.3.9
+    // AsyncGeneratorAwaitReturn when there is no yield to resume - so the
+    // request stays open until that settles, and resume() decides what the
+    // awaited value does: a return completion through the body's finally
+    // blocks, or the request's own done record.
+    if (saved->async_gen && how == resume_mode::returned) {
+        const bool at_yield = saved->started && !saved->done;
+        if (!at_yield) { saved->done = true; }
+        saved->return_pending = at_yield ? 1 : 2;
+        saved->awaiting = true;
+        await_for(saved, sent);
+        return value::undefined();
+    }
+    // `.throw(e)` AT AN ASYNC `yield*`: the delegate loop forwards it to the
+    // inner iterator's `throw` (14.4.14 step 7.b) - the frame resumes with
+    // the record and the loop's own native does the call.
+    if (saved->async_gen && how == resume_mode::thrown && saved->started && !saved->done &&
+        saved->delegate.is_object()) {
+        sent = make_resume_record("throw", sent);
+        how = resume_mode::next;
+    }
     // A FINISHED GENERATOR KEEPS ANSWERING, for ever. `.next()` past the end is
     // not an error and must not run the body again.
     //
@@ -305,11 +327,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     // clause passes it on (catch_filter_name), a `yield` inside a finally
     // suspends again, and the marker escaping the frame is what finishes the
     // generator with v (or with whatever a finally returned instead). An
-    // async generator still finishes on the spot.
-    if (how == resume_mode::returned && saved->async_gen) {
-        saved->done = true;
-        return iter_result(sent, true);
-    }
+    // async generator takes the same road from resume(), once v is awaited.
     if (how == resume_mode::returned) {
         sent = make_return_marker(sent);
         how = resume_mode::thrown;
@@ -480,6 +498,13 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
         return obj->find("__value");
     };
     if (value * reason = rejection_of(outcome)) {
+        // A return completion that ran the body's finally blocks and escaped
+        // through the async fence: the request's record, not a rejection.
+        if (is_return_marker(*reason)) {
+            promise_settler_(*this, promise, iter_result(return_marker_value(*reason), true),
+                             false);
+            return;
+        }
         promise_settler_(*this, promise, *reason, true);
         return;
     }
@@ -565,9 +590,107 @@ std::size_t context::restore_frame(coroutine_object * saved) {
     return base;
 }
 
+value context::make_resume_record(std::string_view how, value v) {
+    value record = make_object();
+    auto * table = static_cast<object_object *>(record.as_heap());
+    table->set(resume_record_key, string(std::string{how}));
+    table->set(resume_record_value_key, v);
+    return record;
+}
+
+void context::await_for(coroutine_object * saved, value v) {
+    if (!pending_promise_factory_ || !promise_settler_) { return; }
+    const value coroutine = value::object(saved);
+    const rooted keep{*this, v};
+    value awaited = v;
+    bool threw = false;
+    value thrown = value::undefined();
+    const auto wrap = [&] {
+        awaited = pending_promise_factory_(*this);
+        promise_settler_(*this, awaited, v, false);
+    };
+    if (v.is_object() && static_cast<object_object *>(v.as_heap())->find("__settled") != nullptr) {
+        // PromiseResolve(%Promise%, v), 27.2.4.7.1: a promise is awaited as
+        // itself when its `constructor` is %Promise% - a getter's throw is
+        // the await's rejection, so it is read under a fence - and resolved
+        // into a fresh one otherwise.
+        handler fence;
+        fence.frame = frames_.size();
+        fence.reg_top = registers_.size();
+        fence.fence = true;
+        handlers_.push_back(fence);
+        const std::size_t mark = handlers_.size();
+        const value ctor = lookup_property(v, "constructor");
+        if (fence_hit_) {
+            fence_hit_ = false;
+            threw = true;
+            thrown = fence_thrown_;
+            fence_thrown_ = value::undefined();
+        } else {
+            if (handlers_.size() >= mark) { handlers_.resize(mark - 1); }
+            // %Promise% is the private slot the library left on its
+            // prototype (builtins/async.cpp, intrinsic_key), not the global
+            // a page may have replaced.
+            object_object * table = prototype(proto_kind::promise);
+            const value * intrinsic =
+                table != nullptr ? table->find(std::string_view{"@#Promise"}) : nullptr;
+            if (intrinsic == nullptr || !ctor.strict_equals(*intrinsic)) { wrap(); }
+        }
+    } else if (v.is_object_like()) {
+        wrap();
+    }
+    if (threw) {
+        queue_microtask(await_job(), {coroutine, thrown, value::boolean(true)});
+        return;
+    }
+    if (is_pending_promise(awaited)) {
+        attach_resume(awaited, coroutine);
+        return;
+    }
+    value with = awaited;
+    bool rejected = false;
+    if (awaited.is_object()) {
+        auto * obj = static_cast<object_object *>(awaited.as_heap());
+        if (value * state = obj->find("__rejected"); state != nullptr && truthy(*state)) {
+            rejected = true;
+        }
+        if (value * settled = obj->find("__value")) {
+            with = *settled;
+            mark_promise_handled(awaited);
+        }
+    }
+    queue_microtask(await_job(), {coroutine, with, value::boolean(rejected)});
+}
+
 void context::resume(value coroutine, value with, bool rejected) {
     if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
     auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
+
+    if (saved->generator && saved->return_pending != 0) {
+        // THE AWAITED `.return(v)` ARRIVES. A finished generator's request
+        // settles with it as its done record (or with the rejection); one
+        // parked at a `yield*` hands it to the delegate loop as a record for
+        // the inner iterator; one at a plain yield resumes with a return
+        // completion - the marker thrown at the yield, as the sync form does
+        // - or with the rejection thrown there.
+        const std::uint8_t pending = saved->return_pending;
+        saved->return_pending = 0;
+        saved->awaiting = false;
+        if (pending == 2) {
+            const value promise = saved->promise;
+            saved->promise = value::undefined();
+            promise_settler_(*this, promise, rejected ? with : iter_result(with, true), rejected);
+            async_generator_drain(saved);
+            return;
+        }
+        if (saved->delegate.is_object()) {
+            with = make_resume_record(rejected ? "throw" : "return", with);
+            rejected = false;
+        } else if (!rejected) {
+            with = make_return_marker(with);
+            rejected = true;
+        }
+    }
 
     const std::size_t base = restore_frame(saved);
     // An async generator comes back as a GENERATOR frame, so its next `yield`
@@ -596,7 +719,12 @@ void context::resume(value coroutine, value with, bool rejected) {
             if (saved->generator) {
                 saved->running = false;
                 saved->done = true;
-                promise_settler_(*this, saved->promise, with, true);
+                if (is_return_marker(with)) {
+                    promise_settler_(*this, saved->promise,
+                                     iter_result(return_marker_value(with), true), false);
+                } else {
+                    promise_settler_(*this, saved->promise, with, true);
+                }
                 saved->promise = value::undefined();
                 async_generator_drain(saved);
                 return;

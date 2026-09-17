@@ -1029,6 +1029,44 @@ void install_destructuring_iteration(context & cx) {
             return value::undefined();
         }
         const value sent = a.size() > 1 ? a[1] : value::undefined();
+        // AN ASYNC GENERATOR'S `.throw(e)` / `.return(v)` ARRIVING AT THE
+        // `yield*` (see resume_record_key): the inner iterator's own method
+        // gets it (14.4.14 steps 7.b and 7.c). No `throw`: the inner
+        // iterator is closed and the protocol violation is a TypeError at
+        // the yield. No `return`: the generator returns v itself - the
+        // marker every finally on the way out sees.
+        if (sent.is_object()) {
+            auto * table = static_cast<object_object *>(sent.as_heap());
+            if (const value * how = table->find(resume_record_key); how != nullptr) {
+                const std::string method_name = c.to_string(*how);
+                const value * held = table->find(resume_record_value_key);
+                const value v = held != nullptr ? *held : value::undefined();
+                const value iterator = slot(record, "iterator");
+                const value method = c.lookup_property(iterator, method_name);
+                if (c.throw_pending()) { return value::undefined(); }
+                if (method.is_nullish()) {
+                    record->set("done", value::boolean(true));
+                    if (method_name == "return") {
+                        c.throw_value(c.make_return_marker(v));
+                        return value::undefined();
+                    }
+                    if (const value close = c.lookup_property(iterator, "return");
+                        close.is_callable()) {
+                        (void)c.call(close, {}, iterator);
+                        if (c.throw_pending()) { return value::undefined(); }
+                    }
+                    c.throw_error("TypeError", "The iterator does not provide a 'throw' method");
+                    return value::undefined();
+                }
+                if (!method.is_callable()) {
+                    record->set("done", value::boolean(true));
+                    c.throw_error("TypeError", "iterator." + method_name + " is not a function");
+                    return value::undefined();
+                }
+                record->set("resume", *how);
+                return c.call(method, {&v, 1}, iterator);
+            }
+        }
         return c.call(next, {&sent, 1}, slot(record, "iterator"));
     });
     cx.define_native(std::string{yield_delegate_settle_name}, [](context & c, std::span<value> a) {
@@ -1046,10 +1084,18 @@ void install_destructuring_iteration(context & cx) {
             c.throw_error("TypeError", "Iterator result is not an object");
             return value::undefined();
         }
+        const value forwarded = slot(record, "resume");
+        record->set("resume", value::undefined());
         if (context::truthy(c.lookup_property(result, "done"))) {
             record->set("done", value::boolean(true));
             record->set("value", c.lookup_property(result, "value"));
             if (co != nullptr) { co->delegate = value::undefined(); }
+            // The inner iterator answered a forwarded `return` with done:
+            // the generator returns that value (14.4.14 step 7.c.viii),
+            // through its finally blocks.
+            if (forwarded.is_string() && c.to_string(forwarded) == "return") {
+                c.throw_value(c.make_return_marker(slot(record, "value")));
+            }
             return value::undefined();
         }
         if (co != nullptr) { co->delegate = a[0]; }
