@@ -73,37 +73,14 @@ constexpr std::array<std::string_view, 6> performed_substitutions{
 // when the engine does. It costs a false NEGATIVE - a page asking about a
 // function the engine handles but this list has not caught up with - which makes
 // a test skip rather than lie.
-constexpr std::array<std::string_view, 31> value_functions{"cross-origin",
-                                                           "integrity",
-                                                           "referrer-policy",
-                                                           "rgb",
-                                                           "rgba",
-                                                           "hsl",
-                                                           "hsla",
-                                                           "hwb",
-                                                           "color",
-                                                           "url",
-                                                           "src",
-                                                           "linear-gradient",
-                                                           "radial-gradient",
-                                                           "conic-gradient",
-                                                           "translate",
-                                                           "translatex",
-                                                           "translatey",
-                                                           "translate3d",
-                                                           "rotate",
-                                                           "scale",
-                                                           "scalex",
-                                                           "scaley",
-                                                           "skew",
-                                                           "matrix",
-                                                           "matrix3d",
-                                                           "perspective",
-                                                           "cubic-bezier",
-                                                           "steps",
-                                                           "counter",
-                                                           "rect",
-                                                           "format"};
+constexpr std::array<std::string_view, 41> value_functions{
+    "cross-origin", "integrity", "referrer-policy", "rgb", "rgba", "hsl", "hsla", "hwb", "color",
+    "url", "src", "linear-gradient", "radial-gradient", "conic-gradient", "translate", "translatex",
+    "translatey", "translate3d", "rotate", "scale", "scalex", "scaley", "skew", "matrix",
+    "matrix3d", "perspective", "cubic-bezier", "steps", "counter", "rect", "format",
+    // CSS Color 4/5, evaluated by properties/color.cpp.
+    "lab", "lch", "oklab", "oklch", "color-mix", "light-dark", "alpha", "contrast-color",
+    "color-layers", "device-cmyk"};
 
 [[nodiscard]] bool is_length_unit(std::string_view unit) {
     return ascii_iequals_any(unit, length_units) || ascii_iequals_any(unit, more_length_units);
