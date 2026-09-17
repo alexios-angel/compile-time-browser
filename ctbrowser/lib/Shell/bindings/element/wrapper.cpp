@@ -237,8 +237,7 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
 }
 
 rect dom_bindings::box_of(node_id id) const {
-    if (fragments_ == nullptr) { return rect{}; }
-    return absolute_rect_of(*fragments_, id).value_or(rect{});
+    return client_rect_of(id); // viewport coordinates: the scroll offsets above the box come off
 }
 
 std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {

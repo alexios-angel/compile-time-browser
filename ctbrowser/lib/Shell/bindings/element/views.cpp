@@ -4,6 +4,7 @@
 #include "internal.hpp"
 
 #include <ctbrowser/dom/token_list.hpp>
+#include <ctbrowser/layout/overflow.hpp>
 
 namespace ctbrowser::shell {
 
@@ -15,7 +16,563 @@ namespace {
 // table, see declarations.cpp.
 using style::css::css_name_of;
 
+// An INLINE box in §7's sense - `display: inline` - and not an inline-level
+// block or replaced box, which have client edges of their own.
+[[nodiscard]] bool is_inline_box(const layout::fragment & f) noexcept {
+    return f.box != nullptr && f.box->kind == layout::box_kind::inline_;
+}
+
 } // namespace
+
+dom_bindings::located dom_bindings::locate(node_id id, bool scrolled) const {
+    located out;
+    if (fragments_ == nullptr || !id) { return out; }
+    const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy,
+                          bool under_fixed) -> bool {
+        const rect box = at.absolute_bounds(dx, dy);
+        const bool fixed =
+            under_fixed || (at.box != nullptr && at.box->position == layout::position_kind::fixed);
+        if (at.source == id) {
+            out.f = &at;
+            out.abs = box;
+            if (scrolled && !fixed) {
+                const point viewport = viewport_scroll();
+                out.abs.x -= viewport.x;
+                out.abs.y -= viewport.y;
+            }
+            return true;
+        }
+        // A scrolled container's content sits `offset` further up and left
+        // than layout put it.
+        point inner{box.x, box.y};
+        if (scrolled && at.box != nullptr && at.box->scroll_container && at.source) {
+            const point offset = scroll_offset_of(at.source);
+            inner.x -= offset.x;
+            inner.y -= offset.y;
+        }
+        for (const layout::fragment & child : at.children) {
+            if (self(self, child, inner.x, inner.y, fixed)) { return true; }
+        }
+        return false;
+    };
+    (void)walk(walk, *fragments_, 0, 0, false);
+    return out;
+}
+
+rect dom_bindings::client_rect_of(node_id id) const {
+    return locate(id, true).abs;
+}
+
+point dom_bindings::scroll_offset_of(node_id id) const {
+    const auto it = element_scrolls_.find(id.key());
+    return it == element_scrolls_.end() ? point{} : it->second;
+}
+
+// "Scroll an element to x, y" - CSSOM View §6, with the clamp of §2's
+// rightward-and-downward overflow directions. A box with nothing to scroll -
+// `overflow: visible`, or no box at all - ignores the write, as the setters'
+// "no associated scrolling box" step says.
+void dom_bindings::scroll_element_to(node_id id, double x, double y) {
+    flush_layout();
+    const located at = locate(id);
+    if (at.f == nullptr || at.f->box == nullptr || !at.f->box->scroll_container) { return; }
+    const rect area = layout::scrolling_area_of(*at.f);
+    const rect padding = layout::padding_box_of(*at.f);
+    const auto clamp = [](double v, float most) {
+        return static_cast<float>(std::max(0.0, std::min(v, static_cast<double>(most))));
+    };
+    const point wanted{clamp(x, area.width - padding.width),
+                       clamp(y, area.height - padding.height)};
+    if (wanted == scroll_offset_of(id)) { return; }
+    element_scrolls_[id.key()] = wanted;
+    queue_scroll_event(id);
+}
+
+// The scrollTop/scrollLeft getters, §6: zero for the root in quirks mode and
+// for a box-less element; the window's position for the root, and for a
+// quirks-mode body that is not potentially scrollable; else the offset.
+double dom_bindings::scroll_position(node_id id, char axis) {
+    flush_layout();
+    const bool quirks = doc_->quirks();
+    const bool root = id == doc_->read().root();
+    if (root && quirks) { return 0; }
+    if (root || (quirks && id == body_element() && !potentially_scrollable(id))) {
+        const point viewport = viewport_scroll();
+        return axis == 'x' ? viewport.x : viewport.y;
+    }
+    const point offset = scroll_offset_of(id);
+    return axis == 'x' ? offset.x : offset.y;
+}
+
+void dom_bindings::set_scroll_position(node_id id, char axis, double v) {
+    if (!std::isfinite(v)) { v = 0; } // "normalize non-finite values"
+    flush_layout();
+    const bool quirks = doc_->quirks();
+    const bool root = id == doc_->read().root();
+    if (root && quirks) { return; }
+    if (root || (quirks && id == body_element() && !potentially_scrollable(id))) {
+        const point viewport = viewport_scroll();
+        scroll_viewport_to(axis == 'x' ? v : viewport.x, axis == 'x' ? viewport.y : v);
+        return;
+    }
+    const point offset = scroll_offset_of(id);
+    scroll_element_to(id, axis == 'x' ? v : offset.x, axis == 'x' ? offset.y : v);
+}
+
+node_id dom_bindings::scrolling_element() {
+    if (!doc_->quirks()) { return doc_->read().root(); }
+    flush_layout(); // potentially_scrollable reads the boxes
+    // Quirks mode: the body when it is not potentially scrollable in either
+    // axis, else null - with the root's `overflow: clip` read as `hidden`,
+    // which is what potentially_scrollable already does (clip is not
+    // visible).
+    const node_id body = body_element();
+    if (!body) { return node_id{}; }
+    return potentially_scrollable(body) ? node_id{} : body;
+}
+
+// "Determine the scroll-into-view position" (§6.1) for one scrolling box,
+// given the target's rectangle and the box's, both in viewport coordinates,
+// and the box's current position: where the box would have to scroll to.
+namespace {
+
+[[nodiscard]] float align_edge(std::string_view how, float current, float target_a, float target_b,
+                               float box_a, float box_b) {
+    const float element = target_b - target_a;
+    const float box = box_b - box_a;
+    if (how == "start") { return current + (target_a - box_a); }
+    if (how == "end") { return current + (target_b - box_b); }
+    if (how == "center") { return current + ((target_a + target_b) / 2 - (box_a + box_b) / 2); }
+    // "nearest"
+    const bool a_out = target_a < box_a;
+    const bool b_out = target_b > box_b;
+    if (a_out && b_out) { return current; }
+    if ((a_out && element < box) || (b_out && element > box)) {
+        return current + (target_a - box_a);
+    }
+    if ((a_out && element > box) || (b_out && element < box)) {
+        return current + (target_b - box_b);
+    }
+    return current;
+}
+
+} // namespace
+
+void dom_bindings::scroll_into_view(node_id id, std::string_view block, std::string_view inline_,
+                                    bool nearest_container) {
+    flush_layout();
+    if (locate(id).f == nullptr) { return; }
+    // Innermost scroll container to outermost, then the viewport. Each step
+    // re-reads the target's viewport rectangle, because the scroll it just
+    // performed moved it.
+    std::vector<node_id> containers;
+    {
+        const auto txn = doc_->read();
+        for (node_id up = txn.parent(id); up; up = txn.parent(up)) {
+            const located at = locate(up);
+            if (at.f != nullptr && at.f->box != nullptr && at.f->box->scroll_container) {
+                containers.push_back(up);
+            }
+        }
+    }
+    for (const node_id container : containers) {
+        const rect target = client_rect_of(id);
+        const located at = locate(container, true);
+        const rect pad = layout::padding_box_of(*at.f);
+        const rect box{at.abs.x + pad.x, at.abs.y + pad.y, pad.width, pad.height};
+        const point current = scroll_offset_of(container);
+        scroll_element_to(container,
+                          align_edge(inline_, current.x, target.x, target.x + target.width, box.x,
+                                     box.x + box.width),
+                          align_edge(block, current.y, target.y, target.y + target.height, box.y,
+                                     box.y + box.height));
+        if (nearest_container) { return; }
+    }
+    const rect target = client_rect_of(id);
+    const point current = viewport_scroll();
+    scroll_viewport_to(align_edge(inline_, current.x, target.x, target.x + target.width, 0,
+                                  static_cast<float>(viewport_width_)),
+                       align_edge(block, current.y, target.y, target.y + target.height, 0,
+                                  static_cast<float>(viewport_height_)));
+}
+
+namespace {
+
+// ScrollToOptions, read the way the methods' overloads resolve: two numbers,
+// or one dictionary - whose `behavior` must be one of the three keywords -
+// or nothing. `bad` is the TypeError the IDL conversion would raise.
+struct scroll_arguments {
+    std::optional<double> x, y;
+    bool bad = false;
+};
+
+[[nodiscard]] scroll_arguments read_scroll_arguments(context & c, std::span<value> args) {
+    scroll_arguments out;
+    const auto finite = [](double v) { return std::isfinite(v) ? v : 0.0; };
+    if (args.size() >= 2) {
+        out.x = finite(context::to_number(args[0]));
+        out.y = finite(context::to_number(args[1]));
+        return out;
+    }
+    if (args.empty() || args[0].is_nullish()) { return out; }
+    if (!args[0].is_object_like()) {
+        out.bad = true;
+        return out;
+    }
+    if (const value left = dict_member(c, args[0], "left"); !left.is_undefined()) {
+        out.x = finite(context::to_number(left));
+    }
+    if (const value top = dict_member(c, args[0], "top"); !top.is_undefined()) {
+        out.y = finite(context::to_number(top));
+    }
+    if (const value behavior = dict_member(c, args[0], "behavior"); !behavior.is_undefined()) {
+        const std::string how = c.to_string(behavior);
+        if (how != "auto" && how != "instant" && how != "smooth") { out.bad = true; }
+    }
+    return out;
+}
+
+} // namespace
+
+// getClientRects() (§7), GeometryUtils (§10) and checkVisibility (HTML) on
+// Element.prototype.
+void dom_bindings::install_element_geometry(context & cx) {
+    // Every fragment of the element, in viewport coordinates and tree order -
+    // an inline split over lines has one per line - as a DOMRectList: an
+    // array carrying `item`, which is what a page indexes and measures.
+    define_operation(cx, {"Element"}, "getClientRects", 0, [this](context & c, std::span<value>) {
+        const node_id self = receiver(c);
+        flush_layout();
+        const value out = c.make_array();
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        if (fragments_ != nullptr && self) {
+            const point viewport = viewport_scroll();
+            const auto walk = [&](auto && walk_, const layout::fragment & at, float dx, float dy,
+                                  bool fixed) -> void {
+                const rect box = at.absolute_bounds(dx, dy);
+                const bool is_fixed = fixed || (at.box != nullptr &&
+                                                at.box->position == layout::position_kind::fixed);
+                if (at.source == self) {
+                    rect r = box;
+                    if (!is_fixed) {
+                        r.x -= viewport.x;
+                        r.y -= viewport.y;
+                    }
+                    items->items.push_back(make_dom_rect(c, r));
+                }
+                point inner{box.x, box.y};
+                if (at.box != nullptr && at.box->scroll_container && at.source) {
+                    const point offset = scroll_offset_of(at.source);
+                    inner.x -= offset.x;
+                    inner.y -= offset.y;
+                }
+                for (const layout::fragment & child : at.children) {
+                    walk_(walk_, child, inner.x, inner.y, is_fixed);
+                }
+            };
+            walk(walk, *fragments_, 0, 0, false);
+        }
+        c.store_property(out, "item", native(c, "item", [out](context &, std::span<value> args) {
+                             const auto * list =
+                                 static_cast<const script::array_object *>(out.as_heap());
+                             const double i = args.empty() ? 0 : context::to_number(args[0]);
+                             if (!(i >= 0) || i >= static_cast<double>(list->items.size())) {
+                                 return value::null();
+                             }
+                             return list->items[static_cast<std::size_t>(i)];
+                         }));
+        return out;
+    });
+    // getBoxQuads({box, relativeTo}): one DOMQuad per box of the element, in
+    // the coordinate space of `relativeTo`'s border box - the viewport when
+    // it is the document or absent. Nothing for an element with no box.
+    define_operation(cx, {"Element"}, "getBoxQuads", 0, [this](context & c, std::span<value> args) {
+        const value options = args.empty() ? value::undefined() : args[0];
+        std::string box = dict_string(c, options, "box");
+        if (box.empty()) { box = "border"; }
+        const value out = c.make_array();
+        const std::optional<rect> own = box_rect_of(c, c.current_this(), box);
+        if (!own) { return out; }
+        point origin{};
+        if (const value relative = dict_member(c, options, "relativeTo");
+            !relative.is_undefined()) {
+            const std::optional<rect> base = box_rect_of(c, relative, "border");
+            if (!base) {
+                throw_dom_exception(c, "NotFoundError", "getBoxQuads: relativeTo has no box");
+                return value::undefined();
+            }
+            origin = point{base->x, base->y};
+        }
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        items->items.push_back(
+            make_dom_quad(c, rect{own->x - origin.x, own->y - origin.y, own->width, own->height}));
+        return out;
+    });
+    // convertQuadFromNode / convertRectFromNode / convertPointFromNode: the
+    // geometry in `from`'s fromBox space, moved into this element's toBox
+    // space. NotFoundError when either side has no box.
+    for (const char * name :
+         {"convertQuadFromNode", "convertRectFromNode", "convertPointFromNode"}) {
+        define_operation(
+            cx, {"Element"}, name, 2, [this, name](context & c, std::span<value> args) {
+                const value from = args.size() > 1 ? args[1] : value::undefined();
+                const value options = args.size() > 2 ? args[2] : value::undefined();
+                std::string from_box = dict_string(c, options, "fromBox");
+                std::string to_box = dict_string(c, options, "toBox");
+                if (from_box.empty()) { from_box = "border"; }
+                if (to_box.empty()) { to_box = "border"; }
+                const std::optional<rect> source = box_rect_of(c, from, from_box);
+                const std::optional<rect> target = box_rect_of(c, c.current_this(), to_box);
+                if (!source || !target) {
+                    throw_dom_exception(c, "NotFoundError",
+                                        std::string{name} + ": the node has no box");
+                    return value::undefined();
+                }
+                const point shift{source->x - target->x, source->y - target->y};
+                const value given = args.empty() ? value::undefined() : args[0];
+                const auto number = [&](value v, const char * member) {
+                    const value held =
+                        v.is_object_like() ? c.lookup_property(v, member) : value::undefined();
+                    return held.is_undefined() ? 0.0 : context::to_number(held);
+                };
+                const std::string_view which = name;
+                if (which == "convertPointFromNode") {
+                    return make_dom_point(c, number(given, "x") + shift.x,
+                                          number(given, "y") + shift.y);
+                }
+                if (which == "convertRectFromNode") {
+                    return make_dom_quad(c, rect{static_cast<float>(number(given, "x") + shift.x),
+                                                 static_cast<float>(number(given, "y") + shift.y),
+                                                 static_cast<float>(number(given, "width")),
+                                                 static_cast<float>(number(given, "height"))});
+                }
+                const value quad = make_dom_quad(c, rect{});
+                auto * made = static_cast<script::object_object *>(quad.as_heap());
+                for (const char * corner : {"p1", "p2", "p3", "p4"}) {
+                    const value p = given.is_object_like() ? c.lookup_property(given, corner)
+                                                           : value::undefined();
+                    made->define(
+                        corner,
+                        make_dom_point(c, number(p, "x") + shift.x, number(p, "y") + shift.y),
+                        script::attr_none);
+                }
+                return quad;
+            });
+    }
+    // checkVisibility(options), HTML: false with no box; with the option, a
+    // `visibility` other than visible, an inclusive ancestor at `opacity: 0`,
+    // or a `content-visibility: auto` ancestor whose content is off-screen.
+    // ponytail: `content-visibility` is not a property the cascade carries,
+    // so its hidden case is not seen here.
+    define_operation(
+        cx, {"Element"}, "checkVisibility", 0, [this](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            flush_layout();
+            const located at = locate(self, true);
+            if (at.f == nullptr) { return value::boolean(false); }
+            const value options = args.empty() ? value::undefined() : args[0];
+            const bool check_visibility = dict_flag(c, options, "visibilityProperty") ||
+                                          dict_flag(c, options, "checkVisibilityCSS");
+            const bool check_opacity =
+                dict_flag(c, options, "opacityProperty") || dict_flag(c, options, "checkOpacity");
+            const bool check_auto = dict_flag(c, options, "contentVisibilityAuto");
+            if (check_visibility && !ascii_iequals(cascade_value(self, "visibility"), "visible") &&
+                !cascade_value(self, "visibility").empty()) {
+                return value::boolean(false);
+            }
+            const auto txn = doc_->read();
+            for (node_id up = self; up; up = txn.parent(up)) {
+                if (check_opacity) {
+                    const std::string_view opacity = cascade_value(up, "opacity");
+                    if (!opacity.empty() &&
+                        std::strtod(std::string{opacity}.c_str(), nullptr) == 0) {
+                        return value::boolean(false);
+                    }
+                }
+                if (up != self && check_auto &&
+                    ascii_iequals(cascade_value(up, "content-visibility"), "auto") &&
+                    (at.abs.y + at.abs.height <= 0 ||
+                     at.abs.y >= static_cast<float>(viewport_height_))) {
+                    return value::boolean(false);
+                }
+                if (up != self &&
+                    ascii_iequals(cascade_value(up, "content-visibility"), "hidden")) {
+                    return value::boolean(false);
+                }
+            }
+            return value::boolean(true);
+        });
+}
+
+// WHAT A FINISHED SCROLL'S PROMISE RESOLVES WITH: a ScrollResult whose
+// `interrupted` is false - an instant scroll is never cut short by another
+// (element-scroll-promises reads the member off the settled value).
+value dom_bindings::scroll_settled(context & c) {
+    auto * result = c.allocate<script::object_object>();
+    result->set("interrupted", value::boolean(false));
+    return c.make_promise(value::object(result), false);
+}
+
+// scroll(), scrollTo(), scrollBy() and scrollIntoView() on Element.prototype
+// (§6). The three scroll methods return the Promise the specification gives
+// them - a rejected one for an argument the IDL refuses, a resolved one
+// once the (instant) scroll is done; `smooth` completes at once, which the
+// suite accepts because it reads the end position.
+void dom_bindings::install_element_scrolling(context & cx) {
+    const auto rejected = [](context & c, std::string_view what) {
+        const value error = c.make_error("TypeError", std::string{what});
+        return c.make_promise(error, true);
+    };
+    const auto scroll = [this, rejected](bool relative) {
+        return [this, rejected, relative](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            const scroll_arguments read = read_scroll_arguments(c, args);
+            if (read.bad) { return rejected(c, "scroll: the argument is not a ScrollToOptions"); }
+            if (!self) { return scroll_settled(c); }
+            flush_layout();
+            const bool quirks = doc_->quirks();
+            const bool root = self == doc_->read().root();
+            const bool viewport_element =
+                root || (quirks && self == body_element() && !potentially_scrollable(self));
+            const point current = viewport_element ? viewport_scroll() : scroll_offset_of(self);
+            double x = read.x.value_or(relative ? 0.0 : current.x);
+            double y = read.y.value_or(relative ? 0.0 : current.y);
+            if (relative) {
+                x += current.x;
+                y += current.y;
+            }
+            if (root && quirks) { return scroll_settled(c); }
+            if (viewport_element) {
+                scroll_viewport_to(x, y);
+            } else {
+                scroll_element_to(self, x, y);
+            }
+            return scroll_settled(c);
+        };
+    };
+    define_operation(cx, {"Element"}, "scroll", 0, scroll(false));
+    define_operation(cx, {"Element"}, "scrollTo", 0, scroll(false));
+    define_operation(cx, {"Element"}, "scrollBy", 0, scroll(true));
+    install_element_geometry(cx);
+    define_operation(
+        cx, {"Element"}, "scrollIntoView", 0, [this](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            // `true` and an omitted argument are block "start"; `false` is block
+            // "end"; a dictionary names both axes and the container.
+            std::string block = "start";
+            std::string inline_ = "nearest";
+            bool nearest_container = false;
+            if (!args.empty() && args[0].is_object_like()) {
+                if (const value b = dict_member(c, args[0], "block"); !b.is_undefined()) {
+                    block = c.to_string(b);
+                }
+                if (const value i = dict_member(c, args[0], "inline"); !i.is_undefined()) {
+                    inline_ = c.to_string(i);
+                }
+                nearest_container = dict_string(c, args[0], "container") == "nearest";
+                for (const std::string * how : {&block, &inline_}) {
+                    if (*how != "start" && *how != "center" && *how != "end" && *how != "nearest") {
+                        c.throw_error("TypeError",
+                                      "scrollIntoView: " + *how + " is not a position");
+                        return value::undefined();
+                    }
+                }
+            } else if (!args.empty() && !args[0].is_nullish() && !context::truthy(args[0])) {
+                // `null` is the (boolean or ScrollIntoViewOptions) union's
+                // dictionary arm - block "start" - and only a falsy boolean is
+                // "end".
+                block = "end";
+            }
+            if (self) { scroll_into_view(self, block, inline_, nearest_container); }
+            return scroll_settled(c);
+        });
+}
+
+// FROM THE CASCADE rather than the box: the root's box carries no resolved
+// properties (box_builder::build sets its style and nothing else), and the
+// rule is about computed values in either axis.
+std::string_view dom_bindings::cascade_value(node_id id, std::string_view property) const {
+    if (styles_ == nullptr) { return {}; }
+    const auto found = styles_->find(style::engine::key_of(id));
+    if (found == styles_->end() || !found->second) { return {}; }
+    return trim(found->second->get(atoms_->intern(property)), html_whitespace);
+}
+
+bool dom_bindings::potentially_scrollable(node_id body) const {
+    if (locate(body).f == nullptr) { return false; }
+    const auto scrolls = [this](node_id id, const char * property) {
+        const std::string_view v = cascade_value(id, property);
+        return !v.empty() && !ascii_iequals(v, "visible") && !ascii_iequals(v, "clip");
+    };
+    const node_id parent = doc_->read().parent(body);
+    if (!parent) { return false; }
+    for (const char * axis : {"overflow-x", "overflow-y"}) {
+        if (scrolls(body, axis) && scrolls(parent, axis)) { return true; }
+    }
+    return false;
+}
+
+bool dom_bindings::is_viewport_element(node_id id, bool scrolling) {
+    const bool quirks = doc_->quirks();
+    const bool root = [&] {
+        const auto txn = doc_->read();
+        return id == txn.root();
+    }();
+    if (root) { return !quirks; }
+    if (!quirks || id != body_element()) { return false; }
+    return !scrolling || !potentially_scrollable(id);
+}
+
+node_id dom_bindings::offset_parent_of(node_id id) {
+    const located at = locate(id);
+    if (at.f == nullptr || at.f->box == nullptr) { return node_id{}; }
+    const node_id body = body_element();
+    node_id parent;
+    {
+        const auto txn = doc_->read();
+        if (id == txn.root() || id == body) { return node_id{}; }
+        parent = txn.parent(id);
+    }
+    const auto box_of_node = [this](node_id node) -> const layout::box_node * {
+        const located found = locate(node);
+        return found.f == nullptr ? nullptr : found.f->box;
+    };
+    // A transform establishes a containing block for fixed and absolute
+    // descendants alike (CSS Transforms 1 §2).
+    const auto anchors_fixed = [](const layout::box_node * b) {
+        return b != nullptr && b->transformed;
+    };
+    const auto anchors_absolute = [](const layout::box_node * b) {
+        return b != nullptr && (b->is_positioned() || b->transformed);
+    };
+    const bool fixed = at.f->box->position == layout::position_kind::fixed;
+    const bool static_ = at.f->box->position == layout::position_kind::static_;
+    if (fixed) {
+        bool anchored = false;
+        for (node_id up = parent; up; up = doc_->read().parent(up)) {
+            if (anchors_fixed(box_of_node(up))) {
+                anchored = true;
+                break;
+            }
+        }
+        if (!anchored) { return node_id{}; }
+    }
+    for (node_id up = parent; up; up = doc_->read().parent(up)) {
+        const layout::box_node * b = box_of_node(up);
+        if (fixed ? anchors_fixed(b) : anchors_absolute(b)) { return up; }
+        if (fixed) { continue; }
+        if (up == body) { return up; }
+        if (static_) {
+            const auto txn = doc_->read();
+            const std::string_view tag = txn.local_name(up);
+            if (txn.element_ns(up) == node_ns::html &&
+                (tag == "td" || tag == "th" || tag == "table")) {
+                return up;
+            }
+        }
+    }
+    return node_id{};
+}
 
 long long dom_bindings::size_attribute(const read_txn & txn, node_id id, std::string_view name,
                                        long long fallback) const {
@@ -30,8 +587,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // view onto ONE element and it has to be installed as its wrapper is made.
     install_sheet_property(cx, obj, id);
 
-    // --- the box metrics: offsetLeft/Top/Width/Height, clientWidth/Height,
-    // clientLeft/Top, scrollWidth/Height.
+    // --- the box metrics: offsetParent/Left/Top/Width/Height, clientWidth/
+    // Height, clientLeft/Top, scrollWidth/Height - CSSOM View §7 and §8.
     //
     // ACCESSORS THAT FLUSH LAYOUT, not numbers copied in at refresh. Reading
     // `offsetWidth` is how a page - Bootstrap's `reflow(el)`, every WPT file
@@ -40,17 +597,21 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // a copy taken at the last refresh said whatever the previous statement
     // left. `flush_layout` runs only what is stale (set_layout_hook).
     //
-    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT, and its two axes come from
-    // different places on purpose: the width is the root box's own (the layout
-    // viewport, 15px narrower than the window when a scrollbar appears - which
-    // is what Bootstrap's `.container` centred itself in), the height the
-    // window's, because `documentElement.clientHeight` means "how tall is the
-    // window" to p5's windowHeight. Before the first layout the root has no
-    // box and the window stands in FOR THE ROOT ONLY: an ordinary element with
-    // no box has a client width of zero, and handing it the viewport told
-    // Babylon its canvas was window-sized before layout had sized it, which
-    // failed WebGL setup outright. The body is an ordinary element here, as in
-    // Chrome. clientLeft/Top are 0: borders are not in the box arithmetic.
+    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT (§7: the root element in a
+    // no-quirks document, the body in a quirks one), and its two axes come
+    // from different places on purpose: the width is the layout viewport (15px
+    // narrower than the window when a scrollbar appears - which is what
+    // Bootstrap's `.container` centred itself in), the height the window's,
+    // because `documentElement.clientHeight` means "how tall is the window"
+    // to p5's windowHeight. An ordinary element with no box has a client width
+    // of zero: handing it the viewport told Babylon its canvas was
+    // window-sized before layout had sized it, which failed WebGL setup
+    // outright. An inline box answers zero for all four client metrics, as
+    // §7 says. scrollWidth/scrollHeight are the SCROLLING AREA - the padding
+    // box grown to everything that overflows it (layout/overflow.hpp) - and
+    // for the root the viewport's; they answered the border box before, which
+    // is 600 subtests of scrollWidthHeight-negative-margin-002 alone.
+    // The `long` metrics are rounded, because that is what a `long` is.
     {
         enum class metric : std::uint8_t {
             offset_left,
@@ -75,30 +636,160 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             auto * getter = cx.allocate<script::native_object>(
                 name, [this, id, which](context &, std::span<value>) {
                     flush_layout();
-                    const rect box = box_of(id);
-                    const bool is_root = [&] {
-                        const auto txn = doc_->read();
-                        return atoms_->text(txn.tag(id).value_or(atom{})) == "html";
-                    }();
+                    const located at = locate(id);
+                    const bool viewport_element = is_viewport_element(
+                        id, which == metric::scroll_width || which == metric::scroll_height);
                     double v = 0;
                     switch (which) {
-                    case metric::offset_left: v = box.x; break;
-                    case metric::offset_top: v = box.y; break;
-                    case metric::offset_width:
-                    case metric::scroll_width: v = box.width; break;
-                    case metric::offset_height:
-                    case metric::scroll_height: v = box.height; break;
-                    case metric::client_width:
-                        v = is_root && box.width <= 0 ? viewport_width_ : box.width;
+                    case metric::offset_left:
+                    case metric::offset_top: {
+                        if (at.f == nullptr || id == body_element()) { break; }
+                        // Against the offsetParent's padding edge, or the
+                        // initial containing block when there is none (§8).
+                        // "ignoring any transforms that apply to the element
+                        // and its ancestors": the translation comes off both.
+                        point origin{};
+                        if (const node_id parent = offset_parent_of(id)) {
+                            const located p = locate(parent);
+                            if (p.f != nullptr) {
+                                const rect pad = layout::padding_box_of(*p.f);
+                                origin = point{p.abs.x + pad.x - p.translation.x,
+                                               p.abs.y + pad.y - p.translation.y};
+                            }
+                        }
+                        v = which == metric::offset_left ? at.abs.x - at.translation.x - origin.x
+                                                         : at.abs.y - at.translation.y - origin.y;
                         break;
-                    case metric::client_height: v = is_root ? viewport_height_ : box.height; break;
-                    case metric::client_left:
-                    case metric::client_top: v = 0; break;
                     }
-                    return value::number(v);
+                    case metric::offset_width: v = at.abs.width; break;
+                    case metric::offset_height: v = at.abs.height; break;
+                    case metric::client_width:
+                    case metric::client_height:
+                    case metric::client_left:
+                    case metric::client_top: {
+                        if (viewport_element &&
+                            (which == metric::client_width || which == metric::client_height)) {
+                            v = which == metric::client_width ? viewport_width_ : viewport_height_;
+                            break;
+                        }
+                        if (at.f == nullptr || is_inline_box(*at.f)) { break; }
+                        // A TABLE'S client box is its whole border box and its
+                        // client edges are 0: the border sits on the table
+                        // wrapper's grid, not around a padding box
+                        // (table-client-props, table-with-border-client-*).
+                        const bool table =
+                            at.f->box != nullptr && at.f->box->kind == layout::box_kind::table;
+                        const rect pad = table ? rect{0, 0, at.abs.width, at.abs.height}
+                                               : layout::padding_box_of(*at.f);
+                        switch (which) {
+                        case metric::client_width: v = pad.width; break;
+                        case metric::client_height: v = pad.height; break;
+                        case metric::client_left: v = pad.x; break;
+                        default: v = pad.y; break;
+                        }
+                        break;
+                    }
+                    case metric::scroll_width:
+                    case metric::scroll_height: {
+                        rect area{};
+                        if (viewport_element) {
+                            area = fragments_ == nullptr
+                                       ? rect{0, 0, static_cast<float>(viewport_width_),
+                                              static_cast<float>(viewport_height_)}
+                                       : layout::viewport_scrolling_area(
+                                             *fragments_, static_cast<float>(viewport_width_),
+                                             static_cast<float>(viewport_height_));
+                        } else if (at.f != nullptr) {
+                            area = layout::scrolling_area_of(*at.f);
+                        }
+                        v = which == metric::scroll_width ? area.width : area.height;
+                        break;
+                    }
+                    }
+                    return value::number(std::round(v));
                 });
             obj.define_accessor(name, value::object(getter), value::undefined());
         }
+        // scrollTop/scrollLeft, §6: doubles, read and written through the
+        // scroll state (scroll_position / set_scroll_position).
+        for (const auto & [name, axis] :
+             {std::pair{"scrollLeft", 'x'}, std::pair{"scrollTop", 'y'}}) {
+            define_getter(
+                cx, obj, name,
+                [this, id, axis](context &, std::span<value>) {
+                    return value::number(scroll_position(id, axis));
+                },
+                [this, id, axis](context &, std::span<value> args) {
+                    set_scroll_position(id, axis, args.empty() ? 0.0 : context::to_number(args[0]));
+                    return value::undefined();
+                });
+        }
+        // `currentCSSZoom`, §7: the effective zoom, which nothing here changes.
+        obj.define_accessor("currentCSSZoom",
+                            native(cx, "get currentCSSZoom",
+                                   [](context &, std::span<value>) { return value::number(1); }),
+                            value::undefined());
+        // `scrollParent`, §8: the nearest scroll container up the containing
+        // block chain, the scrollingElement at the initial containing block;
+        // null for the root, the body, a box-less or unanchored fixed element.
+        auto * scroll_parent_getter = cx.allocate<script::native_object>(
+            "scrollParent", [this, id](context & c, std::span<value>) {
+                flush_layout();
+                const located at = locate(id);
+                node_id body, root;
+                {
+                    const auto txn = doc_->read();
+                    root = txn.root();
+                }
+                body = body_element();
+                if (at.f == nullptr || at.f->box == nullptr || id == root || id == body) {
+                    return value::null();
+                }
+                const bool fixed = at.f->box->position == layout::position_kind::fixed;
+                const bool absolute = at.f->box->position == layout::position_kind::absolute;
+                for (node_id up = doc_->read().parent(id); up; up = doc_->read().parent(up)) {
+                    const located ancestor = locate(up);
+                    const layout::box_node * b = ancestor.f == nullptr ? nullptr : ancestor.f->box;
+                    if (b == nullptr) { continue; }
+                    // A fixed box's containing block is the viewport unless a
+                    // transform anchors it; an absolute one skips to the
+                    // nearest positioned ancestor.
+                    if (fixed && !b->transformed) { continue; }
+                    if (absolute && !b->is_positioned() && !b->transformed) { continue; }
+                    if (b->scroll_container && up != root) { return wrap(c, up); }
+                    if (up == root) { break; }
+                }
+                if (fixed) { return value::null(); }
+                const node_id scrolling = scrolling_element();
+                return scrolling ? wrap(c, scrolling) : value::null();
+            });
+        obj.define_accessor("scrollParent", value::object(scroll_parent_getter),
+                            value::undefined());
+        // HTMLImageElement's `x` and `y` (§9): the border edge against the
+        // initial containing block, ignoring the scroll.
+        if (const auto txn = doc_->read(); txn.local_name(id) == "img") {
+            for (const auto & [name, vertical] : {std::pair{"x", false}, std::pair{"y", true}}) {
+                auto * getter = cx.allocate<script::native_object>(
+                    name, [this, id, vertical](context &, std::span<value>) {
+                        flush_layout();
+                        const located at = locate(id);
+                        return value::number(std::round(at.f == nullptr ? 0.0
+                                                        : vertical ? at.abs.y - at.translation.y
+                                                                   : at.abs.x - at.translation.x));
+                    });
+                obj.define_accessor(name, value::object(getter), value::undefined());
+            }
+        }
+        // `offsetParent`, §8: null for the root, the body, a box-less element
+        // and a fixed one; otherwise the nearest positioned ancestor, the body,
+        // or a table part around a static element.
+        auto * parent_getter = cx.allocate<script::native_object>(
+            "offsetParent", [this, id](context & c, std::span<value>) {
+                flush_layout();
+                const node_id parent = offset_parent_of(id);
+                return parent ? wrap(c, parent) : value::null();
+            });
+        obj.define_accessor("offsetParent", value::object(parent_getter), value::undefined());
     }
 
     // --- element.attributes

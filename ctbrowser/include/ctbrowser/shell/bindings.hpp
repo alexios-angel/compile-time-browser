@@ -441,6 +441,91 @@ private:
 
     [[nodiscard]] rect box_of(node_id id) const;
 
+    // --- CSSOM VIEW GEOMETRY (bindings/element/views.cpp) -------------------
+    // The first fragment for a node in tree order, with its absolute border
+    // box - what box_of answers, plus the fragment itself for the edges and
+    // the scrolling area. `f` is null when the node has no box.
+    struct located {
+        const layout::fragment * f = nullptr;
+        rect abs;
+        // What `transform: translate()` on the box and its ancestors moved it
+        // by - the part offsetTop and an image's `x` "ignore".
+        point translation;
+    };
+    // `scrolled` subtracts every scroll offset above the box - the viewport's
+    // (unless a fixed box is on the way) and each scrolled container's - which
+    // is what getBoundingClientRect answers in; offsetTop and its kin read
+    // the layout position and leave it false.
+    [[nodiscard]] located locate(node_id id, bool scrolled = false) const;
+    // Whether `id` is the element whose client rectangle and scrolling area
+    // are the VIEWPORT's (CSSOM View §7): the root element in a no-quirks
+    // document, the body in a quirks one - and, for the scrolling area, only
+    // a body that is not potentially scrollable.
+    [[nodiscard]] bool is_viewport_element(node_id id, bool scrolling);
+    // "Potentially scrollable" (§2): the body has a box and neither it nor
+    // its parent is `overflow: visible`/`clip` on the axis.
+    [[nodiscard]] bool potentially_scrollable(node_id body) const;
+    // `offsetParent`, §8 - empty where the specification says null.
+    [[nodiscard]] node_id offset_parent_of(node_id id);
+
+    // --- SCROLLING (bindings/element/views.cpp, bindings/window/scrolling.cpp)
+    //
+    // THE SCROLL STATE LIVES HERE. A scroll container's offset is a fact about
+    // the element the page reads and writes through this object model, and a
+    // frame's document has no browser behind it at all - so the offsets are
+    // the bindings', keyed by node, and every geometry read subtracts them
+    // (locate). The VIEWPORT's offset is the browser's for the page - the
+    // wheel and `window.scrollTo` must agree - reached through the two hooks
+    // below, and this object's own for a frame, where nothing else scrolls.
+    // A scroll queues a `scroll` event for the next tick, as "run the scroll
+    // steps" does. What is NOT here is paint: a scrolled container's content
+    // is drawn where layout put it (the recorder does not read these offsets).
+    [[nodiscard]] point viewport_scroll() const;
+    // "Perform a scroll of the viewport" (§3.1): clamped to the viewport's
+    // scrolling area, a `scroll` event at the document when it moved.
+    void scroll_viewport_to(double x, double y);
+    // The offset of a scroll container a script has scrolled; (0, 0) otherwise.
+    [[nodiscard]] point scroll_offset_of(node_id id) const;
+    // "Scroll an element to x, y" (§6): nothing for a box that is not a scroll
+    // container, else clamped to its scrolling area, with a `scroll` event at
+    // the element when it moved.
+    void scroll_element_to(node_id id, double x, double y);
+    // The scrollTop/scrollLeft setters' whole algorithm, root and quirks-body
+    // delegation to the window included; `axis` is 'x' or 'y'.
+    void set_scroll_position(node_id id, char axis, double v);
+    [[nodiscard]] double scroll_position(node_id id, char axis);
+    // "Scroll a target into view" (§6.1) over every scroll container above
+    // the element and then the viewport. `block` and `inline_` are "start",
+    // "center", "end" or "nearest"; `nearest_container` stops at the first
+    // scrolling box (the `container` option).
+    void scroll_into_view(node_id id, std::string_view block, std::string_view inline_,
+                          bool nearest_container);
+    // §5's scrollingElement: the body in quirks mode when it is not
+    // potentially scrollable, the root otherwise, empty for null.
+    [[nodiscard]] node_id scrolling_element();
+    // The border box in VIEWPORT coordinates - locate(id, true).
+    [[nodiscard]] rect client_rect_of(node_id id) const;
+    // The Promise a finished scroll returns, resolved with its ScrollResult.
+    [[nodiscard]] static value scroll_settled(context & cx);
+    void install_element_scrolling(context & cx);
+    void install_element_geometry(context & cx);
+    void install_window_scrolling(context & cx, script::object_object & window);
+    void install_document_geometry(context & cx, script::object_object & doc);
+    // §5's hit test over the fragment tree, topmost first: every element
+    // whose border box is under the viewport point, painted-last first, the
+    // root last. `all` false stops at the first.
+    [[nodiscard]] std::vector<node_id> elements_from_point(double x, double y, bool all);
+    // GeometryUtils (§10) and the geometry interfaces it answers in. A box of
+    // the node in viewport coordinates - "margin", "border", "padding" or
+    // "content" - or nothing when it has none; a Document names the viewport.
+    [[nodiscard]] std::optional<rect> box_rect_of(context & cx, value node, std::string_view box);
+    [[nodiscard]] static value make_dom_point(context & cx, double x, double y);
+    [[nodiscard]] static value make_dom_rect(context & cx, const rect & r);
+    [[nodiscard]] static value make_dom_quad(context & cx, const rect & r);
+    void install_geometry_interfaces(context & cx);
+    // The computed value of `property` for `id` from the cascade's map, or "".
+    [[nodiscard]] std::string_view cascade_value(node_id id, std::string_view property) const;
+
     // THE IDL OPERATIONS, ON THE INTERFACE PROTOTYPES - one native per realm,
     // not one per wrapper. `Node.prototype.appendChild.call(x, y)`,
     // `"insertBefore" in Node.prototype` and `.length` on each are what the
@@ -2087,6 +2172,13 @@ private:
     const layout::box_node * boxes_ = nullptr;
     int viewport_width_ = 0;
     int viewport_height_ = 0;
+    // The scroll state: see set_viewport_scroll_hooks.
+    flat_map<std::uint64_t, point> element_scrolls_;
+    point viewport_scroll_;
+    std::function<point()> viewport_scroll_get_;
+    std::function<void(point)> viewport_scroll_set_;
+    std::vector<node_id> pending_scroll_targets_;
+    bool scroll_events_queued_ = false;
     // A POSITIVE TIME ORIGIN, not zero. `performance.now()` and every event's
     // `timeStamp` read this, and `dom/events/Event-constructors.any.js` asserts
     // `timeStamp > 0` twice - which is the only thing between that file and a
@@ -2309,8 +2401,28 @@ public:
     // file-local prototype builder there calls it.
     static void install_iterable_declaration(context & cx, script::object_object & proto,
                                              bool named_only);
+    // WHERE THE VIEWPORT'S SCROLL POSITION LIVES for this document: the
+    // browser's, for the page. Unset, the bindings keep one of their own (a
+    // frame's document). See the SCROLLING section above.
+    void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set) {
+        viewport_scroll_get_ = std::move(get);
+        viewport_scroll_set_ = std::move(set);
+    }
+    // A `scroll` event at `target` (the document when empty) on the next
+    // tick, once however many times it is asked for before then (§13.1's
+    // pending scroll event targets). The browser calls it for a scroll the
+    // user made; the bindings call it for their own.
+    void queue_scroll_event(node_id target);
+    // A FRAME'S DOCUMENT FLUSHES THROUGH THE PAGE'S HOOK: only the primary
+    // bindings are given one, and the browser's flush lays out every frame
+    // whose document moved (frames_stale) - so a frame's `scrollWidth` read
+    // right after an innerHTML write answered from no layout at all.
     void flush_layout() {
-        if (flush_layout_) { flush_layout_(); }
+        if (flush_layout_) {
+            flush_layout_();
+        } else if (primary_ != nullptr && primary_->flush_layout_) {
+            primary_->flush_layout_();
+        }
     }
     std::function<void()> flush_layout_;
     // SCRIPTS A PAGE MADE AND HAS NOT RUN. HTML's "prepare the script element"

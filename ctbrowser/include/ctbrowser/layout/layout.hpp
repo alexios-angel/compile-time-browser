@@ -13,6 +13,8 @@
 //   position   relative and absolute placement, as a PASS over the finished
 //              fragments - the one part of CSS where a box's position is
 //              decided by an ancestor rather than by its parent
+//   overflow   the scrollable overflow and scrolling area of a finished box,
+//              read off the fragments the same way
 //   engine     the driver
 //
 // the previous engine wrote geometry back onto the DOM node. That single decision is what made
@@ -24,5 +26,6 @@
 #include <ctbrowser/layout/engine.hpp>
 #include <ctbrowser/layout/flex.hpp>
 #include <ctbrowser/layout/fragment.hpp>
+#include <ctbrowser/layout/overflow.hpp>
 #include <ctbrowser/layout/position.hpp>
 #include <ctbrowser/layout/values.hpp>

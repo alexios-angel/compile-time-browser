@@ -113,7 +113,7 @@ rect browser::viewport_box_of(node_id id) const {
 }
 
 void browser::record_scrollbar() {
-    if (max_scroll() <= 0 || options_.scrollbar_width <= 0) { return; }
+    if (!has_scrollbar()) { return; } // hidden viewport overflow draws none (frame.cpp)
     const float width = options_.scrollbar_width;
     const float height = static_cast<float>(options_.height);
     const float left = static_cast<float>(options_.width) - width;

@@ -24,6 +24,8 @@ void dom_bindings::install_window(context & cx) {
     window->set("innerWidth", value::number(viewport_width_));
     window->set("innerHeight", value::number(viewport_height_));
     window->set("devicePixelRatio", value::number(1));
+    install_window_scrolling(cx,
+                             *window); // scrollX/scrollY, scroll/scrollTo/scrollBy (scrolling.cpp)
     // ON THE WINDOW AND AS A BARE GLOBAL, which is one function reachable by two
     // names rather than two functions. The window IS the global object in a
     // browser, so `addEventListener("error", f)` with no receiver is the same
