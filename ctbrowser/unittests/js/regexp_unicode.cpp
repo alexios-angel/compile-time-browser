@@ -33,8 +33,8 @@ void test_property_escapes() {
     expect_result("return /\\p{Script=Latin}/u.test('\\u00b7') + ',' + "
                   "/\\p{scx=Latn}/u.test('\\u00b7');",
                   "false,true");
-    expect_result("return /^\\p{ASCII_Hex_Digit}+$/u.test('0fA') + /^\\p{AHex}$/u.test('g');",
-                  "truefalse");
+    expect_result("return /^\\p{ASCII_Hex_Digit}+$/u.test('0fA') + ',' + /^\\p{AHex}$/u.test('g');",
+                  "true,false");
     expect_result(
         "return /\\p{Any}/u.test('\\u{10FFFF}') + ',' + /\\p{Assigned}/u.test('\\u0378');",
         "true,false");
@@ -85,8 +85,9 @@ void test_canonicalize() {
         "return /^\u00e9+$/.test('\\u00e9\\u00e9') + ',' + /^\u00e9{2}$/.test('\\u00e9');",
         "true,false");
     // \s is WhiteSpace and LineTerminator, not the ASCII five
-    expect_result("return /\\s/.test('\\u00a0') + /\\s/.test('\\u2028') + /\\S/.test('\\u3000');",
-                  "truetruefalse");
+    expect_result("return /\\s/.test('\\u00a0') + ',' + /\\s/.test('\\u2028') + ',' + "
+                  "/\\S/.test('\\u3000');",
+                  "true,true,false");
     expect_result("return /[\\D]/.test('5') + ',' + /[\\D]/.test('x');", "false,true");
     // a million repetitions of one class is a loop, not a recursion
     expect_result("let s = ''; for (let i = 0; i < 200; i++) s += 'abcdefghij'.repeat(1000);"

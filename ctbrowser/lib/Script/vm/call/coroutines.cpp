@@ -513,6 +513,15 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
     if (record.is_object()) {
         if (value * v = static_cast<object_object *>(record.as_heap())->find("value")) {
             if (value * reason = rejection_of(*v)) {
+                // The return marker again, this time as the value of the
+                // done record generator_resume made when the body finished
+                // on a later request (a `yield` inside the finally the
+                // return completion was crossing).
+                if (is_return_marker(*reason)) {
+                    promise_settler_(*this, promise,
+                                     iter_result(return_marker_value(*reason), true), false);
+                    return;
+                }
                 promise_settler_(*this, promise, *reason, true);
                 return;
             }

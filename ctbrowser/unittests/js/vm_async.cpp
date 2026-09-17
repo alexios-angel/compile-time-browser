@@ -550,8 +550,8 @@ void test_async_generator_return() {
     expect_after_turn("var result = ''; async function* g() { try { yield 1; } catch (e) { "
                       "result = e; return 2; } }"
                       "const it = g(); it.next().then(() => it.return(Promise.reject('no')))"
-                      ".then(r => { result += r.value + r.done; });",
-                      "no2true");
+                      ".then(r => { result += ',' + r.value + ',' + r.done; });",
+                      "no,2,true");
     expect_after_turn("var result = ''; async function* g() { yield 1; }"
                       "const it = g(); it.return(Promise.resolve(7)).then(r => { result = "
                       "r.value + ':' + r.done; });",

@@ -100,20 +100,11 @@ private:
         return i_ + ahead < s_.size() ? s_[i_ + ahead] : '\0';
     }
 
+    // A raw line terminator is a LITERAL's problem (12.9.5, judged by
+    // regexp_literal_error on the lexeme); `new RegExp('a\nb')` is a
+    // pattern like any other - p5.js parses CSV with one.
     void step() {
         const char c = s_[i_];
-        // A raw line terminator cannot be in the literal (12.9.5); the lexer
-        // stops at LF but a CR, LS or PS slips through.
-        if (c == '\r' || c == '\n') {
-            fail("a regular expression literal may not contain a line terminator");
-            return;
-        }
-        if (static_cast<unsigned char>(c) == 0xE2 && static_cast<unsigned char>(peek(1)) == 0x80 &&
-            (static_cast<unsigned char>(peek(2)) == 0xA8 ||
-             static_cast<unsigned char>(peek(2)) == 0xA9)) {
-            fail("a regular expression literal may not contain a line terminator");
-            return;
-        }
         if (in_class_) {
             class_step(c);
             return;
