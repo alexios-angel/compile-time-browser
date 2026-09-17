@@ -1169,6 +1169,9 @@ private:
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
     std::vector<custom_element_reaction> custom_reactions_;
     std::vector<std::size_t> reaction_floors_; // the flushes in progress, outermost first
+    // Documents that received an adopted reaction from this scan, with the
+    // floor their queue had - flushed once this scan's own reactions ran.
+    std::vector<std::pair<dom_bindings *, std::size_t>> adoptees_;
     value construct_fence_;                    // the primary's
     value custom_elements_registry_prototype_; // the primary's
     // THIS DOCUMENT'S GLOBAL REGISTRY - null for a document a page made,

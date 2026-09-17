@@ -732,6 +732,9 @@ void dom_bindings::scan_custom_elements() {
                 reaction.what = custom_element_reaction::kind::adopted;
                 reaction.old_document = document_;
                 reaction.new_document = now->document_;
+                bool noted = false;
+                for (const auto & [other, from] : adoptees_) { noted = noted || other == now; }
+                if (!noted) { adoptees_.emplace_back(now, now->custom_reactions_.size()); }
                 now->custom_reactions_.push_back(std::move(reaction));
                 now->custom_elements_.insert_or_assign(fresh.key(), std::move(state));
             }
@@ -900,6 +903,13 @@ void dom_bindings::react_custom_elements() {
     const std::size_t from = custom_reactions_.size();
     scan_custom_elements();
     flush_custom_element_reactions(from);
+    // The adopting steps' reactions run in the ADOPTING document's turn, which
+    // may have no mutation of its own coming (document.adoptNode alone).
+    while (!adoptees_.empty()) {
+        const auto [other, other_from] = adoptees_.back();
+        adoptees_.pop_back();
+        other->flush_custom_element_reactions(other_from);
+    }
 }
 
 // --- the interfaces ---------------------------------------------------------------
