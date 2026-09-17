@@ -705,6 +705,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                     return value::undefined();
                 });
         }
+        // `currentCSSZoom`, §7: the effective zoom, which nothing here changes.
+        obj.define_accessor("currentCSSZoom",
+                            native(cx, "get currentCSSZoom",
+                                   [](context &, std::span<value>) { return value::number(1); }),
+                            value::undefined());
         // `scrollParent`, §8: the nearest scroll container up the containing
         // block chain, the scrollingElement at the initial containing block;
         // null for the root, the body, a box-less or unanchored fixed element.
