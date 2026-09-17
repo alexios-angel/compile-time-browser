@@ -472,7 +472,7 @@ int run_app_file(const std::filesystem::path & path, app_options options) {
 // is a page that already compiled from source. Doing it once here is what
 // stops a second launcher doing it differently.
 int run_bundle(std::span<const std::byte> bytes, app_options overrides) {
-    auto loaded = shell::read_bundle(bytes);
+    const auto loaded = shell::read_bundle(bytes);
     if (!loaded.ok) {
         std::fprintf(stderr, "ctbrowser: %s\n", loaded.error.c_str());
         return 2;
