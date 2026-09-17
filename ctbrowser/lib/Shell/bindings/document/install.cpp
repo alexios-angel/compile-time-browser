@@ -8,6 +8,10 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 void dom_bindings::install_document(context & cx) {
+    // The document's write log is on from here: `mutated()` drains it on
+    // every write for the mutation observers and the attribute change steps
+    // (settle_attribute_writes), at one push per write.
+    if (doc_ != nullptr) { doc_->log_writes(true); }
     auto * doc = cx.allocate<script::object_object>();
 
     set_method(cx, *doc, "getElementById", [this](context & c, std::span<value> args) {

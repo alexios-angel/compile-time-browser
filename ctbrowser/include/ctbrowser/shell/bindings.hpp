@@ -407,6 +407,12 @@ private:
         // Set when a `once` listener has fired, so the pass that removes them
         // runs after the dispatch rather than mutating the list being walked.
         bool spent = false;
+        // THE EVENT HANDLER'S LISTENER (HTML 8.1.8.1): appended when the
+        // handler - the IDL attribute or the content attribute - was first
+        // set to something, removed when it is deactivated, and at its
+        // place in the list it runs the CURRENT handler property. `callback`
+        // is a placeholder object that gives it an identity.
+        bool handler = false;
     };
 
     // --- element wrappers -------------------------------------------------
@@ -705,7 +711,7 @@ public:
     // Costs nothing when no page script has ever constructed a
     // MutationObserver, which is the overwhelmingly common case: the first line
     // returns on an empty registration list.
-    void record_mutations();
+    void record_mutations(const std::vector<document::write_note> & writes);
 
 private:
     // ONE `observe()` CALL'S OPTIONS, after the dictionary's own defaulting.
@@ -1999,6 +2005,18 @@ private:
     // content attribute if that is where it still is.
     [[nodiscard]] value event_handler_get(context & cx, value self, const std::string & name);
     void event_handler_set(context & cx, value self, const std::string & name, value given);
+    // The event handler's listener for `on<type>` at a step (HTML 8.1.8.1,
+    // "activate"/"deactivate an event handler"): appended to the listener
+    // list the first time the handler is set to something - by the IDL
+    // attribute, or by the content attribute as `mutated()` sees it written -
+    // so it fires in registration order among addEventListener's, and
+    // removed when the handler goes back to null.
+    void activate_event_handler(context & cx, path_step at, std::string_view type);
+    void deactivate_event_handler(path_step at, std::string_view type);
+    [[nodiscard]] bool has_handler_listener(path_step at, std::string_view type) const;
+    // The content attributes `mutated()` saw written since the last time: an
+    // `on*` attribute (de)activates its handler, an input's `type` its state.
+    void settle_attribute_writes(const std::vector<document::write_note> & writes);
     // `onclick="doThing()"` as a function, compiled once and cached on the
     // object it belongs to. Undefined when the attribute is absent or will not
     // compile - HTML says a handler that fails to compile is null.

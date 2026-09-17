@@ -274,7 +274,9 @@ void dom_bindings::take_mutation_snapshot() {
     if (doc_ == nullptr) { return; }
     // The write log runs exactly while something observes, and a snapshot
     // starts it afresh: what was written before `observe()` is nobody's record.
-    doc_->log_writes(!mutation_registrations_.empty());
+    // ALWAYS ON: mutated() drains it on every write, the event handler
+    // attributes read it (settle_attribute_writes), and it costs one push.
+    doc_->log_writes(true);
     (void)doc_->take_writes();
     if (mutation_registrations_.empty()) { return; }
     const auto txn = doc_->read();
@@ -323,14 +325,13 @@ value dom_bindings::make_mutation_record(context & cx, std::string_view type, no
 
 // --- the diff ---------------------------------------------------------------
 
-void dom_bindings::record_mutations() {
+void dom_bindings::record_mutations(const std::vector<document::write_note> & writes) {
     // THE FAST PATH, and the reason a page that never constructs a
     // MutationObserver pays nothing for this file: `mutated()` runs on every
     // DOM write a script makes.
     if (mutation_registrations_.empty() || cx_ == nullptr || doc_ == nullptr) { return; }
     context & cx = *cx_;
     const auto txn = doc_->read();
-    const std::vector<document::write_note> writes = doc_->take_writes();
 
     // ONE RECORD PER (observer, node, kind, attribute) FOR THIS MUTATION. An
     // observer that registered on both a node and an ancestor with `subtree`

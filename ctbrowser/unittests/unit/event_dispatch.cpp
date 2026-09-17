@@ -535,6 +535,28 @@ void test_handler_properties() {
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
     check(log_of(page).size() == 5, "and null removes it, leaving the listener");
+
+    // THE HANDLER'S PLACE IN THE LIST is where it was first set (HTML
+    // 8.1.8.1): assigned before a listener it runs before it, set to null and
+    // back it moves to the end, and a content attribute counts from the
+    // setAttribute (event-handler-spec-example.window.js).
+    (void)page.run_script(R"(
+        var b = document.createElement('button'); var order = [];
+        b.onclick = function () { order.push('h1'); };
+        b.addEventListener('click', function () { order.push('l1'); });
+        b.setAttribute('onclick', 'order.push("attr")');
+        b.addEventListener('click', function () { order.push('l2'); });
+        b.onclick = function () { order.push('h2'); };
+        b.click();
+        b.onclick = null; b.onclick = function () { order.push('h3'); }; b.click();
+        var c = document.createElement('button');
+        c.addEventListener('click', function () { order.push('m1'); });
+        c.setAttribute('onclick', 'order.push("c-attr")');
+        c.addEventListener('click', function () { order.push('m2'); });
+        c.click();
+        console.log('order=' + order.join());)");
+    check(log_of(page).back() == "order=h2,l1,l2,l1,l2,h3,m1,c-attr,m2",
+          "the handler listener keeps its registration order: " + log_of(page).back());
 }
 
 void test_events_bubble_and_can_be_prevented() {

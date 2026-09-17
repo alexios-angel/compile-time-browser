@@ -1063,6 +1063,15 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // Gone since the copy was taken - removed by a listener that ran
         // earlier at this step, or by its AbortSignal.
         if (found == listeners_.end()) { continue; }
+        if (found->handler) {
+            // The event handler's listener: the handler property AS IT IS NOW,
+            // at the place the handler was first set (HTML 8.1.8.1).
+            value thrown = value::undefined();
+            const bool threw =
+                fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+            report_fault(threw, thrown);
+            continue;
+        }
         if (found->once) { found->spent = true; }
         // COPIED OUT BEFORE THE CALL. `found` is an iterator into a vector a
         // listener can grow (addEventListener) or shrink (an AbortSignal), so
@@ -1089,11 +1098,48 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         // throws is its own report.
         report_fault(threw, thrown);
     }
-    if (!capturing && !flag_of(*cx_, event, stop_immediate_property)) {
+    // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
+    // write log never saw, a name whose event type is not its lowercase
+    // spelling - still runs, after the listeners, as it always did.
+    if (!capturing && !flag_of(*cx_, event, stop_immediate_property) &&
+        !has_handler_listener(step, type)) {
         value thrown = value::undefined();
         const bool threw = fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
         report_fault(threw, thrown);
     }
+}
+
+bool dom_bindings::has_handler_listener(path_step at, std::string_view type) const {
+    for (const listener & l : listeners_) {
+        if (!l.handler || l.on != at.on || l.type != type) { continue; }
+        if (l.on == listen_on::node && l.target != at.node) { continue; }
+        if (l.on == listen_on::object && l.host.bits() != at.host.bits()) { continue; }
+        return true;
+    }
+    return false;
+}
+
+void dom_bindings::activate_event_handler(context & cx, path_step at, std::string_view type) {
+    if (has_handler_listener(at, type)) { return; }
+    listener made;
+    made.target = at.node;
+    made.on = at.on;
+    made.host = at.host;
+    made.type = std::string{type};
+    made.handler = true;
+    // An identity of its own, traced through the listener list.
+    made.callback = value::object(cx.allocate<script::native_object>(
+        "event handler", [](context &, std::span<value>) { return value::undefined(); }));
+    listeners_.push_back(std::move(made));
+}
+
+void dom_bindings::deactivate_event_handler(path_step at, std::string_view type) {
+    std::erase_if(listeners_, [&](const listener & l) {
+        if (!l.handler || l.on != at.on || l.type != type) { return false; }
+        if (l.on == listen_on::node && l.target != at.node) { return false; }
+        if (l.on == listen_on::object && l.host.bits() != at.host.bits()) { return false; }
+        return true;
+    });
 }
 
 namespace {
@@ -1487,6 +1533,54 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
     (void)object->erase(source_slot(name));
     (void)object->erase(compiled_slot(name));
     if (object == window_object()) { cx.define_global(name, stored); }
+    // ...AND ITS LISTENER IS REGISTERED NOW, OR DROPPED: the handler's place
+    // among addEventListener's listeners is where it was first set
+    // (event-handler-spec-example.window.js).
+    dom_bindings & owner = target_owner(self);
+    const path_step at = owner.step_of(object == window_object() ? value::object(object) : self);
+    const std::string type = ascii_lower_copy(std::string_view{name}.substr(2));
+    if (stored.is_null()) {
+        owner.deactivate_event_handler(at, type);
+    } else {
+        owner.activate_event_handler(cx, at, type);
+    }
+}
+
+// THE ATTRIBUTE WRITES THE DOCUMENT LOGGED since the last mutation: an
+// `on*` content attribute activates its handler's listener the moment it is
+// set (HTML 8.1.8.1 - the attribute change steps), and deactivates it when
+// it goes with no IDL handler assigned in its place.
+void dom_bindings::settle_attribute_writes(const std::vector<document::write_note> & writes) {
+    if (cx_ == nullptr || doc_ == nullptr) { return; }
+    for (const document::write_note & note : writes) {
+        if (note.text || !note.node) { continue; }
+        const std::string_view name = atoms_->text(note.name);
+        if (name.size() < 3 || name[0] != 'o' || name[1] != 'n') { continue; }
+        bool present = false;
+        {
+            const auto txn = doc_->read();
+            if (!txn.contains(note.node) ||
+                txn.kind(note.node).value_or(node_kind::element) != node_kind::element) {
+                continue;
+            }
+            present = txn.has_attribute(note.node, note.name);
+        }
+        // A body/frameset's window-forwarded handler belongs to the window step.
+        const value self = wrap(*cx_, note.node);
+        path_step at{note.node, listen_on::node};
+        auto * object = static_cast<script::object_object *>(self.as_heap());
+        if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {
+            at = path_step{node_id{}, listen_on::window};
+            object = window_object();
+        }
+        const std::string type = ascii_lower_copy(name.substr(2));
+        if (present) {
+            activate_event_handler(*cx_, at, type);
+        } else if (const value * assigned = object->find(assigned_slot(std::string{name}));
+                   assigned == nullptr || assigned->is_null()) {
+            deactivate_event_handler(at, type);
+        }
+    }
 }
 
 // EVERY ONE OF THEM, ON EVERY OBJECT HTML PUTS THEM ON.

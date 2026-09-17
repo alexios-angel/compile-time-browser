@@ -279,7 +279,12 @@ void dom_bindings::mutated() {
     // THE MUTATION OBSERVERS FIRST, and from here rather than from each of the 23
     // natives that change the document: this is the funnel they all already go
     // through. It costs one branch on a page that never made an observer.
-    record_mutations();
+    // The document's write log, drained once and read twice: the observers'
+    // records, then the attribute change steps this engine models.
+    const std::vector<document::write_note> writes =
+        doc_ == nullptr ? std::vector<document::write_note>{} : doc_->take_writes();
+    record_mutations(writes);
+    settle_attribute_writes(writes);
     // A "replace all" note is for the mutation it preceded and no other.
     replace_all_.reset();
     // AN <input> WHOSE TYPE MOVED runs HTML 4.10.5's type-change steps now,
