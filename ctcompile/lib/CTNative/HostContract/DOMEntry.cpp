@@ -193,6 +193,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<HostDOMCall> provedCalls;
     std::vector<ctjs::CreateObjectOp> provedJSONObjects;
     std::vector<ctjs::CopyPropsOp> provedJSONCopies;
+    std::vector<ctjs::SetPropertyOp> provedJSONAssignments;
     std::vector<mlir::Value> provedOptionalStrings;
     std::vector<HostDOMStringRefinement> provedRefinements;
     std::vector<mlir::Value> provedStrings;
@@ -653,6 +654,26 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         return false;
                     }
                     provedJSONCopies.push_back(copy);
+                    continue;
+                }
+                if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                    auto constant = write.getKey().getDefiningOp<ctjs::ConstantOp>();
+                    auto name = constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                                         : ctjs::StringAttr{};
+                    if (!write.getObject().getDefiningOp<ctjs::CreateObjectOp>() || !name ||
+                        name.getValue() == "__proto__" || write.getObject() == write.getValue() ||
+                        (!hasKind(write.getValue(), Kind::string) &&
+                         !hasKind(write.getValue(), Kind::optionalString) &&
+                         !hasKind(write.getValue(), Kind::null) &&
+                         !hasKind(write.getValue(), Kind::boolean) &&
+                         !hasKind(write.getValue(), Kind::number) &&
+                         !hasKind(write.getValue(), Kind::json) &&
+                         !hasKind(write.getValue(), Kind::jsonAggregate))) {
+                        refusal = "DOM JSON assignment requires a fresh target, a constant "
+                                  "non-prototype String key and an owning value";
+                        return false;
+                    }
+                    provedJSONAssignments.push_back(write);
                     continue;
                 }
                 if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
@@ -1279,12 +1300,52 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             auto * user = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(user)) { continue; }
             if (llvm::isa<ctjs::CopyPropsOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0) { continue; }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
                 unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
                 continue;
             }
             if (!dominance.properlyDominates(copy, user)) {
                 refusal = "DOM JSON target is observed before its final spread write";
+                return;
+            }
+        }
+    }
+    for (ctjs::SetPropertyOp write : provedJSONAssignments) {
+        for (mlir::OpOperand & use : write.getObject().getUses()) {
+            if (!spend()) { return; }
+            auto * user = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(user) ||
+                (llvm::isa<ctjs::CopyPropsOp, ctjs::SetPropertyOp>(user) &&
+                 use.getOperandNumber() == 0)) {
+                continue;
+            }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
+                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+                continue;
+            }
+            // A copy in the same loop would retain a JavaScript alias that a
+            // later iteration can mutate. Only observations after the entire
+            // loop may snapshot the owning tree.
+            auto * ordered = write.getOperation();
+            for (auto * parent = ordered->getParentOp(); parent && !llvm::isa<ctjs::FuncOp>(parent);
+                 parent = parent->getParentOp()) {
+                if (!spend()) { return; }
+                if (llvm::isa<mlir::scf::WhileOp>(parent) && parent->isAncestor(user)) {
+                    refusal = "DOM JSON assignment target is observed inside its mutation loop";
+                    return;
+                }
+            }
+            // Conditional and repeated writes need not execute, but their
+            // entire source region must finish before an owning observation.
+            while (!dominance.properlyDominates(ordered, user) && ordered->getParentOp() &&
+                   !llvm::isa<ctjs::FuncOp>(ordered->getParentOp())) {
+                if (!spend()) { return; }
+                ordered = ordered->getParentOp();
+                if (ordered->isAncestor(user)) { break; }
+            }
+            if (ordered->isAncestor(user) || !dominance.properlyDominates(ordered, user)) {
+                refusal = "DOM JSON target is observed before its final assignment";
                 return;
             }
         }
@@ -1314,6 +1375,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     calls = std::move(provedCalls);
     jsonObjects = std::move(provedJSONObjects);
     jsonCopies = std::move(provedJSONCopies);
+    jsonAssignments = std::move(provedJSONAssignments);
 }
 
 ctjs::FuncOp DOMEntryAnalysis::callback(ctjs::CreateClosureOp closure) const {
@@ -1406,6 +1468,10 @@ bool DOMEntryAnalysis::jsonObject(ctjs::CreateObjectOp operation) const {
 
 bool DOMEntryAnalysis::jsonCopy(ctjs::CopyPropsOp operation) const {
     return llvm::is_contained(jsonCopies, operation);
+}
+
+bool DOMEntryAnalysis::jsonAssignment(ctjs::SetPropertyOp operation) const {
+    return llvm::is_contained(jsonAssignments, operation);
 }
 
 } // namespace ctcompile::ctnative

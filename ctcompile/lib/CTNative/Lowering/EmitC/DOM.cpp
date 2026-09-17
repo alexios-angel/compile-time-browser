@@ -277,6 +277,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         copy.erase();
         return true;
     }
+    if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
+        write && write.getObject().getType() == jsonOwner) {
+        ec::CallOpaqueOp::create(
+            at, where, mlir::TypeRange{}, at.getStringAttr("ctnative::set_json_property"),
+            mlir::ValueRange{
+                write.getObject(), write.getKey(),
+                convertScalar(at, where, write.getValue(), carrierType(context, carrier::json))});
+        write.erase();
+        return true;
+    }
     if (domNulls.contains(operation)) {
         swap(null());
         return true;

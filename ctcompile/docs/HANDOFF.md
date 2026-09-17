@@ -15,6 +15,81 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Validated element guards and nested helper calls, 2026-09-17 UTC
+
+Resumed seven dirty ctcompile files on **`d9f89a05`**, identified in the
+**10:52:21 recovery / 10:55:26 abandoned-loop AGENT-SYNC journal**. Both histories
+and unmerged branches were checked; September 7 WIP was already integrated. Two
+editing agents hit service limits after reviewing the drafts; root recovered them.
+A third agent completed independent proof and corrected-order reviews.
+
+**`0a186321`** proves helper/capture initialization before enclosing SCF branches
+and loops, preserving actual arguments and both URI/JSON exception continuations.
+Invoke-boundary crossings, late/mutable captures, callable escapes and incomplete
+budgets still refuse. Nested clone accounting now visits every operation. The former
+branch-call refusal retains its exact original source as a differential positive.
+
+**`fe650e1c`** folds truthiness and Not only from validated nonnullable element
+parameters, on the private fingerprinted candidate. Existing helper/cell expansion
+runs first, so original source CellGet operations and helper formals resolve through
+that proof; the guard itself grants no facts to cells, nullable reads, joins or loop
+state. Iterator preparation follows, then complete DOM reproof. Guard budgets fail
+without mutation. Original guarded value/count/alias loops and the former `!element`
+refusal retain their source bodies and earlier DOM observations. No browser or
+runtime semantics changed; emitted C++ remains ordinary owning containers and public
+DOM calls without Script/VM/GC symbols.
+
+The first **62-target build / 2/2 CTests** passed, but three lit drivers exposed the
+pass-order error and two newly admitted refusal expectations. Those were corrected,
+not removed. The corrected **316-target build / 2/2 CTests (0.43s) / 3/3 lit
+(147.24s)** pass. Dataset: **26 sources / 97 Node-VM source-double observations /
+eight GCC-Clang binaries / 432 refusals**, HTML/SVG and lifetime sanitization.
+JSON: **19 sources / 488 observations / eight binaries / 256 refusals** with lifetime
+sanitization. Strings: **783 observations / eight binaries / 1,056 source refusals**
+plus the existing provenance/depth/budget controls.
+
+The complete frozen gate passes **310/310 CTests (2076.81s) / 258/258 lit
+(1815.84s)**, with no skips. All **1,793 input hashes** match locally and on the
+devbox. Fresh full Bootstrap remains **19/574 native / 0 of 47 globals** in both
+policy reports, with no skipped or pruned functions. Button remains **4/86 / 22
+agreeing Node-VM lifecycle observations**. The separate original DOM Data session
+regression also passes its seven-function admission and lifetime assertions;
+unadapted CommonJS Data still reports **0/7**, a different census.
+
+After that full run, **`ff594bb6`** adds original M inside guarded dataset-value
+and nullable-attribute loops to the existing execution driver. All 26 earlier
+sources, fixtures, values and refusals are preserved. The updated **1/1 dataset lit
+(52.75s)** passes **28 sources / 112 Node-VM source-double observations / eight
+GCC-Clang binaries / 432 refusals**, both providers/policies/layouts, HTML/SVG,
+repeated calls, invalid handles and ASan/UBSan lifetime checks. Boolean, Number,
+JSON, URI-failure and JSON-failure paths run inside the loops. These new observations
+check `typeof` results; the existing JSON driver checks full returned values.
+The all-build needed no compilation work; all **1,793 updated input hashes** were
+verified locally/remotely before documentation edits. The full-suite result above
+precedes this test-only extension; the updated driver was then rerun separately.
+
+Stable formatting passes **890 C++ / 107 Python / 105 web files**. The required
+pinned formatter reproduces the existing **nine unchanged files / 26 diagnostics**.
+WPT/test262 corpus measurements were not rerun.
+
+**Exact next:** 36 fresh admission probes cover nine sources in both providers and
+both optimization policies. The isolated element guard admits one function; guarded
+values and original M calls inside value, attribute and guarded-value loops each
+admit two. The two guarded M-loop consumers now have the permanent execution checks
+above. Full original H still refuses **DOM helper branch contains an unproved local
+identity**.
+Fresh static result assignment refuses object escape/identity; dynamic loop assignment
+refuses nonlocal/unordered uses. Extend the fresh-object/source-use proof and complete
+DOM SetProperty proof together, preserving assignment order, collisions and inherited
+`__proto__` setter behavior; JSON spread semantics are insufficient.
+
+Unicode `charAt(0).toLowerCase() + slice(1)` still refuses the unsupported member.
+The previously measured É/İ oracle gap was not remeasured here. Full H,
+Config/inheritance/defaults, retained callbacks and the application driver remain
+unfinished. Claude's separately measured round-six runtime changes are outside this
+frozen tree and require fresh differential validation when integrated. Evidence:
+`/tmp/ctcompile-guard-finish/`. Older sections below are historical checkpoints.
+
 ## Present dataset values and signed unary snapshots, 2026-09-17 UTC
 
 Resumed **12 dirty ctcompile files on `6e8fb994`**, identified in the **02:27:52

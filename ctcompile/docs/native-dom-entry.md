@@ -109,9 +109,14 @@ filter, its manifest supplies:
 ```
 
 The three helper identities and original Array iteration permit private specialization
-of the dense snapshot path. Preparation reuses the complete dataset/filter proof for
-the original prefix, then reproves the complete entry. Source completion dispatch
-preserves exact loop condition/yield tuples and register correspondence. A poison slot
+of the dense snapshot path. Existing helper/cell expansion runs first, followed by
+exact element-guard normalization on the private fingerprinted candidate. For a
+validated nonnullable element parameter, the original `if (!t) return {};` and
+truthy/alias variants select only their live continuation. Guard facts transfer
+through Not/Truthy, never through unproved cells, nullable reads, joins or loop
+state; insufficient budgets leave the candidate unchanged. Preparation then reuses
+the complete dataset/filter proof for the original prefix and reproves the entry.
+Source completion dispatch preserves exact loop condition/yield tuples and register correspondence. A poison slot
 can be removed only for a constant-selected, unused destination with a same-type live
 state replacement; every source operation is accounted for.
 
@@ -459,7 +464,15 @@ conversion. H's `getDataAttribute` composes with original M for a proved constan
 no-match key such as `"config"`. Matching/live keys and the complete
 `getDataAttributes` remain unproved. Dataset key snapshots, the original filter and
 its count/ordered-key/saved-snapshot loops have the separate complete proof above;
-key normalization, live dataset values, M composition and dynamic result writes
+live dataset values and guarded M-loop `typeof` observations now compose. Helper
+and capture initialization must dominate each actual call through its enclosing
+structured branches/loops;
+Invoke-boundary crossings, late/mutable captures and escaping callables still
+refuse. Actual arguments and both URI/JSON failure continuations are preserved.
+The dataset driver executes these paths with Node/VM comparisons, both native
+providers/policies/layouts, HTML/SVG, repeated calls and lifetime sanitization.
+Its `typeof` observations check result categories; the JSON driver checks full
+returned values. Unicode key normalization and ordered dynamic result writes
 remain next boundaries.
 
 Explicit undefined force preserves the current platform adapters: classList
@@ -487,12 +500,12 @@ state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
 
-The `ctcompile_native_dom_strings` CTest compares **625** copied-value, Boolean
+The `ctcompile_native_dom_strings` CTest compares **783** copied-value, Boolean
 and numeric-prefix observations with Node and the ctbrowser VM, then executes
 eight GCC/Clang clients across both providers, optimization policies and printing
 layouts. It checks copied optional Strings, saved numeric/text results after DOM
 mutation and destruction, invalid handles before effects, document domains, name
-bytes and casing. **908** source refusals cover unsupported coercion, control flow,
+bytes and casing. **1,056** source refusals cover unsupported coercion, control flow,
 handles, retention and builtin misuse, alongside identity, capture, branch,
 completion, fingerprint and work-budget controls. The **132 numeric observations**
 cover 22 input strings/null across six source shapes, including canonical comparison

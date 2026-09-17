@@ -71,6 +71,12 @@ SPREAD_CASES = {
     "json_config_spread_chain": PARSED_CONFIG
     + 'const t = H.getDataAttribute(element, "later"); '
     + f"return {{{BOOTSTRAP_SPREAD}, {BOOTSTRAP_SPREAD_LAST}}};",
+    "json_spread_target_write": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
+    + PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; result.saved = 1; return result;",
+    "json_spread_target_alias_write": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
+    + PARSED_CONFIG
+    + f"const result = {CONFIG_SPREAD}; const alias = result; alias.saved = 1; return result;",
 }
 GET = "element.getAttribute('data-bs-config')"
 NULLABLE_JOIN = (
@@ -164,7 +170,12 @@ def check_oracles(args):
         trace = "get:data-bs-config" if name in ATTRIBUTE_CASES else "has:good"
         if name == "json_config_spread_chain":
             trace += "|get:data-bs-later"
-        if name in ("json_nullable_join", "json_config_typeof"):
+        if name in (
+            "json_nullable_join",
+            "json_config_typeof",
+            "json_spread_target_write",
+            "json_spread_target_alias_write",
+        ):
             trace = "has:good|" + ("get:x" if name == "json_nullable_join" else trace)
         for value in inputs:
             label = f"jsonObservation{len(names):03}"
@@ -301,7 +312,12 @@ def client(name, entry, owned):
     earlier_read = ""
     if name == "json_nullable_join":
         attribute = "x"
-    if name in ("json_nullable_join", "json_config_typeof"):
+    if name in (
+        "json_nullable_join",
+        "json_config_typeof",
+        "json_spread_target_write",
+        "json_spread_target_alias_write",
+    ):
         earlier_read = """
                 const auto good = doc.atoms().intern("good");
                 if (input) { assert(doc.set_attribute(node, good, "")); }
@@ -361,12 +377,8 @@ REFUSALS = {
     "json_spread_members": PARSED_CONFIG + f"const result = {CONFIG_SPREAD}; return result.saved;",
     "json_spread_source_write": PARSED_CONFIG
     + f"const result = {CONFIG_SPREAD}; i.saved = 1; return result;",
-    "json_spread_target_write": PARSED_CONFIG
-    + f"const result = {CONFIG_SPREAD}; result.saved = 1; return result;",
     "json_spread_source_alias_write": PARSED_CONFIG
     + f"const alias = i.saved; const result = {CONFIG_SPREAD}; alias.changed = 1; return result;",
-    "json_spread_target_alias_write": PARSED_CONFIG
-    + f"const result = {CONFIG_SPREAD}; const alias = result; alias.saved = 1; return result;",
     "json_spread_branch_target_write": PARSED_CONFIG
     + f"const result = {CONFIG_SPREAD}; "
     + "const target = element.hasAttribute('good') ? result : {}; target.saved = 1; return result;",

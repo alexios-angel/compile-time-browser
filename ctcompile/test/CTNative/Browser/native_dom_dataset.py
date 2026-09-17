@@ -9,7 +9,7 @@ import re
 import shutil
 
 from CTNative.Browser import native_dom as dom
-from CTNative.Browser.native_dom_json import quote
+from CTNative.Browser.native_dom_json import BOOTSTRAP_M, quote
 from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
 
@@ -86,6 +86,15 @@ VALUE_SOURCES["dataset_guarded_values"] = (
     f"function dataset_guarded_values(t) {{ {BOOTSTRAP_GUARD} let joined = ''; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + t.dataset[n] + '|'; }} return joined; }}\n"
 )
+NORMALIZED_SOURCES = {
+    name: f"function {name}(t) {{ {BOOTSTRAP_M} {BOOTSTRAP_GUARD} let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + typeof M({value}) + '|'; }} return joined; }}\n"
+    for name, value in (
+        ("dataset_normalized_values", "t.dataset[n]"),
+        ("dataset_normalized_attribute", "t.getAttribute('data-bs-config')"),
+    )
+}
+VALUE_SOURCES.update(NORMALIZED_SOURCES)
 LOOP_SOURCES.update(VALUE_SOURCES)
 LOOP_SOURCES.update(
     {
@@ -102,6 +111,16 @@ VALUE_TEXT = {
     "__proto__": "own proto",
     "10": "ten",
     "2": "two",
+}
+NORMALIZED_TEXT = VALUE_TEXT | {
+    "bsZ": "42",
+    "bsTrue": "true",
+    "bsFalse": "false",
+    "bsNull": "null",
+    "bsObject": "%7B%22saved%22%3A%5Btrue%2Cnull%5D%7D",
+    "bsBadUri": "%",
+    "bsBadJson": "not%20json",
+    "bsConfig": "true",
 }
 # Web IDL's named-property order is attribute order, including numeric names.
 # Chrome independently measures this order; an ordinary object is the wrong double.
@@ -192,6 +211,33 @@ for name in VALUE_SOURCES:
             ["bs"],
         ),
     ]
+for name in NORMALIZED_SOURCES:
+    CASES[name] = CASES[name] + [
+        (
+            [
+                "data-bs-z",
+                "data-bs-true",
+                "data-bs-false",
+                "data-bs-null",
+                "data-bs-object",
+                "data-bs-bad-uri",
+                "data-bs-bad-json",
+                "data-bs-config",
+            ],
+            ["bsZ", "bsTrue", "bsFalse", "bsNull", "bsObject", "bsBadUri", "bsBadJson", "bsConfig"],
+            ["bsZ", "bsTrue", "bsFalse", "bsNull", "bsObject", "bsBadUri", "bsBadJson"],
+        ),
+    ]
+# An optional fourth field overrides attribute values for this observation.
+CASES["dataset_normalized_attribute"] += [
+    (
+        ["data-bs-z", "data-bs-config"],
+        ["bsZ", "bsConfig"],
+        ["bsZ"],
+        {"bsConfig": value},
+    )
+    for value in ("%7B%22saved%22%3Atrue%7D", "%", "not%20json")
+]
 REFUSALS = {
     "missing_read": "return element.dataset.missing;",
     "dataset_escape": "return element.dataset;",
@@ -345,12 +391,19 @@ REFUSALS.update(
 )
 
 
+def fixture_values(name, keys, overrides):
+    text = NORMALIZED_TEXT if name in NORMALIZED_SOURCES else VALUE_TEXT
+    if overrides:
+        text = text | overrides[0]
+    return [text.get(key, "x") if name in VALUE_SOURCES else "x" for key in keys]
+
+
 def oracles(args):
     source = "".join(SOURCES.values())
     names, wanted = [], {}
     for name in SOURCES:
         wanted[name] = []
-        for _, keys, selected in CASES[name]:
+        for _, keys, selected, *overrides in CASES[name]:
             label = f"datasetObservation{len(names)}"
             names.append(label)
             if name == "dataset_filter_prefix":
@@ -365,7 +418,7 @@ def oracles(args):
                 if name == "dataset_loop_prefix_all":
                     selected = keys
                 selected = [key.removeprefix("bs") for key in selected]
-            values = [VALUE_TEXT.get(key, "x") if name in VALUE_SOURCES else "x" for key in keys]
+            values = fixture_values(name, keys, overrides)
             number = name in (
                 "dataset_filter_length",
                 "dataset_loop",
@@ -373,7 +426,9 @@ def oracles(args):
                 "dataset_truthy_count",
                 "dataset_guard_alias_count",
             )
-            if name in VALUE_SOURCES:
+            if name in NORMALIZED_SOURCES:
+                wanted[name].append(None)
+            elif name in VALUE_SOURCES:
                 if name == "dataset_values_all":
                     selected = keys
                 first = "".join(VALUE_TEXT.get(key, "x") + "|" for key in selected)
@@ -409,6 +464,10 @@ var {label} = (function() {{
     for (let index = 0; index < keys.length; ++index) Object.defineProperty(target, keys[index], {{value: values[index], enumerable: true, configurable: true}});
     const dataset = new Proxy(target, {{ownKeys() {{ return keys.slice(); }} }});
     const element = {{dataset,
+        getAttribute(key) {{
+            if (key !== 'data-bs-config') throw new Error('unexpected attribute read');
+            return keys.indexOf('bsConfig') >= 0 ? target.bsConfig : null;
+        }},
         setAttribute(key, value) {{
             if ((key !== 'data-later' && key !== 'data-bs-later') || value !== 'x') throw new Error('unexpected write');
             const name = key === 'data-later' ? 'later' : 'bsLater';
@@ -427,6 +486,12 @@ var {label} = (function() {{
     node = args.work / "dataset-node.js"
     node.write_text(source + "".join(f"console.log({name});\n" for name in names))
     expected = run([args.node, node]).stdout.splitlines()
+    # Original M supplies the new expectations; keep the older hand-checked rows.
+    offset = 0
+    for name, values in wanted.items():
+        if name in NORMALIZED_SOURCES:
+            wanted[name] = expected[offset : offset + len(values)]
+        offset += len(values)
     assert expected == [value for values in wanted.values() for value in values], expected
     vm = args.work / "dataset-vm.js"
     vm.write_text(source)
@@ -450,14 +515,12 @@ def client(symbol, owned, name):
             "{"
             + json.dumps(attr, ensure_ascii=False)
             + ","
-            + json.dumps(
-                VALUE_TEXT.get(key, "x") if name in VALUE_SOURCES else "x", ensure_ascii=False
-            )
+            + json.dumps(value, ensure_ascii=False)
             + "}"
-            for attr, key in zip(attrs, keys)
+            for attr, value in zip(attrs, fixture_values(name, keys, overrides))
         )
         + "}"
-        for attrs, keys, _ in CASES[name]
+        for attrs, keys, _, *overrides in CASES[name]
     )
     number = name in (
         "dataset_filter_length",
@@ -552,6 +615,7 @@ def main():
     assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
     assert "t.dataset[n]" in vendor.read_text(), "Bootstrap live-value source pin changed"
     assert BOOTSTRAP_GUARD in vendor.read_text(), "Bootstrap element-guard source pin changed"
+    assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     expected = oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -574,15 +638,19 @@ def main():
                             contract,
                             provider=provider,
                             initial_intrinsics=(
-                                PREFIX_INTRINSICS
-                                if name in PREFIX_SOURCES
+                                ITERATION_INTRINSICS + ["Number", "JSON", "decodeURIComponent"]
+                                if name in NORMALIZED_SOURCES
                                 else (
-                                    ITERATION_INTRINSICS
-                                    if name in LOOP_SOURCES
+                                    PREFIX_INTRINSICS
+                                    if name in PREFIX_SOURCES
                                     else (
-                                        ["Object", "Array", "String"]
-                                        if name not in BODIES
-                                        else ["Object"]
+                                        ITERATION_INTRINSICS
+                                        if name in LOOP_SOURCES
+                                        else (
+                                            ["Object", "Array", "String"]
+                                            if name not in BODIES
+                                            else ["Object"]
+                                        )
                                     )
                                 )
                             ),
@@ -613,8 +681,19 @@ def main():
                     if name in PREFIX_SOURCES:
                         assert ".starts_with(" in cpp and ".substr(" in cpp, cpp
                         assert not re.search(r"regex|RegExp", cpp), cpp
-                    if name in VALUE_SOURCES:
+                    if name in VALUE_SOURCES and name != "dataset_normalized_attribute":
                         assert "ctnative::dataset_value(" in cpp and ".at(" in cpp, cpp
+                    if name in NORMALIZED_SOURCES:
+                        assert all(
+                            token in cpp
+                            for token in (
+                                "ctbrowser::parse_json",
+                                "ctbrowser::decode_uri_component",
+                                "ctbrowser::json_value",
+                            )
+                        ), cpp
+                    if name == "dataset_normalized_attribute":
+                        assert "ctnative::get_attribute(" in cpp, cpp
                     assert not re.search(
                         r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
                     ), cpp

@@ -210,6 +210,7 @@ public:
     // census excludes observable aliases and mutation after a value copy.
     [[nodiscard]] bool jsonObject(ctjs::CreateObjectOp operation) const;
     [[nodiscard]] bool jsonCopy(ctjs::CopyPropsOp operation) const;
+    [[nodiscard]] bool jsonAssignment(ctjs::SetPropertyOp operation) const;
 
 private:
     std::string refusal;
@@ -235,6 +236,7 @@ private:
     std::vector<HostDOMCall> calls;
     std::vector<ctjs::CreateObjectOp> jsonObjects;
     std::vector<ctjs::CopyPropsOp> jsonCopies;
+    std::vector<ctjs::SetPropertyOp> jsonAssignments;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

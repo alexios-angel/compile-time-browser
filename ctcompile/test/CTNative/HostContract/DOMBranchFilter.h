@@ -207,10 +207,92 @@ module {
     check(completed, "bounded nested helper expansion reaches completion");
 }
 
+inline void checkDOMDataSource(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    const std::string source = R"MLIR(
+module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %zero = ctjs.constant #ctjs.number<0>
+    %key = ctjs.constant #ctjs.string<"value">
+    %flag = ctjs.constant #ctjs.boolean<true>
+    %condition = ctjs.truthy %flag
+    %object = ctjs.create_object
+    ctjs.set_property %object[%key], %zero
+    %answer = scf.if %condition -> (!ctjs.value) {
+      ctjs.set_property %object[%key], %flag
+      scf.yield %object : !ctjs.value
+    } else {
+      scf.yield %zero : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    const auto local = replaced(source, "    %object = ctjs.create_object\n", "");
+    const auto branch = replaced(
+        replaced(local, "    ctjs.set_property %object[%key], %zero\n", ""),
+        "      ctjs.set_property", "      %object = ctjs.create_object\n      ctjs.set_property");
+    const auto nested = replaced(source, "      ctjs.set_property %object[%key], %flag", R"MLIR(
+      %loop = scf.while (%state = %zero) : (!ctjs.value) -> !ctjs.value {
+        ctjs.set_property %object[%key], %state
+        scf.condition(%condition) %state : !ctjs.value
+      } do {
+      ^bb0(%state: !ctjs.value):
+        ctjs.set_property %object[%key], %flag
+        scf.yield %state : !ctjs.value
+      }
+)MLIR");
+    for (const auto & valid :
+         {source, branch, nested, replaced(source, "%object[%key]", "%object[%element]"),
+          replaced(source, "\"value\"", "\"__proto__\"")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "fresh data-object source fixture parses");
+        if (!input) { continue; }
+        const auto before = hostContractFingerprint(*input);
+        auto prepared = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!prepared && before == hostContractFingerprint(*input) &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "source preparation preserves every ordered data write for complete DOM proof");
+        if (prepared) { llvm::consumeError(std::move(prepared)); }
+    }
+    for (const auto & invalid :
+         {replaced(source, "%object[%key], %zero", "%element[%object], %zero"),
+          replaced(source, "%object[%key], %zero", "%element[%key], %object"),
+          replaced(source,
+                   "    %answer =", "    %read = ctjs.get_property %object[%key]\n    %answer ="),
+          replaced(source,
+                   "    %answer =", "    ctjs.store_global \"saved\", %object\n    %answer =")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsupported data-object source fixture parses");
+        if (!input) { continue; }
+        const auto before = hostContractFingerprint(*input);
+        auto refused = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(refused) && before == hostContractFingerprint(*input),
+              "data-object keys, escapes and member reads gain no source-use authority");
+        if (refused) { llvm::consumeError(std::move(refused)); }
+    }
+    bool completed = false;
+    for (unsigned budget = 0; budget < 10000; ++budget) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(nested, &context);
+        const auto before = hostContractFingerprint(*input);
+        auto limited = expandDOMHelpers(*input, "entry$0", budget);
+        check(before == hostContractFingerprint(*input),
+              "every nested data-object preparation budget preserves exact assignment order");
+        if (!limited) {
+            completed = true;
+            break;
+        }
+        check(llvm::toString(std::move(limited)).find("budget") != std::string::npos,
+              "incomplete nested data-object preparation fails closed");
+    }
+    check(completed, "bounded nested data-object preparation reaches completion");
+}
+
 inline void checkDOMBranchFilter(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     checkDOMNestedHelpers(context);
+    checkDOMDataSource(context);
     const std::string source = R"MLIR(
 module {
   ctjs.func @branch$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -400,9 +482,9 @@ module {
           replaced(source, "%callback =", "%cell = ctjs.create_cell %u\n      %callback ="),
           replaced(source, "%callback =",
                    "%duplicate = ctjs.create_closure %callee[1] this %u\n      %callback ="),
-          replaced(source, "%callback =",
+          replaced(source, "%filtered =",
                    "%result = ctjs.create_object\n      ctjs.set_property %result[%filterName], "
-                   "%u\n      %callback ="),
+                   "%callback\n      %filtered ="),
           replaced(source, "\n}\n", R"MLIR(
   ctjs.func private @unused$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
@@ -445,7 +527,10 @@ module {
     // Scheduling supplies no authority for effects or the original !element
     // guard. Those remain the complete entry proof's responsibility.
     for (const auto & invalid :
-         {replaced(source, "ctjs.return %selected",
+         {replaced(source, "%callback =",
+                   "%result = ctjs.create_object\n      ctjs.set_property %result[%filterName], "
+                   "%u\n      %callback ="),
+          replaced(source, "ctjs.return %selected",
                    "ctjs.store_global \"saved\", %key\n    ctjs.return %selected"),
           replaced(source, "%condition = ctjs.truthy %flag",
                    "%not = ctjs.unary not %element\n    %condition = ctjs.truthy %not"),
@@ -470,7 +555,7 @@ module {
         contract.initialIntrinsics = {"Object", "Array", "String"};
         contract.moduleSha256 = before;
         check(noEvidence(*input, DOMEntryAnalysis(*input, contract)),
-              "complete reproof rejects callback effects, intrinsic mutation and unproved guards");
+              "complete reproof rejects unsupported stored values, effects, mutation and guards");
     }
 }
 

@@ -40,6 +40,10 @@ bool admission::op(mlir::Operation * o) {
         if (auto copy = llvm::dyn_cast<CopyPropsOp>(o); copy && domEntry->jsonCopy(copy)) {
             return true;
         }
+        if (auto write = llvm::dyn_cast<SetPropertyOp>(o);
+            write && domEntry->jsonAssignment(write)) {
+            return true;
+        }
         if (auto unary = llvm::dyn_cast<UnaryOp>(o);
             unary && unary.getKind() == UnaryKind::TypeOf &&
             carrierOf(typeOf(unary.getOperand())) == carrier::json) {

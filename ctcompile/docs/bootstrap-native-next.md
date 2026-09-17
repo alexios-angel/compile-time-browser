@@ -1,36 +1,39 @@
 # What native Bootstrap needs next
 
-## Current boundary: guarded dataset composition, 2026-09-17
+## Current boundary: result assignment after guarded M loops, 2026-09-17
 
-**`9a367648`** compiles present same-element `t.dataset[n]` through public
-`ctbrowser::dataset_value`, returning owning Strings. Exact immutable snapshot
-membership and unchanged mutation epochs are required; reacquiring a dataset cannot
-renew a stale key. **`8207a051`** preserves held bounded signed Number snapshots
-through Plus/Neg, retaining exact initialization, stride invariance and final bounds.
-Both interrupted drafts were recovered from the 02:29:20 abandoned-loop journal.
+**`0a186321`** proves helper/capture initialization before enclosing structured
+branches and loops, preserving actual arguments and URI/JSON exception continuations.
+**`fe650e1c`** folds original element guards after existing proved helper/cell
+expansion and before iterator preparation. Only validated nonnullable element
+identities seed truth facts; nullable reads, joins and unproved cells do not.
+Both interrupted drafts came from the 10:52:21 recovery / 10:55:26 abandonment
+journal. No browser implementation or runtime semantics changed.
 
-Full **310/310 CTests (1950.15s) / 258/258 lit (1701.18s), wrapper 0**;
-all **1,793 hashes** verified locally/remotely. Focused **3/3 CTests / 5/5 lit** pass.
-Dataset: **22 sources / 80 Node-VM source-double observations / eight binaries /
-392 refusals**, HTML/SVG and lifetime sanitization. New escape: **20 observed sites /
-eight sound / zero violations / eight of 12 precision**; historical **895 sites /
-40 sound / zero violations / 40 of 172** and the snapshot remain unchanged.
-Stable formatting passes; pinned format retains nine unchanged files / 26 diagnostics.
+Full **310/310 CTests (2076.81s) / 258/258 lit (1815.84s)** pass with no skips;
+all **1,793 input hashes** matched locally/remotely. Then test-only **`ff594bb6`**
+added original M inside guarded value/attribute loops: updated dataset lit
+**1/1 (52.75s), 28 sources / 112 Node-VM observations / eight binaries / 432
+refusals**, including HTML/SVG and lifetime sanitization. Earlier cases remain intact.
+New observations check result types; existing JSON tests check full returned values.
+Updated input hashes also match. Stable formatting passes; pinned format retains
+nine unchanged files / 26 diagnostics.
 
-Fresh Bootstrap **19/574, 0/47 globals**, Data **7/7**, Button **4/86 / 22 lifecycle
-observations** are unchanged. The original dataset-value loop now compiles two
-functions in all four modes. Full H still refuses an unproved branch-local identity.
-Next: prove/fold its exact valid-element guard before iterator preparation. The
-isolated guard refuses `ctjs.unary`; the guarded loop requires a top-level iterator.
-In parallel, original M calls inside either value or attribute loops refuse helper
-arity/source order; extend nested-call dominance with captures/exceptions preserved.
-Static/dynamic result writes have separate identity/order refusals and need inherited
-`__proto__` assignment semantics. Unicode normalization still has the `bsÉtage` and
-`bsİtem` Node/VM gap. Config/inheritance/defaults, callbacks and driver remain open.
-Evidence: `/tmp/ctcompile-values-finalize/`; 28 isolated boundary probes are admission
-measurements, not full-H execution. Older sections are historical.
+Fresh Bootstrap remains **19/574 native, 0/47 globals**, the original DOM Data
+session **7/7**, and Button **4/86 / 22 lifecycle observations**. The unadapted
+CommonJS Data census is separately **0/7**. The guard and M-loop seams are proved,
+but full H still refuses **DOM helper branch contains an unproved local identity**.
+Next: extend fresh-object/source-use and DOM SetProperty proofs together for
+ordered result assignment, including collisions and the inherited `__proto__`
+setter. Static/dynamic writes currently refuse identity/order; JSON spread does
+not prove assignment semantics. Unicode key normalization still refuses and its
+previous É/İ Node/VM discrepancy was not remeasured. Config/inheritance/defaults,
+callbacks and the application driver remain open.
 
-See [HANDOFF](HANDOFF.md) for the exact measured continuation and proof seams.
+Evidence: `/tmp/ctcompile-guard-finish/`, including 36 isolated admission probes,
+full reports, generated C++, manifests and review. Claude's pending round-six
+runtime changes were outside this frozen tree. See HANDOFF for the complete measured
+continuation; older sections below are historical.
 
 ## Previous boundary: snapshot length and original iteration, 2026-09-16
 

@@ -744,6 +744,68 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                            "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
                            "  %magnitude = ctjs.unary plus %maximum"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    const std::string makeSubUnit = "  %left = ctjs.unary plus %one\n"
+                                    "  %magnitude = ctjs.unary plus %two\n"
+                                    "  %minus = ctjs.binary sub %left, %magnitude\n";
+    const auto subChild = replace(negativeChild, makeNegativeUnit, makeSubUnit);
+    const auto savedSub =
+        replace(subChild, makeSubUnit,
+                "  %seed = ctjs.create_array [%one, %one] {storage_test_id = \"seed\"}\n"
+                "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                "  %left = ctjs.unary plus %one\n"
+                "  %magnitude = ctjs.get_property %seed[%name]\n"
+                "  %minus = ctjs.binary sub %left, %magnitude\n"
+                "  ctjs.set_property %seed[%name], %zero\n");
+    for (const auto & source : {subChild, savedSub}) {
+        const char * arrays = source == subChild ? "a:[one,x]" : "a:[one,x]; seed:[]";
+        run({.what = "bounded Number subtraction retains its exact negative snapshot and child",
+             .body = source,
+             .arrays = arrays,
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "negative Sub snapshots discharge only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = arrays,
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    run({.what = "a negative Sub snapshot preserves a zero-trip saved child",
+         .body = replace(subChild, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+         .arrays = "a:[one,x]",
+         .exit = "x -> {x}"});
+    const auto carriedSub =
+        replace(carriedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
+    run({.what = "negative Sub snapshots retain their exact final overshoot after array growth",
+         .body =
+             replace(replace(carriedSub, "^exit(%sum :", "^exit(%index :"), "  ctjs.return %result",
+                     "  ctjs.append %zero to %a\n  ctjs.append %zero to %a\n"
+                     "  %after = ctjs.get_property %a[%result]\n  ctjs.return %after"),
+         .arrays = "a:[one,two,three,zero,zero]",
+         .reads = "a[0]=one; a[2]=three; a[4]=zero",
+         .exit = "zero -> {}"});
+    for (const std::string operands : {"%left, %left", "%magnitude, %left"}) {
+        reject("zero and positive Sub results cannot supply a negative stride",
+               replace(subChild, "binary sub %left, %magnitude", "binary sub " + operands));
+    }
+    reject("a coercible left String supplies no negative Sub snapshot",
+           replace(subChild, "unary plus %one", "constant #ctjs.string<\"1\">"));
+    reject("a coercible right String supplies no negative Sub snapshot",
+           replace(subChild, "unary plus %two", "constant #ctjs.string<\"2\">"));
+    reject("negative Sub snapshots cannot become own array indices",
+           replace(subChild, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
+    reject("Add cannot use a negative Sub snapshot as its positive stride",
+           replace(subChild, "binary sub %i, %minus", "binary add %i, %minus"));
+    reject("repeated Sub producers need an independent invariant proof",
+           replace(replace(subChild, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
+                   "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="));
+    reject("a carried Sub snapshot cannot change on the backedge",
+           replace(carriedSub, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("a negative Sub snapshot still bounds its final update",
+           replace(replace(carriedSub, "ctjs.binary add %one, %one",
+                           "ctjs.constant #ctjs.number<4751297606873776128>"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     for (const std::string unary : {"plus", "neg"}) {
         const std::string operation = unary == "plus" ? "sub" : "add";
         const std::string makeSigned = "  %signed = ctjs.unary " + unary + " %minus\n";

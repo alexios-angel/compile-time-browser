@@ -56,6 +56,7 @@ module {
         input.walk([&](ctjs::InvokeOp invoke) { empty &= !proof.invocation(invoke); });
         input.walk([&](ctjs::CreateObjectOp object) { empty &= !proof.jsonObject(object); });
         input.walk([&](ctjs::CopyPropsOp copy) { empty &= !proof.jsonCopy(copy); });
+        input.walk([&](ctjs::SetPropertyOp write) { empty &= !proof.jsonAssignment(write); });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isTokenList(read.getResult());
         });
@@ -271,6 +272,9 @@ module {
                 check(proof.jsonCopy(copy), "every JSON spread retains its exact operation");
                 ++copies;
             });
+            input->walk([&](ctjs::SetPropertyOp write) {
+                check(proof.jsonAssignment(write), "every JSON assignment keeps its source write");
+            });
             check(objects != 0 && copies != 0, "JSON spread fixture exercises both capabilities");
             check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
                   "JSON spread reproduces its exact proof budget");
@@ -302,6 +306,13 @@ module {
     inverted = replaced(inverted, "%empty = ctjs.create_object\n      scf.yield %empty",
                         "scf.yield %answer");
     checkSpread(inverted);
+    checkSpread(replaced(spread, "ctjs.return %target",
+                         "ctjs.set_property %target[%word], %text\n    ctjs.return %target"));
+    checkSpread(replaced(spread, "ctjs.return %target", R"MLIR(
+    scf.if %isObject {
+      ctjs.set_property %target[%word], %answer
+    }
+    ctjs.return %target)MLIR"));
     const auto refuseSpread = [&](const std::string & tail) { refused(spreadSource(tail)); };
     for (llvm::StringRef unproved : {"%answer", "%text", "%element"}) {
         refuseSpread(replaced(spread, "ctjs.copy_props %selected into %target",
@@ -311,8 +322,27 @@ module {
     refuseSpread(replaced(spread, "ctjs.return %target",
                           "%member = ctjs.get_property %selected[%word]\n"
                           "    ctjs.return %target"));
+    for (llvm::StringRef key : {"%kind", "%element"}) {
+        refuseSpread(replaced(spread, "ctjs.return %target",
+                              "ctjs.set_property %target[" + key.str() +
+                                  "], %text\n    ctjs.return %target"));
+    }
     refuseSpread(replaced(spread, "ctjs.return %target",
-                          "ctjs.set_property %target[%word], %text\n    ctjs.return %target"));
+                          "%proto = ctjs.constant #ctjs.string<\"__proto__\">\n"
+                          "    ctjs.set_property %target[%proto], %text\n"
+                          "    ctjs.return %target"));
+    for (llvm::StringRef value : {"%target", "%element", "%undefined"}) {
+        refuseSpread(replaced(spread, "ctjs.return %target",
+                              "ctjs.set_property %target[%word], " + value.str() +
+                                  "\n    ctjs.return %target"));
+    }
+    refuseSpread(replaced(spread, "ctjs.return %target", R"MLIR(
+    %snapshot = ctjs.create_object
+    ctjs.copy_props %target into %snapshot
+    scf.if %isObject {
+      ctjs.set_property %target[%word], %text
+    }
+    ctjs.return %snapshot)MLIR"));
     refuseSpread(replaced(spread, "ctjs.return %target",
                           "%identity = ctjs.compare strict_eq %target, %selected\n"
                           "    ctjs.return %target"));
@@ -328,6 +358,16 @@ module {
                           "scf.yield %answer"));
     refuseSpread(
         replaced(spread, "%empty = ctjs.create_object\n      scf.yield %empty", "scf.yield %text"));
+    refuseSpread(replaced(spread, "ctjs.return %target", R"MLIR(
+    scf.while : () -> () {
+      ctjs.set_property %target[%word], %text
+      %snapshot = ctjs.create_object
+      ctjs.copy_props %target into %snapshot
+      scf.condition(%isObject)
+    } do {
+      scf.yield
+    }
+    ctjs.return %target)MLIR"));
     // Deep-value branch joins cannot alias a target that is written afterward.
     const std::string earlyAlias = R"MLIR(
     %alias = scf.if %isObject -> (!ctjs.value) {
