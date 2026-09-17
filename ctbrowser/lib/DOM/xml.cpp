@@ -578,6 +578,13 @@ private:
         }
         const std::string_view text = src_.substr(start, end - start);
         advance(end + 3 - at_);
+        // A CDATA section is character data, which XML permits only inside the
+        // document element - `<r/><![CDATA[x]]>` and CDATA before the root are
+        // both fatal. Without this guard `open_.back()` reads an empty vector.
+        if (open_.empty()) {
+            fail("CDATA section outside the document element");
+            return;
+        }
         builder_.append(open_.back().id, doc_.create_cdata_section(text));
     }
 

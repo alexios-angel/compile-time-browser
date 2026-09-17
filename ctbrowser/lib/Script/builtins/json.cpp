@@ -181,6 +181,8 @@ struct json_writer {
     }
 
     // The cycle check, 25.5.2.4/25.5.2.5 step 1. False means it has thrown.
+    static constexpr std::size_t max_depth = 1000;
+
     [[nodiscard]] bool enter(value v) {
         const heap_object * self = v.as_heap();
         for (const heap_object * seen : stack) {
@@ -189,6 +191,15 @@ struct json_writer {
                 cx.throw_error("TypeError", "Converting circular structure to JSON");
                 return false;
             }
+        }
+        // The cycle check above catches a value nested inside ITSELF; this
+        // catches a value nested inside 1000 DISTINCT others, which recurses
+        // just as deep (write_array -> serialize -> write_array) and would
+        // otherwise overflow the native stack. `stack` IS the nesting depth.
+        if (stack.size() >= max_depth) {
+            failed = true;
+            cx.throw_error("RangeError", "Maximum call stack size exceeded");
+            return false;
         }
         stack.push_back(self);
         return true;

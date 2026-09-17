@@ -277,5 +277,20 @@ int main() {
               " } }]); return 'no'; } catch (e) { return e.name; } })()",
               "no");
 
+    // DEEP NESTING IS BOUNDED, NOT A NATIVE STACK OVERFLOW. Before the depth
+    // caps a document nested past the native stack aborted the process; now
+    // each path fails with a catchable error. (security review DOS-001/002/003.)
+    js_expect("(function () { var s = '['.repeat(50000) + ']'.repeat(50000);"
+              " try { JSON.parse(s); return 'no throw'; } catch (e) { return e.name; } })()",
+              "SyntaxError");
+    js_expect("(function () { var a = []; for (var i = 0; i < 50000; i++) { a = [a]; }"
+              " try { JSON.stringify(a); return 'no throw'; } catch (e) { return e.name; } })()",
+              "RangeError");
+    js_expect("(function () { var a = []; for (var i = 0; i < 50000; i++) { a = [a]; }"
+              " try { structuredClone(a); return 'no throw'; } catch (e) { return e.name; } })()",
+              "DataCloneError");
+    // ...and a document at the LEGAL depth still round-trips.
+    js_expect("JSON.parse('[[[[[1]]]]]')[0][0][0][0][0]", "1");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

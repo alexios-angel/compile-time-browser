@@ -132,8 +132,17 @@ void install_uri(context & cx) {
 void install_structured_clone(context & cx) {
     cx.define_native("structuredClone", [](context & c, std::span<value> a) {
         std::vector<std::pair<heap_object *, value>> seen;
-        const auto copy = [&](auto && self, value v) -> value {
+        const auto copy = [&](auto && self, value v, std::size_t depth) -> value {
             if (!v.is_heap()) { return v; }
+            // Bounded so a deeply nested (but not self-referential) structure
+            // fails rather than recursing until the native stack overflows -
+            // the `seen` list above only short-circuits genuine cycles.
+            constexpr std::size_t max_depth = 1000;
+            if (depth >= max_depth) {
+                c.throw_error("DataCloneError",
+                              "structuredClone cannot copy a structure nested this deeply");
+                return value::undefined();
+            }
             for (const auto & [from, to] : seen) {
                 if (from == v.as_heap()) { return to; }
             }
@@ -144,7 +153,9 @@ void install_structured_clone(context & cx) {
                 out->elements = source->elements;
                 seen.emplace_back(v.as_heap(), made);
                 out->items.reserve(source->items.size());
-                for (const value & item : source->items) { out->items.push_back(self(self, item)); }
+                for (const value & item : source->items) {
+                    out->items.push_back(self(self, item, depth + 1));
+                }
                 return made;
             }
             if (v.is_object()) {
@@ -152,7 +163,9 @@ void install_structured_clone(context & cx) {
                 value made = c.make_object();
                 auto * out = static_cast<object_object *>(made.as_heap());
                 seen.emplace_back(v.as_heap(), made);
-                for (const auto & [key, item] : source->props) { out->set(key, self(self, item)); }
+                for (const auto & [key, item] : source->props) {
+                    out->set(key, self(self, item, depth + 1));
+                }
                 return made;
             }
             // A string is immutable, so sharing it IS a copy. Everything else -
@@ -163,7 +176,7 @@ void install_structured_clone(context & cx) {
                                                 std::string{context::type_of(v)});
             return value::undefined();
         };
-        return copy(copy, a.empty() ? value::undefined() : a[0]);
+        return copy(copy, a.empty() ? value::undefined() : a[0], 0);
     });
 }
 
