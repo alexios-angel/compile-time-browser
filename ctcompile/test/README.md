@@ -47,6 +47,28 @@ CMake target names and generated filenames are independent of source locations.
 Update registrations and relative references when moving a test, and use
 `git mv` under the repository Git lock. Build and run the affected CTests on the
 devbox through `tools/remote-build.sh`, following the repository synchronization
-protocol. Run the complete compiler lit suite with
-`ctest --preset default -R '^ctcompile_lit$'` from `ctbrowser/`. Its CMake
-registration allows 2,400 seconds for the native ownership matrix.
+protocol and the focused validation policy in [CLAUDE.md](../../CLAUDE.md).
+For example, this builds and runs one CTest under the shared devbox lock:
+
+```bash
+flock /tmp/ctbrowser-devbox-build.lock bash <<'GATE'
+set -e
+tools/remote-build.sh ctcompile-test-native-runtime
+ssh devbox 'ctest --test-dir projects/compile-time-browser/build --output-on-failure --no-tests=error -R "^ctcompile_native_runtime$"'
+GATE
+```
+
+For a native DOM assignment change, build `ctjs-opt`, `ctjs-translate`,
+`ctcompile-tool` and `ctcompile-test-native-reference` with the same helper,
+then run only that lit case on the devbox under the same lock:
+
+```bash
+~/.lit-venv/bin/lit -sv projects/compile-time-browser/build/ctcompile/test \
+  --filter='^ctcompile :: CTNative/Browser/native-dom-assignment[.]test$'
+```
+
+Use the generated build-tree lit configuration so substitutions and features
+are available. Adjust the targets, test selection, host and remote directory to
+the change; a selection that runs zero tests is not a pass. Full lit runs through
+`ctcompile_lit` or `check-ctcompile` require an explicit user request. The full
+lit CTest allows 2,400 seconds for the native ownership matrix.
