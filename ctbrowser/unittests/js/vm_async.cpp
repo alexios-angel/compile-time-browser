@@ -431,6 +431,22 @@ void test_concurrent_awaits() {
                       "21"); // D settles first: C.b awaits twice
 }
 
+// %AsyncIteratorPrototype%[Symbol.asyncDispose] (27.1.3.2): `return` called
+// and awaited, undefined answered; no `return` is undefined at once; a throw
+// from the getter or the call is the rejection.
+void test_async_dispose() {
+    expect_after_turn("var result = ''; async function* g() { try { yield 1; } finally {"
+                      " result += 'closed'; } } const it = g();"
+                      "it.next().then(() => it[Symbol.asyncDispose]()).then(v => {"
+                      " result += ':' + v + ':' + it[Symbol.asyncDispose].name; });",
+                      "closed:undefined:[Symbol.asyncDispose]");
+    expect_after_turn("var result = ''; const it = { __proto__: Object.getPrototypeOf("
+                      "Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})()))),"
+                      " return() { throw new RangeError('r'); } };"
+                      "it[Symbol.asyncDispose]().catch(e => { result = e.name; });",
+                      "RangeError");
+}
+
 // `async function*`: every request is a promise of the record, queued behind
 // the body; `yield` awaits its operand; a throw rejects the request; the body
 // may park on an `await` between two requests.
@@ -601,6 +617,7 @@ int main() {
     test_promise_handlers_are_microtasks();
     test_async_rejection();
     test_concurrent_awaits();
+    test_async_dispose();
     test_async_generators();
     test_for_await();
     REPORT("vm_async");
