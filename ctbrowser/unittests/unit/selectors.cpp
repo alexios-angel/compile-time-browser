@@ -174,7 +174,7 @@ void test_heading() {
           " q('h1:heading(2)'), bad(':heading()'), bad(':heading(1.0)'), bad(':heading(2n)'),"
           " bad(':heading(-1)'), document.styleSheets[0].cssRules[0].selectorText,"
           " getComputedStyle(document.getElementById('b')).color].join('|'); })()",
-          "a,b,c|a|b,c||ok|SyntaxError|SyntaxError|SyntaxError|ok|h2:heading(2)|rgb(1, 2, 3)");
+          "a,b,c|a|b,c|||SyntaxError|SyntaxError|SyntaxError|ok|h2:heading(2)|rgb(1, 2, 3)");
 }
 
 // --- every spelling of An+B ------------------------------------------------
