@@ -70,15 +70,6 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // nothing at all. It read `undefined` on the other side and
             // said nothing, which is the failure this whole ladder exists
             // to make loud.
-            if (at(n.a).kind == vp::nk::var_decl) {
-                for (const std::int32_t d : kids(at(n.a))) {
-                    if (at(d).text.empty()) {
-                        fail("`export` of a destructuring declaration is not implemented yet - "
-                             "ES modules are staged in docs/plans/modules.md");
-                        break;
-                    }
-                }
-            }
             // AND THAT IS ALL: the declaration compiles as itself. Its
             // names were bound to their export cells at module entry, so
             // there is nothing left to publish here - see bind_export.
