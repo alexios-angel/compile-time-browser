@@ -1733,8 +1733,23 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         });
     }
     if (!parent) { root_line_height_ = own_line_height; }
-    const css::length_context lengths =
-        font_context(own_font_size, own_line_height, own_zero_advance);
+    // THE ELEMENT'S OWN WRITING MODE, settled before any length resolves:
+    // `vi`/`vb` swap axes in a vertical one (CSS Values 4 §6.1.2), and the
+    // property inherits, so the parent's answer stands until a declaration
+    // says otherwise - a keyword, never a length, so nothing to fold.
+    bool vertical = parent && parent->inherited &&
+                    !parent->inherited->get(writing_mode_).starts_with("horizontal") &&
+                    !parent->inherited->get(writing_mode_).empty();
+    fold([&](const declaration & d) {
+        if (d.property != writing_mode_) { return; }
+        const std::string_view text = trim(d.value, html_whitespace);
+        if (ascii_iequals(text, "inherit") || css::may_have_var(text)) { return; }
+        if (css::is_wide_keyword(text)) { return; }
+        const std::string lowered = ascii_lower_copy(text);
+        vertical = lowered.starts_with("vertical-") || lowered.starts_with("sideways-");
+    });
+    css::length_context lengths = font_context(own_font_size, own_line_height, own_zero_advance);
+    lengths.vertical = vertical;
     // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
     // `line-height: 2lh` folded against its own answer would double it -
     // and `line_height_lengths` above is what that property folds with; and
