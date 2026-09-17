@@ -277,6 +277,7 @@ public:
     void set_shadow_declarative(node_id root, bool declarative);
     // Snapshot for callers that walk trees and may attach another root.
     [[nodiscard]] std::vector<node_id> shadow_roots() const;
+    [[nodiscard]] bool has_shadow_roots() const noexcept { return !shadow_roots_.empty(); }
 
     // --- the parse path -----------------------------------------------------
     // The parsers' append: no detach, no cycle check, no version bump, because

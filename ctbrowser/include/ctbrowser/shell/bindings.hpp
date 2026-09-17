@@ -2110,7 +2110,8 @@ private:
     // thousands of slots.
     flat_map<std::uint64_t, std::vector<node_id>> slot_assignments_;
     std::vector<node_id> signal_slots_;
-    void signal_slot_changes();
+    std::vector<node_id> slot_roots_dirty_; // slot.assign() named these trees
+    void signal_slot_changes(const std::vector<document::write_note> & writes);
     void fire_signalled_slots();
     // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
     // the `nonce` attribute's text at the time - see reflection.cpp's

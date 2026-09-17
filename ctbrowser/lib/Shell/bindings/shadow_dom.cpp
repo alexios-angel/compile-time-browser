@@ -106,10 +106,46 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
 // last mutation: the slots of every shadow tree, each list recomputed and
 // compared with the one kept. A slot new to the map with nothing assigned
 // has not changed; one that has left its tree keeps the signal it earned.
-void dom_bindings::signal_slot_changes() {
-    if (doc_ == nullptr || cx_ == nullptr) { return; }
-    const std::vector<node_id> roots = doc_->shadow_roots();
-    if (roots.empty() && slot_assignments_.empty()) { return; }
+void dom_bindings::signal_slot_changes(const std::vector<document::write_note> & writes) {
+    if (doc_ == nullptr || cx_ == nullptr || !doc_->has_shadow_roots()) { return; }
+    // ONLY THE TREES THE WRITES COULD HAVE MOVED AN ASSIGNMENT IN: a host's
+    // child list (its shadow root's slots), a shadow tree's own content (a
+    // slot inserted or removed, at any depth), a `slot` or `name` attribute
+    // (the child's host's root, or the slot's tree) - and, for slot.assign(),
+    // the root it named. A page with ten thousand hosts that appends one
+    // element must not recompute ten thousand trees.
+    std::vector<node_id> roots;
+    const auto note_root = [&](node_id root) {
+        if (root && shadow_tree_of(root) != nullptr &&
+            std::ranges::find(roots, root) == roots.end()) {
+            roots.push_back(root);
+        }
+    };
+    {
+        const auto txn = doc_->read();
+        const atom slot_attr = atoms_->intern("slot");
+        const atom name_attr = atoms_->intern("name");
+        for (const document::write_note & note : writes) {
+            using edit = document::write_note::edit;
+            if (note.kind == edit::data || !note.node || !txn.contains(note.node)) { continue; }
+            if (note.kind == edit::attribute && note.name != slot_attr && note.name != name_attr) {
+                continue;
+            }
+            // The node's own tree, when it is a shadow tree...
+            note_root(root_of_tree(txn, note.node, false));
+            // ...and the shadow root of the host whose child it is, or is.
+            note_root(shadow_root_of(note.node));
+            if (const node_id parent = txn.parent(note.node)) { note_root(shadow_root_of(parent)); }
+            if (note.kind == edit::attribute) { continue; }
+            if (note.child && txn.contains(note.child)) {
+                note_root(root_of_tree(txn, note.child, false));
+                note_root(shadow_root_of(note.child));
+            }
+        }
+        for (const node_id root : slot_roots_dirty_) { note_root(root); }
+    }
+    slot_roots_dirty_.clear();
+    if (roots.empty()) { return; }
     flat_map<std::uint64_t, std::vector<node_id>> now;
     {
         const auto txn = doc_->read();
@@ -126,6 +162,7 @@ void dom_bindings::signal_slot_changes() {
         const auto before = slot_assignments_.find(key);
         const bool moved =
             before == slot_assignments_.end() ? !assigned.empty() : before->second != assigned;
+        slot_assignments_.insert_or_assign(key, assigned);
         if (!moved) { continue; }
         const node_id slot = unpack(key);
         if (std::ranges::find(signal_slots_, slot) == signal_slots_.end()) {
@@ -133,7 +170,6 @@ void dom_bindings::signal_slot_changes() {
             any = true;
         }
     }
-    slot_assignments_ = std::move(now);
     if (any) { queue_mutation_delivery(); }
 }
 
@@ -412,6 +448,12 @@ void dom_bindings::install_shadow_dom(context & cx) {
                     });
                 }
                 manual_slots_.insert_or_assign(slot.key(), std::move(assigned));
+                // A manual assignment moves nothing the write log sees: the
+                // slot's tree is recomputed on this mutation regardless.
+                {
+                    const auto txn = doc_->read();
+                    slot_roots_dirty_.push_back(root_of_tree(txn, slot, false));
+                }
                 mutated();
                 return value::undefined();
             },
