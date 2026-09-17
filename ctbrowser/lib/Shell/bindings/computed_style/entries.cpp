@@ -952,12 +952,31 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
             style::css::color_context ctx;
             ctx.lengths = &bases;
+            // THE USED COLOUR SCHEME (CSS Color Adjust 1 §2.1): `dark` when
+            // the element's `color-scheme` lists dark and not light - this
+            // engine's user prefers light, so `light dark` is light.
+            {
+                const std::string scheme = collapse_keyword(declared("color-scheme"));
+                bool light = false, dark = false;
+                for (const std::string_view word : split_top_level(scheme, " ")) {
+                    light = light || ascii_iequals(word, "light");
+                    dark = dark || ascii_iequals(word, "dark");
+                }
+                ctx.dark = dark && !light;
+            }
+            // `currentcolor` is this element's `color` - or, when the property
+            // IS `color`, the parent's (CSS Color 4 §7.1).
             std::string own_color;
-            if (property != "color") {
-                const std::string_view declared_color = trim(declared("color"), html_whitespace);
-                own_color = declared_color.empty() || ascii_iequals(declared_color, "currentcolor")
+            {
+                const bool of_parent = property == "color";
+                const std::string_view declared_color =
+                    of_parent ? (at.chain.size() >= 2 ? declared_on(at.chain[1], "color")
+                                                      : std::string_view{})
+                              : declared("color");
+                const std::string_view text = trim(declared_color, html_whitespace);
+                own_color = text.empty() || ascii_iequals(text, "currentcolor")
                                 ? std::string{"rgb(0, 0, 0)"}
-                                : style::css::computed_color(declared_color, {});
+                                : style::css::computed_color(text, {});
                 if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
                 ctx.current_color = own_color;
             }

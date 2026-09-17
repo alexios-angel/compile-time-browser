@@ -184,6 +184,9 @@ struct color_context {
     // The bases for a `calc()` in a channel (`sign(1em - 10px)`); null is the
     // defaults.
     const length_context * lengths = nullptr;
+    // The element's used colour scheme is dark: `light-dark()` takes its
+    // second colour and the system colours their dark values.
+    bool dark = false;
 };
 // THE SPECIFIED SERIALISATION of a `<color>` on its own - what a colour
 // inside a gradient or a shadow reads back as - or empty for text that is

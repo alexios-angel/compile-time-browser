@@ -215,6 +215,19 @@ void test_the_computed_value() {
     computed("hsl(from rebeccapurple h s none)", "hsl(270 50% none)");
     computed("alpha(from red / 0.5)", "color(srgb 1 0 0 / 0.5)");
     computed("light-dark(black, white)", "rgb(0, 0, 0)");
+    computed("Canvas", "rgb(255, 255, 255)");
+    {
+        // `color-scheme: dark`: light-dark() takes its second colour and the
+        // scheme-aware system colours their dark values.
+        color_context dark;
+        dark.dark = true;
+        CHECK_EQ(computed_color("light-dark(black, white)", dark),
+                 std::string{"rgb(255, 255, 255)"});
+        CHECK_EQ(computed_color("light-dark(light-dark(white, red), red)", dark),
+                 std::string{"rgb(255, 0, 0)"});
+        CHECK_EQ(computed_color("Canvas", dark), std::string{"rgb(18, 18, 18)"});
+        CHECK_EQ(computed_color("Mark", dark), std::string{"rgb(255, 255, 0)"});
+    }
     // color-mix, to a hundredth: the interpolation and the hue methods.
     computed_near("color-mix(in hsl, hsl(120deg 10% 20% / .4), hsl(30deg 30% 40% / .8))",
                   "color(srgb 0.372222 0.411111 0.255556 / 0.6)");

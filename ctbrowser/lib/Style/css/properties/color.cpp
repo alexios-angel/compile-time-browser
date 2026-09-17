@@ -198,7 +198,9 @@ constexpr named named_colors[] = {
 // §6.2's system colours and the deprecated ones §6.3 keeps parsing, with the
 // light-scheme values Chromium ships: CSSOM makes a colour's resolved value
 // the used one, so `background-color: Menu` reads back as an `rgb()`
-// (getComputedStyle-resolved-colors). Nothing here is themed.
+// (getComputedStyle-resolved-colors). The dark table below is what
+// `color-scheme: dark` swaps in (CSS Color Adjust 1 §2); a name not in it
+// is the same in both schemes.
 constexpr named system_colors[] = {
     {"accentcolor", 0x0075FF},
     {"accentcolortext", 0xFFFFFF},
@@ -242,6 +244,17 @@ constexpr named system_colors[] = {
     {"window", 0xFFFFFF},
     {"windowframe", 0xCCCCCC},
     {"windowtext", 0x000000},
+};
+constexpr named dark_system_colors[] = {
+    {"activetext", 0xFF9E9E},   {"buttonborder", 0x6B6B6B},     {"buttonface", 0x6B6B6B},
+    {"buttontext", 0xFFFFFF},   {"canvas", 0x121212},           {"canvastext", 0xFFFFFF},
+    {"field", 0x3B3B3B},        {"fieldtext", 0xFFFFFF},        {"graytext", 0xA0A0A0},
+    {"highlight", 0x99C8FF},    {"highlighttext", 0x000000},    {"linktext", 0x9E9EFF},
+    {"selecteditem", 0x99C8FF}, {"selecteditemtext", 0x000000}, {"visitedtext", 0xD0ADF0},
+    {"appworkspace", 0x121212}, {"scrollbar", 0x121212},        {"menu", 0x121212},
+    {"menutext", 0xFFFFFF},     {"window", 0x121212},           {"windowtext", 0xFFFFFF},
+    {"threedface", 0x6B6B6B},   {"captiontext", 0xFFFFFF},      {"infobackground", 0x121212},
+    {"infotext", 0xFFFFFF},
 };
 
 [[nodiscard]] const named * find_named(std::span<const named> table, std::string_view word) {
@@ -1749,6 +1762,7 @@ std::string serialize_specified(const parsed & p, bool as_origin) {
 struct resolve_context {
     std::string_view current_color; // computed text, or empty
     const length_context * lengths = nullptr;
+    bool dark = false; // the used colour scheme
 };
 
 std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, int depth);
@@ -2040,6 +2054,7 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
             return resolve(*current, without, depth + 1);
         }
         const named * hit = find_named(named_colors, p.keyword);
+        if (hit == nullptr && ctx.dark) { hit = find_named(dark_system_colors, p.keyword); }
         if (hit == nullptr) { hit = find_named(system_colors, p.keyword); }
         if (hit == nullptr) { return std::nullopt; }
         out.c = {((hit->rgb >> 16) & 0xFF) / 255.0, ((hit->rgb >> 8) & 0xFF) / 255.0,
@@ -2050,7 +2065,7 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
     case parsed::kind::absolute:
     case parsed::kind::relative: return resolve_absolute(p, ctx, depth);
     case parsed::kind::mix: return resolve_mix(p, ctx, depth);
-    case parsed::kind::light_dark: return resolve(*p.items[0].color, ctx, depth + 1);
+    case parsed::kind::light_dark: return resolve(*p.items[ctx.dark ? 1 : 0].color, ctx, depth + 1);
     case parsed::kind::alpha_fn: {
         std::optional<resolved> origin = resolve(*p.origin, ctx, depth + 1);
         if (!origin) { return std::nullopt; }
@@ -2155,7 +2170,7 @@ std::string serialize_color(std::string_view text) {
 std::string computed_color(std::string_view specified, const color_context & ctx) {
     const std::unique_ptr<parsed> tree = parse_text(trim(specified, html_whitespace));
     if (!tree) { return {}; }
-    const resolve_context rc{ctx.current_color, ctx.lengths};
+    const resolve_context rc{ctx.current_color, ctx.lengths, ctx.dark};
     const std::optional<resolved> r = resolve(*tree, rc, 0);
     if (!r) { return {}; }
     return serialize_computed(*r);
@@ -2164,7 +2179,7 @@ std::string computed_color(std::string_view specified, const color_context & ctx
 std::optional<srgb_color> resolve_color(std::string_view specified, const color_context & ctx) {
     const std::unique_ptr<parsed> tree = parse_text(trim(specified, html_whitespace));
     if (!tree) { return std::nullopt; }
-    const resolve_context rc{ctx.current_color, ctx.lengths};
+    const resolve_context rc{ctx.current_color, ctx.lengths, ctx.dark};
     const std::optional<resolved> r = resolve(*tree, rc, 0);
     if (!r) { return std::nullopt; }
     const resolved srgb = convert(*r, space::srgb);
