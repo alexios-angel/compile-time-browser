@@ -111,7 +111,9 @@ bool condition(std::string_view text, int depth) {
         if (!out.empty()) { out += ", "; }
         if (t.type == token_type::ident) {
             if (is_wide_keyword(text) || ascii_iequals(text, "default")) { return false; }
-            out += ascii_iequals(text, "none") ? std::string{"none"} : std::string{text};
+            // A custom ident keeps its case and is written back escaped
+            // (CSSOM §2.1): `multi\ word` round-trips as itself.
+            out += ascii_iequals(text, "none") ? std::string{"none"} : serialize_identifier(text);
             continue;
         }
         if (t.type != token_type::string) { return false; }

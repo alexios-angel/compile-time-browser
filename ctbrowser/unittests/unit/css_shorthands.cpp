@@ -78,6 +78,11 @@ void test_animation_is_a_shorthand() {
     CHECK_EQ(set_and_read("animation", "none"), std::string{"none"});
     CHECK_EQ(set_and_read("animation", "ease-in-out"), std::string{"ease-in-out"});
     CHECK_EQ(set_and_read("animation", "1s 2s 3s"), std::string{});
+    CHECK_EQ(set_and_read("animation", "-1s -2s"), std::string{});
+    CHECK_EQ(set_and_read("animation", "cubic-bezier( 0, -2, 1, 3 )"),
+             std::string{"cubic-bezier(0, -2, 1, 3)"});
+    CHECK_EQ(check_declaration("animation-name", "multi\\ word").serialized,
+             std::string{"multi\\ word"});
     // `[ none | <keyframes-name> ]#`: a string is the identifier it names
     // unless that would be a keyword.
     CHECK_EQ(check_declaration("animation-name", "NONE").serialized, std::string{"none"});

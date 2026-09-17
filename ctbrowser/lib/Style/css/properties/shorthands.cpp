@@ -532,6 +532,21 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 8> animation
     return ascii_iequals(text, animation_items[i].second) || (i == 0 && ascii_iequals(text, "0s"));
 }
 
+// An easing function with its arguments respaced: `cubic-bezier( 0, -2, 1, 3 )`
+// is `cubic-bezier(0, -2, 1, 3)`. A keyword is itself.
+[[nodiscard]] std::string canonical_easing(std::string text) {
+    const std::size_t open = text.find('(');
+    if (open == std::string::npos || text.back() != ')') { return text; }
+    std::string out = ascii_lower_copy(text.substr(0, open + 1));
+    const std::string_view inner{text.data() + open + 1, text.size() - open - 2};
+    bool first = true;
+    for (const std::string_view argument : split_top_level(inner, ",")) {
+        out += (first ? "" : ", ") + std::string{trim(argument, html_whitespace)};
+        first = false;
+    }
+    return out + ")";
+}
+
 // `animation`: one `<single-animation>` per comma, each component to the
 // first longhand of its kind not yet given - the times in order, the
 // keywords of the typed longhands before the name takes what is left.
@@ -552,6 +567,11 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
             const value_check time = check_declaration("animation-delay", part, false);
             if (time.valid && !is_wide_keyword(time.serialized)) {
                 if (!given[0]) {
+                    // The first <time> is the duration, which a negative
+                    // one cannot be: `animation: -1s -2s` is refused.
+                    if (!check_declaration("animation-duration", part, false).valid) {
+                        return split::invalid;
+                    }
                     take(0, time.serialized);
                 } else if (!given[2]) {
                     take(2, time.serialized);
@@ -561,7 +581,9 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
                 continue;
             }
             if (!given[1] && parse_easing(part)) {
-                take(1, check_declaration("animation-timing-function", part, false).serialized);
+                take(1,
+                     canonical_easing(
+                         check_declaration("animation-timing-function", part, false).serialized));
                 continue;
             }
             const value_check count = check_declaration("animation-iteration-count", part, false);
