@@ -219,6 +219,13 @@ value_check check_declaration(std::string_view property, std::string_view value,
         simplified = canonical_random(simplified, property);
     }
 
+    // THE ONE DESCRIPTOR WITH A GRAMMAR OF ITS OWN: `unicode-range` is not a
+    // property, and its `<urange>` is a token-level shape no property has.
+    if (ascii_iequals(property, "unicode-range")) {
+        std::string ranges;
+        return match_unicode_range(ts, found, ranges) ? yes(std::move(ranges)) : value_check{};
+    }
+
     const property_syntax * p = find_property(property);
     // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
     // and read it back; refusing here would be a behaviour change for every

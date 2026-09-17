@@ -134,6 +134,10 @@ struct scan {
 // here, an empty `out` for an invalid value. Defined in keywords.cpp.
 [[nodiscard]] bool match_keywords(std::string_view property, const token_stream & ts,
                                   const scan & found, std::string & out);
+// The `unicode-range` descriptor's `<urange>#` (CSS Syntax 3 §6). False for
+// an invalid value. Defined in urange.cpp.
+[[nodiscard]] bool match_unicode_range(const token_stream & ts, const scan & found,
+                                       std::string & out);
 // rotate, scale, translate, transform-origin and perspective-origin.
 // Defined in transforms.cpp.
 [[nodiscard]] bool match_transform_property(std::string_view property, const token_stream & ts,
