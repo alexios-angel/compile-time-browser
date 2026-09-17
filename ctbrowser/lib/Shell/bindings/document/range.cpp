@@ -544,7 +544,10 @@ void dom_bindings::install_range(context & cx) {
                                      position](context & c, std::span<value> a) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
-        const double how = context::to_number(arg(a, 0));
+        // WebIDL `unsigned short`: ToNumber, truncate, modulo 2^16 - so 65536
+        // is START_TO_START and 1.5 is START_TO_END (Range-compareBoundaryPoints
+        // walks every such value, 1,325 subtests).
+        const double how = static_cast<double>(context::to_uint32(arg(a, 0)) % 65536u);
         const value other = arg(a, 1);
         if (!(how == 0 || how == 1 || how == 2 || how == 3)) {
             throw_dom_exception(c, "NotSupportedError",
