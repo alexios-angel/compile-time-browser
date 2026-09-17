@@ -407,11 +407,15 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
     std::string failure;
     std::string failure_name = "NotSupportedError";
     if (!threw) {
-        const node_id result = handle_of(made);
-        const auto txn = doc_->read();
+        dom_bindings * home = owner_of(made);
+        const node_id result = home == nullptr ? node_id{} : home->handle_of(made);
+        const auto txn = (home == nullptr ? *this : *home).doc_->read();
         if (!result || txn.kind(result).value_or(node_kind::text) != node_kind::element) {
             failure_name = "TypeError";
             failure = "the custom element constructor did not return an element";
+        } else if (home != this) {
+            failure = "the custom element was adopted into another document during "
+                      "construction";
         } else if (txn.local_name(result) != lowered) {
             failure = "the custom element constructor returned an element with the wrong "
                       "local name";
@@ -782,6 +786,12 @@ void dom_bindings::flush_custom_element_reactions() {
         const custom_element_reaction reaction = std::move(custom_reactions_.front());
         custom_reactions_.erase(custom_reactions_.begin());
         if (reaction.definition >= primary().custom_definitions_.size()) { continue; }
+        // A target that is gone (not merely detached, nor adopted away with
+        // its wrapper) has nothing to run a callback on.
+        if (!doc_->read().contains(reaction.target) &&
+            adopted_away_.find(reaction.target.key()) == adopted_away_.end()) {
+            continue;
+        }
         const value wrapper = wrap(cx, reaction.target);
         if (!wrapper.is_object()) { continue; }
         using kind = custom_element_reaction::kind;
