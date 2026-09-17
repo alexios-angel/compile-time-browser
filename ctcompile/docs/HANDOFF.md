@@ -15,6 +15,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ordered native result assignments and negative Sub snapshots, 2026-09-17 UTC
+
+Continued clean **`1bbaff44`** and the **12:40:58 AGENT-SYNC handoff** after
+checking both commit histories and unmerged branches. The interrupted guard/helper
+thread was complete; this session resumed its documented fresh-result assignment
+boundary. Three agents split source preparation, execution tests and escape review;
+root recovered the escape proposal after one agent hit its service limit.
+
+**`e8d5aae0`** preserves receiver-only fresh-object writes through structured
+branches and loops. **`1576568d`** proves and lowers constant String-key assignments
+except `__proto__` on a direct fresh object. Values are owning JSON trees, Strings,
+optional Strings, null, Boolean or Number. Every mutation must finish before a
+return, join, spread or value assignment can snapshot its target; observations
+inside its mutation loop refuse. The shared member-update helper preserves numeric
+key order, ordinary insertion order and last-write values for assignments and
+spreads. Two former JSON refusals retain their exact source and earlier DOM reads
+as execution positives. No browser implementation or Script/VM/GC dependency was
+added; the public `ctbrowser::json_value` owns the result.
+
+**`eec9fcb9`** preserves exact negative Number subtraction snapshots. String
+coercion supplies no such fact. Existing latch invariance, sign, index and final
+update checks remain. The new source oracle measures **20 sites / eight sound /
+zero violations / eight of 12 precision (66.7%)**; the three existing signed
+stride/unary source oracles pass. CFG/SCF tests add 27 rows and budget cutoffs.
+
+The corrected **371-target build / 3/3 focused CTests (1.31s)** pass. The final
+assignment driver passes **1/1 lit (55.69s): six sources / 111 Node-VM observations /
+eight GCC-Clang binaries / 88 refusals**, both providers/policies/layouts and
+ASan/UBSan lifetime checks. It executes original M values inside repeated fixed-key
+writes and checks results after document/session destruction. The other seven
+focused lit tests pass: dataset **28 sources / 112 observations / eight binaries /
+432 refusals**, JSON **21 / 584 / eight / 248**, Strings **783 observations / eight
+binaries / 1,056 source refusals** plus provenance controls, and four escape drivers.
+
+The new driver retains **111 additional Node accessor traces**. The VM currently
+invokes enumerable dataset getters during Object.keys, so its comparison uses the
+same original entry source and values with plain data properties in both Node and
+VM; dataset-getter and DOM-method order remain checked. Native observation first
+checks raw result-key order and duplicates, then applies Node JSON enumeration to
+nested parsed trees: public Core deliberately retains parse order. Ordinary nested
+key order and scalar types still match exactly. The first compile typo and three
+fixture failures are retained as evidence; they did not require runtime changes.
+
+The complete frozen gate passes **310/310 CTests (2087.43s) / 260/260 lit
+(1822.86s)** with no skips; workflow exit status is **0**. All **1,796 input
+hashes** match locally and on the devbox. Fresh full Bootstrap remains **19/574
+native / 0 of 47 globals** in both policy reports, with no skipped or pruned
+functions. Button remains **4/86 / 22 agreeing lifecycle observations**. The
+original DOM Data session passes its seven-function admission and lifetime
+assertions; this is separate from the historical unadapted CommonJS census.
+Stable formatting passes **890 C++ / 108 Python / 105 web files**. The required
+pinned formatter retains exactly **nine unchanged files / 26 diagnostics**.
+WPT/test262 corpus measurements were not rerun.
+
+**Exact next:** 44 fresh admission probes cover 11 sources in both providers and
+policies. A fixed result write now admits one function; original M inside a fixed-key
+dataset result loop admits two. Guarded value/M loops remain admitted. Full original
+H advances from its source-local identity refusal to **DOM property read lacks a
+proved receiver and supported member**, also seen in the isolated Unicode
+`charAt(0).toLowerCase() + slice(1)` expression. Dynamic and `__proto__` result writes
+reach the explicit final DOM assignment diagnostic.
+
+Do not generalize `__proto__` skipping: repeated writes after null, a parsed
+prototype's own data slot, or a previous spread can create an own property. A
+parallel Node-only review found a narrower possible proof for original H: exactly
+one `bs__proto__` snapshot key, one traversal/write, original M values and final
+own-data-only observations. Ordinary ASCII/Unicode normalized keys can collide.
+This proposal is **not implemented or native-validated**. The current runtime still
+has byte-indexed charAt and ASCII case conversion; the earlier É/İ VM discrepancy
+was not remeasured. Coordinate a public, non-VM Unicode seam with the browser work.
+
+Full H, Config/inheritance/defaults, retained callbacks and the application driver
+remain unfinished. Claude's round-six/seven runtime changes are outside this frozen
+oracle and need fresh differential validation after integration. Evidence:
+`/tmp/ctcompile-assignment/`, including frozen hashes, failed and passing gates,
+generated C++, 44 boundary probes and `prototype-next.md` with Node counterexamples.
+Older sections below are historical checkpoints.
+
 ## Validated element guards and nested helper calls, 2026-09-17 UTC
 
 Resumed seven dirty ctcompile files on **`d9f89a05`**, identified in the
