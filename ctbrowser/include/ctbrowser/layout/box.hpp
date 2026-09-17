@@ -651,6 +651,18 @@ private:
             into.intrinsic_height = attribute_number("height", 150);
             return;
         }
+        // A NESTED BROWSING CONTEXT AND THE OTHER EMBEDS: CSS 2 §10.3.2's
+        // default object size, 300 by 150, unless the `width`/`height`
+        // attributes say (HTML 15.4.1, the presentational hints of `<iframe>`
+        // and friends). An iframe used to have no intrinsic size at all - a
+        // 0 by line-height box - so `<iframe width=200 height=100>` laid out
+        // nothing and its document's viewport, which is this box, was 0 by
+        // 20: every media query in a frame read that (matchMedia.html).
+        if (tag == "iframe" || tag == "embed" || tag == "object" || tag == "video") {
+            into.intrinsic_width = attribute_number("width", 300);
+            into.intrinsic_height = attribute_number("height", 150);
+            return;
+        }
         if (tag == "img" || tag == "svg") {
             // The attributes WIN over the natural size - that is how a page
             // scales a graphic - and ONE of them scales the other through the
