@@ -566,8 +566,13 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
     if (seen.find('u') != std::string::npos && seen.find('v') != std::string::npos) {
         return "the flags `u` and `v` may not be combined";
     }
-    // `v` changes what a character class is; the body is not judged under it.
-    if (seen.find('v') != std::string::npos) { return std::nullopt; }
+    // `v` changes what a character class is, and 22.2.1's ClassSetExpression
+    // is implemented in full by the matcher's own reader - so under `v` the
+    // matcher judges the body, and what it refuses is the early error.
+    if (seen.find('v') != std::string::npos) {
+        if (rx::rx_compile(body, seen).ok) { return std::nullopt; }
+        return "the pattern is not a Pattern under the v flag";
+    }
     return scan{body, seen.find('u') != std::string::npos}.run();
 }
 

@@ -84,6 +84,29 @@ char32_t rx_fold_simple(char32_t cp) {
     return it != std::end(rx_folds) && (*it)[0] == cp ? (*it)[1] : cp;
 }
 
+rx_ranges_t rx_fold_closure(const rx_ranges_t & ranges) {
+    const auto in = [&](char32_t probe) {
+        const auto it = std::lower_bound(ranges.begin(), ranges.end(), probe,
+                                         [](const std::pair<std::uint32_t, std::uint32_t> & r,
+                                            char32_t v) { return r.second < v; });
+        return it != ranges.end() && it->first <= probe;
+    };
+    // Every fold pair with either side in the set brings the whole
+    // equivalence class along: the fold, and everything that folds to it.
+    rx_class cc;
+    cc.ranges = ranges;
+    for (const auto & row : rx_folds) {
+        if (!in(row[0]) && !in(row[1])) { continue; }
+        cc.ranges.push_back({row[1], row[1]});
+        char32_t others[8];
+        for (std::size_t n = rx_unfold(row[1], others); n-- > 0;) {
+            cc.ranges.push_back({others[n], others[n]});
+        }
+    }
+    rx_class_normalize(cc);
+    return std::move(cc.ranges);
+}
+
 std::size_t rx_unfold(char32_t folded, char32_t (&out)[8]) {
     std::size_t n = 0;
     for (auto * it =

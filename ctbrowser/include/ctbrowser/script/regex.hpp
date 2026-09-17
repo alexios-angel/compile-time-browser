@@ -292,6 +292,234 @@ inline bool rx_parse_property(std::string_view src, std::size_t & i, const rx_pr
 	return true;
 }
 
+// THE `v` FLAG'S CLASS (22.2.1 ClassSetExpression): a union of characters,
+// ranges, nested classes, `\q{a|bc}` string disjunctions and escapes, or ONE
+// chain of `--` subtractions or `&&` intersections - the three do not mix.
+// A set is code points plus strings; a string of one code point IS a code
+// point (22.2.1.1 MayContainStrings), so `\q{a}` lands in the ranges.
+//
+// Under `vi` the specification folds every operand first (MaybeSimpleCase-
+// Folding) and complements within the folded code points; here an operand
+// is CLOSED under the fold instead - every code point sharing a member's
+// fold joins - which the matcher's own fold check then reads identically,
+// and which keeps the set operations plain range arithmetic.
+using rx_ranges_t = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+rx_ranges_t rx_fold_closure(const rx_ranges_t & ranges); // regex_properties.cpp
+
+inline rx_ranges_t rx_ranges_intersect(const rx_ranges_t & a, const rx_ranges_t & b) {
+	rx_ranges_t out;
+	std::size_t x = 0, y = 0;
+	while (x < a.size() && y < b.size()) {
+		const std::uint32_t lo = std::max(a[x].first, b[y].first);
+		const std::uint32_t hi = std::min(a[x].second, b[y].second);
+		if (lo <= hi) { out.push_back({lo, hi}); }
+		if (a[x].second < b[y].second) { ++x; } else { ++y; }
+	}
+	return out;
+}
+
+// The set an operand yields; ranges normalized, strings of two or more code
+// points (or none) only.
+struct rx_set {
+	rx_ranges_t ranges;
+	std::vector<std::string> strings;
+};
+
+inline void rx_set_normalize(rx_set & s) {
+	rx_class cc;
+	cc.ranges = std::move(s.ranges);
+	cc.strings = std::move(s.strings);
+	rx_class_normalize(cc);
+	std::sort(cc.strings.begin(), cc.strings.end());
+	cc.strings.erase(std::unique(cc.strings.begin(), cc.strings.end()), cc.strings.end());
+	s.ranges = std::move(cc.ranges);
+	s.strings = std::move(cc.strings);
+}
+
+inline bool rx_class_set_expression(std::string_view src, std::size_t & i, rx_prog & p, rx_set & out);
+
+// ClassSetCharacter: one code point, or false. `i` at the character.
+inline bool rx_class_set_character(std::string_view src, std::size_t & i, std::uint32_t & cp) {
+	if (i >= src.size()) { return false; }
+	const char c = src[i];
+	if (c == '\\') {
+		if (i + 1 >= src.size()) { return false; }
+		const char e = src[i + 1];
+		i += 2;
+		if (rx_code_point_escape(src, i, e, cp)) { return true; }
+		if (e == 'b') { cp = 0x08; return true; }
+		if (e == 'c') {
+			if (i < src.size() && ((src[i] >= 'a' && src[i] <= 'z') || (src[i] >= 'A' && src[i] <= 'Z'))) {
+				cp = static_cast<std::uint32_t>(src[i++]) % 32;
+				return true;
+			}
+			return false;
+		}
+		if (e == '0' && (i >= src.size() || src[i] < '0' || src[i] > '9')) { cp = 0; return true; }
+		// CharacterEscape's ControlEscape and identity escapes (the syntax
+		// characters and `/`), and the ClassSetReservedPunctuators.
+		if (std::string_view{"nrtfv"}.find(e) != std::string_view::npos) {
+			cp = static_cast<unsigned char>(rx_escape_char(e));
+			return true;
+		}
+		if (std::string_view{"^$\\.*+?()[]{}|/&-!#%,:;<=>@`~"}.find(e) != std::string_view::npos) {
+			cp = static_cast<unsigned char>(e);
+			return true;
+		}
+		return false;
+	}
+	// ClassSetSyntaxCharacter may not stand bare, nor a ClassSetReserved-
+	// DoublePunctuator (`&&`, `!!`, ...).
+	if (std::string_view{"()[]{}/-\\|"}.find(c) != std::string_view::npos) { return false; }
+	if (i + 1 < src.size() && src[i + 1] == c &&
+	    std::string_view{"&!#$%*+,.:;<=>?@^`~"}.find(c) != std::string_view::npos) {
+		return false;
+	}
+	std::size_t width = 1;
+	cp = rx_utf8_decode(src, i, width);
+	i += width;
+	return true;
+}
+
+// ClassSetOperand, plus a ClassSetRange when `range` is allowed (a union).
+inline bool rx_class_set_operand(std::string_view src, std::size_t & i, rx_prog & p, bool range,
+                                 rx_set & out, bool * ranged = nullptr) {
+	if (i >= src.size()) { return false; }
+	const bool fold = p.icase;
+	if (src[i] == '[') {
+		// NestedClass, complemented when it starts with `^` - and then it
+		// may not contain strings.
+		++i;
+		const bool negate = i < src.size() && src[i] == '^';
+		if (negate) { ++i; }
+		rx_set nested;
+		if (!rx_class_set_expression(src, i, p, nested)) { return false; }
+		if (negate) {
+			if (!nested.strings.empty()) { return false; }
+			nested.ranges = rx_complement(fold ? rx_fold_closure(nested.ranges) : nested.ranges);
+		}
+		out = std::move(nested);
+		return true;
+	}
+	if (src[i] == '\\' && i + 1 < src.size()) {
+		const char e = src[i + 1];
+		if (e == 'q') {
+			// ClassStringDisjunction: `\q{a|bc|}` - each alternative a run
+			// of ClassSetCharacters; one code point is a code point.
+			if (i + 2 >= src.size() || src[i + 2] != '{') { return false; }
+			i += 3;
+			std::string current;
+			std::size_t points = 0;
+			const auto finish = [&]() {
+				if (points == 1) {
+					std::size_t width = 1;
+					const std::uint32_t only = rx_utf8_decode(current, 0, width);
+					out.ranges.push_back({only, only});
+				} else {
+					out.strings.push_back(current);
+				}
+				current.clear();
+				points = 0;
+			};
+			for (;;) {
+				if (i >= src.size()) { return false; }
+				if (src[i] == '}') { finish(); ++i; break; }
+				if (src[i] == '|') { finish(); ++i; continue; }
+				std::uint32_t cp = 0;
+				if (!rx_class_set_character(src, i, cp)) { return false; }
+				append_utf8(current, cp);
+				++points;
+			}
+			if (fold) { out.ranges = rx_fold_closure(out.ranges); }
+			return true;
+		}
+		if (e == 'p' || e == 'P') {
+			i += 2;
+			rx_class cc;
+			if (!rx_parse_property(src, i, p, false, cc)) { return false; }
+			if (e == 'P' && !cc.strings.empty()) { return false; }
+			rx_class_normalize(cc);
+			if (fold) { cc.ranges = rx_fold_closure(cc.ranges); }
+			if (e == 'P') { cc.ranges = rx_complement(cc.ranges); }
+			out.ranges = std::move(cc.ranges);
+			out.strings = std::move(cc.strings);
+			return true;
+		}
+		if (std::string_view{"dswDSW"}.find(e) != std::string_view::npos) {
+			i += 2;
+			rx_class cc;
+			rx_class_escape(cc, static_cast<char>(e | 0x20));
+			rx_class_normalize(cc);
+			if (fold) { cc.ranges = rx_fold_closure(cc.ranges); }
+			if (e < 'a') { cc.ranges = rx_complement(cc.ranges); }
+			out.ranges = std::move(cc.ranges);
+			return true;
+		}
+	}
+	std::uint32_t lo = 0;
+	if (!rx_class_set_character(src, i, lo)) { return false; }
+	std::uint32_t hi = lo;
+	if (range && i + 1 < src.size() && src[i] == '-' && src[i + 1] != '-') {
+		++i;
+		if (!rx_class_set_character(src, i, hi) || hi < lo) { return false; }
+		if (ranged != nullptr) { *ranged = true; }
+	}
+	out.ranges.push_back({lo, hi});
+	if (fold) { out.ranges = rx_fold_closure(out.ranges); }
+	return true;
+}
+
+// ClassSetExpression up to and past the closing `]`.
+inline bool rx_class_set_expression(std::string_view src, std::size_t & i, rx_prog & p, rx_set & out) {
+	out = rx_set{};
+	if (i < src.size() && src[i] == ']') { ++i; return true; }
+	rx_set first;
+	bool ranged = false;
+	if (!rx_class_set_operand(src, i, p, true, first, &ranged)) { return false; }
+	rx_set_normalize(first);
+	const auto two = [&](char c) { return i + 1 < src.size() && src[i] == c && src[i + 1] == c; };
+	if (two('-') || two('&')) {
+		// ClassSubtraction / ClassIntersection: a chain of one operator,
+		// operands without ranges (a range is a ClassUnion's).
+		if (ranged) { return false; }
+		const char op = src[i];
+		out = std::move(first);
+		while (two(op)) {
+			i += 2;
+			rx_set next;
+			if (!rx_class_set_operand(src, i, p, false, next)) { return false; }
+			rx_set_normalize(next);
+			std::vector<std::string> strings;
+			if (op == '&') {
+				out.ranges = rx_ranges_intersect(out.ranges, next.ranges);
+				std::set_intersection(out.strings.begin(), out.strings.end(), next.strings.begin(),
+				                      next.strings.end(), std::back_inserter(strings));
+			} else {
+				out.ranges = rx_ranges_intersect(out.ranges, rx_complement(next.ranges));
+				std::set_difference(out.strings.begin(), out.strings.end(), next.strings.begin(),
+				                    next.strings.end(), std::back_inserter(strings));
+			}
+			out.strings = std::move(strings);
+		}
+		if (i >= src.size() || src[i] != ']') { return false; }
+		++i;
+		return true;
+	}
+	// ClassUnion
+	out = std::move(first);
+	while (i < src.size() && src[i] != ']') {
+		if (two('-') || two('&')) { return false; }
+		rx_set next;
+		if (!rx_class_set_operand(src, i, p, true, next)) { return false; }
+		out.ranges.insert(out.ranges.end(), next.ranges.begin(), next.ranges.end());
+		out.strings.insert(out.strings.end(), next.strings.begin(), next.strings.end());
+	}
+	if (i >= src.size()) { return false; }
+	++i;
+	rx_set_normalize(out);
+	return true;
+}
+
 inline std::shared_ptr<rx_alt> rx_parse_alt(std::string_view src, std::size_t & i, rx_prog & p,
                                             bool top);
 
@@ -339,6 +567,17 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		if (i < src.size() && src[i] == '^') {
 			pc.cc.neg = true;
 			++i;
+		}
+		if (p.unicode_sets) {
+			rx_set set;
+			if (!rx_class_set_expression(src, i, p, set) || (pc.cc.neg && !set.strings.empty())) {
+				rx_fail(p, src);
+				return pc;
+			}
+			pc.cc.ranges = std::move(set.ranges);
+			pc.cc.strings = std::move(set.strings);
+			rx_class_normalize(pc.cc);
+			return pc;
 		}
 		// `[]` is the EMPTY class and `[^]` matches anything (22.2.2.9 - a
 		// ClassContents may be empty); the `]` is never literal in a class.
@@ -466,7 +705,18 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		}
 		if ((e == 'p' || e == 'P') && (p.unicode || p.unicode_sets)) {
 			pc.kind = rx_piece::cls;
-			if (!rx_parse_property(src, i, p, e == 'P', pc.cc)) {
+			if (p.unicode_sets) {
+				// Under `v` the escape is a ClassSetOperand wherever it
+				// stands, folded before it is complemented.
+				i -= 2;
+				rx_set set;
+				if (!rx_class_set_operand(src, i, p, false, set)) {
+					rx_fail(p, src);
+					return pc;
+				}
+				pc.cc.ranges = std::move(set.ranges);
+				pc.cc.strings = std::move(set.strings);
+			} else if (!rx_parse_property(src, i, p, e == 'P', pc.cc)) {
 				rx_fail(p, src);
 				return pc;
 			}

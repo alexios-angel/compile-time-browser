@@ -94,10 +94,44 @@ void test_canonicalize() {
                   "true,true,2000000");
 }
 
+void test_unicode_sets() {
+    // ClassSetExpression: union, `--`, `&&`, nested classes, `\q{...}`
+    expect_result("return /^[[0-9]--[0-9]]+$/v.test('0') + ',' + /^[[0-9]&&\\d]+$/v.test('5') + "
+                  "',' + /^[\\w--\\d]+$/v.test('ab_') + ',' + /^[\\w--\\d]+$/v.test('a1');",
+                  "false,true,true,false");
+    expect_result("return /^[[a-z]&&[^aeiou]]+$/v.test('bcd') + ',' + "
+                  "/^[[a-z]&&[^aeiou]]+$/v.test('e');",
+                  "true,false");
+    expect_result(
+        "return /^[\\q{abc|d}]+$/v.test('abcdabc') + ',' + /^[\\q{abc|d}]+$/v.test('abd') "
+        "+ ',' + /^[\\q{}]$/v.test('');",
+        "true,false,true");
+    expect_result("return /^[\\d--\\q{0|2|4|9\\uFE0F\\u20E3}]+$/v.test('1') + ',' + "
+                  "/^[\\d--\\q{0|2|4|9\\uFE0F\\u20E3}]+$/v.test('0') + ',' + "
+                  "/^[\\p{Emoji_Keycap_Sequence}&&\\q{0|2|4|9\\uFE0F\\u20E3}]+$/v"
+                  ".test('9\\uFE0F\\u20E3');",
+                  "true,false,true");
+    // under `vi` an operand is folded before it is complemented, so `\P{Lu}`
+    // no longer takes "A" - the documented break between u and v
+    expect_result("return /\\P{Lu}/ui.test('A') + ',' + /\\P{Lu}/vi.test('A') + ',' + "
+                  "/[\\p{Lu}--[a-c]]/vi.test('A') + ',' + /[\\p{Lu}--[a-c]]/vi.test('D');",
+                  "true,false,false,true");
+    // the syntax characters must be escaped, the double punctuators are
+    // reserved, operators do not mix, a range is a union's
+    for (const char * bad : {"/[(]/v", "/[-]/v", "/[&&]/v", "/[^^^]/v", "/[_^^]/v", "/[a-z--b]/v",
+                             "/[a--b&&c]/v", "/[^\\q{ab}]/v", "/\\P{RGI_Emoji}/v"}) {
+        refused(bad);
+    }
+    expect_result("return /[\\&\\-\\!]/v.test('-') + ',' + /[\\p{ASCII_Hex_Digit}--[0-9]]/v"
+                  ".test('a') + ',' + /[\\p{ASCII_Hex_Digit}--[0-9]]/v.test('5');",
+                  "true,true,false");
+}
+
 } // namespace
 
 int main() {
     test_property_escapes();
     test_canonicalize();
+    test_unicode_sets();
     REPORT("regexp_unicode");
 }
