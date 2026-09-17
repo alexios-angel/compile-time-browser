@@ -244,6 +244,12 @@ void dom_bindings::deliver_mutation_records() {
         note_callback_fault("MutationObserver");
     }
     sync_mutation_roots();
+    // "Notify mutation observers" step 5: the signalled slots' `slotchange`,
+    // after the callbacks - this document's and every one it made.
+    fire_signalled_slots();
+    for (std::size_t i = 0; i < secondary_documents_.size(); ++i) {
+        secondary_documents_[i]->fire_signalled_slots();
+    }
 }
 
 // --- the snapshot -----------------------------------------------------------

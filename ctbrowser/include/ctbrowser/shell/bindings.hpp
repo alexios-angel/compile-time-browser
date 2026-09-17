@@ -2077,6 +2077,18 @@ private:
     // element or a text node - is decided when the list is read, so moving a
     // node out of the host un-assigns it without a hook.
     flat_map<std::uint64_t, std::vector<node_id>> manual_slots_;
+    // THE SLOTCHANGE SIGNALS, DOM 4.2.2.4. An assignment is computed, not
+    // stored (shadow_dom.cpp), so a change is found by diffing: `mutated()`
+    // recomputes every slot's assigned nodes and a slot whose list moved is
+    // "signalled" - queued for a `slotchange` at the next mutation observer
+    // microtask, after the observers' callbacks (DOM 4.3.3 step 5), even if
+    // it has left its tree since. ponytail: every slot of every shadow tree
+    // is recomputed per mutation; a per-host dirty bit if a page carries
+    // thousands of slots.
+    flat_map<std::uint64_t, std::vector<node_id>> slot_assignments_;
+    std::vector<node_id> signal_slots_;
+    void signal_slot_changes();
+    void fire_signalled_slots();
     // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
     // the `nonce` attribute's text at the time - see reflection.cpp's
     // `cryptographic_nonce` for why the pair. Empty until a page assigns one.

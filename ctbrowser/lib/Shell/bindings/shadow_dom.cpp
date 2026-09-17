@@ -14,13 +14,18 @@
 // stored: the assignment is a function of the two trees, so it is computed
 // when it is asked for and cannot go stale the way a cached list would.
 //
-// ponytail: no `slotchange` event - it needs the microtask queue signals do -
-// and nothing here reaches the FLAT TREE that layout would render: a slot's
-// assigned nodes are an answer to a question, not a rearrangement of the
-// boxes. See the report.
+// `slotchange` (DOM 4.2.2.4) is found by DIFFING that answer: mutated()
+// recomputes every slot's list and signals the ones that moved
+// (signal_slot_changes), and the mutation observer microtask fires the
+// events after the observers' callbacks (fire_signalled_slots).
+//
+// ponytail: nothing here reaches the FLAT TREE that layout would render: a
+// slot's assigned nodes are an answer to a question, not a rearrangement of
+// the boxes. See the report.
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <algorithm>
 #include <span>
 #include <string>
 #include <string_view>
@@ -95,6 +100,57 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
         if (slot_name_of(txn, *atoms_, child, "slot") == name) { out.push_back(child); }
     }
     return out;
+}
+
+// "Signal a slot change" for every slot whose assigned nodes moved since the
+// last mutation: the slots of every shadow tree, each list recomputed and
+// compared with the one kept. A slot new to the map with nothing assigned
+// has not changed; one that has left its tree keeps the signal it earned.
+void dom_bindings::signal_slot_changes() {
+    if (doc_ == nullptr || cx_ == nullptr) { return; }
+    const std::vector<node_id> roots = doc_->shadow_roots();
+    if (roots.empty() && slot_assignments_.empty()) { return; }
+    flat_map<std::uint64_t, std::vector<node_id>> now;
+    {
+        const auto txn = doc_->read();
+        const auto walk = [&](auto && self, node_id at) -> void {
+            for (const node_id child : txn.children(at)) {
+                if (is_slot(txn, child)) { now[child.key()] = assigned_nodes_of(child); }
+                self(self, child);
+            }
+        };
+        for (const node_id root : roots) { walk(walk, root); }
+    }
+    bool any = false;
+    for (const auto & [key, assigned] : now) {
+        const auto before = slot_assignments_.find(key);
+        const bool moved =
+            before == slot_assignments_.end() ? !assigned.empty() : before->second != assigned;
+        if (!moved) { continue; }
+        const node_id slot = unpack(key);
+        if (std::ranges::find(signal_slots_, slot) == signal_slots_.end()) {
+            signal_slots_.push_back(slot);
+            any = true;
+        }
+    }
+    slot_assignments_ = std::move(now);
+    if (any) { queue_mutation_delivery(); }
+}
+
+// The `slotchange` events of the signalled slots: bubbles, not cancelable,
+// not composed, at each slot in the order they were signalled.
+void dom_bindings::fire_signalled_slots() {
+    if (cx_ == nullptr || signal_slots_.empty()) { return; }
+    std::vector<node_id> due;
+    due.swap(signal_slots_);
+    for (const node_id slot : due) {
+        if (!doc_->read().contains(slot)) { continue; }
+        const value event = make_event(*cx_, "slotchange", slot);
+        auto * object = static_cast<script::object_object *>(event.as_heap());
+        object->set("bubbles", value::boolean(true));
+        object->set("cancelable", value::boolean(false));
+        (void)dispatch_event("slotchange", slot, event);
+    }
 }
 
 // The <slot> a slottable is assigned to, mode-agnostic. Its host is the node's

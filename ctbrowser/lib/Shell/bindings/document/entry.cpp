@@ -295,6 +295,7 @@ void dom_bindings::mutated() {
     record_mutations(writes);
     settle_attribute_writes(writes);
     settle_live_ranges(writes);
+    signal_slot_changes();
     // A "replace all" note is for the mutation it preceded and no other.
     replace_all_.reset();
     // AN <input> WHOSE TYPE MOVED runs HTML 4.10.5's type-change steps now,

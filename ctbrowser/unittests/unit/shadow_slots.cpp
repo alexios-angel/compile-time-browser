@@ -143,10 +143,44 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
 
 } // namespace
 
+// slotchange-event.html: not synchronous, once per change however many
+// mutations, at a slot removed after its assignment moved, after the
+// mutation observers' callbacks; and none for a slot nothing moved on.
+void test_slotchange_events() {
+    browser page{browser_options{200, 100}};
+    page.load_html(
+        "<html><body><div id=h></div><script>"
+        "var seen = [];"
+        "var h = document.getElementById('h');"
+        "var r = h.attachShadow({mode: 'open'});"
+        "var s = document.createElement('slot'); s.name = 'x';"
+        "s.addEventListener('slotchange', function (e) { seen.push('s:' + (e.target === s) + ','"
+        " + e.bubbles + ',' + e.cancelable + ',' + e.composed); });"
+        "var d = document.createElement('slot');"
+        "d.addEventListener('slotchange', function () { seen.push('d'); });"
+        "r.appendChild(s); r.appendChild(d);"
+        "new MutationObserver(function () { seen.push('mo'); }).observe(h, {childList: true});"
+        "var a = document.createElement('span'); a.slot = 'x';"
+        "h.appendChild(a); h.appendChild(document.createElement('b'));"
+        "h.appendChild(document.createElement('i'));"
+        "r.removeChild(s);"
+        "seen.push('sync:' + seen.length);"
+        "queueMicrotask(function () { seen.push('micro'); });"
+        "setTimeout(function () { h.removeChild(a); alert(seen.join('|')); }, 0);"
+        "setTimeout(function () { alert(seen.join('|')); }, 5);"
+        "</script></body></html>");
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
+    std::string out;
+    for (const std::string & one : page.alerts()) { out += one + ";"; }
+    CHECK_EQ(out, std::string{"sync:0|mo|s:true,true,false,false|d|micro;"
+                              "sync:0|mo|s:true,true,false,false|d|micro|mo;"});
+}
+
 int main() {
     test_the_init_dictionary_is_readable_back();
     test_slots_assign_by_name();
     test_manual_slot_assignment();
     test_set_html_unsafe_attaches_a_declarative_root();
+    test_slotchange_events();
     REPORT("shadow_slots");
 }
