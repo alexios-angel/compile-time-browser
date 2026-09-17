@@ -48,6 +48,7 @@ constexpr std::string_view message_key = "@#ctbrowser:internals-message";
 constexpr std::string_view form_value_key = "@#ctbrowser:internals-form-value";
 constexpr std::string_view form_state_key = "@#ctbrowser:internals-form-state";
 constexpr std::string_view states_key = "@#ctbrowser:internals-states";
+constexpr std::string_view behaviors_key = "@#ctbrowser:internals-behaviors";
 constexpr std::string_view aria_prefix = "@#ctbrowser:internals-aria:";
 constexpr std::string_view flag_prefix = "@#ctbrowser:internals-flag:";
 
@@ -559,6 +560,19 @@ void dom_bindings::install_element_internals(context & cx,
             });
     }
 
+    define_getter(cx, *proto, "behaviors", [target_of](context & c, std::span<value>) {
+        const target at = target_of(c, "behaviors");
+        if (!at.id) { return value::undefined(); }
+        // Frozen, and one per internals: the proposal's read-only FrozenArray.
+        value held = slot(*at.internals, behaviors_key);
+        if (held.is_array()) { return held; }
+        held = c.make_array();
+        const value freeze = c.lookup_property(c.global("Object"), "freeze");
+        if (freeze.is_callable()) { (void)c.call(freeze, std::span<const value>{&held, 1}); }
+        at.internals->set(std::string{behaviors_key}, held);
+        return held;
+    });
+
     proto->define("@@toStringTag", cx.string("ElementInternals"), script::attr_configurable);
     auto * ctor =
         cx.allocate<script::native_object>("ElementInternals", [](context & c, std::span<value>) {
@@ -570,54 +584,71 @@ void dom_bindings::install_element_internals(context & cx,
     cx.define_global("ElementInternals", value::object(ctor));
 
     // --- HTMLElement.prototype.attachInternals(), HTML 4.13.7.1 -----------
-    set_method(cx, html_element_proto, "attachInternals", [this](context & c, std::span<value>) {
-        const value self = c.current_this();
-        dom_bindings * owner = owner_of(self);
-        const node_id id = owner == nullptr ? node_id{} : owner->handle_of(self);
-        if (!id) {
-            c.throw_error("TypeError", "Failed to execute 'attachInternals' on 'HTMLElement': "
-                                       "Illegal invocation");
-            return value::undefined();
-        }
-        const auto refuse = [&](const char * why) {
-            throw_dom_exception(c, "NotSupportedError",
-                                std::string{"Failed to execute 'attachInternals' on "
-                                            "'HTMLElement': "} +
-                                    why);
-            return value::undefined();
-        };
-        auto * wrapper = object_of(self);
-        // 1: a customized built-in (an `is` value) has no internals.
-        {
-            const auto txn = owner->doc_->read();
-            if (txn.has_attribute(id, atoms_->intern("is"))) {
+    set_method(
+        cx, html_element_proto, "attachInternals", [this](context & c, std::span<value> args) {
+            const value self = c.current_this();
+            dom_bindings * owner = owner_of(self);
+            const node_id id = owner == nullptr ? node_id{} : owner->handle_of(self);
+            if (!id) {
+                c.throw_error("TypeError", "Failed to execute 'attachInternals' on 'HTMLElement': "
+                                           "Illegal invocation");
+                return value::undefined();
+            }
+            const auto refuse = [&](const char * why) {
+                throw_dom_exception(c, "NotSupportedError",
+                                    std::string{"Failed to execute 'attachInternals' on "
+                                                "'HTMLElement': "} +
+                                        why);
+                return value::undefined();
+            };
+            auto * wrapper = object_of(self);
+            // 1: a customized built-in (an `is` value) has no internals.
+            {
+                const auto txn = owner->doc_->read();
+                if (txn.has_attribute(id, atoms_->intern("is"))) {
+                    return refuse("the element is a customized built-in element");
+                }
+            }
+            // 2-4: a definition for the element's local name, in its document's
+            // registry, that did not disable internals.
+            const auto state = owner->custom_elements_.find(id.key());
+            if (state == owner->custom_elements_.end() ||
+                state->second.state == custom_element_state::status::failed) {
+                return refuse("the element is not a defined custom element");
+            }
+            const custom_element_definition & def =
+                primary().custom_definitions_[state->second.definition];
+            if (def.name != def.local_name) {
                 return refuse("the element is a customized built-in element");
             }
-        }
-        // 2-4: a definition for the element's local name, in its document's
-        // registry, that did not disable internals.
-        const auto state = owner->custom_elements_.find(id.key());
-        if (state == owner->custom_elements_.end() ||
-            state->second.state == custom_element_state::status::failed) {
-            return refuse("the element is not a defined custom element");
-        }
-        const custom_element_definition & def =
-            primary().custom_definitions_[state->second.definition];
-        if (def.name != def.local_name) {
-            return refuse("the element is a customized built-in element");
-        }
-        if (def.disable_internals) { return refuse("the definition disabled internals"); }
-        // 5: once.
-        if (wrapper == nullptr || slot(*wrapper, internals_key).is_object()) {
-            return refuse("ElementInternals for the element was already attached");
-        }
-        // 6: only while or after the constructor runs.
-        auto * internals = c.allocate<script::object_object>();
-        internals->prototype = element_internals_prototype_;
-        internals->set(std::string{target_key}, self);
-        wrapper->set(std::string{internals_key}, value::object(internals));
-        return value::object(internals);
-    });
+            if (def.disable_internals) { return refuse("the definition disabled internals"); }
+            // 5: once.
+            if (wrapper == nullptr || slot(*wrapper, internals_key).is_object()) {
+                return refuse("ElementInternals for the element was already attached");
+            }
+            // `attachInternals({behaviors})` (the platform-provided behaviors
+            // proposal, tentative): the sequence is read, and as no behavior
+            // interface exists here every member is the TypeError a non-behavior
+            // is; an empty list is fine and `behaviors` answers an empty array.
+            if (const value behaviors = dict_member(c, arg(args, 0), "behaviors");
+                !behaviors.is_undefined()) {
+                const value items = c.iterable_values(behaviors);
+                if (c.throw_pending()) { return value::undefined(); }
+                if (!items.is_array() ||
+                    !static_cast<script::array_object *>(items.as_heap())->items.empty()) {
+                    c.throw_error("TypeError",
+                                  "Failed to execute 'attachInternals' on "
+                                  "'HTMLElement': a behavior is not of a behavior type");
+                    return value::undefined();
+                }
+            }
+            // 6: only while or after the constructor runs.
+            auto * internals = c.allocate<script::object_object>();
+            internals->prototype = element_internals_prototype_;
+            internals->set(std::string{target_key}, self);
+            wrapper->set(std::string{internals_key}, value::object(internals));
+            return value::object(internals);
+        });
 }
 
 } // namespace ctbrowser::shell
