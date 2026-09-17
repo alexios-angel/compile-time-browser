@@ -744,6 +744,88 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                            "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
                            "  %magnitude = ctjs.unary plus %maximum"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    for (const std::string unary : {"plus", "neg"}) {
+        const std::string operation = unary == "plus" ? "sub" : "add";
+        const std::string makeSigned = "  %signed = ctjs.unary " + unary + " %minus\n";
+        const auto signedChild =
+            replace(replace(negativeChild, "  cf.br ^header", makeSigned + "  cf.br ^header"),
+                    "binary sub %i, %minus", "binary " + operation + " %i, %signed");
+        run({.what = "signed unary snapshots retain the exact returned child",
+             .body = signedChild,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "signed unary snapshots discharge only unreturned children",
+             .body = replace(signedChild, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        run({.what = "a zero-trip signed unary stride preserves its saved child",
+             .body = replace(signedChild, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+             .arrays = "a:[one,x]",
+             .exit = "x -> {x}"});
+        run({.what = "Plus and Neg preserve a negated zero as a nonnegative start",
+             .body = replace(signedChild, "  cf.br ^header(%a, %zero, %zero",
+                             "  %negativeZero = ctjs.unary neg %zero\n"
+                             "  %start = ctjs.unary " +
+                                 unary + " %negativeZero\n  cf.br ^header(%a, %start, %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        const auto carriedSigned =
+            replace(replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                            "  %negative = ctjs.unary neg %magnitude\n"
+                            "  %unit = ctjs.unary " +
+                                unary + " %negative\n"),
+                    "binary sub %i, %d", "binary " + operation + " %i, %d");
+        run({.what = "signed unary strides preserve exact carried values and final overshoot",
+             .body = replace(replace(carriedSigned, "^exit(%sum :", "^exit(%index :"),
+                             "  ctjs.return %result",
+                             "  ctjs.append %zero to %a\n  ctjs.append %zero to %a\n"
+                             "  %after = ctjs.get_property %a[%result]\n  ctjs.return %after"),
+             .arrays = "a:[one,two,three,zero,zero]",
+             .reads = "a[0]=one; a[2]=three; a[4]=zero",
+             .exit = "zero -> {}"});
+        reject("signed unary strides cannot change on the backedge",
+               replace(carriedSigned, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        reject("signed unary strides cannot borrow the opposite sign",
+               replace(signedChild, "binary " + operation + " %i, %signed",
+                       "binary " + std::string{unary == "plus" ? "add" : "sub"} + " %i, %signed"));
+        reject("a held negative snapshot cannot initialize an increasing loop",
+               replace(signedChild, "^header(%a, %zero, %zero", "^header(%a, %minus, %zero"));
+        reject(
+            "repeated signed unary producers need independent invariance",
+            replace(replace(signedChild, makeSigned, ""), "  %step =", makeSigned + "  %step ="));
+        reject("signed unary snapshots cannot borrow an unknown input",
+               replace(signedChild, makeSigned, "  %signed = ctjs.unary " + unary + " %p\n"),
+               ArrayContentsFailure::UnsupportedOperation);
+        if (unary == "plus") {
+            reject("Plus preserves a negative snapshot without making it an own index",
+                   replace(signedChild, "%base[%i]", "%base[%signed]"),
+                   ArrayContentsFailure::UnknownIndex);
+        } else {
+            run({.what = "Neg restores an exact positive own index from its held magnitude",
+                 .body = replace(signedChild, "%base[%i]", "%base[%signed]"),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[1]=x; a[1]=x",
+                 .exit = "x -> {x}"});
+        }
+        for (const std::string constant :
+             {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
+              "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
+              "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
+              "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
+            reject("signed unary strides require an exact nonzero bounded Number producer",
+                   replace(signedChild, "#ctjs.number<4607182418800017408>", constant));
+        }
+        reject("signed unary strides still bound their final exact update",
+               replace(replace(signedChild, "  %magnitude = ctjs.unary plus %one",
+                               "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                               "  %magnitude = ctjs.unary plus %maximum"),
+                       "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    }
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",

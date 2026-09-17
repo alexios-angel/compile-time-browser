@@ -625,6 +625,68 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(carriedNegative, "ctjs.binary add %one, %one",
                            "ctjs.constant #ctjs.number<4751297606873776128>"),
                    "%index = %zero", "%index = %one"));
+    for (const std::string unary : {"plus", "neg"}) {
+        const std::string operation = unary == "plus" ? "sub" : "add";
+        const std::string makeSigned = "  %unit = ctjs.unary " + unary + " %negative\n";
+        const auto savedSigned =
+            replace(replace(replace(savedNegative, "  %unit = ctjs.unary neg %magnitude",
+                                    "  %negative = ctjs.unary neg %magnitude"),
+                            "  ctjs.set_property %seed[%name], %zero\n",
+                            "  ctjs.set_property %seed[%name], %zero\n" + makeSigned),
+                    "binary sub %i, %unit", "binary " + operation + " %i, %unit");
+        rows.push_back({.what = "signed unary snapshots keep source length before shrink",
+                        .body = savedSigned,
+                        .arrays = "a:[x,y]; seed:[]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "signed structured snapshots discharge only unreturned children",
+                        .body = replace(savedSigned, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]; seed:[]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        rows.push_back({.what = "zero-trip signed structured strides preserve their saved result",
+                        .body = replace(replace(savedSigned, "  ctjs.append %y to %a\n", ""),
+                                        "%index = %zero", "%index = %one"),
+                        .arrays = "a:[x]; seed:[]",
+                        .exit = "zero -> {}"});
+        const auto carriedSigned =
+            replace(replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                            "  %negative = ctjs.unary neg %magnitude\n" + makeSigned),
+                    "binary sub %i, %d", "binary " + operation + " %i, %d");
+        rows.push_back({.what = "signed unary strides survive reordered structured transport",
+                        .body = carriedSigned,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x",
+                        .exit = "x -> {x}"});
+        rows.push_back({.what = "signed unary predecessor snapshots retain separate magnitudes",
+                        .body = replace(carriedSigned,
+                                        "  %magnitude = ctjs.binary add %one, %one\n"
+                                        "  %negative = ctjs.unary neg %magnitude\n",
+                                        "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                                        "    %magnitude = ctjs.binary add %one, %one\n"
+                                        "    %n = ctjs.unary neg %magnitude\n"
+                                        "    scf.yield %n : !ctjs.value\n"
+                                        "  } else {\n    %n = ctjs.unary neg %one\n"
+                                        "    scf.yield %n : !ctjs.value\n  }\n"),
+                        .arrays = "a:[x,y] | a:[x,y]",
+                        .reads = "a[0]=x; a[0]=x; a[1]=y",
+                        .exit = "x -> {x}; y -> {y}"});
+        reject("signed structured strides must remain identical on the backedge",
+               replace(carriedSigned, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("signed structured strides cannot borrow the opposite sign",
+               replace(carriedSigned, "binary " + operation + " %i, %d",
+                       "binary " + std::string{unary == "plus" ? "add" : "sub"} + " %i, %d"));
+        reject("repeated structured signed unary producers need independent invariance",
+               replace(replace(savedSigned, makeSigned, ""),
+                       "    %step =", "  " + makeSigned + "    %step ="));
+        reject("signed structured snapshots cannot borrow an unknown input",
+               replace(savedSigned, makeSigned, "  %unit = ctjs.unary " + unary + " %p\n"),
+               ArrayContentsFailure::UnsupportedOperation);
+        reject("signed structured strides still bound their final exact update",
+               replace(replace(carriedSigned, "ctjs.binary add %one, %one",
+                               "ctjs.constant #ctjs.number<4751297606873776128>"),
+                       "%index = %zero", "%index = %one"));
+    }
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
     reject("a structured array backedge must preserve its certified formal",
