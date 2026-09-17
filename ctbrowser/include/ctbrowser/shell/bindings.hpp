@@ -987,6 +987,11 @@ public:
     // before returning, which is what [CEReactions] means. Returns on the first
     // line when nothing was ever defined.
     void react_custom_elements();
+    // A SUBTREE A NATIVE JUST MADE - cloneNode, importNode, a fragment parse
+    // into a detached element: DOM "create an element" enqueues an upgrade for
+    // every candidate it makes whether or not the result is connected, and
+    // the scan cannot see a detached subtree it has never been told about.
+    void upgrade_created_subtree(node_id root);
 
 private:
     struct custom_element_definition {
@@ -1001,12 +1006,37 @@ private:
         value adopted;
         value attribute_changed;
         value connected_move;
+        value form_associated_callback;
+        value form_reset;
+        value form_disabled;
+        value form_state_restore;
         std::vector<std::string> observed_attributes;
+        bool form_associated = false;
+        bool disable_internals = false;
+        bool disable_shadow = false;
+        // HTML 4.13.4's CONSTRUCTION STACK: the element an upgrade is running
+        // the constructor for, and whether `super()` has reached the HTML
+        // element constructor for it yet (the "already constructed marker").
+        struct construction {
+            node_id element;
+            bool constructed = false;
+        };
+        std::vector<construction> construction_stack;
     };
     // ONE UPGRADED OR CONSTRUCTED ELEMENT AS IT WAS, which is what a reaction
     // is a difference from - the same shape record_mutations diffs against.
     struct custom_element_state {
+        // HTML 4.13.1's custom element state, the three that matter here: an
+        // upgrade that threw is `failed` and is never tried again, one whose
+        // constructor is running is `precustomized`, and `custom` is an
+        // element whose callbacks fire.
+        enum class status : std::uint8_t {
+            failed,
+            precustomized,
+            custom
+        };
         std::size_t definition = 0;
+        status state = status::custom;
         bool connected = false;
         bool visited = false; // scratch for one scan
         node_id parent;
@@ -1017,10 +1047,12 @@ private:
             upgrade,
             connected,
             disconnected,
+            adopted,
             connected_move,
             attribute_changed
         };
         node_id target;
+        std::size_t definition = 0;
         kind what = kind::upgrade;
         // Strings rather than `value`s: a reaction waits in this queue while
         // the ones before it run script, and nothing would root a heap string.
@@ -1029,33 +1061,77 @@ private:
         std::string new_value;
         bool has_old = false;
         bool has_new = false;
+        // adoptedCallback's two documents: the `document` values of the two
+        // bindings, which are roots already.
+        value old_document;
+        value new_document;
     };
 
     void install_custom_elements(context & cx);
-    // `document.createElement(name)`: a defined name is constructed through
-    // the author's class, anything else is a plain node wrapped.
-    [[nodiscard]] value create_html_element(context & cx, const std::string & name);
+    // THE REGISTRY IS THE PRIMARY'S. A document a page made has no browsing
+    // context and so no registry of its own (HTML 4.13.3) - it never upgrades
+    // a candidate - but an element adopted into it keeps its definition, and
+    // that definition is looked up here.
+    [[nodiscard]] dom_bindings & registry() noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
+    [[nodiscard]] const dom_bindings & registry() const noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
+    // `document.createElement(name, options)`: a defined name is constructed
+    // through the author's class, anything else is a plain node wrapped;
+    // `options.is` names a customized built-in's definition.
+    [[nodiscard]] value create_html_element(context & cx, const std::string & name,
+                                            value options = value::undefined());
     // The definition this element's (local name, `is`) pair belongs to, or
     // npos.
     [[nodiscard]] std::size_t custom_definition_for(const read_txn & txn, node_id id) const;
-    // The definition whose prototype is on this object's chain, or npos - how
-    // the HTMLElement constructor learns which class `super()` came from.
-    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver) const;
-    // One subtree in tree order: upgrade what is new, diff what is tracked.
-    // `upgrade` is false for the pass over DETACHED elements: a candidate that
-    // is not in a document is not upgraded (HTML 4.13.5 upgrades on insertion
-    // and on `customElements.upgrade`), but one that was already upgraded
-    // still gets its attributeChanged and disconnected reactions.
-    void walk_custom_elements(const read_txn & txn, node_id start, bool connected,
-                              bool upgrade = true);
+    // The definition an HTML element constructor is running for: for a
+    // receiver that is an element already, the definition whose construction
+    // stack holds it (an upgrade); otherwise the definition whose prototype is
+    // EXACTLY the receiver's, which is what `new C()` made it. npos when no
+    // definition - the "Illegal constructor" every such call is.
+    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver);
+    // The HTML element constructor, HTML 4.13.4, for the receiver `super()` or
+    // `new` handed a native: what HTMLElement and every HTML*Element interface
+    // object share. `interface_name` is the interface whose constructor was
+    // called, checked against the definition's local name.
+    [[nodiscard]] value construct_html_element(context & cx, value receiver,
+                                               std::string_view interface_name);
+    // The interface an HTML tag is, by name - "HTMLUnknownElement" for a tag no
+    // interface claims (bindings/element/interfaces.cpp owns the table).
+    [[nodiscard]] static std::string_view interface_name_for_tag(std::string_view tag);
+    // One subtree in shadow-including tree order: upgrade what is new, diff
+    // what is tracked. `upgrade` is false for the pass over DETACHED elements:
+    // a candidate that is not in a document is not upgraded (HTML 4.13.5
+    // upgrades on insertion and on `customElements.upgrade`), but one that
+    // was already upgraded still gets its attributeChanged and disconnected
+    // reactions. `roots_seen` collects the shadow roots the walk crossed.
+    void walk_custom_elements(const read_txn & txn, node_id start, bool connected, bool upgrade,
+                              std::vector<node_id> & roots_seen);
     void scan_custom_elements();
     void flush_custom_element_reactions();
+    // Run one upgrade reaction: HTML 4.13.5 "upgrade an element", with the
+    // constructor fenced so an exception is reported and the element fails.
+    void run_upgrade(context & cx, std::size_t definition, node_id target, value wrapper);
+    // "Report the exception" for a callback or constructor that threw: the
+    // window's error event, with the value.
+    void report_custom_element_exception(context & cx, value thrown, std::string_view where);
+    // `new C()` inside a JavaScript try/catch, so a throw from the author's
+    // constructor comes back as a value rather than unwinding through the
+    // native that asked. Compiled on first use, like the listener fence.
+    [[nodiscard]] value construct_fenced(context & cx, value constructor, bool & threw,
+                                         value & thrown);
     void sync_custom_element_roots();
+    [[nodiscard]] bool has_browsing_context() const noexcept { return !secondary_; }
 
     std::vector<custom_element_definition> custom_definitions_;
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
     std::vector<custom_element_reaction> custom_reactions_;
-    flat_map<std::string, std::vector<value>> when_defined_;
+    flat_map<std::string, value> when_defined_;
+    // HTML 4.13.4's "element definition is running" flag, on the registry.
+    bool custom_definition_running_ = false;
+    value construct_fence_;
     // The CustomElementRegistry interface object, whose `retained` list roots
     // every constructor, prototype, callback and pending promise above - the
     // arrangement install_mutation_observer uses, for the same reason.
