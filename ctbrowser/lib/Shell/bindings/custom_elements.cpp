@@ -331,6 +331,7 @@ value dom_bindings::construct_html_element(context & c, value self,
     owner.wrappers_.emplace(made.key(), obj);
     custom_element_state state;
     state.definition = index;
+    owner.watch_loose(made.key(), state);
     owner.custom_elements_.emplace(made.key(), std::move(state));
     // A customized built-in <script> is a script nothing has started, exactly
     // as createElement("script") notes one: its text runs when it connects,
@@ -479,7 +480,7 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
 // --- the scan ----------------------------------------------------------------------
 
 void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected,
-                                        bool upgrade, std::vector<node_id> & roots_seen) {
+                                        bool upgrade, flat_map<std::uint64_t, bool> & roots_seen) {
     struct frame {
         node_id at;
         bool moved; // an ancestor changed parent while connected
@@ -604,17 +605,18 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                     state.definition = index;
                     state.state = custom_element_state::status::precustomized;
                     state.connected = connected;
-                    state.visited = true;
+                    state.seen = scan_generation_;
                     state.parent = txn.parent(here.at);
                     enqueue(here.at, index, kind::upgrade);
                     diff_attributes(def, state, here.at);
                     if (connected) { enqueue(here.at, index, kind::connected); }
                     diff_form(def, state, here.at);
+                    watch_loose(key, state);
                     custom_elements_.emplace(key, std::move(state));
                 }
             } else if (found != custom_elements_.end()) {
                 custom_element_state & state = found->second;
-                state.visited = true;
+                state.seen = scan_generation_;
                 if (state.state != custom_element_state::status::failed) {
                     const custom_element_definition & def = defs[state.definition];
                     const node_id parent = txn.parent(here.at);
@@ -637,6 +639,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                     diff_form(def, state, here.at);
                     state.connected = connected;
                     state.parent = parent;
+                    watch_loose(key, state);
                 }
             }
         }
@@ -647,7 +650,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             pending.push_back(frame{children[i], moved});
         }
         if (shadow) {
-            roots_seen.push_back(shadow);
+            roots_seen.emplace(shadow.key(), true);
             pending.push_back(frame{shadow, moved});
         }
     }
@@ -664,7 +667,7 @@ void dom_bindings::upgrade_created_subtree(node_id root) {
         const node_id top = root_of_tree(txn, root, true);
         const bool connected =
             top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
-        std::vector<node_id> roots_seen;
+        flat_map<std::uint64_t, bool> roots_seen;
         walk_custom_elements(txn, root, connected, true, roots_seen);
     }
     flush_custom_element_reactions(from);
@@ -672,21 +675,15 @@ void dom_bindings::upgrade_created_subtree(node_id root) {
 
 void dom_bindings::scan_custom_elements() {
     const auto txn = doc_->read();
-    for (auto & [key, state] : custom_elements_) { state.visited = false; }
-    std::vector<node_id> roots_seen;
+    ++scan_generation_;
+    flat_map<std::uint64_t, bool> roots_seen;
     const bool upgrade = has_browsing_context();
+    // THE SHADOW-INCLUDING WALK crosses every shadow tree of a connected host.
+    // A shadow tree whose host is detached is a detached subtree: nothing in
+    // it is upgraded until it connects, and what is tracked in it is walked
+    // below like any other loose element - so the shadow roots are not
+    // enumerated here (a page can hold 100,000 of them).
     walk_custom_elements(txn, txn.root(), true, upgrade, roots_seen);
-    // Every shadow tree the walk did not cross - one whose host is detached -
-    // connected when its host's shadow-including root is the document.
-    for (const node_id root : doc_->shadow_roots()) {
-        bool seen = false;
-        for (const node_id crossed : roots_seen) { seen = seen || crossed == root; }
-        if (seen) { continue; }
-        const node_id top = root_of_tree(txn, shadow_tree_of(root)->host, true);
-        const bool connected =
-            top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
-        walk_custom_elements(txn, root, connected, upgrade, roots_seen);
-    }
     // WHAT NO ROOT REACHED IS DETACHED - AND IS STILL A CUSTOM ELEMENT.
     //
     // A disconnected element's reactions do not stop: `el.setAttribute(...)`
@@ -700,9 +697,18 @@ void dom_bindings::scan_custom_elements() {
     //
     // THE KEYS ARE COLLECTED FIRST: an upgrade inside a detached subtree
     // inserts into this map, and a flat_map rehashes under an iterator.
+    //
+    // AND ONLY THE ONES THAT CAN SAY SOMETHING: a detached element that was
+    // already detached, observes no attribute and is not form-associated has
+    // no reaction left to make until it connects - and a page that keeps
+    // 100,000 of them (ElementInternals-target-element-is-held-strongly)
+    // pays a walk of each on every mutation otherwise.
     std::vector<node_id> loose;
-    for (const auto & [key, state] : custom_elements_) {
-        if (!state.visited) { loose.push_back(unpack(key)); }
+    for (const auto & [key, watched] : loose_watch_) {
+        const auto held = custom_elements_.find(key);
+        if (held != custom_elements_.end() && held->second.seen != scan_generation_) {
+            loose.push_back(unpack(key));
+        }
     }
     for (const node_id at : loose) {
         if (txn.contains(at)) { walk_custom_elements(txn, at, false, false, roots_seen); }
@@ -712,19 +718,16 @@ void dom_bindings::scan_custom_elements() {
     // document's custom element now: its state moves over, and the adopting
     // steps (HTML 4.13.6) enqueue adoptedCallback there, after the
     // disconnectedCallback the walk above queued here.
-    for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
-        const auto away = adopted_away_.find(it->first);
-        if (away == adopted_away_.end()) {
-            ++it;
-            continue;
-        }
-        dom_bindings * now = owner_of(value::object(away->second));
+    for (const auto & [key, obj] : adopted_away_) {
+        const auto it = custom_elements_.find(key);
+        if (it == custom_elements_.end()) { continue; }
+        dom_bindings * now = owner_of(value::object(obj));
         if (now != nullptr && now != this) {
-            const node_id fresh = now->handle_of(value::object(away->second));
+            const node_id fresh = now->handle_of(value::object(obj));
             custom_element_state state = it->second;
             state.connected = false;
             state.parent = node_id{};
-            state.visited = false;
+            state.seen = 0;
             if (fresh && state.state == custom_element_state::status::custom) {
                 custom_element_reaction reaction;
                 reaction.target = fresh;
@@ -736,18 +739,40 @@ void dom_bindings::scan_custom_elements() {
                 for (const auto & [other, from] : adoptees_) { noted = noted || other == now; }
                 if (!noted) { adoptees_.emplace_back(now, now->custom_reactions_.size()); }
                 now->custom_reactions_.push_back(std::move(reaction));
+                now->watch_loose(fresh.key(), state);
                 now->custom_elements_.insert_or_assign(fresh.key(), std::move(state));
             }
         }
-        it = custom_elements_.erase(it);
+        loose_watch_.erase(key);
+        custom_elements_.erase(it);
     }
-    // A node that is GONE, rather than merely detached, is forgotten.
-    for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
-        if (!it->second.visited && !txn.contains(unpack(it->first))) {
-            it = custom_elements_.erase(it);
-            continue;
+    // A node that is GONE, rather than merely detached, is forgotten - swept
+    // when the map has doubled since the last sweep, not on every mutation:
+    // a stale entry costs a hash slot and nothing else (a slot reused by a
+    // new node has a new generation, so a new key).
+    if (custom_elements_.size() >= sweep_at_) {
+        for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
+            if (it->second.seen != scan_generation_ && !txn.contains(unpack(it->first))) {
+                loose_watch_.erase(it->first);
+                it = custom_elements_.erase(it);
+                continue;
+            }
+            ++it;
         }
-        ++it;
+        sweep_at_ = std::max<std::size_t>(64, custom_elements_.size() * 2);
+    }
+}
+
+void dom_bindings::watch_loose(std::uint64_t key, const custom_element_state & state) {
+    // What a DETACHED element can still say: disconnectedCallback if it was
+    // connected, attributeChangedCallback if it observes anything, and the
+    // form callbacks if it is form-associated. One that can say nothing is
+    // not walked until it connects.
+    const custom_element_definition & def = primary().custom_definitions_[state.definition];
+    if (state.connected || !def.observed_attributes.empty() || def.form_associated) {
+        loose_watch_.emplace(key, true);
+    } else {
+        loose_watch_.erase(key);
     }
 }
 
@@ -1170,8 +1195,8 @@ void dom_bindings::install_custom_elements(context & cx) {
             {
                 const auto txn = owner->doc_->read();
                 const node_id top = owner->root_of_tree(txn, root, true);
-                for (auto & [key, state] : owner->custom_elements_) { state.visited = false; }
-                std::vector<node_id> roots_seen;
+                ++owner->scan_generation_;
+                flat_map<std::uint64_t, bool> roots_seen;
                 owner->walk_custom_elements(txn, root,
                                             top == txn.root() ||
                                                 txn.kind(top).value_or(node_kind::element) ==

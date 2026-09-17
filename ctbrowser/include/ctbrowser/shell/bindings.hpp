@@ -1058,7 +1058,7 @@ private:
         std::size_t definition = 0;
         status state = status::custom;
         bool connected = false;
-        bool visited = false; // scratch for one scan
+        std::uint32_t seen = 0; // the scan generation that last walked it
         // A FORM-ASSOCIATED element's form owner and disabledness as they
         // were, which formAssociatedCallback and formDisabledCallback are a
         // difference from (HTML 4.13.7.2).
@@ -1144,8 +1144,10 @@ private:
     // was already upgraded still gets its attributeChanged and disconnected
     // reactions. `roots_seen` collects the shadow roots the walk crossed.
     void walk_custom_elements(const read_txn & txn, node_id start, bool connected, bool upgrade,
-                              std::vector<node_id> & roots_seen);
+                              flat_map<std::uint64_t, bool> & roots_seen);
     void scan_custom_elements();
+    // Keep `loose_watch_` right for one tracked element's state.
+    void watch_loose(std::uint64_t key, const custom_element_state & state);
     // Run the reactions enqueued at index `from` and after - one [CEReactions]
     // native's element queue - see the definition.
     void flush_custom_element_reactions(std::size_t from);
@@ -1167,6 +1169,11 @@ private:
 
     std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
+    // THE DETACHED ELEMENTS A SCAN MUST STILL WALK - see watch_loose - and
+    // the generation the current scan stamps on what it reaches.
+    flat_map<std::uint64_t, bool> loose_watch_;
+    std::uint32_t scan_generation_ = 0;
+    std::size_t sweep_at_ = 64; // when the map is this big, sweep the gone nodes
     std::vector<custom_element_reaction> custom_reactions_;
     std::vector<std::size_t> reaction_floors_; // the flushes in progress, outermost first
     // Documents that received an adopted reaction from this scan, with the
