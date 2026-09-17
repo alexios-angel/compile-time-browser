@@ -269,7 +269,14 @@ inline void adopt_subclass_prototype(context & cx, value made, const object_obje
 // sparse"); this keeps it rather than widening it.
 [[nodiscard]] inline double array_like_length(context & cx, value self) {
     if (self.is_array()) {
-        return static_cast<double>(static_cast<array_object *>(self.as_heap())->length());
+        auto * arr = static_cast<array_object *>(self.as_heap());
+        // A typed array's `length` is a prototype getter an OWN property may
+        // shadow (Object.defineProperty(ta, "length", {value: 4000}) is what
+        // Array.prototype.concat's spreading then reads); an Array's is its own.
+        const bool shadowed = arr->elements != element_kind::none && arr->named &&
+                              (arr->named->find("length") != nullptr ||
+                               arr->named->find_accessor("length") != nullptr);
+        if (!shadowed) { return static_cast<double>(arr->length()); }
     }
     const value raw = cx.lookup_property(self, "length");
     if (!numeric_arg(cx, raw)) { return 0.0; }
