@@ -719,6 +719,21 @@ void dom_bindings::install_event_interfaces(context & cx) {
                      e.set("pseudoElement", c.string(dict_string(c, init, "pseudoElement")));
                  });
 
+    // `PromiseRejectionEvent` (HTML 8.1.7.x): the promise - a required
+    // member, so `new PromiseRejectionEvent("x")` is a TypeError - and its
+    // reason.
+    interface_of("PromiseRejectionEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     const value promise = dict_member(c, init, "promise");
+                     if (promise.is_undefined()) {
+                         c.throw_error("TypeError", "Failed to construct 'PromiseRejectionEvent': "
+                                                    "the 'promise' member is required");
+                         return;
+                     }
+                     e.set("promise", promise);
+                     e.set("reason", dict_member(c, init, "reason"));
+                 });
+
     // `MediaQueryListEvent` (CSSOM View §4.2): the list's media and whether it
     // matches now. Dispatched by media_queries.cpp's report.
     interface_of("MediaQueryListEvent", event_prototype_,

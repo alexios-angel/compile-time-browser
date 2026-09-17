@@ -680,6 +680,18 @@ private:
     // `change` one tick later, as the scroll steps do. AFTER install_abort.
     void install_media_queries(context & cx);
     [[nodiscard]] value match_media(context & cx, std::string_view text);
+    // HTML 8.1.7.x "unhandled promise rejections" - bindings/promise_rejections
+    // .cpp. The VM's HostPromiseRejectionTracker (context::set_rejection_
+    // tracker) feeds the about-to-be-notified list; a task fires
+    // `unhandledrejection` (cancelable) at the window for each promise still
+    // unhandled, and `rejectionhandled` for one handled after that. AFTER
+    // install_event_interfaces (PromiseRejectionEvent).
+    void install_promise_rejections(context & cx);
+    void track_promise_rejection(value promise, bool handled);
+    std::vector<value> rejections_to_notify_;    // roots until the task ran
+    std::vector<value> outstanding_rejections_;  // notified, still unhandled
+    std::vector<value> rejections_handled_late_; // roots until the task ran
+    bool rejection_task_queued_ = false;
     [[nodiscard]] bool is_media_query_list(value v) const;
     // Which bindings' document a list names - the page's, or a frame's - and
     // the list's media text evaluated against that document's environment.

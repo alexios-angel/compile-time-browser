@@ -135,6 +135,9 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(media_query_list_prototype_);
     for (const value & range : live_ranges_) { mark(range); }
     for (const value & list : pending_media_changes_) { mark(list); }
+    for (const value & promise : rejections_to_notify_) { mark(promise); }
+    for (const value & promise : outstanding_rejections_) { mark(promise); }
+    for (const value & promise : rejections_handled_late_) { mark(promise); }
     // DOMException.prototype, for the same reason: `assert_throws_dom`
     // requires `e.constructor === DOMException`, and a prototype the
     // collector could not see would break that on the first sweep.
@@ -171,6 +174,7 @@ void dom_bindings::install(context & cx) {
     // AFTER both: a signal is an EventTarget and aborts with a DOMException.
     install_abort(cx);
     install_media_queries(cx);
+    install_promise_rejections(cx);
     install_xhr(cx);
     install_css_interface(cx);
     install_mutation_observer(cx);
