@@ -45,7 +45,7 @@ constexpr std::string_view pending_key = "__ctbrowser_decoder_pending";
 constexpr std::string_view bom_seen_key = "__ctbrowser_decoder_bom_seen";
 constexpr std::string_view encoder_key = "__ctbrowser_encoder";
 
-#include "encoding_tables.inc"
+#include <ctbrowser/dom/encoding_tables.inc>
 
 // --- the label table, §4.1 -------------------------------------------------
 //
