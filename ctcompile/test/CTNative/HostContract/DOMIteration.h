@@ -67,6 +67,9 @@ module {
                      proof.stringRefinements().empty();
         input.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
         input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
+        input.walk([&](ctjs::SetPropertyOp write) {
+            empty &= !proof.jsonAssignment(write) && !proof.jsonSnapshotAssignment(write);
+        });
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
                      !proof.isStringVectorLength(read) && !proof.isStringVectorIndex(read) &&
@@ -125,6 +128,91 @@ module {
     const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";
     const std::string valueSource = replaced(
         source, "        %nextCount =", "        " + memberRead + "\n        %nextCount =");
+    const std::string assignment = "ctjs.set_property %target[%key], %value";
+    const std::string assigned = replaced(
+        replaced(replaced(valueSource,
+                          "    %loop:3 =", "    %target = ctjs.create_object\n    %loop:3 ="),
+                 memberRead, memberRead + "\n        " + assignment),
+        "ctjs.return %loop#2", "ctjs.return %target");
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(assigned, &context);
+        check(static_cast<bool>(input), "single snapshot assignment fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.provider = provider;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "one direct snapshot traversal proves each result key at most once");
+        if (!proof.proved()) {
+            std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+            continue;
+        }
+        unsigned writes = 0;
+        input->walk([&](ctjs::SetPropertyOp write) {
+            ++writes;
+            check(proof.jsonAssignment(write) && proof.jsonSnapshotAssignment(write),
+                  "only the sole direct-key write receives snapshot assignment evidence");
+        });
+        check(writes == 1 && DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+              "snapshot assignment reproduces its complete charged proof");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, request, budget);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "incomplete snapshot assignment publishes no partial writer evidence");
+        }
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "snapshot proof and budget cutoffs retain the original source");
+    }
+    for (const auto & invalid : {
+             replaced(assigned, assignment, assignment + "\n        " + assignment),
+             replaced(assigned, "    %loop:3 =",
+                      "    ctjs.set_property %target[%keysName], %keysName\n    %loop:3 ="),
+             replaced(assigned, "ctjs.return %target",
+                      "ctjs.set_property %target[%keysName], %keysName\n    ctjs.return %target"),
+             replaced(assigned, "    %loop:3 =",
+                      "    %seed = ctjs.create_object\n"
+                      "    ctjs.copy_props %seed into %target\n    %loop:3 ="),
+             replaced(assigned, assignment,
+                      "%changed = ctjs.binary add %key, %keysName\n"
+                      "        ctjs.set_property %target[%changed], %value"),
+             replaced(assigned, assignment,
+                      "%proto = ctjs.constant #ctjs.string<\"__proto__\">\n"
+                      "        ctjs.set_property %target[%proto], %value"),
+             replaced(assigned, assignment,
+                      assignment + "\n        %saved = ctjs.create_object\n"
+                                   "        ctjs.copy_props %target into %saved"),
+             replaced(replaced(replaced(assigned, "    %target = ctjs.create_object\n", ""),
+                               assignment, "%target = ctjs.create_object\n        " + assignment),
+                      "ctjs.return %target", "ctjs.return %loop#2"),
+             replaced(assigned, assignment, R"MLIR(
+        scf.while : () -> () {
+          ctjs.set_property %target[%key], %value
+          %stop = arith.constant false
+          scf.condition(%stop)
+        } do {
+          scf.yield
+        })MLIR"),
+             replaced(
+                 replaced(replaced(assigned,
+                                   "    %keys = ctjs.call %keysMethod(%Object, %dataset)\n", ""),
+                          "    %length = ctjs.get_property %keys[%lengthName]\n", ""),
+                 "      %less =",
+                 "      %keys = ctjs.call %keysMethod(%Object, %dataset)\n"
+                 "      %length = ctjs.get_property %keys[%lengthName]\n"
+                 "      %less ="),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved snapshot assignment fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(noEvidence(*input, proof),
+              "repeated, transformed, seeded or intermediately observed writes refuse");
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "refused snapshot assignment keeps the full source");
+    }
     const std::string mutation = R"MLIR(
     %removeName = ctjs.constant #ctjs.string<"removeAttribute">
     %remove = ctjs.get_property %element[%removeName]
