@@ -1269,6 +1269,18 @@ constexpr std::string_view window_event_handlers[] = {
 // A HANDLER THAT WILL NOT COMPILE IS NULL, which HTML says in as many words:
 // the uncompiled handler is discarded and the attribute reads null, rather than
 // the page taking a SyntaxError from a read.
+//
+// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
+// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
+// onload="init()">` and `document.body.onresize = f` both address the window.
+[[nodiscard]] bool forwards_to_window(std::string_view name) {
+    for (const std::string_view each :
+         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
+        if (name == each) { return true; }
+    }
+    return false;
+}
+
 value dom_bindings::compile_handler_attribute(context & cx, value self, const std::string & name) {
     const node_id id = handle_of(self);
     if (!id || doc_ == nullptr || atoms_ == nullptr) { return value::undefined(); }
@@ -1316,31 +1328,32 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
         }
     }
     const bool with_form = form.is_object_like();
+    // THE `with` BLOCKS ENCLOSE THE FUNCTION, they are not inside it: the
+    // scope chain is the function's OUTER environment (step 10 builds it
+    // before step 11 makes the function), so a parameter or local of the
+    // handler shadows the element's properties and not the other way round.
+    // Inside the body they shadowed `event` itself - `<body onerror>` read
+    // `this.event`, the window's current event, where HTML hands the handler
+    // the message string. A Window's `onerror` takes the five parameters
+    // (event, source, lineno, colno, error) - step 11's one special case.
+    const bool window_error =
+        name == "onerror" && forwards_to_window(name) && body_or_frameset_of(self);
     script::program compiled = script::compiler::compile(
-        std::string{"return (function (document, form) { return function (event) {\n"
-                    "with (document) { "} +
-        (with_form ? "with (form) { " : "") + "with (this) {\n" + source + "\n}" +
-        (with_form ? " }" : "") + " } }; });");
+        std::string{"return (function (document, form) { with (document) { "} +
+        (with_form ? "with (form) { " : "") + "with (this) { return function (" +
+        (window_error ? "event, source, lineno, colno, error" : "event") + ") {\n" + source +
+        "\n}; }" + (with_form ? " }" : "") + " } });");
     value made = value::undefined();
     if (compiled.ok) {
         const value outer = cx.run_nested(cx.own_program(std::move(compiled)));
         const value scope[] = {document_, form};
-        if (outer.is_callable()) { made = cx.call(outer, scope); }
+        // `this` of the outer call is the element: the innermost object
+        // environment of the chain.
+        if (outer.is_callable()) { made = cx.call(outer, scope, self); }
     }
     object->define(source_slot(name), cx.string(source), script::attr_none);
     object->define(compiled_slot(name), made, script::attr_none);
     return made;
-}
-
-// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
-// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
-// onload="init()">` and `document.body.onresize = f` both address the window.
-[[nodiscard]] bool forwards_to_window(std::string_view name) {
-    for (const std::string_view each :
-         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
-        if (name == each) { return true; }
-    }
-    return false;
 }
 
 // The body or frameset element `self` wraps, or none.

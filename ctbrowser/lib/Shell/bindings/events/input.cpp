@@ -88,7 +88,10 @@ bool dom_bindings::dispatch_error_value(std::string_view message, value error) {
     value event = make_event(*cx_, "error", node_id{});
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("message", cx_->string(std::string{message}));
-    object->set("filename", cx_->string(std::string{}));
+    // The document's URL: "report an exception" names the script's URL and an
+    // inline script's is its document's (`source === location.href` in the
+    // body-onerror files). No position yet - the VM keeps none for a throw.
+    object->set("filename", cx_->string(location_href_));
     object->set("lineno", value::number(0));
     object->set("colno", value::number(0));
     object->set("error", error);

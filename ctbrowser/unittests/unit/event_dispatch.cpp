@@ -629,6 +629,30 @@ void test_abort_signal() {
               log_of(page).back());
 }
 
+// AN INLINE HANDLER'S SCOPE CHAIN (HTML 8.1.8.1 step 10) ENCLOSES THE
+// FUNCTION: `event` is the handler's own parameter, not the element's or the
+// window's `event` property, and a Window's `onerror` gets the five
+// (event, source, lineno, colno, error).
+void test_inline_handler_scope() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body onerror="log += typeof event + ',' + typeof source + ',' +
+        typeof lineno + ',' + typeof colno + ';'">
+    <div id=a title=t onclick="log += event.type + ':' + title + ':' + (this === a) + ';'">x</div>
+    <script>
+    var log = '';
+    var a = document.getElementById('a');
+    a.dispatchEvent(new Event('click'));
+    a.event = 'shadowed';
+    a.dispatchEvent(new Event('click'));
+    function report() { console.log(log); }
+    </script>
+    <script>nosuchthing();</script>
+    </body></html>)");
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "click:t:true;click:t:true;string,string,number,number;",
+          "the parameter wins over `with`, and body onerror takes five: " + log_of(page).back());
+}
+
 int main() {
     test_a_made_documents_nodes_have_a_path_that_ends_at_it();
     test_click_dispatch();
@@ -641,5 +665,6 @@ int main() {
     test_dispatch_refuses_and_binds_this();
     test_passive_listeners_and_a_throwing_one();
     test_abort_signal();
+    test_inline_handler_scope();
     REPORT("event_dispatch");
 }
