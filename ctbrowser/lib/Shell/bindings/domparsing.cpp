@@ -102,7 +102,13 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
                "\"";
     }
     const std::span<const node_id> children = txn.children(node);
-    if (children.empty()) { return out + "/>"; }
+    // An empty element self-closes; an empty HTML VOID element as ` />`, the
+    // one place the algorithm writes a space (DOM Parsing 2.2, step 13).
+    if (children.empty()) {
+        const bool html_void = txn.element_ns(node) == node_ns::html &&
+                               ctbrowser::html::is_void_element(txn.local_name(node));
+        return out + (html_void ? " />" : "/>");
+    }
     out += ">";
     const std::string scope = prefix.empty() ? ns : std::string{inherited};
     for (const node_id child : children) { out += serialize_xml(child, scope); }

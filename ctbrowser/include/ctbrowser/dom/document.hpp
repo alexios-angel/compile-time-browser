@@ -106,6 +106,8 @@ public:
                                         std::string_view local) const noexcept;
     // An `other` element's recorded namespace URI - see document::element_namespace.
     [[nodiscard]] atom element_namespace(node_id) const noexcept;
+    // A <template>'s contents fragment - see document::template_content.
+    [[nodiscard]] node_id template_content(node_id) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] node_id document_node() const noexcept;

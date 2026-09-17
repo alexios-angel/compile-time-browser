@@ -662,6 +662,10 @@ atom read_txn::element_namespace(node_id id) const noexcept {
     return doc_->element_namespace(id);
 }
 
+node_id read_txn::template_content(node_id id) const noexcept {
+    return doc_->template_content(id);
+}
+
 void document::set_element_namespace(node_id element, atom uri) {
     element_namespaces_.insert_or_assign(shadow_key(element), uri);
 }
