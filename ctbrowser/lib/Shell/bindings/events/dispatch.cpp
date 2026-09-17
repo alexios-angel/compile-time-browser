@@ -1428,9 +1428,20 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
     // (event, source, lineno, colno, error) - step 11's one special case.
     const bool window_error =
         name == "onerror" && forwards_to_window(name) && body_or_frameset_of(self);
+    // NAMED AFTER THE ATTRIBUTE: step 11's source text is `function
+    // onclick(event) {\n<body>\n}`, which is what `handler.toString()` and
+    // `handler.name` answer (event-handler-sourcetext.html). ponytail: a
+    // named function expression binds its name inside the body, which the
+    // specification's function does not; `onclick="onclick = f"` would write
+    // that binding (silently, in sloppy code) rather than the element's.
+    const bool identifier = std::ranges::all_of(name, [](const char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               ch == '_' || ch == '$';
+    });
     script::program compiled = script::compiler::compile(
         std::string{"return (function (document, form) { with (document) { "} +
-        (with_form ? "with (form) { " : "") + "with (this) { return function (" +
+        (with_form ? "with (form) { " : "") + "with (this) { return function " +
+        (identifier ? name : std::string{}) + "(" +
         (window_error ? "event, source, lineno, colno, error" : "event") + ") {\n" + source +
         "\n}; }" + (with_form ? " }" : "") + " } });");
     value made = value::undefined();
