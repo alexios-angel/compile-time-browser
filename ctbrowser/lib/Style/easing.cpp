@@ -5,10 +5,12 @@
 #include <ctbrowser/style/css/token.hpp>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -403,6 +405,266 @@ struct premultiplied {
     return out;
 }
 
+// --- transform lists (CSS Transforms 1 §12) ---
+
+// One 2D transform function with its arguments as numbers: lengths in px,
+// angles in degrees. `scale(2)` is `scale(2, 2)`, `translate(1px)` is
+// `translate(1px, 0px)`, so two functions of one primitive always pair.
+struct transform_fn {
+    std::string name;
+    std::vector<double> args;
+};
+
+[[nodiscard]] std::string_view primitive_of(std::string_view name) {
+    if (name.starts_with("translate")) { return "translate"; }
+    if (name.starts_with("scale")) { return "scale"; }
+    return name;
+}
+
+// A 2D transform list, or nothing for `none`, or nullopt for one this does
+// not model - a 3D function, a percentage, an `em` - which stays discrete.
+// ponytail: 2D only, matching the computed-style serialiser; a 3D list
+// needs matrix3d() there first.
+[[nodiscard]] std::optional<std::vector<transform_fn>> parse_transforms(std::string_view text) {
+    using css::token_type;
+    std::vector<transform_fn> out;
+    if (ascii_iequals(text, "none")) { return out; }
+    const css::token_stream ts = css::tokenize(text);
+    std::size_t at = 0;
+    for (;;) {
+        while (ts.tokens[at].type == token_type::whitespace) { ++at; }
+        if (ts.tokens[at].type == token_type::eof) { break; }
+        if (ts.tokens[at].type != token_type::function) { return std::nullopt; }
+        const std::string_view raw = ts.text_of(ts.tokens[at]);
+        transform_fn fn;
+        fn.name = ascii_lower_copy(raw.substr(0, raw.size() - 1));
+        ++at;
+        std::vector<bool> is_length;
+        for (;;) {
+            while (ts.tokens[at].type == token_type::whitespace) { ++at; }
+            const css::css_token & t = ts.tokens[at];
+            if (t.type == token_type::eof) { return std::nullopt; }
+            ++at;
+            if (t.type == token_type::close_paren) { break; }
+            if (t.type == token_type::comma) { continue; }
+            if (t.type == token_type::number) {
+                fn.args.push_back(t.number);
+                is_length.push_back(false);
+            } else if (t.type == token_type::dimension) {
+                const std::string unit = ascii_lower_copy(ts.unit_of(t));
+                if (unit == "px") {
+                    fn.args.push_back(t.number);
+                    is_length.push_back(true);
+                } else if (unit == "deg") {
+                    fn.args.push_back(t.number);
+                    is_length.push_back(false);
+                } else if (unit == "rad") {
+                    fn.args.push_back(t.number * 180.0 / std::numbers::pi);
+                    is_length.push_back(false);
+                } else if (unit == "grad") {
+                    fn.args.push_back(t.number * 0.9);
+                    is_length.push_back(false);
+                } else if (unit == "turn") {
+                    fn.args.push_back(t.number * 360.0);
+                    is_length.push_back(false);
+                } else {
+                    return std::nullopt;
+                }
+            } else {
+                return std::nullopt;
+            }
+        }
+        const std::size_t n = fn.args.size();
+        const bool translate = fn.name.starts_with("translate");
+        for (std::size_t i = 0; i < n; ++i) {
+            if (is_length[i] != translate && !(translate && fn.args[i] == 0.0)) {
+                return std::nullopt;
+            }
+        }
+        // Canonical two-argument forms, so the same primitive always pairs.
+        if (fn.name == "translatex" && n == 1) {
+            fn.name = "translate", fn.args.push_back(0);
+        } else if (fn.name == "translatey" && n == 1) {
+            fn.name = "translate", fn.args.insert(fn.args.begin(), 0);
+        } else if (fn.name == "translate" && n == 1) {
+            fn.args.push_back(0);
+        } else if (fn.name == "scalex" && n == 1) {
+            fn.name = "scale", fn.args.push_back(1);
+        } else if (fn.name == "scaley" && n == 1) {
+            fn.name = "scale", fn.args.insert(fn.args.begin(), 1);
+        } else if (fn.name == "scale" && n == 1) {
+            fn.args.push_back(fn.args[0]);
+        } else if (fn.name == "skew" && n == 1) {
+            fn.args.push_back(0);
+        }
+        const std::size_t count = fn.args.size();
+        const bool shaped =
+            (fn.name == "matrix" && count == 6) || (fn.name == "translate" && count == 2) ||
+            (fn.name == "scale" && count == 2) || (fn.name == "rotate" && count == 1) ||
+            (fn.name == "skew" && count == 2) || (fn.name == "skewx" && count == 1) ||
+            (fn.name == "skewy" && count == 1);
+        if (!shaped) { return std::nullopt; }
+        out.push_back(std::move(fn));
+    }
+    return out;
+}
+
+// The affine matrix as CSS writes it: x' = a*x + c*y + e, y' = b*x + d*y + f.
+using matrix2d = std::array<double, 6>;
+
+[[nodiscard]] matrix2d multiply(const matrix2d & m, const matrix2d & n) {
+    return {m[0] * n[0] + m[2] * n[1],        m[1] * n[0] + m[3] * n[1],
+            m[0] * n[2] + m[2] * n[3],        m[1] * n[2] + m[3] * n[3],
+            m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]};
+}
+
+[[nodiscard]] double radians(double deg) {
+    return deg * std::numbers::pi / 180.0;
+}
+
+[[nodiscard]] matrix2d matrix_of(const transform_fn & fn) {
+    const std::vector<double> & a = fn.args;
+    if (fn.name == "matrix") { return {a[0], a[1], a[2], a[3], a[4], a[5]}; }
+    if (fn.name == "translate") { return {1, 0, 0, 1, a[0], a[1]}; }
+    if (fn.name == "scale") { return {a[0], 0, 0, a[1], 0, 0}; }
+    if (fn.name == "rotate") {
+        const double r = radians(a[0]);
+        return {std::cos(r), std::sin(r), -std::sin(r), std::cos(r), 0, 0};
+    }
+    if (fn.name == "skew") {
+        return {1, std::tan(radians(a[1])), std::tan(radians(a[0])), 1, 0, 0};
+    }
+    if (fn.name == "skewx") { return {1, 0, std::tan(radians(a[0])), 1, 0, 0}; }
+    return {1, std::tan(radians(a[0])), 0, 1, 0, 0}; // skewy
+}
+
+[[nodiscard]] matrix2d matrix_of(const std::vector<transform_fn> & list) {
+    matrix2d m{1, 0, 0, 1, 0, 0};
+    for (const transform_fn & fn : list) { m = multiply(m, matrix_of(fn)); }
+    return m;
+}
+
+// §12.2, the 2D decomposition: translation, scale, rotation and the
+// residual matrix, interpolated separately and recomposed.
+struct decomposed2d {
+    double tx, ty, sx, sy, angle, m11, m12, m21, m22;
+};
+
+[[nodiscard]] decomposed2d decompose(const matrix2d & m) {
+    double row0x = m[0], row0y = m[1], row1x = m[2], row1y = m[3];
+    decomposed2d d{m[4], m[5], 0, 0, 0, 1, 0, 0, 1};
+    d.sx = std::hypot(row0x, row0y);
+    if (d.sx != 0) { row0x /= d.sx, row0y /= d.sx; }
+    double skew = row0x * row1x + row0y * row1y;
+    row1x -= row0x * skew, row1y -= row0y * skew;
+    d.sy = std::hypot(row1x, row1y);
+    if (d.sy != 0) { row1x /= d.sy, row1y /= d.sy, skew /= d.sy; }
+    if (row0x * row1y - row0y * row1x < 0) {
+        d.sx = -d.sx;
+        row0x = -row0x, row0y = -row0y;
+    }
+    d.angle = std::atan2(row0y, row0x) * 180.0 / std::numbers::pi;
+    d.m11 = row0x, d.m12 = row0y, d.m21 = row1x, d.m22 = row1y;
+    return d;
+}
+
+[[nodiscard]] matrix2d recompose(const decomposed2d & d) {
+    matrix2d m{1, 0, 0, 1, d.tx, d.ty};
+    const double r = radians(d.angle);
+    m = multiply(m, {std::cos(r), std::sin(r), -std::sin(r), std::cos(r), 0, 0});
+    m = multiply(m, {d.m11, d.m12, d.m21, d.m22, 0, 0});
+    return multiply(m, {d.sx, 0, 0, d.sy, 0, 0});
+}
+
+[[nodiscard]] std::string matrix_text(const matrix2d & m) {
+    std::string out{"matrix("};
+    for (std::size_t i = 0; i < 6; ++i) {
+        if (i != 0) { out += ", "; }
+        // Six decimals, which is where the computed serialiser rounds anyway.
+        out += css::serialize_number(std::round(m[i] * 1e6) / 1e6);
+    }
+    return out + ')';
+}
+
+[[nodiscard]] std::string function_text(const transform_fn & fn) {
+    std::string out = fn.name + '(';
+    const bool translate = fn.name == "translate";
+    const bool angles = fn.name == "rotate" || fn.name.starts_with("skew");
+    for (std::size_t i = 0; i < fn.args.size(); ++i) {
+        if (i != 0) { out += ", "; }
+        out += css::serialize_number(fn.args[i]);
+        if (translate) { out += "px"; }
+        if (angles) { out += "deg"; }
+    }
+    return out + ')';
+}
+
+[[nodiscard]] transform_fn identity_like(const transform_fn & fn) {
+    transform_fn out{fn.name, {}};
+    if (fn.name == "matrix") {
+        out.args = {1, 0, 0, 1, 0, 0};
+    } else if (fn.name == "scale") {
+        out.args = {1, 1};
+    } else {
+        out.args.assign(fn.args.size(), 0.0);
+    }
+    return out;
+}
+
+// §12: function by function while the lists match - the shorter padded
+// with the identity of its partner - else the whole lists as matrices,
+// decomposed. `none` on both sides stays `none`.
+[[nodiscard]] std::optional<std::string> interpolate_transform(std::string_view from,
+                                                               std::string_view to, double p) {
+    std::optional<std::vector<transform_fn>> a = parse_transforms(from);
+    std::optional<std::vector<transform_fn>> b = parse_transforms(to);
+    if (!a || !b) { return std::nullopt; }
+    if (a->empty() && b->empty()) { return "none"; }
+    const auto lerp = [p](double x, double y) { return (1 - p) * x + p * y; };
+    const std::size_t shorter = std::min(a->size(), b->size());
+    bool matched = true;
+    for (std::size_t i = 0; i < shorter && matched; ++i) {
+        matched = primitive_of((*a)[i].name) == primitive_of((*b)[i].name);
+    }
+    if (matched) {
+        for (std::size_t i = a->size(); i < b->size(); ++i) {
+            a->push_back(identity_like((*b)[i]));
+        }
+        for (std::size_t i = b->size(); i < a->size(); ++i) {
+            b->push_back(identity_like((*a)[i]));
+        }
+        std::string out;
+        for (std::size_t i = 0; i < a->size(); ++i) {
+            transform_fn fn = (*a)[i];
+            for (std::size_t k = 0; k < fn.args.size(); ++k) {
+                fn.args[k] = lerp((*a)[i].args[k], (*b)[i].args[k]);
+            }
+            if (i != 0) { out += ' '; }
+            out += function_text(fn);
+        }
+        return out;
+    }
+    decomposed2d x = decompose(matrix_of(*a));
+    const decomposed2d y = decompose(matrix_of(*b));
+    // The rotation goes the short way round, and a flip of scale on one
+    // side is undone on the other (§12.2).
+    if ((x.sx < 0 && y.sy < 0) || (x.sy < 0 && y.sx < 0)) {
+        x.sx = -x.sx, x.sy = -x.sy;
+        x.angle += x.angle < 0 ? 180 : -180;
+    }
+    if (std::fabs(x.angle - y.angle) > 180) {
+        if (x.angle > y.angle) {
+            x.angle -= 360;
+        } else {
+            x.angle += 360;
+        }
+    }
+    const decomposed2d z{lerp(x.tx, y.tx),   lerp(x.ty, y.ty),       lerp(x.sx, y.sx),
+                         lerp(x.sy, y.sy),   lerp(x.angle, y.angle), lerp(x.m11, y.m11),
+                         lerp(x.m12, y.m12), lerp(x.m21, y.m21),     lerp(x.m22, y.m22)};
+    return matrix_text(recompose(z));
+}
+
 // --- the pair ---
 
 // CSS Values 4 §4.1: two values interpolate when they are one number, length
@@ -418,6 +680,9 @@ struct premultiplied {
     from = trim(from, html_whitespace);
     to = trim(to, html_whitespace);
     interpolable = true;
+    if (property == "transform") {
+        if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
+    }
     if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
         return lerp_color(*a, *b, p);
     }
@@ -554,7 +819,7 @@ struct premultiplied {
         const bool added_none = added.empty() || ascii_iequals(added, "none");
         if (base_none) { return added; }
         if (added_none) { return base; }
-        return base + ", " + added;
+        return base + (is_shadow(property) ? ", " : " ") + added;
     }
     if (property == "scale") {
         // CSS Transforms 2 §7: scales add by multiplying component by

@@ -150,6 +150,18 @@ void test_composition() {
     CHECK(interpolate_text("scale", "none", "none", 0.5, context) == "none");
     CHECK(interpolate_text("translate", "10px", "none", 0.5, context) == "5px 0px 0px");
     CHECK(interpolate_text("rotate", "none", "100deg", 0.5, context) == "50deg");
+    // A transform list function by function while the lists match, padded
+    // with identities; else as decomposed matrices (CSS Transforms 1 §12).
+    CHECK(interpolate_text("transform", "rotate(30deg)", "rotate(60deg)", 0.5, context) ==
+          "rotate(45deg)");
+    CHECK(interpolate_text("transform", "translate(10px)", "translateX(20px) scale(2)", 0.5,
+                           context) == "translate(15px, 0px) scale(1.5, 1.5)");
+    CHECK(interpolate_text("transform", "none", "scale(2)", 0.5, context) == "scale(1.5, 1.5)");
+    CHECK(interpolate_text("transform", "rotate(90deg)", "scale(2)", 0.5, context)
+              .starts_with("matrix(1.06066"));
+    CHECK(interpolate_text("transform", "none", "none", 0.5, context) == "none");
+    CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
+          "rotate(30deg) scale(2)");
 }
 
 } // namespace
