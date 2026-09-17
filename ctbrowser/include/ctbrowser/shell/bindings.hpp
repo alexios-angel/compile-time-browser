@@ -518,6 +518,11 @@ private:
     [[nodiscard]] static value scroll_settled(context & cx);
     void install_element_scrolling(context & cx);
     void install_element_geometry(context & cx);
+    // `style` on the HTMLElement/SVGElement/MathMLElement prototypes, the
+    // declaration proxy built on first read; make_style_view is one
+    // element's. element/views.cpp.
+    void install_style_accessor(context & cx);
+    [[nodiscard]] value make_style_view(context & cx, node_id id);
     // §7's client rects: one per fragment, viewport coordinates, tree order.
     [[nodiscard]] std::vector<rect> client_rects_of(node_id self);
     void install_window_scrolling(context & cx, script::object_object & window);

@@ -1089,6 +1089,8 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // mixins', the canvas three - on the prototype WebIDL names, through one
     // mechanism. See define_operation in element/methods.cpp.
     install_operations(cx);
+    // `style`, on the three prototypes that mix in ElementCSSInlineStyle.
+    install_style_accessor(cx);
 
     // `animate` and `getAnimations` on Element.prototype, and the Animation
     // interfaces beside them - here because this is where that prototype
