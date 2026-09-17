@@ -1415,14 +1415,28 @@ void dom_bindings::install_form_owner(context & cx) {
                     node_id owner;
                     {
                         const auto txn = doc_->read();
-                        const std::string_view named =
-                            txn.attribute_value(id, atoms_->intern("form"));
-                        if (!named.empty()) {
-                            const node_id found = find_by_id(std::string{named});
-                            if (found && txn.element_ns(found) == node_ns::html &&
-                                txn.local_name(found) == "form" &&
-                                root_of_tree(txn, found, false) == root_of_tree(txn, id, false)) {
-                                owner = found;
+                        const atom form_attr = atoms_->intern("form");
+                        const std::string_view named = txn.attribute_value(id, form_attr);
+                        if (txn.has_attribute(id, form_attr)) {
+                            // HTML 4.10.17.3 "reset the form owner" step 3: the
+                            // FIRST element in the control's tree with that ID,
+                            // a form or nothing - `form=""` names nothing, and
+                            // a detached form holding the control is its tree
+                            // (form_attribute.html).
+                            const atom id_attr = atoms_->intern("id");
+                            node_id first;
+                            const auto walk = [&](auto && self, node_id at) -> void {
+                                if (first) { return; }
+                                if (!named.empty() && txn.attribute_value(at, id_attr) == named) {
+                                    first = at;
+                                    return;
+                                }
+                                for (const node_id child : txn.children(at)) { self(self, child); }
+                            };
+                            walk(walk, root_of_tree(txn, id, false));
+                            if (first && txn.element_ns(first) == node_ns::html &&
+                                txn.local_name(first) == "form") {
+                                owner = first;
                             }
                         } else {
                             for (node_id at = txn.parent(id); at; at = txn.parent(at)) {

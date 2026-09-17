@@ -288,6 +288,23 @@ void test_output_and_textarea() {
 
 } // namespace
 
+// --- the form owner, HTML 4.10.17.3 ----------------------------------------------------
+
+void test_form_owner_attribute() {
+    // form_attribute.html: `form=""` names nothing, a detached form holding
+    // the control is its tree, a non-form with the id earlier wins nothing.
+    is("(function () { var f = document.getElementById('f'); var b = "
+       "document.createElement('button');"
+       " f.appendChild(b); var o = [b.form === f]; b.setAttribute('form', ''); o.push(b.form);"
+       " b.setAttribute('form', 'f'); o.push(b.form === f);"
+       " var d = document.createElement('div'); var f2 = document.createElement('form');"
+       " f2.id = 'f2'; d.appendChild(f2); var c = document.createElement('input');"
+       " c.setAttribute('form', 'f2'); f2.appendChild(c); o.push(c.form === f2);"
+       " var s = document.createElement('span'); s.id = 'f2'; d.insertBefore(s, f2);"
+       " o.push(c.form); return o.join(); })()",
+       "true,,true,true,");
+}
+
 // --- the selection across a value change, HTML 4.10.5.3 ------------------------------
 
 void test_selection_survives_the_same_value() {
@@ -381,6 +398,7 @@ int main() {
     test_autocomplete_tokens();
     test_list_of_options_nesting();
     test_selection_survives_the_same_value();
+    test_form_owner_attribute();
     test_selection_api();
     test_form_data_and_submission();
     test_output_and_textarea();
