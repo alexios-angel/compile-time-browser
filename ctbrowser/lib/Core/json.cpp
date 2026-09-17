@@ -42,7 +42,7 @@ struct json_reader {
     // it. The trailing check is the one this reader did not do at all, so
     // `JSON.parse("[1,2]junk")` answered [1,2].
     [[nodiscard]] std::expected<json_value, std::size_t> parse_text() {
-        json_value out = parse();
+        const json_value out = parse();
         skip();
         if (at != text.size()) { fail(); }
         if (!ok) { return std::unexpected(at); }
@@ -61,7 +61,7 @@ struct json_reader {
                 fail();
                 return {};
             }
-            json_value nested = c == '{' ? parse_object() : parse_array();
+            const json_value nested = c == '{' ? parse_object() : parse_array();
             --depth;
             return nested;
         }
