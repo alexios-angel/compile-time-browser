@@ -50,3 +50,28 @@ target_include_directories(ctbrowser-test-vm_operators PRIVATE
 # the font path ctbrowser_test() set rather than adding to it.
 set_tests_properties(navigation PROPERTIES ENVIRONMENT
   "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")
+
+# --- Precompiled header: parse the umbrella once, not once per test ----------
+#
+# `<ctbrowser.hpp>` is the one-include public API, and parsing it costs ~2.9 s
+# (measured; an empty TU is 0.01 s). Every full test re-parsed it, so the ~480
+# test TUs spent ~1,400 s of the suite's build - over half of it - on the same
+# parse. Built ONCE here and reused across the targets, which roughly halves
+# the unittests' compile time.
+#
+# LEFT OUT: the ten tests that deliberately link a SUBSET of the libraries (the
+# three foreach blocks above) and do not include the umbrella - forcing it onto
+# them would reference libraries their link line drops. `selectors` is the
+# arbitrary full-engine anchor that builds the shared PCH.
+set(_pch_anchor ctbrowser-test-selectors)
+target_precompile_headers(${_pch_anchor} PRIVATE <ctbrowser.hpp>)
+set(_pch_excluded core_basics core_text core_uri core_json
+                  dom_token_list dom_element dom_shadow dom_dataset
+                  style_easing style_closest)
+foreach(test IN LISTS tests)
+  get_filename_component(_pch_name "${test}" NAME_WE)
+  if(_pch_name STREQUAL selectors OR _pch_name IN_LIST _pch_excluded)
+    continue()
+  endif()
+  target_precompile_headers(ctbrowser-test-${_pch_name} REUSE_FROM ${_pch_anchor})
+endforeach()
