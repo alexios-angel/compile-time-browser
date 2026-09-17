@@ -472,6 +472,10 @@ void document::detach(node * child_node, node_id child) {
     if (parent_node == nullptr) { return; }
     // std::erase/erase_if only overload for std containers, not Boost's
     const auto gone = std::ranges::remove(parent_node->children, child);
+    if (log_writes_) {
+        note_edit(write_note::edit::removed, old_parent, child,
+                  static_cast<std::size_t>(gone.begin() - parent_node->children.begin()));
+    }
     parent_node->children.erase(gone.begin(), gone.end());
     child_node->parent = node_id{};
 }
@@ -488,6 +492,7 @@ std::expected<void, dom_error> document::append_child(node_id parent, node_id ch
     detach(child_node, child);
     parent_node->children.push_back(child);
     child_node->parent = parent;
+    note_edit(write_note::edit::inserted, parent, child, parent_node->children.size() - 1);
     bump_version();
     return {};
 }
@@ -512,8 +517,11 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
         before = self == items.end() || self + 1 == items.end() ? node_id{} : *(self + 1);
     }
     detach(child_node, child);
-    items.insert(std::ranges::find(items, before), child); // end() when absent: append
+    const auto at =
+        items.insert(std::ranges::find(items, before), child); // end() when absent: append
     child_node->parent = parent;
+    note_edit(write_note::edit::inserted, parent, child,
+              static_cast<std::size_t>(at - items.begin()));
     bump_version();
     return {};
 }
@@ -611,15 +619,34 @@ std::expected<void, dom_error> document::remove_attribute_ns(node_id id, std::st
     return {};
 }
 
-std::expected<void, dom_error> document::set_text(node_id id, std::string_view value) {
+namespace {
+// UTF-16 code units of UTF-8 text: what a data write's offsets count.
+[[nodiscard]] std::uint32_t units_length(std::string_view text) {
+    std::size_t n = 0;
+    for (std::size_t at = 0; at < text.size();) { n += decode_utf8(text, at) >= 0x10000 ? 2 : 1; }
+    return static_cast<std::uint32_t>(n);
+}
+} // namespace
+
+std::expected<void, dom_error> document::set_text(node_id id, std::string_view value,
+                                                  std::optional<data_edit> edit) {
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
+    // The whole data replaced, unless the caller said which part.
+    if (log_writes_ && !edit) { edit = data_edit{0, units_length(n->text), units_length(value)}; }
     // Copied before it is assigned, and the node's own copy goes to the PI
     // parser below: a caller may have passed this node's previous text.
     n->text = std::string{value};
     if (n->kind == node_kind::processing_instruction) { update_pi_attributes(*n, n->text); }
     bump_version();
-    note_write(id, atom{}, true);
+    if (log_writes_) {
+        write_note note;
+        note.node = id;
+        note.text = true;
+        note.kind = write_note::edit::data;
+        note.data = *edit;
+        writes_log_.push_back(note);
+    }
     return {};
 }
 
@@ -633,7 +660,24 @@ std::vector<document::write_note> document::take_writes() {
 }
 
 void document::note_write(node_id id, atom name, bool text) {
-    if (log_writes_) { writes_log_.push_back(write_note{id, name, text}); }
+    if (log_writes_) {
+        write_note note;
+        note.node = id;
+        note.name = name;
+        note.text = text;
+        if (text) { note.kind = write_note::edit::data; }
+        writes_log_.push_back(note);
+    }
+}
+
+void document::note_edit(write_note::edit kind, node_id parent, node_id child, std::size_t index) {
+    if (!log_writes_) { return; }
+    write_note note;
+    note.node = parent;
+    note.kind = kind;
+    note.child = child;
+    note.index = static_cast<std::uint32_t>(index);
+    writes_log_.push_back(note);
 }
 
 node_id document::template_content(node_id element) const {

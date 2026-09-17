@@ -214,7 +214,17 @@ public:
     std::expected<void, dom_error> remove_attribute(node_id, atom name);
     std::expected<void, dom_error> remove_attribute_ns(node_id, std::string_view ns,
                                                        std::string_view local);
-    std::expected<void, dom_error> set_text(node_id, std::string_view value);
+    // `edit`, when given, is the "replace data" (DOM 4.10.2) this write is -
+    // offset, count and the replacement's length, in UTF-16 code units - which
+    // the live ranges read (the write log below). Without it the write is a
+    // replacement of the whole data.
+    struct data_edit {
+        std::uint32_t offset = 0;
+        std::uint32_t count = 0;
+        std::uint32_t added = 0;
+    };
+    std::expected<void, dom_error> set_text(node_id, std::string_view value,
+                                            std::optional<data_edit> edit = std::nullopt);
 
     // A <template>'s CONTENTS, HTML 4.12.3: the DocumentFragment its children
     // are parsed into, which is NOT a child of the element - a document query
@@ -393,17 +403,33 @@ private:
     // while a reader has asked (`log_writes(true)`), every set_attribute* and
     // set_text notes what it wrote, and `take_writes` drains the notes. Off,
     // it costs one load per write.
+    //
+    // AND THE TREE EDITS, for the live ranges (DOM 5.5): every child inserted
+    // or removed is noted with its parent and its index at that moment, in
+    // order - a node moved by insert_before is one `removed` and one
+    // `inserted` - and a data write carries its "replace data" arguments.
 public:
     struct write_note {
-        node_id node;
-        atom name; // the attribute's qualified name; unused for a text write
-        bool text = false;
+        enum class edit : std::uint8_t {
+            attribute,
+            data,
+            inserted,
+            removed
+        };
+        node_id node;      // the element or character data written; the PARENT of a child
+        atom name;         // the attribute's qualified name; unused otherwise
+        bool text = false; // `kind == data`
+        edit kind = edit::attribute;
+        node_id child;           // inserted/removed: which
+        std::uint32_t index = 0; // ...and where in `node`'s children it was
+        data_edit data;          // data: the replacement, in code units
     };
     void log_writes(bool on);
     [[nodiscard]] std::vector<write_note> take_writes();
 
 private:
     void note_write(node_id id, atom name, bool text);
+    void note_edit(write_note::edit kind, node_id parent, node_id child, std::size_t index);
     bool log_writes_ = false;
     std::vector<write_note> writes_log_;
 
