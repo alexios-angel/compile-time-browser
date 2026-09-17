@@ -172,6 +172,18 @@ void test_relative_colours_and_mixing() {
        "color-mix(oklab(0.1 0.2 0.3) 75%, oklab(0.5 0.6 0.7) 25%)");
     ok("color-mix(in lch shorter hue, lch(100 0 20deg), lch(100 0 320deg))",
        "color-mix(in lch, lch(100 0 20), lch(100 0 320))");
+    // Three or more colours (CSS Color 5 §3): the omitted weights share the
+    // remainder, an even share is left unwritten, a calc() keeps everything.
+    ok("color-mix(in srgb, red 100%)", "color-mix(in srgb, red)");
+    ok("color-mix(in srgb, red 50%, green, blue)",
+       "color-mix(in srgb, red 50%, green 25%, blue 25%)");
+    ok("color-mix(in srgb, red, green, blue, white)",
+       "color-mix(in srgb, red, green, blue, white)");
+    ok("color-mix(in srgb, red calc(10%), blue 50%)",
+       "color-mix(in srgb, red calc(10%), blue 50%)");
+    ok("lab(calc(50%) 50% 0.5)", "lab(calc(50%) 62.5 0.5)");
+    ok("color(srgb calc(50% * 3) calc(-150% / 3) calc(50%) / calc(-50% * 3))",
+       "color(srgb calc(150%) calc(-50%) calc(50%) / calc(-150%))");
     ok("light-dark(black, white)", "light-dark(black, white)");
     ok("color-layers(normal, red, blue)", "color-layers(red, blue)");
     bad("hsl(from rebeccapurple calc(h + 1deg) s l)");
@@ -215,6 +227,29 @@ void test_the_computed_value() {
     computed_near("lch(from hsl(180 0.001% 50%) l c h)", "lch(53.389 0 none)");
     computed_near("color-mix(in hsl, lch(none 20 180), hsl(11 33 44))",
                   "color(srgb 1.09909 -0.21909 -0.11806)");
+    // §12.2's analogous sets: hwb's white and black carry to hsl's saturation
+    // and lightness when both are missing, x carries to r, a missing
+    // saturation makes the hue powerless, and lab's b at nought is hue 0.
+    computed("hsl(from hwb(180 none none) h s l)", "hsl(180 none none)");
+    computed_near("lch(from hwb(180 none none) l c h)", "lch(none none 196.455)");
+    computed_near("hsl(from lch(20 none 180) h s l)", "hsl(none none 18.9376%)");
+    computed_near("rgb(from color(xyz none 0.5 1) r g b)", "color(srgb none 0.990951 0.979945)");
+    computed_near("color-mix(in lch, hsl(180 none none), lch(11 33 44))", "lch(11 33 44)");
+    computed("color-mix(in lch, lab(50 10 none))", "lch(50 10 0)");
+    computed_near("hsl(from hwb(180 49.999% 50%) h calc(s * 1000) l)", "hsl(none 0% 49.999%)");
+    // A relative colour's omitted alpha is the origin's (CSS Color 5 §4.2).
+    computed("rgb(from rgb(20%, 40%, 60%, 80%) g b r)", "color(srgb 0.4 0.6 0.2 / 0.8)");
+    computed("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(120 none 50% / 0.5)");
+    // Three colours mix pairwise in order; weights short of 100% thin the alpha.
+    computed_near("color-mix(in srgb, red, green, blue)", "color(srgb 0.333333 0.16732 0.333333)");
+    computed_near("color-mix(in srgb, red 0%, green 0%, blue 50%)", "color(srgb 0 0 1 / 0.5)");
+    computed_near("color-mix(in srgb, red calc(10%), blue 50%)",
+                  "color(srgb 0.166667 0 0.833333 / 0.6)");
+    // rec2020 is a pure 2.4 gamma; hwb keeps its hue unrotated out of gamut.
+    computed_near("color(from color(rec2020 0.25 0.5 0.75) srgb r g b)",
+                  "color(srgb -0.328686 0.491201 0.76185)", 0.001);
+    computed_near("hwb(from lab(100 104.3 -50.9) h w b)", "color(srgb 1.5935 0.58776 1.40555)",
+                  0.0001);
     // Out of gamut, to a ten-thousandth: the matrices.
     computed_near("rgb(from color(display-p3 0 1 0) r g b / alpha)",
                   "color(srgb -0.5116 1.01827 -0.31067)", 0.0001);
