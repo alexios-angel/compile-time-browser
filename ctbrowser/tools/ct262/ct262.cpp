@@ -51,6 +51,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -304,7 +305,86 @@ public:
             needed.push_back(target);
         }
         owned_.push_back(std::move(compiled));
+        ++depth_;
         for (const std::filesystem::path & target : needed) { instantiate(target); }
+        --depth_;
+        if (depth_ == 0) { wire_reexports(); }
+    }
+
+    // `export { a } from './m.js'` AND `export * from './m.js'` - 16.2.1.6.3
+    // ResolveExport, over the WHOLE graph once it is loaded. A re-export is an
+    // alias of the other module's cell, not a copy, so a write there is a
+    // read here. Wired to a fixed point rather than deepest-first, because a
+    // cycle of index files has no deepest member: an edge whose source is
+    // not bound yet simply waits for the next pass, and a genuinely circular
+    // one never resolves - which is the specification's null. An explicit
+    // edge outranks a star's, a name the module binds itself outranks both,
+    // `export *` never carries `default`, and one name reached through two
+    // stars as two different cells is AMBIGUOUS: not exported at all. An
+    // explicit edge left unresolved at the end is the resolution SyntaxError.
+    void wire_reexports() {
+        auto & registry = cx_.modules();
+        std::set<std::pair<std::string, std::string>> from_star;
+        std::set<std::pair<std::string, std::string>> ambiguous;
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto & [key, record] : registry) {
+                if (record.compiled == nullptr) { continue; }
+                for (const bool explicit_pass : {true, false}) {
+                    for (const auto & edge : record.compiled->reexports) {
+                        if (edge.source.empty() == explicit_pass) { continue; }
+                        const auto mapped = record.resolved.find(edge.from);
+                        const std::string from =
+                            mapped == record.resolved.end() ? edge.from : mapped->second;
+                        const auto source = registry.find(from);
+                        if (source == registry.end() || from == key) { continue; }
+                        std::vector<std::pair<std::string, value>> wire;
+                        if (explicit_pass) {
+                            const auto cell = source->second.exports.find(edge.source);
+                            if (cell != source->second.exports.end()) {
+                                wire.emplace_back(edge.exported, cell->second);
+                            }
+                        } else {
+                            for (const auto & [name, cell] : source->second.exports) {
+                                if (name != "default") { wire.emplace_back(name, cell); }
+                            }
+                        }
+                        for (const auto & [name, cell] : wire) {
+                            const auto held = record.exports.find(name);
+                            const bool via_star = from_star.count({key, name}) != 0;
+                            if (held != record.exports.end() && !(via_star && explicit_pass)) {
+                                if (!explicit_pass && via_star &&
+                                    !held->second.strict_equals(cell)) {
+                                    record.exports.erase(held);
+                                    ambiguous.insert({key, name});
+                                    changed = true;
+                                }
+                                continue;
+                            }
+                            if (!explicit_pass && ambiguous.count({key, name}) != 0) { continue; }
+                            record.exports[name] = cell;
+                            if (explicit_pass) {
+                                from_star.erase({key, name});
+                                ambiguous.erase({key, name});
+                            } else {
+                                from_star.insert({key, name});
+                            }
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        for (const auto & [key, record] : registry) {
+            if (record.compiled == nullptr) { continue; }
+            for (const auto & edge : record.compiled->reexports) {
+                if (edge.source.empty() ||
+                    record.exports.find(edge.exported) != record.exports.end()) {
+                    continue;
+                }
+                note("`" + edge.from + "` has no export named `" + edge.source + "`");
+            }
+        }
     }
 
     // POST-ORDER, each module once: a dependency has finished before the module
@@ -353,6 +433,7 @@ private:
 
     context & cx_;
     std::vector<std::unique_ptr<program>> owned_;
+    std::size_t depth_ = 0; // instantiate() recursing: the graph is wired when it is back at 0
     bool failed_ = false;
     program compile_error_;
     std::string resolution_;
