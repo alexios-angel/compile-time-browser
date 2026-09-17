@@ -1071,6 +1071,29 @@ struct rotation {
 
 // --- the pair ---
 
+// calc-size(A, B)'s basis and calculation, or nothing when `text` is not one.
+[[nodiscard]] std::optional<std::pair<std::string_view, std::string_view>>
+calc_size_args(std::string_view text) {
+    text = trim(text, html_whitespace);
+    if (!ascii_iequals(text.substr(0, 10), "calc-size(") || !text.ends_with(')')) {
+        return std::nullopt;
+    }
+    std::size_t depth = 1;
+    std::size_t comma = std::string_view::npos;
+    for (std::size_t i = 10; i + 1 < text.size() && comma == std::string_view::npos; ++i) {
+        if (text[i] == '(') {
+            ++depth;
+        } else if (text[i] == ')') {
+            --depth;
+        } else if (text[i] == ',' && depth == 1) {
+            comma = i;
+        }
+    }
+    if (comma == std::string_view::npos) { return std::nullopt; }
+    return std::pair{trim(text.substr(10, comma - 10), html_whitespace),
+                     trim(text.substr(comma + 1, text.size() - comma - 2), html_whitespace)};
+}
+
 // CSS Values 4 §4.1: two values interpolate when they are one number, length
 // or percentage each; two colours; or LISTS of the same shape -
 // comma-separated, then space-separated - whose items pair off as one of
@@ -1113,6 +1136,21 @@ struct rotation {
     if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
         return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
                                                       : lerp_oklab(*a, *b, p);
+    }
+    // calc-size(A, B) with calc-size(C, D) interpolates A with C and B with D
+    // (CSS Values 5 §10.3); a calc-size() against a plain value is discrete.
+    if (const auto a = calc_size_args(from), b = calc_size_args(to); a || b) {
+        if (!a || !b) {
+            interpolable = false;
+            return std::string{p < 0.5 ? from : to};
+        }
+        const std::string basis =
+            interpolate_pair(property, a->first, b->first, p, ctx, interpolable);
+        if (!interpolable) { return std::string{p < 0.5 ? from : to}; }
+        const std::string calc =
+            interpolate_pair(property, a->second, b->second, p, ctx, interpolable);
+        if (!interpolable) { return std::string{p < 0.5 ? from : to}; }
+        return "calc-size(" + basis + ", " + calc + ")";
     }
     if (const std::optional<numeric_pair> n = numeric_of(from, to, ctx)) {
         return numeric_text(property, mix(n->a, n->b, p));
