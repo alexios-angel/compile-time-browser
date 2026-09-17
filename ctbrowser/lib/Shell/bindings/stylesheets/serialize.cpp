@@ -305,6 +305,17 @@ void append_compound(std::string & out, const style::compound & part, const atom
         // `css/cssom/selectorSerialize.html`'s twenty-three. A range that IS an
         // identifier is written as one, escapes and all - `:lang(j\ a)` - and
         // one with a wildcard in it as the string it can only be.
+        case style::pseudo_kind::heading: {
+            out += ":heading";
+            if (!pseudo.levels.empty()) {
+                out += '(';
+                for (std::size_t i = 0; i < pseudo.levels.size(); ++i) {
+                    out += (i == 0 ? "" : ", ") + std::to_string(pseudo.levels[i]);
+                }
+                out += ')';
+            }
+            break;
+        }
         case style::pseudo_kind::lang:
         case style::pseudo_kind::dir: {
             out += pseudo.kind == style::pseudo_kind::lang ? ":lang(" : ":dir(";

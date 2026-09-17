@@ -1,5 +1,6 @@
 #include <ctbrowser/style/css/selector.hpp>
 
+#include <charconv>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -578,6 +579,48 @@ private:
             into.part.pseudos.push_back(std::move(ref));
             return true;
         }
+        // `:heading(<integer>#)`, Selectors 5: a comma-separated list of
+        // integers and nothing else - `:heading(2n)`, `:heading(1.0)` and an
+        // empty list are syntax errors (parse-heading.html).
+        if (ascii_iequals(name, "heading")) {
+            bool want_level = true;
+            for (const component_value & v : inner) {
+                if (v.kind != cv_kind::token) {
+                    invalid = true;
+                    return false;
+                }
+                const css_token & t = token(v);
+                if (t.type == token_type::whitespace) { continue; }
+                if (want_level) {
+                    if (t.type != token_type::number || (t.flags & flag_integer) == 0) {
+                        invalid = true;
+                        return false;
+                    }
+                    const std::string_view digits = text(v);
+                    std::int32_t level = 0;
+                    const auto [end, ec] =
+                        std::from_chars(digits.data() + (digits.front() == '+' ? 1 : 0),
+                                        digits.data() + digits.size(), level);
+                    if (ec != std::errc{} || end != digits.data() + digits.size()) {
+                        invalid = true;
+                        return false;
+                    }
+                    ref.levels.push_back(level);
+                } else if (t.type != token_type::comma) {
+                    invalid = true;
+                    return false;
+                }
+                want_level = !want_level;
+            }
+            if (ref.levels.empty() || want_level) {
+                invalid = true;
+                return false;
+            }
+            ref.kind = pseudo_kind::heading;
+            ++into.classes;
+            into.part.pseudos.push_back(std::move(ref));
+            return true;
+        }
         // `:lang()` and `:dir()` carry TEXT rather than a selector or an An+B: a
         // language range is not an identifier (`*-Latn` is a legal one) and a
         // direction keyword is answered from an ancestor's attribute, not from
@@ -1074,6 +1117,14 @@ private:
                     // a selector holding it serialises from the author's bytes -
                     // exactly `dropped`'s job - rather than losing the `:defined`.
                     if (bit == structural_defined) { b.part.dropped = true; }
+                    continue;
+                }
+                // `:heading` - every h1-h6 (Selectors 5).
+                if (ascii_iequals(name, "heading")) {
+                    pseudo_ref ref;
+                    ref.kind = pseudo_kind::heading;
+                    b.part.pseudos.push_back(std::move(ref));
+                    ++b.classes;
                     continue;
                 }
                 // `:focus-visible` and `:defined` are real and this engine cannot

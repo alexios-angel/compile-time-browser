@@ -1208,6 +1208,21 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             if (want.ranges.front() != (rtl ? "rtl" : "ltr")) { return false; }
             break;
         }
+        case pseudo_kind::heading: {
+            // An HTML h1-h6, its level the digit; the list, when there is
+            // one, has to name it.
+            if (txn.element_ns(node) != node_ns::html) { return false; }
+            const std::string_view local = txn.local_name(node);
+            if (local.size() != 2 || local[0] != 'h' || local[1] < '1' || local[1] > '6') {
+                return false;
+            }
+            const std::int32_t level = local[1] - '0';
+            if (!want.levels.empty() &&
+                std::ranges::find(want.levels, level) == want.levels.end()) {
+                return false;
+            }
+            break;
+        }
         }
     }
     return true;
