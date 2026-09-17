@@ -338,7 +338,7 @@ public:
                         const std::string from =
                             mapped == record.resolved.end() ? edge.from : mapped->second;
                         const auto source = registry.find(from);
-                        if (source == registry.end() || from == key) { continue; }
+                        if (source == registry.end()) { continue; }
                         std::vector<std::pair<std::string, value>> wire;
                         if (explicit_pass) {
                             const auto cell = source->second.exports.find(edge.source);
