@@ -1072,8 +1072,8 @@ struct rotation {
 // --- the pair ---
 
 // calc-size(A, B)'s basis and calculation, or nothing when `text` is not one.
-[[nodiscard]] std::optional<std::pair<std::string_view, std::string_view>>
-calc_size_args(std::string_view text) {
+[[nodiscard]] std::optional<std::pair<std::string_view, std::string_view>> calc_size_args(
+    std::string_view text) {
     text = trim(text, html_whitespace);
     if (!ascii_iequals(text.substr(0, 10), "calc-size(") || !text.ends_with(')')) {
         return std::nullopt;
