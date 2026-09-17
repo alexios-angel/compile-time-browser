@@ -2,9 +2,121 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Error.h"
 
 namespace ctcompile::ctnative {
+
+llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
+                                      unsigned maxSteps) {
+    const auto error = [](llvm::StringRef text) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
+    };
+    unsigned remaining = maxSteps;
+    const auto spend = [&] { return remaining && (--remaining, true); };
+    // Charge the source census and fingerprint before inspecting the contract.
+    const auto census = candidate.walk([&](mlir::Operation * operation) {
+        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
+            if (!spend() || !spend()) { return mlir::WalkResult::interrupt(); }
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (census.wasInterrupted()) { return error("DOM element guard work budget exhausted"); }
+    if (hostContractFingerprint(candidate) != contract.moduleSha256 ||
+        candidate->hasAttr("ctjs.skipped")) {
+        return error("DOM element guard fingerprint mismatch or incomplete source");
+    }
+    auto entry = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
+    if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
+         contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
+        !entry || !entry.getBody().hasOneBlock() ||
+        entry.getBody().front().getNumArguments() < ctjs::implicit_arguments ||
+        contract.elementParameters.empty() ||
+        contract.elementParameters.size() !=
+            entry.getBody().front().getNumArguments() - ctjs::implicit_arguments) {
+        return error("DOM element guard requires a complete element entry declaration");
+    }
+    llvm::DenseMap<mlir::Value, bool> truth;
+    for (auto [position, index] : llvm::enumerate(contract.elementParameters)) {
+        if (!spend()) { return error("DOM element guard work budget exhausted"); }
+        if (position != index) {
+            return error("DOM element guard requires ordered explicit element parameters");
+        }
+        truth[entry.getBody().front().getArgument(index + ctjs::implicit_arguments)] = true;
+    }
+    // Only exact input SSA identities seed truthiness. In particular, nullable
+    // closest results, cells, joins and loop-carried values acquire no facts.
+    llvm::SmallVector<std::pair<ctjs::UnaryOp, bool>> negations;
+    llvm::SmallVector<std::pair<ctjs::TruthyOp, bool>> queries;
+    llvm::SmallVector<std::pair<mlir::scf::IfOp, bool>> branches;
+    const auto scan = entry.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * operation) {
+        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        for (mlir::Value result : operation->getResults()) {
+            for ([[maybe_unused]] mlir::OpOperand & use : result.getUses()) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+            }
+        }
+        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+            unary && unary.getKind() == ctjs::UnaryKind::Not) {
+            if (auto found = truth.find(unary.getOperand()); found != truth.end()) {
+                const bool value = !found->second;
+                truth[unary.getResult()] = value;
+                negations.emplace_back(unary, value);
+            }
+        }
+        if (auto query = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
+            if (auto found = truth.find(query.getValue()); found != truth.end()) {
+                const bool value = found->second;
+                truth[query.getResult()] = value;
+                queries.emplace_back(query, value);
+            }
+        }
+        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+            if (auto found = truth.find(branch.getCondition()); found != truth.end()) {
+                branches.emplace_back(branch, found->second);
+            }
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (scan.wasInterrupted()) { return error("DOM element guard work budget exhausted"); }
+    for (auto [branch, selected] : branches) {
+        auto & arm = selected ? branch.getThenRegion() : branch.getElseRegion();
+        if (!arm.hasOneBlock() || arm.front().getNumArguments() || arm.front().empty()) {
+            return error("DOM element guard lacks an exact selected arm");
+        }
+        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(arm.front().back());
+        if (!yield || yield.getOperandTypes() != branch.getResultTypes()) {
+            return error("DOM element guard lost its value correspondence");
+        }
+    }
+    // All work and replacements are known before mutation. The caller owns this
+    // private clone and must still reprove the complete live DOM entry.
+    for (auto [unary, value] : negations) {
+        mlir::OpBuilder at(unary);
+        auto constant = ctjs::ConstantOp::create(
+            at, unary.getLoc(), ctjs::BooleanAttr::get(candidate.getContext(), value));
+        unary.getResult().replaceAllUsesWith(constant.getResult());
+        unary.erase();
+    }
+    for (auto [query, value] : queries) {
+        mlir::OpBuilder at(query);
+        auto constant = mlir::arith::ConstantIntOp::create(at, query.getLoc(), value, 1);
+        query.getResult().replaceAllUsesWith(constant.getResult());
+        query.erase();
+    }
+    for (auto [branch, selected] : branches) {
+        auto & arm = selected ? branch.getThenRegion() : branch.getElseRegion();
+        auto yield = llvm::cast<mlir::scf::YieldOp>(arm.front().back());
+        for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
+            result.replaceAllUsesWith(value);
+        }
+        auto & contents = arm.front().getOperations();
+        branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
+                                                   contents.begin(), yield->getIterator());
+        branch.erase();
+    }
+    return llvm::Error::success();
+}
 
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps) {

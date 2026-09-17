@@ -1524,15 +1524,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
                     if (unary.getKind() != ctjs::UnaryKind::BitNot) {
-                        // Neg keeps a bounded positive Number's magnitude
-                        // separately from own-index facts. The held snapshot
-                        // survives source mutation; coercions supply no fact.
+                        // Preserve held signed Numbers through Plus/Neg, keeping
+                        // negative magnitudes separate from own-index facts.
+                        // Zero stays nonnegative; coercions supply no fact.
                         integerNumber = input.integerNumber ? input.integerNumber
                                                             : boundedNumber(input.origin());
-                        if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber &&
-                            *integerNumber != 0) {
-                            negativeIntegerNumber = integerNumber;
-                            integerNumber.reset();
+                        negativeIntegerNumber = input.negativeIntegerNumber;
+                        if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
+                            std::swap(integerNumber, negativeIntegerNumber);
                         }
                         if ((integerNumber || negativeIntegerNumber) && !spend()) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);

@@ -59,6 +59,18 @@ struct DOMSource {
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
     }
 
+    bool precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use) {
+        // Crossing only these regions proves the definition runs before the
+        // entire selected arm or loop. Invoke continuations require their own
+        // exception proof and cannot inherit this source-order shortcut.
+        while (use->getBlock() != definition->getBlock() &&
+               llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
+            if (!step()) { return false; }
+            use = use->getParentOp();
+        }
+        return use->getBlock() == definition->getBlock() && definition->isBeforeInBlock(use);
+    }
+
     bool confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
         if (!closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
             creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
@@ -106,10 +118,9 @@ struct DOMSource {
             } else {
                 return true;
             }
-            if (use.getOwner()->getBlock() != closure->getBlock() ||
-                !closure->isBeforeInBlock(use.getOwner()) ||
+            if (!precedesInStructuredBody(closure, use.getOwner()) ||
                 arguments.size() + ctjs::implicit_arguments != body.getNumArguments()) {
-                return true;
+                return reason.empty();
             }
             for (auto [index, argument] : llvm::enumerate(arguments)) {
                 if (!step()) { return false; }
@@ -1142,7 +1153,7 @@ struct DOMSource {
                     values.insert(operation.getResults().begin(), operation.getResults().end());
                 }
                 // A capture-free filter callback stays in its selected source
-                // arm. Other callable/capture scheduling still requires the
+                // arm. Other callable/capture definitions still require the
                 // entry block; repeated loop-local identities are not proved.
                 auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
                 if (depth) {
@@ -1356,15 +1367,15 @@ struct DOMSource {
                             return refuse(
                                 "DOM helper callable escapes or its call shape is unsupported");
                         }
-                        if (operation->getBlock() != &block ||
-                            !closure->isBeforeInBlock(operation) ||
+                        if (!precedesInStructuredBody(closure, operation) ||
                             arguments.size() + ctjs::implicit_arguments !=
                                 target.getBody().front().getNumArguments()) {
                             return refuse("DOM helper call has unsupported arity or source order");
                         }
                         for (const Capture & capture : captures) {
                             if (!step()) { return false; }
-                            if (capture.write && !capture.write->isBeforeInBlock(operation)) {
+                            if (capture.write &&
+                                !precedesInStructuredBody(capture.write, operation)) {
                                 return refuse(
                                     "DOM helper capture assignment does not precede its call");
                             }
@@ -1450,15 +1461,13 @@ struct DOMSource {
                                 auto * cloned = at.clone(operation, mapping);
                                 // Regions (a normalized invoke) clone with the
                                 // same mapping; charge every nested operation.
-                                for (mlir::Region & region : cloned->getRegions()) {
-                                    for (mlir::Block & nested : region) {
-                                        for (mlir::Operation & inner : nested) {
-                                            (void)inner;
-                                            if (!step()) { return false; }
-                                            ++operationCount;
-                                        }
-                                    }
-                                }
+                                const auto counted = cloned->walk([&](mlir::Operation * inner) {
+                                    if (inner == cloned) { return mlir::WalkResult::advance(); }
+                                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                                    ++operationCount;
+                                    return mlir::WalkResult::advance();
+                                });
+                                if (counted.wasInterrupted()) { return false; }
                                 if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
                                     callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
                                                         callDepth.lookup(&operation);

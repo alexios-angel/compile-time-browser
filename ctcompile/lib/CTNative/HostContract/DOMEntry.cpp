@@ -184,6 +184,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     };
     std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
         provedStringVectorIndices;
+    std::vector<std::pair<ctjs::GetPropertyOp, mlir::Value>> provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
     std::vector<ctjs::CallOp> provedPrefixRegExps;
@@ -238,6 +239,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         llvm::DenseSet<mlir::Value> increasingIndices;
         unsigned mutationEpoch = 0;
         llvm::DenseMap<mlir::Value, unsigned> datasetEpochs;
+        struct DatasetOrigin {
+            mlir::Value element;
+            unsigned epoch;
+        };
+        llvm::DenseMap<mlir::Value, DatasetOrigin> snapshotOrigins, keyOrigins;
         struct Predicate {
             mlir::Value optional;
             bool stringOnTrue;
@@ -792,6 +798,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        llvm::is_contained(provedStringVectorLengths, length);
                         }
                         if (guarded) {
+                            if (!spend()) { return false; }
+                            if (auto origin = snapshotOrigins.find(read.getObject());
+                                origin != snapshotOrigins.end()) {
+                                if (!spend()) { return false; }
+                                keyOrigins.try_emplace(read.getResult(), origin->second);
+                            }
                             values[read.getResult()] = Kind::string;
                             provedStringVectorIndices.push_back(read);
                             provedStrings.push_back(read.getResult());
@@ -821,6 +833,25 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         values[read.getResult()] = Kind::dataset;
                         datasetEpochs[read.getResult()] = mutationEpoch;
                         provedDatasets.push_back(read);
+                        continue;
+                    }
+                    if (hasKind(read.getObject(), Kind::dataset)) {
+                        if (!spend() || !spend() || !spend()) { return false; }
+                        const auto origin = keyOrigins.find(read.getKey());
+                        auto dataset = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+                        // ponytail: only direct snapshot members carry presence.
+                        // Joined or transformed keys need a separate provenance proof.
+                        if (!dataset || origin == keyOrigins.end() ||
+                            origin->second.element != dataset.getObject() ||
+                            origin->second.epoch != mutationEpoch ||
+                            datasetEpochs.lookup(read.getObject()) != mutationEpoch) {
+                            refusal = "DOM dataset value requires a live member key from the same "
+                                      "element";
+                            return false;
+                        }
+                        provedDatasetValues.emplace_back(read, dataset.getObject());
+                        values[read.getResult()] = Kind::string;
+                        provedStrings.push_back(read.getResult());
                         continue;
                     }
                     if (hasKind(read.getObject(), Kind::objectIntrinsic) && key == "keys") {
@@ -975,6 +1006,13 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     }
                     if (hasKind(invoke.getCallee(), Kind::filterStrings) && arguments.size() == 1 &&
                         hasKind(arguments[0], Kind::callback)) {
+                        if (!spend()) { return false; }
+                        if (auto found = snapshotOrigins.find(invoke.getReceiver());
+                            found != snapshotOrigins.end()) {
+                            if (!spend()) { return false; }
+                            const auto origin = found->second;
+                            snapshotOrigins.try_emplace(invoke.getResult(), origin);
+                        }
                         auto closure = arguments[0].getDefiningOp<ctjs::CreateClosureOp>();
                         provedCalls.push_back({invoke, HostDOMMethod::filterStrings,
                                                invoke.getReceiver(),
@@ -1012,6 +1050,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             return false;
                         }
                         auto dataset = arguments[0].getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!spend()) { return false; }
+                        snapshotOrigins.try_emplace(
+                            invoke.getResult(), DatasetOrigin{dataset.getObject(), mutationEpoch});
                         provedCalls.push_back(
                             {invoke, HostDOMMethod::datasetKeys, dataset.getObject()});
                         values[invoke.getResult()] = Kind::stringVector;
@@ -1260,6 +1301,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     datasets = std::move(provedDatasets);
     stringVectorLengths = std::move(provedStringVectorLengths);
     stringVectorIndices = std::move(provedStringVectorIndices);
+    datasetValues = std::move(provedDatasetValues);
     stringPrefixRegExps = std::move(provedPrefixRegExps);
     datasetElements = std::move(provedDatasetElements);
     objectIntrinsics = std::move(provedObjectIntrinsics);
@@ -1317,6 +1359,13 @@ bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {
 
 bool DOMEntryAnalysis::isStringVectorIndex(ctjs::GetPropertyOp read) const {
     return llvm::is_contained(stringVectorIndices, read);
+}
+
+mlir::Value DOMEntryAnalysis::datasetValueElement(ctjs::GetPropertyOp read) const {
+    for (const auto & [candidate, element] : datasetValues) {
+        if (candidate == read) { return element; }
+    }
+    return {};
 }
 
 bool DOMEntryAnalysis::isStringPrefixRegExp(ctjs::CallOp call) const {

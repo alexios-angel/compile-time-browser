@@ -61,6 +61,7 @@ struct lowering {
     llvm::DenseSet<mlir::Value> domOptionalStrings;
     llvm::DenseSet<mlir::Value> domStringResults;
     llvm::DenseSet<mlir::Operation *> domStringVectorIndices;
+    llvm::DenseMap<mlir::Operation *, mlir::Value> domDatasetValues;
     std::vector<HostDOMStringRefinement> domStringRefinements;
     void prepareDOMStrings();
     llvm::DenseSet<mlir::Value> domParameters;

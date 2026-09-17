@@ -39,6 +39,11 @@ SOURCES = {
 SOURCES["json_helper"] = SOURCES["json_helper"].replace(
     BODY, "function parse(text) { " + BODY + " } return parse(text);"
 )
+# Preserve the former refusal body, including its original earlier DOM observation.
+SOURCES["json_not_element"] = (
+    "function json_not_element(element) { const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
+    "return !element; }\n"
+)
 BOOTSTRAP_M = """    function M(t) {
         if ("true" === t) return !0;
         if ("false" === t) return !1;
@@ -311,6 +316,7 @@ def client(name, entry, owned):
         later_change = 'assert(doc.set_attribute(node, later, "later"));'
     result_type = {
         "json_number_not": "bool",
+        "json_not_element": "bool",
         "json_attribute_typeof": "std::string",
         "json_config_typeof_direct": "bool",
         "json_config_typeof": "bool",
@@ -387,7 +393,6 @@ REFUSALS = {
     "json_nullable_sibling": NULLABLE_JOIN.replace(
         "typeof saved", "typeof element.getAttribute('other')"
     ),
-    "json_not_element": "return !element;",
     "json_number_shadowed": "const Number = element; return !Number(text);",
     "json_number_replaced": "Number = element; return !Number(text);",
     "json_number_string_replaced": "Number.prototype.toString = element; return Number(text).toString();",
@@ -437,6 +442,7 @@ def main():
     intrinsics = ["decodeURIComponent", "JSON", "Number"]
     source_intrinsics = {
         "json_number_not": ["Number"],
+        "json_not_element": intrinsics,
         "json_bootstrap_m": intrinsics,
         "json_bootstrap_attribute": intrinsics,
         "json_attribute_typeof": intrinsics,
@@ -489,9 +495,9 @@ def main():
                     layouts[layout],
                     namespace,
                     optional_read=name in ATTRIBUTE_CASES,
-                    uri_call=name != "json_number_not",
+                    uri_call=name not in ("json_number_not", "json_not_element"),
                 )
-                if name != "json_number_not" and (
+                if name not in ("json_number_not", "json_not_element") and (
                     any(
                         token not in cpp
                         for token in ("ctbrowser::parse_json", "ctbrowser::json_value", "std::move")

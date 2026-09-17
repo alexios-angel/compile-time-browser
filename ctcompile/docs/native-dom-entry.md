@@ -68,7 +68,7 @@ The complete source proof requires the original Object/keys identity and receive
 A saved dataset alias is accepted only when no DOM mutation intervenes before
 its enumeration. Returning a saved key vector after a mutation and rereading
 `element.dataset` for a fresh snapshot are supported. Dataset/value writes,
-vector mutation or identity and dynamic value reads remain refused. Missing
+vector mutation or identity and unproved value reads remain refused. Missing
 dataset values need an Undefined/prototype proof separate from getAttribute's
 String-or-null result.
 
@@ -83,7 +83,8 @@ Array fixes the original filter method and default constructor/species chain, as
 well as `Array.prototype[Symbol.iterator]`/`values` and its iterator prototype chain
 without custom next/return hooks. String fixes the original startsWith method.
 The complete source proof requires a capture-free,
-confined callback with one String parameter and a Boolean result. Implicit arguments,
+confined callback with one String parameter and a Boolean result. A branch-local
+creation retains the same complete callback/use proof. Implicit arguments,
 callback identity, side effects and prefixes not proved as ASCII String constants
 remain refused.
 The callback becomes an ordinary C++ function; `std::copy_if` creates a second owning
@@ -120,8 +121,26 @@ that exact immutable vector. The emitted `vector.at` copies an owning String. Or
 count, ordered-key and saved-snapshot loops retain their source order and lifetime.
 Wrong starts/updates/guards/forwarded slots, vector mutation, loop DOM mutation,
 escaped helper records, unknown calls and insufficient budgets refuse. Nested or
-multiple source iterators, dynamic key normalization and live dataset values remain
-outside this proof.
+multiple source iterators and dynamic key normalization remain outside this proof.
+
+Inside the proved loop, `element.dataset[key]` returns an owning `std::string`
+through public `ctbrowser::dataset_value`. The key must be the exact indexed member
+of that element's original or filtered immutable snapshot, with no intervening DOM
+mutation. A fresh dataset lookup cannot renew a stale snapshot key. Saved aliases
+and separate calls reading updated attributes are supported; results survive document
+or session destruction. Joined, transformed, carried, literal and cross-element keys
+do not inherit membership. Every incomplete proof withholds all member evidence.
+This establishes a present own String, with no missing-property prototype lookup.
+
+The original Bootstrap `n.replace(/^bs/, "")` is supported on a proved String.
+Its manifest also supplies `"RegExp"` and `"__ctbrowser_regexp"`, together with
+`"String"`. The exact anchored literal must have empty String flags, one confined
+replacement use and an empty String replacement; the original String receiver and
+intrinsic identities are required. The emitted C++ uses `starts_with("bs")` and
+`substr`, preserving all suffix bytes in an owning String without a regex engine.
+Unanchored/flagged/general patterns, escaped or reused literals, changed methods,
+reentry and incomplete proof budgets remain refused. The following Unicode first-code-unit
+case conversion is a separate boundary.
 
 The source tests compare Node and the VM using a DOMStringMap-shaped `ownKeys`
 Proxy. Chromium independently confirms attribute order and live saved-dataset

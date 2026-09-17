@@ -15,22 +15,136 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Prefix work landed; integrated-runtime gate in progress, 2026-09-16 UTC
+## Present dataset values and signed unary snapshots, 2026-09-17 UTC
 
-Commits **ba98d8f4**, **7d8148e0** and **c0536547** add held bounded Neg strides,
-branch-local confined filter scheduling and original Bootstrap anchored prefix removal.
-Corrected focused **3/3 CTests / 4/4 lit** pass, with **17 dataset sources / 55 Node-VM
-observations / eight native binaries / 304 refusals** and lifetime sanitization.
-Full **305/305 CTests (2257.92s) / 257/257 lit** passed on frozen **c0536547**.
-The final local hash check then detected browser merge **a2486f85** (Annex B bytecode
-and platform changes), so those results do not validate the current runtime.
+Resumed **12 dirty ctcompile files on `6e8fb994`**, identified in the **02:27:52
+recovery / 02:29:20 abandoned-loop AGENT-SYNC journal**. The integrated-runtime
+recovery was already committed; September 7 WIP is already an ancestor. Three agents
+split dataset tests, escape recovery and independent review. Root recovered the two
+editing agents after service limits, reviewed their drafts and completed the gates.
 
-Current session is preserving that completed gate and validating the integrated tree.
-Do not discard the three landed commits or revert the browser merge. Evidence and
-running gate scripts are under `/tmp/ctcompile-prefix-finalize/`; AGENT-SYNC records
-the active build and claims. Native live dataset reads, Unicode key normalization,
-loop-local M calls, dynamic result writes and the application driver remain open.
-The checkpoint below is historical; final measured results will replace this notice.
+**`9a367648`** compiles original same-element `t.dataset[n]` reads through public
+`ctbrowser::dataset_value`. Immutable snapshots record their exact element and
+enumeration epoch; confined filtering preserves provenance, and the existing guarded
+vector index proof supplies a present own member. A fresh dataset lookup cannot renew
+an old key. Changed/joined/carried Strings, cross-element reads, mutations, unknown
+effects and incomplete budgets receive no membership evidence. Native C++ returns
+owning Strings; no browser implementation, Script/VM/GC dependency or runtime
+semantics changed.
+
+**`8207a051`** preserves held bounded signed Number facts through unary Plus and
+Neg, including a second Neg restoring a positive stride or own index. Exact initial
+values, invariant backedges and bounded final updates remain required. Coercible
+String/BigInt/unknown inputs do not acquire Number facts. CFG/SCF and complete source
+oracles cover retained children, zero trips, overshoot, source mutation and budget
+exhaustion.
+
+The **393-target build / 3/3 focused CTests (0.83s) / 5/5 lit (42.59s)** pass.
+Dataset tests cover **22 sources / 80 Node-VM source-double observations / eight
+GCC-Clang binaries / 392 refusals**, HTML/SVG and ASan/UBSan lifetime checks, including
+returned Strings after document/session destruction and mutation between calls.
+The new signed-unary oracle observes **20 sites / eight sound / zero violations /
+eight of 12 precision (66.7%)**. The complete historical fixture remains **895 sites /
+40 sound / zero violations / 40 of 172 precision (23.3%)**, with its snapshot unchanged.
+Independent static dataset proof/emission review found no actionable defect.
+
+The complete frozen gate passes **310/310 CTests (1950.15s) / 258/258 lit
+(1701.18s)**, wrapper **0**, with no skips. All **1,793 input hashes** match locally
+and on the devbox before documentation edits. This includes the corrected Annex B
+String witness from the preceding recovery. Array suites now cover **567 dense /
+234 induction / 162 structured rows**, with **21,935 / 15,806 / 9,424** conservative
+budget cutoffs.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 47 globals**, Data **7/7**, and
+Button **4/86 / 22 agreeing Node-VM lifecycle observations**. All four corpus reports
+are byte-identical to the preceding gate. The original dataset-value loop now admits
+**two native functions in all four provider/policy modes**, alongside the filter,
+count and prefix loops. Original M retains **24 nine-register blocks / handler ^bb12**.
+Full H still refuses **DOM helper branch contains an unproved local identity**.
+
+Stable formatting passes **890 C++ / 107 Python / 105 web files**. The required
+pinned formatter reproduces exactly the same **nine unchanged HEAD files / 26
+diagnostics**. WPT/test262 corpus measurements were not rerun. Evidence, source
+manifests, generated code, static review and boundary probes are preserved under
+`/tmp/ctcompile-values-finalize/`.
+
+**Exact next, measured in all four provider/policy modes:** prove the original
+`if (!t) return {};` for an already validated, nonnullable element input, and fold
+that exact guard on the private source candidate before iterator preparation. The
+isolated guard currently refuses the unsupported `ctjs.unary`; the guarded value
+loop refuses **DOM iteration requires one top-level source iterator**. An empty
+result object alone already admits one function.
+
+An independent composition thread is loop-local original M: both dataset-value and
+getAttribute arguments refuse **DOM helper call has unsupported arity or source
+order**. Extend the helper-call dominance/source-order proof at the actual nested
+call while preserving capture initialization and original exception continuations.
+Fresh result writes remain separate: static assignment refuses object escape/identity,
+and dynamic assignment refuses nonlocal/unordered object uses. Ordered collisions and
+inherited `__proto__` setter behavior need an assignment proof beyond JSON spread.
+The 28 isolated boundary probes are admission measurements, not full-H execution.
+
+The unchanged Unicode witness still disagrees for `bsÉtage` and `bsİtem`; ASCII,
+empty, emoji and supplementary Deseret agree. The original expression lowercases its
+first UTF-16 code unit. Keep this oracle issue coordinated with Claude; the filter
+does not establish an ASCII suffix.
+
+Full H, Unicode first-code-unit key normalization, loop-local M composition,
+ordered dynamic result assignment/collision semantics, Config/inheritance/defaults,
+retained callbacks and the application driver remain unfinished. Older sections below
+are historical checkpoints.
+
+## Integrated-runtime recovery complete, 2026-09-17 UTC
+
+Resumed clean `228d80d1` from this handoff and the interrupted **2026-09-16
+22:29 AGENT-SYNC** gate. The native source had already landed: `c8b9856d`
+(original anchored prefix), `bf872db3` (branch-local confined filter scheduling),
+and `c7d1b1a2` (held bounded Neg stride). Claude reworded their old SHAs without
+changing the trees. September 7 WIP is already an ancestor; no branch was replayed.
+
+The integrated browser's Annex B fix gives a block function a local binding.
+The former duplicate-export fixture therefore has one global publication and now
+correctly admits. Its exact original source is preserved as a native/Node/VM positive;
+an explicit repeated `var` export retains the refusal, with one-versus-two raw
+publication assertions. An isolated before/after probe confirms the scope distinction.
+No compiler or browser semantics changed during recovery.
+
+The fresh devbox build passed **817 targets**. The full gate passed **309/310
+CTests (1978.86s)**: all **309 non-lit tests**, and **256/257 lit (1720.91s)**;
+only that stale expectation failed. After the test-only correction, **3/3 focused
+CTests (143.02s)** passed, including the complete Strings driver **1/1 lit (142.57s)**.
+Thus every test has passed across the full and corrected focused runs; this is not
+a single all-green full invocation. Both sets of **1,792 hashes** match locally and
+on the devbox, and only `native_dom_strings.py` differs between them. Logs, failed
+and corrected manifests, generated-code probes and reports are preserved under
+`/tmp/ctcompile-runtime-resume/`; the corrected workflow exits **0**.
+
+Stable clang-format 23.1.1 passes **890 C++ / 107 Python / 105 web files**. The
+required pinned formatter reproduces the same **nine unchanged HEAD files / 26
+diagnostics**, matching the predecessor baseline. Independent bounded static reviews
+found no actionable prefix/filter or held-Neg proof defect. WPT/test262 corpus
+measurements were not rerun.
+
+Fresh full Bootstrap remains **19/574 native / 0 of 47 globals**, without skips or
+pruning. Data remains **7/7**, Button **4/86** with **22 agreeing Node/VM lifecycle
+observations**; all four reports are byte-identical to the previous frozen gate.
+Original M retains **24 nine-register blocks / handler ^bb12**. In all four
+provider/policy modes, the original filter, count loop and anchored-prefix loop each
+compile **two native functions**. Full H still refuses **DOM helper branch contains
+an unproved local identity**; Unicode key normalization and live dataset values each
+refuse **DOM property read lacks a proved receiver and supported member**.
+
+**Exact next:** present own `t.dataset[n]` String reads through public
+`ctbrowser::dataset_value`, proving the exact element, immutable snapshot member and
+unchanged enumeration epoch. Fresh dataset lookup cannot renew a stale key. The
+existing iterator completion normalizer already keeps the key and consumer together;
+generic String joins must not gain membership. The independent escape continuation
+is preserving held signed Number snapshots through unary Plus and a second Neg.
+Full H also needs its fresh result-object/valid-element guard, Unicode first-code-unit
+normalization, loop-local M calls and dynamic assignment/collision semantics.
+Node/VM still disagree for `bsÉtage` and `bsİtem`; this oracle gap is journaled for
+Claude. Config/inheritance/defaults, retained callbacks and the application driver
+remain open. Older sections below are historical checkpoints.
 
 ## Original snapshot iteration and scalar loop completion, 2026-09-16 UTC
 

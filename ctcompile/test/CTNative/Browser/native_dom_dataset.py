@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proved HTML/SVG dataset key snapshots, Bootstrap filtering and iteration."""
+"""Proved HTML/SVG dataset snapshots, filtering, iteration and present values."""
 
 import argparse
 import json
@@ -26,6 +26,7 @@ BOOTSTRAP_FILTER = (
     'Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))'
 )
 PREDICATE = 't => t.startsWith("bs") && !t.startsWith("bsConfig")'
+BOOTSTRAP_GUARD = "if (!t) return {};"
 FILTER_BODIES = {
     "dataset_filter": f"const t = element; return {BOOTSTRAP_FILTER};",
     "dataset_filter_length": f"const t = element; return ({BOOTSTRAP_FILTER}).length;",
@@ -68,6 +69,40 @@ PREFIX_SOURCES = {
     f"for (const n of Object.keys(t.dataset)) {{ {PREFIX} joined = joined + i + '|'; }} return joined; }}\n",
 }
 LOOP_SOURCES.update(PREFIX_SOURCES)
+VALUE_SOURCES = {
+    "dataset_values": "function dataset_values(t) { let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + t.dataset[n] + '|'; }} return joined; }}\n",
+    "dataset_values_element_alias": "function dataset_values_element_alias(t) { const alias = t; let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + alias.dataset[n] + '|'; }} return joined; }}\n",
+    "dataset_values_dataset_alias": "function dataset_values_dataset_alias(t) { const data = t.dataset; let joined = ''; "
+    f"for (const n of Object.keys(data).filter({PREDICATE})) {{ joined = joined + data[n] + '|'; }} return joined; }}\n",
+    "dataset_values_saved": "function dataset_values_saved(t) { "
+    f"const selected = {BOOTSTRAP_FILTER}; let joined = ''; "
+    "for (const n of selected) { joined = joined + t.dataset[n] + '|'; } return joined; }\n",
+    "dataset_values_all": "function dataset_values_all(t) { let joined = ''; "
+    "for (const n of Object.keys(t.dataset)) { joined = joined + t.dataset[n] + '|'; } return joined; }\n",
+}
+VALUE_SOURCES["dataset_guarded_values"] = (
+    f"function dataset_guarded_values(t) {{ {BOOTSTRAP_GUARD} let joined = ''; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ joined = joined + t.dataset[n] + '|'; }} return joined; }}\n"
+)
+LOOP_SOURCES.update(VALUE_SOURCES)
+LOOP_SOURCES.update(
+    {
+        "dataset_guarded_count": f"function dataset_guarded_count(t) {{ {BOOTSTRAP_GUARD} {LOOP_COUNT} }}\n",
+        "dataset_truthy_count": f"function dataset_truthy_count(t) {{ if (t) {{ {LOOP_COUNT} }} else {{ return {{}}; }} }}\n",
+        "dataset_guard_alias_count": f"function dataset_guard_alias_count(element) {{ const t = element; {BOOTSTRAP_GUARD} {LOOP_COUNT} }}\n",
+    }
+)
+VALUE_TEXT = {
+    "bsZ": "first",
+    "bsEmpty": "",
+    "bsUnicode": "été 😀",
+    "bs": "bare",
+    "__proto__": "own proto",
+    "10": "ten",
+    "2": "two",
+}
 # Web IDL's named-property order is attribute order, including numeric names.
 # Chrome independently measures this order; an ordinary object is the wrong double.
 KEYS = ["bsZ", "10", "2", "01", "", "__proto__", "Foo", "foo-Bar"]
@@ -141,6 +176,22 @@ for name in PREFIX_SOURCES:
             ["bsÉtage", "bsİtem", "bs𐐀name", "bs😀name"],
         ),
     ]
+for name in VALUE_SOURCES:
+    CASES[name] = [
+        ([], [], []),
+        (["data-bs-config", "data-other"], ["bsConfig", "other"], []),
+        (["data-bs-z", "data-bs-empty"], ["bsZ", "bsEmpty"], ["bsZ", "bsEmpty"]),
+        (
+            ["data-bs-unicode", "data-bs-empty"],
+            ["bsUnicode", "bsEmpty"],
+            ["bsUnicode", "bsEmpty"],
+        ),
+        (
+            ["data-__proto__", "data-10", "data-2", "data-bs"],
+            ["__proto__", "10", "2", "bs"],
+            ["bs"],
+        ),
+    ]
 REFUSALS = {
     "missing_read": "return element.dataset.missing;",
     "dataset_escape": "return element.dataset;",
@@ -211,6 +262,11 @@ REFUSALS = {
     "{ saved = n; count = count + 1; } return count;",
     "loop_callback": f"const t = element; let count = 0; for (const n of {BOOTSTRAP_FILTER}) "
     "{ element(n); count = count + 1; } return count;",
+    "guard_live_write": f"const t = element; {BOOTSTRAP_GUARD} saved = 1; {LOOP_COUNT}",
+    "guard_unknown": f"const t = element; if (!unknown) return {{}}; {LOOP_COUNT}",
+    "guard_nullable_element": f"const t = element.closest('.missing'); {BOOTSTRAP_GUARD} {LOOP_COUNT}",
+    "guard_optional_string": f"const t = element.getAttribute('data-any'); {BOOTSTRAP_GUARD} {LOOP_COUNT}",
+    "guard_ordinary_object": f"const t = {{}}; {BOOTSTRAP_GUARD} {LOOP_COUNT}",
 }
 
 PREFIX_LOOP = f"const t = element; let joined = ''; for (const n of {BOOTSTRAP_FILTER}) {{ {PREFIX} joined = joined + i; }} return joined;"
@@ -250,6 +306,44 @@ REFUSALS.update(
     }
 )
 
+VALUE_KEYS = f"const selected = Object.keys(element.dataset).filter({PREDICATE}); "
+VALUE_LOOP = (
+    "let joined = ''; for (const n of selected) { "
+    "joined = joined + element.dataset[n] + '|'; } return joined;"
+)
+REFUSALS.update(
+    {
+        "value_deleted": VALUE_KEYS + "element.removeAttribute('data-bs-z'); " + VALUE_LOOP,
+        "value_changed": VALUE_KEYS + "element.setAttribute('data-bs-z', 'new'); " + VALUE_LOOP,
+        "value_unrelated_write": VALUE_KEYS
+        + "element.setAttribute('data-other', 'x'); "
+        + VALUE_LOOP,
+        "value_stale_dataset": "const data = element.dataset; element.setAttribute('data-bs-z', 'new'); "
+        + VALUE_KEYS
+        + VALUE_LOOP.replace("element.dataset[n]", "data[n]"),
+        "value_stale_keys_fresh_dataset": VALUE_KEYS
+        + "element.setAttribute('data-bs-z', 'new'); const fresh = element.dataset; "
+        + VALUE_LOOP.replace("element.dataset[n]", "fresh[n]"),
+        "value_stale_keys_filtered_later": "const keys = Object.keys(element.dataset); "
+        "element.removeAttribute('data-bs-z'); "
+        f"const selected = keys.filter({PREDICATE}); " + VALUE_LOOP,
+        "value_transformed_key": VALUE_KEYS
+        + VALUE_LOOP.replace("dataset[n]", 'dataset[n.replace(/^bs/, "")]'),
+        "value_equal_text_key": VALUE_KEYS + VALUE_LOOP.replace("dataset[n]", "dataset[n + '']"),
+        "value_joined_key": VALUE_KEYS
+        + VALUE_LOOP.replace(
+            "joined = joined + element.dataset[n]",
+            "const key = n.startsWith('bs') ? n : 'bsZ'; joined = joined + element.dataset[key]",
+        ),
+        "value_literal_key": VALUE_KEYS + VALUE_LOOP.replace("dataset[n]", "dataset['bsZ']"),
+        "value_mutated_keys": VALUE_KEYS + "selected[0] = 'bsZ'; " + VALUE_LOOP,
+        "value_loop_write": VALUE_KEYS
+        + VALUE_LOOP.replace(
+            "joined = joined +", "element.removeAttribute('data-bs-z'); joined = joined +"
+        ),
+    }
+)
+
 
 def oracles(args):
     source = "".join(SOURCES.values())
@@ -271,8 +365,24 @@ def oracles(args):
                 if name == "dataset_loop_prefix_all":
                     selected = keys
                 selected = [key.removeprefix("bs") for key in selected]
-            number = name in ("dataset_filter_length", "dataset_loop")
-            if number:
+            values = [VALUE_TEXT.get(key, "x") if name in VALUE_SOURCES else "x" for key in keys]
+            number = name in (
+                "dataset_filter_length",
+                "dataset_loop",
+                "dataset_guarded_count",
+                "dataset_truthy_count",
+                "dataset_guard_alias_count",
+            )
+            if name in VALUE_SOURCES:
+                if name == "dataset_values_all":
+                    selected = keys
+                first = "".join(VALUE_TEXT.get(key, "x") + "|" for key in selected)
+                second = "".join(
+                    ("second" if key == "bsZ" else VALUE_TEXT.get(key, "x")) + "|"
+                    for key in selected
+                )
+                wanted[name].append(first + "~" + second)
+            elif number:
                 wanted[name].append(str(len(selected)))
             elif name in LOOP_SOURCES:
                 wanted[name].append("".join(key + "|" for key in selected))
@@ -283,11 +393,20 @@ def oracles(args):
                 if number or name in LOOP_SOURCES
                 else f"{name}(element).join('|')"
             )
+            observe = f"return {observation};"
+            if name in VALUE_SOURCES:
+                observe = f"""
+    const saved = {name}(element);
+    if (keys.indexOf('bsZ') >= 0) Object.defineProperty(target, 'bsZ', {{value: 'second'}});
+    const updated = {name}(element);
+    return saved + '~' + updated;
+"""
             source += f"""
 var {label} = (function() {{
     const keys = {json.dumps(keys)};
+    const values = {json.dumps(values)};
     const target = {{}};
-    for (const key of keys) Object.defineProperty(target, key, {{value: 'x', enumerable: true, configurable: true}});
+    for (let index = 0; index < keys.length; ++index) Object.defineProperty(target, keys[index], {{value: values[index], enumerable: true, configurable: true}});
     const dataset = new Proxy(target, {{ownKeys() {{ return keys.slice(); }} }});
     const element = {{dataset,
         setAttribute(key, value) {{
@@ -302,7 +421,7 @@ var {label} = (function() {{
             delete target.bsZ;
         }}
     }};
-    return {observation};
+    {observe}
 }})();
 """
     node = args.work / "dataset-node.js"
@@ -326,24 +445,55 @@ def client(symbol, owned, name):
     )
     call = "session.invoke(element)" if owned else f"{symbol}(element)"
     fixtures = ",".join(
-        "{" + ",".join(json.dumps(key, ensure_ascii=False) for key in attrs) + "}"
-        for attrs, _, _ in CASES[name]
+        "{"
+        + ",".join(
+            "{"
+            + json.dumps(attr, ensure_ascii=False)
+            + ","
+            + json.dumps(
+                VALUE_TEXT.get(key, "x") if name in VALUE_SOURCES else "x", ensure_ascii=False
+            )
+            + "}"
+            for attr, key in zip(attrs, keys)
+        )
+        + "}"
+        for attrs, keys, _ in CASES[name]
     )
-    number = name in ("dataset_filter_length", "dataset_loop")
+    number = name in (
+        "dataset_filter_length",
+        "dataset_loop",
+        "dataset_guarded_count",
+        "dataset_truthy_count",
+        "dataset_guard_alias_count",
+    )
     saved_type = (
         "double"
         if number
         else "std::string" if name in LOOP_SOURCES else "std::vector<std::string>"
     )
     observe = (
-        "std::cout << saved;"
-        if number or name in LOOP_SOURCES
-        else """
+        "std::cout << saved << '~' << updated;"
+        if name in VALUE_SOURCES
+        else (
+            "std::cout << saved;"
+            if number or name in LOOP_SOURCES
+            else """
         for (std::size_t i = 0; i < saved.size(); ++i) {
             if (i) std::cout << '|';
             std::cout << saved[i];
         }
         """
+        )
+    )
+    repeat = (
+        f"""
+            if (doc.read().has_attribute(node, doc.atoms().intern("data-bs-z"))) {{
+                assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern("data-bs-z"), "second"));
+            }}
+            updated = {call};
+        """
+        if name in VALUE_SOURCES
+        else ""
     )
     mutations = (
         """
@@ -354,19 +504,21 @@ def client(symbol, owned, name):
         else ""
     )
     return f"""
-    for (const auto & names : std::vector<std::vector<const char *>>{{{fixtures}}}) {{
+    for (const auto & attributes : std::vector<std::vector<std::pair<const char *, const char *>>>{{{fixtures}}}) {{
     for (node_ns ns : {{node_ns::html, node_ns::svg}}) {{
         {saved_type} saved{{}};
+        {'std::string updated;' if name in VALUE_SOURCES else ''}
         {{
             {setup}
             const auto node = doc.create_element(doc.atoms().intern("test"), ns);
             element_ref element{{&doc, node}};
-            for (const char * name : names) {{
-                assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern(name), "x"));
+            for (const auto & [name, value] : attributes) {{
+                assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern(name), value));
             }}
             assert(doc.set_attribute_ns(node, doc.atoms().intern("urn:ignored"), doc.atoms().intern("data-hidden"), "x"));
             assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern("data-Upper"), "x"));
             saved = {call};
+            {repeat}
             {mutations}
             assert(doc.set_attribute(node, doc.atoms().intern("data-after"), "x"));
             const auto other = doc.create_element(doc.atoms().intern("test"), node_ns::other);
@@ -374,6 +526,10 @@ def client(symbol, owned, name):
             const auto version = doc.version();
             bool rejected = false;
             try {{ (void){call}; }} catch (const std::invalid_argument &) {{ rejected = true; }}
+            assert(rejected && doc.version() == version);
+            element = {{}};
+            rejected = false;
+            try {{ (void){call}; }} catch (const std::exception &) {{ rejected = true; }}
             assert(rejected && doc.version() == version);
         }}
         {observe}
@@ -394,6 +550,8 @@ def main():
     vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     assert BOOTSTRAP_FILTER in vendor.read_text(), "Bootstrap dataset source pin changed"
     assert PREFIX in vendor.read_text(), "Bootstrap prefix source pin changed"
+    assert "t.dataset[n]" in vendor.read_text(), "Bootstrap live-value source pin changed"
+    assert BOOTSTRAP_GUARD in vendor.read_text(), "Bootstrap element-guard source pin changed"
     expected = oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -439,7 +597,10 @@ def main():
                         native = deduced
                     entries = dom.NATIVE.findall(native.read_text())
                     assert len(entries) == (
-                        1 if name in BODIES or name == "dataset_loop_prefix_all" else 2
+                        1
+                        if name in BODIES
+                        or name in ("dataset_loop_prefix_all", "dataset_values_all")
+                        else 2
                     ) and not dom.FUNCTION.search(native.read_text()), native.read_text()
                     entry = next(
                         symbol
@@ -452,6 +613,8 @@ def main():
                     if name in PREFIX_SOURCES:
                         assert ".starts_with(" in cpp and ".substr(" in cpp, cpp
                         assert not re.search(r"regex|RegExp", cpp), cpp
+                    if name in VALUE_SOURCES:
+                        assert "ctnative::dataset_value(" in cpp and ".at(" in cpp, cpp
                     assert not re.search(
                         r"shared_ptr|weak_ptr|nullable_scalar|std::variant|std::function", cpp
                     ), cpp
@@ -503,10 +666,21 @@ def main():
                 )
                 assert result.stdout.splitlines() == wanted and not result.stderr, result.stderr
     refusals = 0
-    for name, body in REFUSALS.items():
-        ir, contract = dom.prepare(
-            args, name, f"function {name}(element) {{ {body} }}", 1, entry_name=name
+    refused_sources = [
+        (name, f"function {name}(element) {{ {body} }}", 1) for name, body in REFUSALS.items()
+    ]
+    refused_sources.append(
+        (
+            "value_other_element",
+            "function value_other_element(element, other) { "
+            + VALUE_KEYS
+            + VALUE_LOOP.replace("element.dataset[n]", "other.dataset[n]")
+            + " }",
+            2,
         )
+    )
+    for name, source, parameters in refused_sources:
+        ir, contract = dom.prepare(args, name, source, parameters, entry_name=name)
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
                 dom.lower(
@@ -516,10 +690,81 @@ def main():
                         contract,
                         provider=provider,
                         initial_intrinsics=PREFIX_INTRINSICS,
-                        dataset_parameters=[0],
+                        dataset_parameters=list(range(parameters)),
                     ),
                     f"refuse-{name}-{provider}-{optimize}",
                     optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+    _, ir, contract = next(item for item in prepared if item[0] == "dataset_guarded_values")
+    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for optimize in (False, True):
+            for changes in ({"element_parameters": []}, {"dataset_parameters": []}):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        initial_intrinsics=ITERATION_INTRINSICS,
+                        dataset_parameters=[0],
+                    )
+                    | changes,
+                    f"guard-premise-{refusals}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+            for budget in (0, 64, 256):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        initial_intrinsics=ITERATION_INTRINSICS,
+                        dataset_parameters=[0],
+                    ),
+                    f"guard-budget-{refusals}",
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
+                )
+                refusals += 1
+    _, ir, contract = next(item for item in prepared if item[0] == "dataset_values")
+    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for optimize in (False, True):
+            for missing in ITERATION_INTRINSICS:
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        dataset_parameters=[0],
+                        initial_intrinsics=[
+                            name for name in ITERATION_INTRINSICS if name != missing
+                        ],
+                    ),
+                    f"value-premise-{refusals}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refusals += 1
+            for budget in (0, 64, 256):
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        contract,
+                        provider=provider,
+                        dataset_parameters=[0],
+                        initial_intrinsics=ITERATION_INTRINSICS,
+                    ),
+                    f"value-budget-{refusals}",
+                    optimize=optimize,
+                    max_steps=budget,
                     success=False,
                 )
                 refusals += 1

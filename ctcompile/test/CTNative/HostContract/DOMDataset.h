@@ -67,7 +67,7 @@ module {
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
                      !proof.isTokenList(read.getResult()) && !proof.isStringVectorLength(read) &&
-                     !proof.isStringVectorIndex(read);
+                     !proof.isStringVectorIndex(read) && !proof.datasetValueElement(read);
         });
         return empty;
     };
@@ -320,7 +320,8 @@ module {
         return !proof.proved() && !proof.entry() && proof.parameters().empty() &&
                !proof.isInitialIntrinsic(intrinsic) && !proof.isDataset(dataset.getResult()) &&
                !proof.isDatasetElement(dataset.getObject()) && !proof.method(method) &&
-               !proof.call(call);
+               !proof.call(call) && !proof.datasetValueElement(dataset) &&
+               !proof.datasetValueElement(method);
     };
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -397,7 +398,9 @@ module {
             empty &= !proof.call(call) && !proof.isStringPrefixRegExp(call);
         });
         input.walk([&](ctjs::LoadGlobalOp load) { empty &= !proof.isInitialIntrinsic(load); });
-        input.walk([&](ctjs::GetPropertyOp read) { empty &= !proof.method(read); });
+        input.walk([&](ctjs::GetPropertyOp read) {
+            empty &= !proof.method(read) && !proof.datasetValueElement(read);
+        });
         return empty;
     };
     auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);

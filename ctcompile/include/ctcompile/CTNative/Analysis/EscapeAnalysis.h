@@ -552,8 +552,8 @@ struct ArrayContentsEvidence {
 /// values refuse. A certified read-only CFG or scf.while header/body loop may replay with proved
 /// nonnegative integral Number initialization and proved positive integral Number Add steps
 /// (dynamic or static, with either operand order), or dynamic Sub of an original bounded
-/// negative Number literal (including literal Neg), or held Neg of a proved bounded
-/// positive Number, under a
+/// negative Number literal (including literal Neg), or a held bounded signed Number
+/// preserved through Plus/Neg, under a
 /// strict current own-array length guard (`index < length`, `length > index`,
 /// `!(index >= length)` or `!(length <= index)`), within the same
 /// work budget. The start and exact final

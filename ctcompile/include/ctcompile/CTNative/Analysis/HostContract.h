@@ -94,6 +94,8 @@ void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 // Only on a private, fingerprint-checked clone. The caller must reprove its
 // complete DOM entry after this bounded local-call normalization.
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps);
+llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
+                                      unsigned maxSteps);
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
 
@@ -184,6 +186,8 @@ public:
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
+    // Present own member from this element's immutable, uninvalidated key snapshot.
+    [[nodiscard]] mlir::Value datasetValueElement(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringPrefixRegExp(ctjs::CallOp call) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
@@ -217,6 +221,7 @@ private:
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
+    std::vector<std::pair<ctjs::GetPropertyOp, mlir::Value>> datasetValues;
     std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;

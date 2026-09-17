@@ -37,8 +37,13 @@ WIDE = r"""function readWideName(element) {
   return element.getAttribute('\ud800');
 }
 """
+# Annex B gives the block function a local binding; its self-copy is not a second export.
+HOST_LOCAL_FUNCTION_COPY = "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } host_refusal = host_refusal;"
+
 # Keep the original refusal sources byte-for-byte when admitting their graphs.
 CAPTURE_RETURNS = {
+    "helper_branch_call_in_arm": "function invalid(element) { function read(target) { function attribute(node) { return node.getAttribute('x'); } if (target.hasAttribute('x')) return attribute(target); return null; } return read(element); }\n",
+    "host_local_function_copy": "{\n" + HOST_LOCAL_FUNCTION_COPY + "\n}\n",
     "branch_optional_return": "function invalid(element) { const saved = element.getAttribute('x'); let value; if (saved === null) { value = null; } else { value = saved; } return value; }\n",
     "helper_optional_return": "function invalid(element) { function read(target) { const saved = target.getAttribute('x'); if (saved === null) return null; return saved; } return read(element); }\n",
     "capture_callable": "function invalid(element) { function read(target) { return target.getAttribute('x'); } function invoke() { return read(element); } return invoke(); }\n",
@@ -47,7 +52,11 @@ CAPTURE_RETURNS = {
     "helper_regex": "function invalid(element) { const F = t => t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); return element.getAttribute('data-bs-' + F('config')); }\n",
 }
 CAPTURE_SOURCE = "".join(
-    f"const {name} = (() => {{\n{source}return invalid;\n}})();\n"
+    (
+        source + "const host_local_function_copy = host_refusal;\n"
+        if name == "host_local_function_copy"
+        else f"const {name} = (() => {{\n{source}return invalid;\n}})();\n"
+    )
     for name, source in CAPTURE_RETURNS.items()
 )
 SOURCES = (
@@ -1013,12 +1022,13 @@ const names = [];
 assert.equal(readNames({getAttribute(name) { names.push(name); return name; }}), 'a\0b');
 assert.deepEqual(names, ['bad name', '', 'a\0b']);
 assert.equal(readWideName({getAttribute(name) { return name; }}), '\ud800');
-for (const entry of [readAttribute, savedAttribute, branch_optional_return, helper_optional_return, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
+for (const entry of [readAttribute, savedAttribute, helper_branch_call_in_arm, host_local_function_copy, branch_optional_return, helper_optional_return, capture_callable, capture_holder, capture_forwarded, helper_regex]) {
   const key = entry === readAttribute || entry === savedAttribute ? 'DATA-State' : entry === helper_regex ? 'data-bs-config' : 'x';
   for (const expected of [null, '', 'a\0b', '\u00e9']) {
     let value = expected;
     const calls = [];
     const element = {
+      hasAttribute(name) { calls.push('has:' + name); return name === key && value !== null; },
       getAttribute(name) {
         calls.push('get:' + name);
         return name === key ? value : null;
@@ -1034,7 +1044,9 @@ for (const entry of [readAttribute, savedAttribute, branch_optional_return, help
     };
     const result = entry(element, element);
     assert.equal(result, expected);
-    assert.deepEqual(calls, entry !== savedAttribute ? ['get:' + key] : [
+    assert.deepEqual(calls, entry === helper_branch_call_in_arm
+      ? (expected === null ? ['has:x'] : ['has:x', 'get:x'])
+      : entry !== savedAttribute ? ['get:' + key] : [
       'get:DATA-State', 'get:data-missing', 'set:DATA-State:after',
       'get:DATA-State', 'remove:DATA-State'
     ]);
@@ -1297,7 +1309,6 @@ HELPER_REFUSALS = {
     "helper_branch_callable_join": "function read(target) { function first(node) { return node.getAttribute('x'); } function second(node) { return node.getAttribute('y'); } let chosen; if (target.hasAttribute('x')) { chosen = first; } else { chosen = second; } return chosen(target); } return read(element);",
     "helper_branch_unused": "function read(target) { if (target.hasAttribute('x')) return true; return false; } return element.getAttribute('x');",
     "helper_branch_unknown_after_return": "function read(target) { if (target.hasAttribute('x')) return true; sideEffect(); return false; } return read(element);",
-    "helper_branch_call_in_arm": "function read(target) { function attribute(node) { return node.getAttribute('x'); } if (target.hasAttribute('x')) return attribute(target); return null; } return read(element);",
     "capture_reassigned": "let key = 'x'; function read() { return element.getAttribute(key); } key = 'y'; return read();",
     "capture_reassigned_later": "let key = 'x'; function read() { return element.getAttribute(key); } const result = read(); key = 'y'; return result;",
     "capture_child_write": "let key = 'x'; function read() { key = 'y'; return element.getAttribute(key); } return read();",
@@ -1460,7 +1471,7 @@ HOST_REFUSALS = {
     "host_wrapper_effect": "const key = 'x'; sideEffect(); function host_refusal(element) { return element.getAttribute(key); }",
     "host_wrapper_read": "const key = externalKey; function host_refusal(element) { return element.getAttribute(key); }",
     "host_wrapper_call": "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } host_refusal({});",
-    "host_duplicate_export": "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } host_refusal = host_refusal;",
+    "host_duplicate_export": "const key = 'x'; var host_refusal = function host_refusal(element) { return element.getAttribute(key); }; host_refusal = host_refusal;",
     "host_other_export": "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } function other(element) { return element.getAttribute(key); }",
     "host_factory_repeated": "const make = function() { function host_refusal(element) { return element.getAttribute('x'); } return host_refusal; }; var host_refusal = make(); const second = make();",
     "host_factory_reassigned": "var host_refusal = (function() { let key = 'x'; function host_refusal(element) { return element.getAttribute(key); } key = 'y'; key = 'z'; return host_refusal; })();",
@@ -2172,6 +2183,7 @@ def main():
         + """
 function makeElement(value) {
   return {
+    hasAttribute(name) { return name === 'x' && value !== null; },
     getAttribute(name) { return name === 'DATA-State' || name === 'x' || name === 'data-bs-config' ? value : null; },
     setAttribute(name, text) { value = text; },
     removeAttribute(name) { value = null; }
@@ -2211,7 +2223,7 @@ function makeElement(value) {
                 source,
                 count,
                 entry_name=(
-                    "invalid"
+                    ("host_refusal" if name == "host_local_function_copy" else "invalid")
                     if name in CAPTURE_RETURNS
                     else name if name in HELPER_CASES or name in HOST_CASES else None
                 ),
@@ -2219,6 +2231,8 @@ function makeElement(value) {
         )
         for name, source, count in SOURCES + BOOLEAN_SOURCES
     ]
+    local_copy = (args.work / "host_local_function_copy.raw.mlir").read_text()
+    assert local_copy.count('ctjs.store_global "host_refusal"') == 1, local_copy
     prepared.extend(numbers.prepare(args))
     prepared.extend(uri.prepare(args))
     prepared.extend(nullable_uri.prepare(args))
@@ -2359,6 +2373,9 @@ function makeElement(value) {
         ir, contract = dom.prepare(
             args, name, "{\n" + source + "\n}\n", 1, entry_name="host_refusal"
         )
+        if name == "host_duplicate_export":
+            raw = (args.work / f"{name}.raw.mlir").read_text()
+            assert raw.count('ctjs.store_global "host_refusal"') == 2, raw
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
                 diagnostic = dom.lower(

@@ -261,6 +261,13 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         return "native DOM source: " + llvm::toString(std::move(sourceError));
                     }
                     transformed.moduleSha256 = hostContractFingerprint(*composed);
+                    // Helper expansion resolves proved local cells and maps
+                    // helper formals back to the validated entry parameters.
+                    if (auto error =
+                            normalizeDOMElementGuards(*composed, transformed, hostMaxSteps)) {
+                        return "native DOM element guard: " + llvm::toString(std::move(error));
+                    }
+                    transformed.moduleSha256 = hostContractFingerprint(*composed);
                     if (auto error = normalizeDOMIteration(*composed, transformed, hostMaxSteps)) {
                         return "native DOM iteration: " + llvm::toString(std::move(error));
                     }
