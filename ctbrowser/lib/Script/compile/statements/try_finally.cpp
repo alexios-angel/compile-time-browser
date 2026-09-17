@@ -131,7 +131,7 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
     }
 
     // THE FINALLY, ONCE.
-    finally_context open = std::move(finallies_.back());
+    const finally_context open = std::move(finallies_.back());
     finallies_.pop_back();
     for (const std::size_t arrival : open.arrivals) { patch_here(arrival); }
     compile_stmt(finally_block);

@@ -104,7 +104,7 @@ void compiler_impl::compile_using_region(bool async, const std::function<void()>
     proto().emit(instruction{op::move, value_reg, caught_reg});
     set_kind(1);
 
-    finally_context open = std::move(finallies_.back());
+    const finally_context open = std::move(finallies_.back());
     finallies_.pop_back();
     using_stacks_.pop_back();
     for (const std::size_t arrival : open.arrivals) { patch_here(arrival); }

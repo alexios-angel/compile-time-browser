@@ -344,7 +344,7 @@ void install_array(context & cx) {
         // collector's roots - the hazard `map` and `sort` document at length.
         // `scratch` holds the pending VALUES and is rooted; the depths beside
         // them are plain doubles with nothing to trace.
-        value scratch = c.make_array();
+        const value scratch = c.make_array();
         const context::rooted keep_scratch(c, scratch);
         auto & pending = static_cast<array_object *>(scratch.as_heap())->items;
         std::vector<double> depths;
