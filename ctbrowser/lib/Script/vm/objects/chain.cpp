@@ -191,9 +191,31 @@ bool context::has_property(value target, value key) {
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "has");
+        if (throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[2] = {p->target, key};
-            return truthy(call(trap, args, p->handler));
+            const bool answered = truthy(call(trap, args, p->handler));
+            if (throw_pending()) { return false; }
+            // 10.5.7 step 9, the invariant: `false` over a target property that
+            // is non-configurable, or that a non-extensible target has at all,
+            // is the TypeError.
+            if (!answered) {
+                const std::string name = to_string(key);
+                property_descriptor held;
+                if (own_property(p->target, name, held)) {
+                    if ((held.has_configurable && !held.configurable) ||
+                        !is_extensible(p->target)) {
+                        throw_error("TypeError", "'has' on proxy: trap returned falsish for "
+                                                 "property '" +
+                                                     name +
+                                                     "' which exists in the proxy target as "
+                                                     "non-configurable, or the target is not "
+                                                     "extensible");
+                        return false;
+                    }
+                }
+            }
+            return answered;
         }
         return !lookup_property(p->target, to_string(key)).is_undefined();
     }

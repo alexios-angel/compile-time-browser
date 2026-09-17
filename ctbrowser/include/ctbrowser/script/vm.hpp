@@ -895,6 +895,9 @@ public:
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
     // See store_rejected_: a store from strict code asks this afterwards.
     void clear_store_rejected() noexcept { store_rejected_ = false; }
+    // Was the last store refused (a non-writable property, a `set` trap
+    // answering false, a non-extensible receiver)? Reflect.set's answer.
+    [[nodiscard]] bool store_rejected() const noexcept { return store_rejected_; }
     void strict_store_check(std::string_view name) {
         if (!store_rejected_) { return; }
         store_rejected_ = false;
@@ -948,7 +951,10 @@ public:
     // op::construct keeps its own inline path because it does not need a nested
     // interpreter loop; this is for the spread form and for `Reflect.construct`,
     // which both do.
-    [[nodiscard]] value construct(value callee, std::span<const value> args);
+    // `new_target` defaults to the callee (a plain `new`); a proxy's
+    // [[Construct]] and Reflect.construct pass their own.
+    [[nodiscard]] value construct(value callee, std::span<const value> args,
+                                  value new_target = value::undefined());
 
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
     // ToPrimitive (7.1.1) with a hint - "default", "number" or "string": the

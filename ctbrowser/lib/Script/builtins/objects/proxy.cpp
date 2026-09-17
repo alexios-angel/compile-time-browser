@@ -152,7 +152,11 @@ void install_proxy(context & cx) {
                 // this engine has, which carries no receiver.
                 c.clear_store_rejected();
                 c.store_index(walk, c.string(key), v);
-                return value::boolean(!c.throw_pending());
+                if (c.throw_pending()) { return value::undefined(); }
+                // 10.5.9 step 9: a trap answering false is the false here.
+                const bool refused = c.store_rejected();
+                c.clear_store_rejected();
+                return value::boolean(!refused);
             }
             found = c.own_property(walk, key, own);
             if (c.throw_pending()) { return value::undefined(); }
@@ -229,17 +233,9 @@ void install_proxy(context & cx) {
         std::vector<value> args;
         if (!list_from(c, arg_at(a, 1), args, "construct")) { return value::undefined(); }
         const context::rooted_values keep{c, args};
-        const value made = c.construct(a[0], args);
-        // GetPrototypeFromConstructor off newTarget (10.1.14): context::construct
-        // takes none, so an ordinary object a built-in made is re-parented
-        // afterwards - what `Reflect.construct(Error, [], NewTarget)` observes.
-        if (a.size() > 2 && !a[2].strict_equals(a[0]) && made.is_object() && !c.throw_pending()) {
-            const value proto = c.lookup_property(a[2], "prototype");
-            if (proto.is_object_like()) {
-                static_cast<object_object *>(made.as_heap())->prototype = proto;
-            }
-        }
-        return made;
+        // Construct(target, args, newTarget): the instance is made from
+        // newTarget's prototype (10.1.14), and a body sees it as new.target.
+        return c.construct(a[0], args, a.size() > 2 ? a[2] : a[0]);
     });
     // 28.1.1 Reflect.apply: a non-callable target is a TypeError BEFORE the
     // list is read.
@@ -343,6 +339,7 @@ void install_proxy(context & cx) {
         if (a[0].is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(a[0].as_heap());
             const value trap = c.proxy_trap(a[0], "preventExtensions");
+            if (c.throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[1] = {p->target};
                 const bool ok = context::truthy(c.call(trap, args, p->handler));

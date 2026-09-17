@@ -287,11 +287,27 @@ std::string context::describe_thrown(value thrown) {
     return "exception: " + to_string(thrown);
 }
 
+// GetMethod(handler, name) (7.3.10) with 10.5's step 1-3 around it: a revoked
+// proxy (null handler) is the TypeError; the trap is read through [[Get]], so
+// one inherited from the handler's prototype or answered by a getter counts
+// (test262 drives most traps that way); null/undefined is "no trap" and
+// anything else that is not callable is the TypeError. THE CALLER CHECKS
+// throw_pending() before forwarding to the target: undefined here means
+// either "no trap" or "a throw is in flight".
 value context::proxy_trap(value proxy, const std::string & name) {
     auto * p = static_cast<proxy_object *>(proxy.as_heap());
-    if (!p->handler.is_object()) { return value::undefined(); }
-    value * found = static_cast<object_object *>(p->handler.as_heap())->find(name);
-    return found == nullptr ? value::undefined() : *found;
+    if (!p->handler.is_object_like()) {
+        throw_error("TypeError", "Cannot perform '" + name + "' on a proxy that has been revoked");
+        return value::undefined();
+    }
+    const value trap = lookup_property(p->handler, name);
+    if (throw_pending()) { return value::undefined(); }
+    if (trap.is_nullish()) { return value::undefined(); }
+    if (!trap.is_callable()) {
+        throw_error("TypeError", "proxy trap '" + name + "' is not a function");
+        return value::undefined();
+    }
+    return trap;
 }
 
 value context::spread_values(value v) {

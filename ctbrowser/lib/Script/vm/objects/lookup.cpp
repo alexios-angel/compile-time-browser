@@ -94,6 +94,7 @@ value context::get_with_receiver(value base, const std::string & name, value rec
         if (at.is_kind(heap_kind::proxy)) {
             auto * p = static_cast<proxy_object *>(at.as_heap());
             const value trap = proxy_trap(at, "get");
+            if (throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[3] = {p->target, key_value(name), receiver};
                 return call(trap, args, p->handler);
@@ -203,11 +204,39 @@ value context::lookup_property(value target, const std::string & name) {
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "get");
+        if (throw_pending()) { return value::undefined(); }
         if (trap.is_callable()) {
             const value args[3] = {p->target, key_value(name), target};
-            return call(trap, args, p->handler);
+            const value answered = call(trap, args, p->handler);
+            if (throw_pending()) { return value::undefined(); }
+            // 10.5.8 steps 8-10, the invariants: over a non-configurable target
+            // property the answer must be a non-writable data property's own
+            // value, and undefined for an accessor with no getter.
+            property_descriptor held;
+            if (own_property(p->target, name, held) && held.has_configurable &&
+                !held.configurable) {
+                if (held.is_data() && held.has_writable && !held.writable &&
+                    !held.held.same_value(answered)) {
+                    throw_error("TypeError", "'get' on proxy: property '" + name +
+                                                 "' is a read-only and non-configurable data "
+                                                 "property on the proxy target but the proxy did "
+                                                 "not return its actual value");
+                    return value::undefined();
+                }
+                if (held.is_accessor() && !held.getter.is_callable() && !answered.is_undefined()) {
+                    throw_error("TypeError",
+                                "'get' on proxy: property '" + name +
+                                    "' is a non-configurable accessor property on the "
+                                    "proxy target and does not have a getter function, "
+                                    "but the trap did not return 'undefined'");
+                    return value::undefined();
+                }
+            }
+            return answered;
         }
-        return lookup_property(p->target, name);
+        // 10.5.8 step 6: target.[[Get]](P, Receiver) with the PROXY as the
+        // receiver - a getter on the target sees the proxy as `this`.
+        return get_with_receiver(p->target, name, target);
     }
     // Own properties first: a page that writes `arr.length = 0` or shadows a
     // method on one object must not be overridden by the prototype.

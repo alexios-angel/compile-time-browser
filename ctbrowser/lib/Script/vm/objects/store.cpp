@@ -175,6 +175,7 @@ void context::store_property(value target, const std::string & name, value v) {
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         const value trap = proxy_trap(target, "set");
+        if (throw_pending()) { return; }
         if (trap.is_callable()) {
             const value args[4] = {p->target, key_value(name), v, target};
             // 10.5.9 step 9: a trap answering false is a REJECTED write -
@@ -182,6 +183,29 @@ void context::store_property(value target, const std::string & name, value v) {
             // An HTMLCollection's index is the everyday case.
             if (!truthy(call(trap, args, p->handler)) && !throw_pending()) {
                 store_rejected_ = true;
+                return;
+            }
+            if (throw_pending()) { return; }
+            // Steps 10-12, the invariants: a true answer over a target property
+            // that is non-configurable and either non-writable data holding a
+            // different value, or an accessor with no setter, is the TypeError.
+            property_descriptor held;
+            if (own_property(p->target, name, held) && held.has_configurable &&
+                !held.configurable) {
+                if (held.is_data() && held.has_writable && !held.writable &&
+                    !held.held.same_value(v)) {
+                    throw_error("TypeError", "'set' on proxy: trap returned truish for property '" +
+                                                 name +
+                                                 "' which exists in the proxy target as a "
+                                                 "non-configurable and non-writable data "
+                                                 "property with a different value");
+                } else if (held.is_accessor() && !held.setter.is_callable()) {
+                    throw_error("TypeError", "'set' on proxy: trap returned truish for property '" +
+                                                 name +
+                                                 "' which exists in the proxy target as a "
+                                                 "non-configurable and non-writable "
+                                                 "accessor property without a setter");
+                }
             }
             return;
         }

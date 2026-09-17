@@ -118,20 +118,33 @@ void context::new_callee_type_error(const function_proto & fn, std::string_view 
     throw_error("TypeError", "`new` on " + describe_callee(fn, origin, callee));
 }
 
-value context::construct(value callee, std::span<const value> args) {
-    // `new proxy(...)` runs the construct trap with (target, argsArray). p5.js
-    // has exactly one of these and it runs at the bundle's top level:
-    // `p5.renderers['p2d-p3'] = new Proxy(Renderer2D, {construct(...) {...}})`.
+value context::construct(value callee, std::span<const value> args, value new_target) {
+    // `new C(...)` is Construct(C, args, C): new.target is the callee unless a
+    // caller with one of its own - a proxy forwarding, Reflect.construct -
+    // says otherwise.
+    if (new_target.is_undefined()) { new_target = callee; }
+    // 10.5.13 [[Construct]]: `new proxy(...)` runs the construct trap with
+    // (target, argsArray, newTarget) and its answer must be an object; with no
+    // trap, Construct(target, args, newTarget). p5.js has exactly one of these
+    // and it runs at the bundle's top level: `p5.renderers['p2d-p3'] = new
+    // Proxy(Renderer2D, {construct(...) {...}})`.
     if (callee.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(callee.as_heap());
         const value trap = proxy_trap(callee, "construct");
+        if (throw_pending()) { return value::undefined(); }
         if (trap.is_callable()) {
             const value list = make_array();
             static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
-            const value trap_args[2] = {p->target, list};
-            return call(trap, trap_args, p->handler);
+            const value trap_args[3] = {p->target, list, new_target};
+            const value made = call(trap, trap_args, p->handler);
+            if (throw_pending()) { return value::undefined(); }
+            if (!made.is_object_like()) {
+                throw_error("TypeError", "proxy [[Construct]] must return an object");
+                return value::undefined();
+            }
+            return made;
         }
-        return construct(p->target, args);
+        return construct(p->target, args, new_target);
     }
     if (!callee.is_callable()) {
         raise("attempted to construct a non-function");
@@ -141,7 +154,9 @@ value context::construct(value callee, std::span<const value> args) {
         throw_error("TypeError", describe_new_target(callee) + " is not a constructor");
         return value::undefined();
     }
-    const value self = make_instance(callee);
+    // OrdinaryCreateFromConstructor off NEW.TARGET (10.1.13): the instance's
+    // prototype is new.target's, which is the callee's own for a plain `new`.
+    const value self = make_instance(new_target.is_object_like() ? new_target : callee);
     // THE INSTANCE IS IN A C++ LOCAL FOR THE REST OF THIS FUNCTION, across a
     // field-initialiser run and a constructor body - both of which run user
     // JavaScript and can collect. Nothing rooted it, and under gc_stress that
@@ -158,7 +173,10 @@ value context::construct(value callee, std::span<const value> args) {
             std::vector<value> all{nat->retained.begin() + 3, nat->retained.end()};
             all.insert(all.end(), args.begin(), args.end());
             const rooted_values keep_all{*this, all};
-            return construct(*target, all);
+            // 10.4.1.2 step 5: a newTarget that was the bound function itself
+            // becomes the target; any other one is passed along.
+            return construct(*target, all,
+                             new_target.strict_equals(callee) ? value::undefined() : new_target);
         }
         std::vector<value> copy{args.begin(), args.end()};
         // Rooted for the same reason invoke() roots a native's arguments: from
@@ -185,6 +203,9 @@ value context::construct(value callee, std::span<const value> args) {
     // is told it is constructing. The ABI hands that decision to
     // ct_aot_return_value, and passing false would make `new C()` on a compiled
     // constructor evaluate to whatever the body happened to return.
+    // AND new.target GOES WITH IT: invoke consumes pending_new_target_ into
+    // the frame, as op::construct sets fresh.new_target on its own path.
+    pending_new_target_ = new_target;
     const value produced = invoke(callee, args, self, /*constructing*/ true);
     return produced.is_object_like() ? produced : self;
 }
