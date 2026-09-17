@@ -1663,6 +1663,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (original && offset && *offset <= *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original - *offset;
+                    } else if (original && number && *original < *number) {
+                        // A negative snapshot requires exact Number operands,
+                        // never the coercible String offset accepted above.
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.negativeIntegerNumber = *number - *original;
                     } else if (const auto magnitude = right.negativeIntegerNumber
                                                           ? right.negativeIntegerNumber
                                                           : boundedNumber(rhs, true);

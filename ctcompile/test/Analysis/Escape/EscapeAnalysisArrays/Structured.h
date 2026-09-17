@@ -625,6 +625,51 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(carriedNegative, "ctjs.binary add %one, %one",
                            "ctjs.constant #ctjs.number<4751297606873776128>"),
                    "%index = %zero", "%index = %one"));
+    const auto subSnapshot =
+        replace(savedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
+    rows.push_back(
+        {.what = "structured Sub snapshots retain their child after source length shrink",
+         .body = subSnapshot,
+         .arrays = "a:[x,y]; seed:[]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
+    rows.push_back({.what = "structured Sub snapshots discharge only unreturned children",
+                    .body = replace(subSnapshot, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "zero-trip structured Sub snapshots preserve the original result",
+                    .body = replace(replace(subSnapshot, "  ctjs.append %y to %a\n", ""),
+                                    "%index = %zero", "%index = %one"),
+                    .arrays = "a:[x]; seed:[]",
+                    .exit = "zero -> {}"});
+    const auto carriedSub =
+        replace(carriedNegative, "unary neg %magnitude", "binary sub %one, %magnitude");
+    rows.push_back({.what = "structured Sub snapshots preserve exact reordered transport",
+                    .body = carriedSub,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject("structured Sub snapshots cannot change on the backedge",
+           replace(carriedSub, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("structured Add cannot borrow a negative Sub snapshot",
+           replace(carriedSub, "binary sub %i, %d", "binary add %i, %d"));
+    for (const std::string producer : {"binary sub %zero, %zero", "binary sub %magnitude, %zero"}) {
+        reject("structured Sub snapshots preserve the zero and positive stride refusals",
+               replace(subSnapshot, "binary sub %zero, %magnitude", producer));
+    }
+    reject("structured Sub cannot infer a negative snapshot from a coercible String",
+           replace(carriedSub, "binary add %one, %one", "constant #ctjs.string<\"2\">"));
+    reject("structured negative Sub snapshots cannot be own indices",
+           replace(subSnapshot, "%base[%i]", "%base[%unit]"), ArrayContentsFailure::UnknownIndex);
+    reject("repeated structured Sub producers need independent invariance",
+           replace(replace(subSnapshot, "  %unit = ctjs.binary sub %zero, %magnitude\n", ""),
+                   "    %step =", "    %unit = ctjs.binary sub %zero, %magnitude\n    %step ="));
+    reject("structured negative Sub snapshots still bound the last exact update",
+           replace(replace(replace(carriedSub, "binary sub %one, %magnitude",
+                                   "binary sub %zero, %magnitude"),
+                           "binary add %one, %one", "constant #ctjs.number<4751297606873776128>"),
+                   "%index = %zero", "%index = %one"));
     for (const std::string unary : {"plus", "neg"}) {
         const std::string operation = unary == "plus" ? "sub" : "add";
         const std::string makeSigned = "  %unit = ctjs.unary " + unary + " %negative\n";
