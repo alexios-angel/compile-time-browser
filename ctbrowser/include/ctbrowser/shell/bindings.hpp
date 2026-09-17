@@ -565,6 +565,14 @@ private:
     // `bindings/exceptions.cpp` owns the exception hierarchy every DOM method
     // throws through, `bindings/css.cpp` the `CSS` namespace object.
     void install_dom_exception(context & cx);
+    // `AbortController` and `AbortSignal`, DOM §3.2 - bindings/abort.cpp. A
+    // signal is an EventTarget; aborting one removes every listener added
+    // with it, fires `abort`, and reaches the signals `AbortSignal.any` made
+    // from it. AFTER install_event_interfaces and install_dom_exception.
+    void install_abort(context & cx);
+    [[nodiscard]] value make_abort_signal(context & cx);
+    [[nodiscard]] bool is_abort_signal(value v) const;
+    void signal_abort(context & cx, value signal, value reason);
     // A DOMException instance with the right `name`, `code` and `message`, on
     // `DOMException.prototype` - which is what `assert_throws_dom` checks and
     // what `context::throw_error` cannot build, because an engine-raised error
@@ -1880,6 +1888,8 @@ private:
     // `EventTarget.prototype`, where the three methods a standalone target
     // inherits live.
     value event_target_prototype_;
+    // AbortSignal.prototype, marked as a root like the two above.
+    value abort_signal_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
     // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not

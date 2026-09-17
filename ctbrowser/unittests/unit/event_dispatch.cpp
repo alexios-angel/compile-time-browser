@@ -584,6 +584,51 @@ void test_a_made_documents_nodes_have_a_path_that_ends_at_it() {
 
 } // namespace
 
+// AbortSignal IS AN EVENT TARGET (DOM 3.2): aborting fires `abort` at it once,
+// with the reason given or an AbortError, and the statics - `abort()` already
+// aborted and silent, `timeout()` a TimeoutError on the page's own timer, and
+// `any()` following its sources - answer the shapes a page checks.
+void test_abort_signal() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        var ac = new AbortController();
+        var s = ac.signal;
+        log += (s instanceof AbortSignal) + ',' + (s instanceof EventTarget) + ';';
+        var fired = 0;
+        s.addEventListener('abort', function (e) { fired++; log += e.type + ':' + (e.target === s) + ';'; });
+        s.onabort = function () { fired++; };
+        ac.abort();
+        ac.abort();
+        log += fired + ',' + s.aborted + ',' + s.reason.name + ';';
+        var thrown = '';
+        try { s.throwIfAborted(); } catch (e) { thrown = e.name; }
+        log += thrown + ';';
+        var pre = AbortSignal.abort('why');
+        log += pre.aborted + ',' + pre.reason + ';';
+        var a = new AbortController(), b = new AbortController();
+        var both = AbortSignal.any([a.signal, b.signal]);
+        var anyFired = 0;
+        both.addEventListener('abort', function () { anyFired++; });
+        b.abort('b first');
+        a.abort('a second');
+        log += both.aborted + ',' + both.reason + ',' + anyFired + ';';
+        var t = AbortSignal.timeout(20);
+        t.addEventListener('abort', function () { log += 'timeout:' + t.reason.name + ';'; });
+        var bad = '';
+        try { AbortSignal.timeout(-1); } catch (e) { bad = e.name; }
+        log += bad + ';';
+        function report() { console.log(log); }
+      </script></body></html>)");
+    check(page.script_error().empty(), "the abort script ran: " + page.script_error());
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "true,true;abort:true;2,true,AbortError;AbortError;true,why;"
+                                 "true,b first,1;TypeError;timeout:TimeoutError;",
+          "AbortSignal aborts once, with a reason, through any() and timeout(): " +
+              log_of(page).back());
+}
+
 int main() {
     test_a_made_documents_nodes_have_a_path_that_ends_at_it();
     test_click_dispatch();
@@ -595,5 +640,6 @@ int main() {
     test_the_event_interface_hierarchy();
     test_dispatch_refuses_and_binds_this();
     test_passive_listeners_and_a_throwing_one();
+    test_abort_signal();
     REPORT("event_dispatch");
 }

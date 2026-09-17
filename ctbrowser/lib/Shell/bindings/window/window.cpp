@@ -123,47 +123,8 @@ void dom_bindings::install_window(context & cx) {
     storage("localStorage");
     storage("sessionStorage");
 
-    // `new AbortController()`. p5.js makes one in its constructor and passes
-    // its signal to every listener it installs, so that removing a sketch can
-    // remove them all at once.
-    //
-    // The signal is carried and honoured by removeEventListener via `abort`;
-    // TODO: aborting should cancel an in-flight fetch once fetch stops blocking
-    // the frame. Today there is nothing in flight to cancel.
-    // what is NOT modelled is aborting an in-flight fetch, because a fetch here
-    // does not overlap with anything. A page that aborts one gets a request
-    // that already finished, which is a difference worth knowing about.
-    cx.define_native("AbortController", [this](context & c, std::span<value>) {
-        auto * controller = c.allocate<script::object_object>();
-        auto * signal = c.allocate<script::object_object>();
-        signal->set("aborted", value::boolean(false));
-        signal->set("reason", value::undefined());
-        const value signal_value = value::object(signal);
-        controller->set("signal", signal_value);
-        auto * abort = c.allocate<script::native_object>(
-            "abort", [this, signal_value](context & inner, std::span<value> args) {
-                auto * s = static_cast<script::object_object *>(signal_value.as_heap());
-                s->set("aborted", value::boolean(true));
-                s->set("reason", arg(args, 0));
-                // Every listener registered with this signal goes.
-                std::erase_if(listeners_, [&](const listener & l) {
-                    return l.abort_signal.is_heap() &&
-                           l.abort_signal.as_heap() == signal_value.as_heap();
-                });
-                (void)inner;
-                return value::undefined();
-            });
-        // THE SIGNAL IS IN A C++ CAPTURE AND NOWHERE ELSE THE COLLECTOR LOOKS.
-        // It is a property of the CONTROLLER, so the pair survives as long as
-        // the controller does - but a page that keeps only `abort` (or only
-        // the signal and `abort`, having dropped the controller) leaves this
-        // lambda holding the sole reference, and abort() then writes `aborted`
-        // into freed memory. Found by the sweep of every native capture list,
-        // not by a failing test. See native_object::retained.
-        abort->retained.push_back(signal_value);
-        controller->set("abort", value::object(abort));
-        return value::object(controller);
-    });
+    // `AbortController` and `AbortSignal` are bindings/abort.cpp, installed
+    // after the event interfaces they build on.
 
     // `new Event(type)` and `window.dispatchEvent(event)`.
     //

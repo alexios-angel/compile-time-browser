@@ -131,6 +131,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(event_prototype_);
     mark(custom_event_prototype_);
     mark(event_target_prototype_);
+    mark(abort_signal_prototype_);
     // DOMException.prototype, for the same reason: `assert_throws_dom`
     // requires `e.constructor === DOMException`, and a prototype the
     // collector could not see would break that on the first sweep.
@@ -164,6 +165,8 @@ void dom_bindings::install(context & cx) {
     install_computed_style(cx);
     // BEFORE anything that may throw one.
     install_dom_exception(cx);
+    // AFTER both: a signal is an EventTarget and aborts with a DOMException.
+    install_abort(cx);
     install_css_interface(cx);
     install_mutation_observer(cx);
     install_range(cx);
