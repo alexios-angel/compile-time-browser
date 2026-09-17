@@ -446,7 +446,11 @@ namespace detail {
             continue;
         }
         const bool is_ident = ascii_iequals(fn, "ident");
-        if (!is_ident && !ascii_iequals(fn, "inherit")) { continue; }
+        // `var()` and `inherit()` both open with exactly one custom property
+        // name (CSS Variables 1 §3: `var( <custom-property-name> ,
+        // <declaration-value>? )`) - `var()`, `var({})`, `var(, 10px)` and
+        // `var(--x {--y})` are all syntax errors (var-parsing.html).
+        if (!is_ident && !ascii_iequals(fn, "inherit") && !ascii_iequals(fn, "var")) { continue; }
         // Everything about the argument list that either grammar asks: how many
         // top-level commas there are, what the first argument's significant
         // tokens are, and whether a `{}` block sits at the top of it.
@@ -480,7 +484,7 @@ namespace detail {
             // A CUSTOM PROPERTY NAME and nothing else: `inherit(!!, foo)` names
             // no property, and `inherit(--x, foo)` has its fallback after the
             // comma rather than beside the name.
-            if (commas > 1 || first.size() != 1) { return false; }
+            if ((commas > 1 && !ascii_iequals(fn, "var")) || first.size() != 1) { return false; }
             const css_token & name = ts.tokens[first.front()];
             if (name.type != token_type::ident || !ts.text_of(name).starts_with("--")) {
                 return false;
