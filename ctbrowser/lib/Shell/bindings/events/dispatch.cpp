@@ -1459,6 +1459,11 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
         // `this` of the outer call is the element: the innermost object
         // environment of the chain.
         if (outer.is_callable()) { made = cx.call(outer, scope, self); }
+    } else {
+        // Step 11's "if body is not parsable... report the exception": the
+        // window hears the SyntaxError, as it hears a script's, and the
+        // handler is null (compile-error-in-attribute.html).
+        (void)dispatch_error("uncaught SyntaxError: " + compiled.error);
     }
     object->define(source_slot(name), cx.string(source), script::attr_none);
     object->define(compiled_slot(name), made, script::attr_none);
