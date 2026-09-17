@@ -204,6 +204,78 @@ void test_a_page_without_a_definition_is_untouched() {
              "TypeError;true");
 }
 
+// A CUSTOMIZED BUILT-IN from `createElement(tag, {is})`, and a clone of one:
+// DOM's "create an element" constructs through the class synchronously for
+// createElement and enqueues an upgrade for a clone, detached as it is
+// (builtin-coverage.html, 333 subtests at 9cd0a9e4).
+void test_create_element_with_is_and_clone_node() {
+    CHECK_EQ(said("<html><body><div id=c></div><script>"
+                  "var log = [];"
+                  "class A extends HTMLAnchorElement {"
+                  "  constructor() { super(); log.push('ctor'); }"
+                  "  connectedCallback() { log.push('in'); }"
+                  "}"
+                  "customElements.define('my-a', A, {extends: 'a'});"
+                  "var a = document.createElement('a', {is: 'my-a'});"
+                  "alert((a instanceof A) + ':' + a.localName + ':' + a.getAttribute('is'));"
+                  "alert(a.cloneNode().constructor === A);"
+                  "document.getElementById('c').innerHTML = '<a is=\"my-a\" id=x></a>';"
+                  "var x = document.getElementById('x');"
+                  "alert((x instanceof A) + ':' + (x.cloneNode(true).constructor === A));"
+                  "var d = document.createElement('div');"
+                  "d.innerHTML = '<a is=\"my-a\"></a>';"
+                  "alert(d.firstChild instanceof A);"
+                  "alert(log.join(','));"
+                  "</script></body></html>"),
+             "true:a:my-a;true;true:true;true;ctor,ctor,ctor,in,ctor,ctor");
+}
+
+// HTML 4.13.4's element definition reads the constructor in the order the
+// specification lists, a prototype that is a function or a Proxy is an
+// object, and an arrow function is not a constructor.
+void test_define_reads_the_constructor_in_spec_order() {
+    CHECK_EQ(said("<html><body><script>"
+                  "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
+                  "var calls = [];"
+                  "var C = function () {};"
+                  "C.prototype = HTMLElement;"
+                  "var P = new Proxy(C, { get: function (t, n) { calls.push(n); return t[n]; } });"
+                  "alert(threw(function(){ customElements.define('x-p', P); }));"
+                  "alert(calls.join(','));"
+                  "alert(threw(function(){ customElements.define('x-q', () => {}); }));"
+                  "alert(threw(function(){ customElements.define('x-r', class extends "
+                  "HTMLElement {}, {extends: 'bgsound'}); }));"
+                  "var w1 = customElements.whenDefined('x-w');"
+                  "alert(w1 === customElements.whenDefined('x-w'));"
+                  "</script></body></html>"),
+             "ok;prototype,disabledFeatures,formAssociated;TypeError;NotSupportedError;true");
+}
+
+// AN UPGRADE THAT FAILS: the constructor's exception is reported at the
+// window, the element's state is `failed`, nothing later re-upgrades it, and a
+// second `super()` in one upgrade is an InvalidStateError. A `new` that has no
+// definition is a TypeError even when a parent class has one.
+void test_upgrade_failure_is_reported_and_final() {
+    CHECK_EQ(said("<html><body><x-bad id=b></x-bad><x-two id=t></x-two><script>"
+                  "window.addEventListener('error', function (e) {"
+                  "  alert('reported:' + (e.error && e.error.message)); });"
+                  "class Bad extends HTMLElement {"
+                  "  constructor() { super(); throw new Error('boom'); }"
+                  "  connectedCallback() { alert('connected'); }"
+                  "}"
+                  "customElements.define('x-bad', Bad);"
+                  "var b = document.getElementById('b');"
+                  "alert(b instanceof Bad);"
+                  "b.remove(); document.body.appendChild(b);"
+                  "class Two extends HTMLElement {}"
+                  "customElements.define('x-two', Two);"
+                  "alert(document.getElementById('t') instanceof Two);"
+                  "class Sub extends Two {}"
+                  "try { new Sub(); alert('made'); } catch (e) { alert(e.name); }"
+                  "</script></body></html>"),
+             "reported:boom;true;true;TypeError");
+}
+
 } // namespace
 
 int main() {
@@ -215,5 +287,8 @@ int main() {
     test_attribute_changed_follows_observed_attributes();
     test_when_defined_resolves_on_define();
     test_a_page_without_a_definition_is_untouched();
+    test_create_element_with_is_and_clone_node();
+    test_define_reads_the_constructor_in_spec_order();
+    test_upgrade_failure_is_reported_and_final();
     REPORT("custom_elements");
 }

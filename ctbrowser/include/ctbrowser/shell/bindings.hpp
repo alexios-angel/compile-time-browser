@@ -1008,11 +1008,36 @@ public:
     // before returning, which is what [CEReactions] means. Returns on the first
     // line when nothing was ever defined.
     void react_custom_elements();
+    // A SUBTREE A NATIVE JUST MADE - cloneNode, importNode, a fragment parse
+    // into a detached element: DOM "create an element" enqueues an upgrade for
+    // every candidate it makes whether or not the result is connected, and
+    // the scan cannot see a detached subtree it has never been told about.
+    void upgrade_created_subtree(node_id root);
+    // THIS DOCUMENT'S OWN `customElements`. A frame's document has a browsing
+    // context and so a registry of its own (HTML 4.13.3) even though the realm
+    // - HTMLElement, every prototype - is the page's: frames.cpp hangs this
+    // on `contentWindow`, and asking for it marks the document as a frame's.
+    // The primary's is the `customElements` global.
+    [[nodiscard]] value custom_elements_registry(context & cx);
 
 private:
+    // ONE CustomElementRegistry: the page's, a frame document's, or a scoped
+    // one a page made with `new CustomElementRegistry()` (HTML 4.13.3) -
+    // which belongs to no document, so nothing is looked up in it and only
+    // `new C()` reaches its definitions. Owned by the primary, so a pointer
+    // is stable for the life of the page.
+    struct custom_element_registry {
+        dom_bindings * document = nullptr; // whose global registry, or null
+        value object;                      // the JS CustomElementRegistry
+        flat_map<std::string, value> when_defined;
+        bool running = false; // HTML 4.13.4's "element definition is running"
+    };
     struct custom_element_definition {
         std::string name;
         std::string local_name; // the `extends` name, or `name` itself
+        // THE REGISTRY IT WAS DEFINED IN. Every definition of the realm lives
+        // in the primary's vector, so an index means the same thing everywhere.
+        custom_element_registry * registry = nullptr;
         value constructor;
         value prototype;
         // The lifecycle callbacks, captured at define time as the
@@ -1022,66 +1047,190 @@ private:
         value adopted;
         value attribute_changed;
         value connected_move;
+        value form_associated_callback;
+        value form_reset;
+        value form_disabled;
+        value form_state_restore;
         std::vector<std::string> observed_attributes;
+        bool form_associated = false;
+        bool disable_internals = false;
+        bool disable_shadow = false;
+        // HTML 4.13.4's CONSTRUCTION STACK: the element an upgrade is running
+        // the constructor for, and whether `super()` has reached the HTML
+        // element constructor for it yet (the "already constructed marker").
+        struct construction {
+            node_id element;
+            bool constructed = false;
+        };
+        std::vector<construction> construction_stack;
     };
     // ONE UPGRADED OR CONSTRUCTED ELEMENT AS IT WAS, which is what a reaction
     // is a difference from - the same shape record_mutations diffs against.
     struct custom_element_state {
+        // HTML 4.13.1's custom element state, the three that matter here: an
+        // upgrade that threw is `failed` and is never tried again, one whose
+        // constructor is running is `precustomized`, and `custom` is an
+        // element whose callbacks fire.
+        enum class status : std::uint8_t {
+            failed,
+            precustomized,
+            custom
+        };
         std::size_t definition = 0;
+        status state = status::custom;
         bool connected = false;
-        bool visited = false; // scratch for one scan
+        std::uint32_t seen = 0; // the scan generation that last walked it
+        // A FORM-ASSOCIATED element's form owner and disabledness as they
+        // were, which formAssociatedCallback and formDisabledCallback are a
+        // difference from (HTML 4.13.7.2).
+        bool disabled = false;
         node_id parent;
-        std::vector<std::pair<atom, std::string>> attributes; // observed only
+        node_id form;
+        std::vector<attribute> attributes; // observed only
     };
     struct custom_element_reaction {
         enum class kind : std::uint8_t {
             upgrade,
             connected,
             disconnected,
+            adopted,
             connected_move,
-            attribute_changed
+            attribute_changed,
+            form_associated,
+            form_disabled
         };
         node_id target;
+        std::size_t definition = 0;
         kind what = kind::upgrade;
+        node_id form;      // formAssociatedCallback's form, or none
+        bool flag = false; // formDisabledCallback's disabled
         // Strings rather than `value`s: a reaction waits in this queue while
         // the ones before it run script, and nothing would root a heap string.
-        std::string name;
+        std::string name; // the attribute's LOCAL name
+        std::string ns;   // its namespace, "" for none
         std::string old_value;
         std::string new_value;
         bool has_old = false;
         bool has_new = false;
+        // adoptedCallback's two documents: the `document` values of the two
+        // bindings, which are roots already.
+        value old_document;
+        value new_document;
     };
 
     void install_custom_elements(context & cx);
-    // `document.createElement(name)`: a defined name is constructed through
-    // the author's class, anything else is a plain node wrapped.
-    [[nodiscard]] value create_html_element(context & cx, const std::string & name);
+    // WHERE THE DEFINITIONS LIVE: the primary's vector, whichever registry
+    // took them. A document a page made (createHTMLDocument, DOMParser) has
+    // no browsing context and so no registry (HTML 4.13.3) - it never
+    // upgrades a candidate - but an element adopted into it keeps its
+    // definition, and that definition is found here.
+    [[nodiscard]] dom_bindings & primary() noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
+    [[nodiscard]] const dom_bindings & primary() const noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
+    // The registry a `customElements`-shaped receiver is - the page's for
+    // anything that is not one of them.
+    [[nodiscard]] custom_element_registry & registry_of(value receiver);
+    // A new registry record on the primary, for `object`.
+    custom_element_registry & make_registry(dom_bindings * document, value object);
+    // `document.createElement(name, options)`: a defined name is constructed
+    // through the author's class, anything else is a plain node wrapped;
+    // `options.is` names a customized built-in's definition.
+    [[nodiscard]] value create_html_element(context & cx, const std::string & name,
+                                            value options = value::undefined());
     // The definition this element's (local name, `is`) pair belongs to, or
     // npos.
     [[nodiscard]] std::size_t custom_definition_for(const read_txn & txn, node_id id) const;
-    // The definition whose prototype is on this object's chain, or npos - how
-    // the HTMLElement constructor learns which class `super()` came from.
-    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver) const;
-    // One subtree in tree order: upgrade what is new, diff what is tracked.
-    // `upgrade` is false for the pass over DETACHED elements: a candidate that
-    // is not in a document is not upgraded (HTML 4.13.5 upgrades on insertion
-    // and on `customElements.upgrade`), but one that was already upgraded
-    // still gets its attributeChanged and disconnected reactions.
-    void walk_custom_elements(const read_txn & txn, node_id start, bool connected,
-                              bool upgrade = true);
+    // The definition an HTML element constructor is running for: for a
+    // receiver that is an element already, the definition whose construction
+    // stack holds it (an upgrade); otherwise the definition whose prototype is
+    // EXACTLY the receiver's, which is what `new C()` made it. npos when no
+    // definition - the "Illegal constructor" every such call is.
+    [[nodiscard]] std::size_t custom_definition_of(context & cx, value receiver);
+    // The HTML element constructor, HTML 4.13.4, for the receiver `super()` or
+    // `new` handed a native: what HTMLElement and every HTML*Element interface
+    // object share. `interface_name` is the interface whose constructor was
+    // called, checked against the definition's local name.
+    [[nodiscard]] value construct_html_element(context & cx, value receiver,
+                                               std::string_view interface_name);
+    // The interface an HTML tag is, by name - "HTMLUnknownElement" for a tag no
+    // interface claims (bindings/element/interfaces.cpp owns the table).
+    [[nodiscard]] static std::string_view interface_name_for_tag(std::string_view tag);
+    // One subtree in shadow-including tree order: upgrade what is new, diff
+    // what is tracked. `upgrade` is false for the pass over DETACHED elements:
+    // a candidate that is not in a document is not upgraded (HTML 4.13.5
+    // upgrades on insertion and on `customElements.upgrade`), but one that
+    // was already upgraded still gets its attributeChanged and disconnected
+    // reactions. `roots_seen` collects the shadow roots the walk crossed.
+    void walk_custom_elements(const read_txn & txn, node_id start, bool connected, bool upgrade,
+                              flat_map<std::uint64_t, bool> & roots_seen);
     void scan_custom_elements();
-    void flush_custom_element_reactions();
+    // Keep `loose_watch_` right for one tracked element's state.
+    void watch_loose(std::uint64_t key, const custom_element_state & state);
+    // Run the reactions enqueued at index `from` and after - one [CEReactions]
+    // native's element queue - see the definition.
+    void flush_custom_element_reactions(std::size_t from);
+    // Run one upgrade reaction: HTML 4.13.5 "upgrade an element", with the
+    // constructor fenced so an exception is reported and the element fails.
+    void run_upgrade(context & cx, std::size_t definition, node_id target, value wrapper);
+    // "Report the exception" for a callback or constructor that threw: the
+    // window's error event, with the value.
+    void report_custom_element_exception(context & cx, value thrown, std::string_view where);
+    // `new C()` inside a JavaScript try/catch, so a throw from the author's
+    // constructor comes back as a value rather than unwinding through the
+    // native that asked. Compiled on first use, like the listener fence.
+    [[nodiscard]] value construct_fenced(context & cx, value constructor, bool & threw,
+                                         value & thrown);
     void sync_custom_element_roots();
+    // A document with a browsing context has a registry: the page's, and a
+    // frame's once frames.cpp asked for it.
+    [[nodiscard]] bool has_browsing_context() const noexcept { return registry_ != nullptr; }
 
-    std::vector<custom_element_definition> custom_definitions_;
+    std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
+    // THE DETACHED ELEMENTS A SCAN MUST STILL WALK - see watch_loose - and
+    // the generation the current scan stamps on what it reaches.
+    flat_map<std::uint64_t, bool> loose_watch_;
+    std::uint32_t scan_generation_ = 0;
+    std::size_t sweep_at_ = 64; // when the map is this big, sweep the gone nodes
     std::vector<custom_element_reaction> custom_reactions_;
-    flat_map<std::string, std::vector<value>> when_defined_;
+    std::vector<std::size_t> reaction_floors_; // the flushes in progress, outermost first
+    // Documents that received an adopted reaction from this scan, with the
+    // floor their queue had - flushed once this scan's own reactions ran.
+    std::vector<std::pair<dom_bindings *, std::size_t>> adoptees_;
+    value construct_fence_;                    // the primary's
+    value custom_elements_registry_prototype_; // the primary's
+    // THIS DOCUMENT'S GLOBAL REGISTRY - null for a document a page made,
+    // which has no browsing context and looks nothing up.
+    custom_element_registry * registry_ = nullptr;
+    // Every registry of the realm, on the primary, and the map from a
+    // registry object to its record - how a method on the shared prototype
+    // learns which registry it was called on.
+    std::vector<std::unique_ptr<custom_element_registry>> registries_;
+    flat_map<std::uint64_t, custom_element_registry *> registry_objects_;
     // The CustomElementRegistry interface object, whose `retained` list roots
     // every constructor, prototype, callback and pending promise above - the
     // arrangement install_mutation_observer uses, for the same reason.
     script::native_object * custom_elements_interface_ = nullptr;
     // END custom elements
+    // BEGIN element internals (bindings/element_internals.cpp)
+    // `HTMLElement.prototype.attachInternals` and the ElementInternals it
+    // answers with (HTML 4.13.7): the shadow root, the form-associated
+    // members, the ARIA mixin, the CustomStateSet. Installed by
+    // install_custom_elements, which owns HTMLElement.prototype.
+    void install_element_internals(context & cx, script::object_object & html_element_proto);
+    // HTML 4.10.17.3, the form owner of a form-associated element: the form
+    // its `form` attribute names in the same tree, else the nearest <form>
+    // ancestor.
+    [[nodiscard]] node_id form_owner_of(const read_txn & txn, node_id id) const;
+    // HTML 4.10.18.5: a `disabled` attribute, or a disabled <fieldset>
+    // ancestor the element is not inside the first <legend> of.
+    [[nodiscard]] bool form_control_disabled(const read_txn & txn, node_id id) const;
+    value element_internals_prototype_;
+    value custom_state_set_prototype_;
+    // END element internals
 
     // BEGIN style sheets (bindings/stylesheets/)
 public:

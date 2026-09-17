@@ -367,6 +367,7 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     const value frame_view = value::object(
         cx.allocate<script::proxy_object>(value::object(frame_window), value::object(handler)));
     frame_window->set("document", made.document_);
+    frame_window->set("customElements", made.custom_elements_registry(cx)); // custom_elements.cpp
     frame_window->set("frameElement", element);
     // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
     // .Text()` is a node OF THE FRAME'S document (Text-constructor.html's

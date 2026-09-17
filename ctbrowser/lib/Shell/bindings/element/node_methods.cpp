@@ -229,12 +229,17 @@ void dom_bindings::install_node_methods(context & cx) {
                // IN ORDER, because each node goes before the SAME reference rather
                // than before the one just added. copy_subtree appends to the parent it
                // is given, so the move is a no-op when the reference is empty.
+               std::vector<node_id> added;
                for (const node_id child : from.children(body)) {
                    const node_id made = copy_subtree(from, child, place->first);
                    if (place->second) {
                        (void)doc_->insert_before(place->first, made, place->second);
                    }
+                   added.push_back(made);
                }
+               // [CEReactions]: what the fragment parser made is upgraded
+               // where it landed, connected or not - see upgrade_created_subtree.
+               for (const node_id made : added) { upgrade_created_subtree(made); }
                mutated();
                return value::undefined();
            });
@@ -742,8 +747,16 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::null();
         }
         const bool deep = !args.empty() && context::truthy(args[0]);
-        const auto txn = doc_->read();
-        return wrap(c, clone_node(txn, self, deep));
+        node_id made;
+        {
+            const auto txn = doc_->read();
+            made = clone_node(txn, self, deep);
+        }
+        // [CEReactions]: DOM 4.4's clone runs "create an element" for every
+        // element of the copy, which enqueues an upgrade for each candidate a
+        // definition covers - detached as the copy is.
+        upgrade_created_subtree(made);
+        return wrap(c, made);
     });
     // `contains` INCLUDES THE NODE ITSELF, which is the part that is easy to get
     // wrong: `el.contains(el)` is true in every browser.

@@ -327,6 +327,7 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
     }
     const auto from = scratch.read();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, into); }
+    upgrade_created_subtree(into); // [CEReactions] - see custom_elements.cpp
     mutated();
 }
 

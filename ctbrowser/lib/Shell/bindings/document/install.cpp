@@ -34,7 +34,7 @@ void dom_bindings::install_document(context & cx) {
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
         if (!doc_->xml()) {
-            const value made = create_html_element(c, name);
+            const value made = create_html_element(c, name, arg(args, 1));
             if (ascii_iequals(name, "script")) { note_unstarted_script(handle_of(made)); }
             return made;
         }
@@ -145,8 +145,13 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         const bool deep = context::truthy(arg(args, 1));
-        const auto from = owner->doc_->read();
-        return wrap(c, clone_node(from, source, deep, owner == this ? nullptr : owner));
+        node_id made;
+        {
+            const auto from = owner->doc_->read();
+            made = clone_node(from, source, deep, owner == this ? nullptr : owner);
+        }
+        upgrade_created_subtree(made); // [CEReactions] - see custom_elements.cpp
+        return wrap(c, made);
     });
     // `adoptNode(node)`, DOM 4.5. A Document is a NotSupportedError, a shadow
     // root a HierarchyRequestError, and otherwise the node is removed from its
