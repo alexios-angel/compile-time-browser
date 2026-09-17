@@ -126,7 +126,7 @@ value context::construct(value callee, std::span<const value> args) {
         auto * p = static_cast<proxy_object *>(callee.as_heap());
         const value trap = proxy_trap(callee, "construct");
         if (trap.is_callable()) {
-            value list = make_array();
+            const value list = make_array();
             static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
             const value trap_args[2] = {p->target, list};
             return call(trap, trap_args, p->handler);
