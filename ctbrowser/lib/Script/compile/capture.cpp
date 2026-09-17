@@ -99,6 +99,19 @@ bool compiler_impl::mentions_arguments(std::int32_t idx) const {
     return false;
 }
 
+bool compiler_impl::contains_closure(std::int32_t idx) const {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    if (is_function_node(n) || n.kind == vp::nk::class_decl) { return true; }
+    for (const std::int32_t slot : child_slots(n)) {
+        if (contains_closure(slot)) { return true; }
+    }
+    for (const std::int32_t k : kids(n)) {
+        if (contains_closure(k)) { return true; }
+    }
+    return false;
+}
+
 bool compiler_impl::mentions_super(std::int32_t idx, bool root) const {
     if (idx < 0) { return false; }
     const vp::node & n = at(idx);

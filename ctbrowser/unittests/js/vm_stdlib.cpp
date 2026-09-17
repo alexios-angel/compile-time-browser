@@ -664,6 +664,50 @@ void test_structured_clone() {
     expect_result("try { structuredClone({ f: function () {} }); } catch (e) { return e.name; }"
                   "return 'not thrown';",
                   "DataCloneError");
+    // HTML 2.7: what the specification serialises - a wrapper, a Date, a
+    // RegExp (lastIndex reset), a Map and a Set, an Error of the seven kinds,
+    // a bigint, an ArrayBuffer and a view over it - and what it does not: a
+    // non-enumerable or inherited property, a symbol, a getter that throws.
+    expect_result("const b = structuredClone(new Number(5));"
+                  "return (b instanceof Number) + ',' + Number(b) + ',' + typeof b;",
+                  "true,5,object");
+    expect_result("const d = structuredClone(new Date(86400000));"
+                  "return (d instanceof Date) + ',' + d.getTime();",
+                  "true,86400000");
+    expect_result("const r = /a+/gi; r.lastIndex = 3; const c = structuredClone(r);"
+                  "return c.source + '/' + c.flags + '/' + c.lastIndex + '/' + (c !== r);",
+                  "a+/gi/0/true");
+    expect_result("const m = new Map([[1, {x: 1}]]); const c = structuredClone(m);"
+                  "return (c instanceof Map) + ',' + c.get(1).x + ',' + (c.get(1) !== m.get(1));",
+                  "true,1,true");
+    expect_result("const s = structuredClone(new Set([1, 'a'])); return s.has('a') + ',' + s.size;",
+                  "true,2");
+    expect_result("const e = new RangeError('m', { cause: 7 }); e.foo = 1;"
+                  "const c = structuredClone(e); return c.name + ',' + c.message + ',' + c.cause +"
+                  "',' + (c instanceof RangeError) + ',' + c.foo;",
+                  "RangeError,m,7,true,undefined");
+    expect_result("return typeof structuredClone(12n) + ',' + structuredClone(12n);", "bigint,12");
+    expect_result("const buf = new Uint8Array([1, 2, 3, 4]).buffer;"
+                  "const v = new Uint8Array(buf, 1, 2); const c = structuredClone({ v, buf });"
+                  "return c.v[0] + ',' + c.v.length + ',' + (c.v.buffer === c.buf) + ',' +"
+                  "(c.buf !== buf) + ',' + c.buf.byteLength;",
+                  "2,2,true,true,4");
+    expect_result("const o = Object.create({ inherited: 1 }); o.own = 2;"
+                  "Object.defineProperty(o, 'hidden', { value: 3, enumerable: false });"
+                  "const c = structuredClone(o);"
+                  "return ('inherited' in c) + ',' + c.own + ',' + ('hidden' in c);",
+                  "false,2,false");
+    expect_result("const a = [1, , 3]; a.foo = 'bar'; const c = structuredClone(a);"
+                  "return c.length + ',' + (1 in c) + ',' + c.foo;",
+                  "3,false,bar");
+    expect_result("try { structuredClone({ get x() { throw new TypeError('g'); } }); }"
+                  "catch (e) { return e.name + ':' + e.message; }",
+                  "TypeError:g");
+    expect_result("try { structuredClone(Symbol('s')); } catch (e) { return e.name; }",
+                  "DataCloneError");
+    expect_result("const p = structuredClone(Object.prototype); return Object.keys(p).length + ','"
+                  " + (p !== Object.prototype);",
+                  "0,true");
 }
 
 } // namespace
@@ -685,6 +729,22 @@ void test_eval() {
     // prefix flag is 1, which the capture tour once followed as a child.
     expect_result("var x = 1; return eval('++x');", "2");
     expect_result("var x = 1; return eval('++x; x++; x');", "3");
+    // THE COMPLETION VALUE, 14.2.2 and UpdateEmpty: a declaration is empty
+    // and keeps the previous value; an `if`, a loop, a `switch`, a `try`
+    // start from undefined and take their body's; a finally keeps the try's.
+    expect_result("return eval('3; var y = 1;');", "3");
+    expect_result("return String(eval('3; if (true) {}'));", "undefined");
+    expect_result("return eval('3; if (true) { 4; }');", "4");
+    expect_result("return String(eval('3; while (false);'));", "undefined");
+    expect_result("return eval('3; do { 5; break; } while (false)');", "5");
+    expect_result("return eval('3; switch (1) { case 1: 6; break; case 2: 7; }');", "6");
+    expect_result("return String(eval('3; switch (1) { case 2: 7; }'));", "undefined");
+    expect_result("return eval('3; try { 8; } finally { 9; }');", "8");
+    expect_result("return eval('3; try { throw 1; } catch (e) { 10; }');", "10");
+    expect_result("return eval('3; L: { 11; break L; }');", "11");
+    expect_result("return eval('3; {}');", "3");
+    expect_result("return eval('3; function f() {}');", "3");
+    expect_result("return eval('for (var i = 0; i < 2; i++) { i; }');", "1");
 }
 
 int main() {

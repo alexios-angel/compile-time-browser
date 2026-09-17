@@ -140,7 +140,9 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
 [[nodiscard]] bool prevent_extensions_or_throw(context & cx, value target, const char * called) {
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = cx.proxy_trap(target, "preventExtensions");
+        bool failed = false;
+        const value trap = cx.proxy_trap(target, "preventExtensions", &failed);
+        if (failed || cx.throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[1] = {p->target};
             const bool ok = context::truthy(cx.call(trap, args, p->handler));
@@ -276,12 +278,15 @@ void install_object(context & cx) {
             // asked only of a proxy with no descriptor trap, which is the
             // engine's own window and style proxies, whose globals and
             // declarations ARE own.
-            if (const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor");
-                describe.is_callable()) {
+            bool failed = false;
+            const value describe = c.proxy_trap(self, "getOwnPropertyDescriptor", &failed);
+            if (failed || c.throw_pending()) { return value::undefined(); }
+            if (describe.is_callable()) {
                 const value args[2] = {p->target, c.string(key)};
                 return value::boolean(!c.call(describe, args, p->handler).is_undefined());
             }
-            const value trap = c.proxy_trap(self, "has");
+            const value trap = c.proxy_trap(self, "has", &failed);
+            if (failed || c.throw_pending()) { return value::undefined(); }
             if (trap.is_callable()) {
                 const value args[2] = {p->target, c.string(key)};
                 return value::boolean(c.truthy(c.call(trap, args, p->handler)));
@@ -319,6 +324,8 @@ void install_object(context & cx) {
         if (!detail::is_array_value(c, self, array)) { return value::undefined(); }
         if (array) {
             tag = "Array";
+        } else if (detail::is_arguments_object(self)) {
+            tag = "Arguments"; // 20.1.3.6 step 5: [[ParameterMap]]
         } else if (self.is_callable()) {
             tag = "Function";
         } else if (self.is_string()) {
@@ -533,7 +540,13 @@ void install_object(context & cx) {
         // detail::wrap_primitive.
         const value v = arg_at(a, 0);
         if (v.is_object_like()) { return v; }
-        if (v.is_nullish()) { return c.make_object(); }
+        // 20.1.1.1 step 1: under `new` from a subclass (`class O extends
+        // Object`, reached through super()) the instance [[Construct]] made
+        // from NewTarget IS the answer; a plain `new Object()` or a call
+        // makes a fresh one, which the instance also is.
+        if (v.is_nullish()) {
+            return detail::constructing_this(c.current_this()) ? c.current_this() : c.make_object();
+        }
         return detail::box_primitive(c, v);
     });
     // `Object.prototype` REACHABLE FROM SCRIPT, not just consulted by lookup.

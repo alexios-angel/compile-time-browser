@@ -36,6 +36,14 @@ int main() {
     // 1. JSON.stringify - the shapes that always worked, first
     // ================================================================
     js_expect("JSON.stringify({a: 1, b: 'x'})", "{\"a\":1,\"b\":\"x\"}");
+    // Well-formed JSON.stringify (25.5.2.3 step 2.b): a lone surrogate is
+    // escaped, a pair is kept as the character.
+    js_expect("JSON.stringify('\\uD834\\uDF06\\uD834')", "\"\xF0\x9D\x8C\x86\\ud834\"");
+    js_expect("JSON.stringify('\\uDF06')", "\"\\udf06\"");
+    // 25.5.1 step 1: ToString of the text, so a Symbol is the TypeError.
+    js_expect("(function () { try { JSON.parse(Symbol()); } catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("JSON.parse(null)", "null");
     js_expect("JSON.stringify([1, 2, 3])", "[1,2,3]");
     js_expect("JSON.stringify([])", "[]");
     js_expect("JSON.stringify({})", "{}");

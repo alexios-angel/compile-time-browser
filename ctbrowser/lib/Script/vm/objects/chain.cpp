@@ -165,6 +165,7 @@ void context::copy_own_properties(value target, value source) {
 
 value context::get_prototype(value target) {
     if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->prototype; }
+    if (target.is_array()) { return static_cast<array_object *>(target.as_heap())->prototype; }
     // A closure's own [[Prototype]]: the parent class `extends` chained it
     // to, else Function.prototype (10.2.5 / OrdinaryGetPrototypeOf) - which
     // is what `super.x` inside a static method starts from.
@@ -182,18 +183,45 @@ value context::get_prototype(value target) {
 
 void context::set_prototype(value target, value proto) {
     if (target.is_object()) { static_cast<object_object *>(target.as_heap())->prototype = proto; }
+    if (target.is_array()) { static_cast<array_object *>(target.as_heap())->prototype = proto; }
 }
 
 bool context::has_property(value target, value key) {
     // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
-        const value trap = proxy_trap(target, "has");
+        bool failed = false;
+        const value trap = proxy_trap(target, "has", &failed);
+        if (failed || throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[2] = {p->target, key};
-            return truthy(call(trap, args, p->handler));
+            const std::size_t before = unwinds();
+            const bool answered = truthy(call(trap, args, p->handler));
+            if (throw_pending() || unwinds() != before) { return false; }
+            // 10.5.7 step 9, the invariant: `false` over a target property that
+            // is non-configurable, or that a non-extensible target has at all,
+            // is the TypeError.
+            if (!answered) {
+                const std::string name = to_string(key);
+                property_descriptor held;
+                if (own_property(p->target, name, held)) {
+                    if ((held.has_configurable && !held.configurable) ||
+                        !is_extensible(p->target)) {
+                        throw_error("TypeError", "'has' on proxy: trap returned falsish for "
+                                                 "property '" +
+                                                     name +
+                                                     "' which exists in the proxy target as "
+                                                     "non-configurable, or the target is not "
+                                                     "extensible");
+                        return false;
+                    }
+                }
+            }
+            return answered;
         }
-        return !lookup_property(p->target, to_string(key)).is_undefined();
+        // 10.5.7 step 7: target.[[HasProperty]] - not a [[Get]], so no
+        // getter on the target runs.
+        return has_property(p->target, to_string(key));
     }
     return has_property(target, to_string(key));
 }
@@ -219,8 +247,10 @@ bool context::has_property(value target, const std::string & name) {
     // then the implicit tables property lookup falls back to.
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
-    value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                                    : value::null();
+    value link = target.is_object()  ? static_cast<object_object *>(target.as_heap())->prototype
+                 : target.is_array() ? static_cast<array_object *>(target.as_heap())->prototype
+                                     : value::null();
+    const bool explicit_chain = target.is_object() || (target.is_array() && !link.is_null());
     // A depth cap because a page can make the chain cyclic, exactly as
     // lookup_property does.
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
@@ -234,7 +264,12 @@ bool context::has_property(value target, const std::string & name) {
     }
     // An explicit null [[Prototype]] (object_object::prototype) ends the chain
     // without the implicit Object.prototype.
-    if (target.is_object() && link.is_undefined()) { return false; }
+    if (explicit_chain && link.is_undefined()) { return false; }
+    if (target.is_array() && explicit_chain) { // see instance_of
+        object_object * table = prototype(proto_kind::object);
+        return table != nullptr &&
+               (table->find(name) != nullptr || table->find_accessor(name) != nullptr);
+    }
     for (object_object * table : implicit_prototypes(target)) {
         if (table != nullptr &&
             (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
@@ -288,8 +323,17 @@ bool context::instance_of(value target, value ctor) {
     }
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
-    value link = subject.is_object() ? static_cast<object_object *>(subject.as_heap())->prototype
-                                     : value::null();
+    // ...and an array's own, when it has one (array_object::prototype), and a
+    // function's proto_link - `class B extends A` for B itself, and a dynamic
+    // function made under `class F extends Function` (`f instanceof F`).
+    value link = subject.is_object()  ? static_cast<object_object *>(subject.as_heap())->prototype
+                 : subject.is_array() ? static_cast<array_object *>(subject.as_heap())->prototype
+                 : subject.is_kind(heap_kind::function)
+                     ? static_cast<closure_object *>(subject.as_heap())->proto_link
+                 : subject.is_kind(heap_kind::native)
+                     ? static_cast<native_object *>(subject.as_heap())->proto_link
+                     : value::null();
+    const bool explicit_chain = subject.is_object() || !link.is_null();
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
@@ -300,7 +344,13 @@ bool context::instance_of(value target, value ctor) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         return instance_of(link, ctor);
     }
-    if (subject.is_object() && link.is_undefined()) { return false; } // an explicit null
+    if (explicit_chain && link.is_undefined()) { return false; } // an explicit null
+    // An array's explicit chain ended at the implicit Object.prototype: the
+    // kind's tables are not behind it (Object.setPrototypeOf(arr, o) took
+    // Array.prototype out of the chain).
+    if (!subject.is_object() && explicit_chain) {
+        return prototype(proto_kind::object) == wanted.as_heap();
+    }
     // Then the IMPLICIT one. An array, a function, a string and a plain object
     // have no prototype field to walk - their chain is the tables property
     // lookup falls back to - so instanceof answered false for every builtin

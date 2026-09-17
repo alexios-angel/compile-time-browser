@@ -48,6 +48,7 @@ void context::trace_object(heap_object * o) {
         // would free it under a page that can still read it by index.
         for (const auto & [index, v] : arr->sparse) { edge(v); }
         edge(arr->viewed);
+        edge(arr->prototype);
         edge(arr->index);
         edge(arr->input);
         edge(arr->groups);

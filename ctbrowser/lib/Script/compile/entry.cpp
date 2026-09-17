@@ -101,35 +101,37 @@ void compiler_impl::compile_program() {
         if (at(declared_by(s)).kind == vp::nk::func_decl) { compile_stmt(s); }
     }
     const std::span<const std::int32_t> body = kids(root);
-    // A `using` at the top level: the rest of the script is its region, and
-    // the completion value of an eval is not kept across one.
+    // `eval("a; b")` is b, and `eval("1; if (x) {}")` is undefined: the
+    // completion register below is what every statement of the program
+    // updates (see completion_reg_), and it is what the program returns.
+    // Allocated here, above every statement's mark, so nothing releases it.
+    if (completion_value_) {
+        completion_reg_ = alloc_reg();
+        proto().emit(instruction{op::load_undef, static_cast<std::uint16_t>(completion_reg_)});
+    }
+    const auto ret_completion = [&] {
+        if (completion_reg_ >= 0) {
+            proto().emit(instruction{op::ret, static_cast<std::uint16_t>(completion_reg_)});
+        } else {
+            proto().emit(instruction{op::ret_undef});
+        }
+    };
+    // A `using` at the top level: the rest of the script is its region.
     bool has_using = false;
     for (const std::int32_t s : body) { has_using = has_using || is_using_decl(at(s)); }
     if (has_using) {
         compile_statement_list(body, true);
-        proto().emit(instruction{op::ret_undef});
+        ret_completion();
         finish_frame(fn().proto, 0);
         pop_scope();
         frames_.pop_back();
         return;
     }
-    for (std::size_t i = 0; i < body.size(); ++i) {
-        const std::int32_t s = body[i];
+    for (const std::int32_t s : body) {
         if (at(declared_by(s)).kind == vp::nk::func_decl) { continue; }
-        // `eval("a; b")` is b: the last statement, when it is an expression,
-        // is returned rather than discarded.
-        if (completion_value_ && i + 1 == body.size() && at(s).kind == vp::nk::expr_stmt &&
-            at(s).a >= 0) {
-            const std::uint32_t mark = reg_mark();
-            const std::uint16_t r = alloc_reg();
-            compile_expr(at(s).a, r);
-            proto().emit(instruction{op::ret, r});
-            release_to(mark);
-            continue;
-        }
         compile_stmt(s);
     }
-    proto().emit(instruction{op::ret_undef});
+    ret_completion();
     finish_frame(fn().proto, 0);
     pop_scope();
     frames_.pop_back();

@@ -219,6 +219,20 @@ namespace detail {
     auto * obj = static_cast<object_object *>(self.as_heap());
     return obj->props.empty() && !obj->accessors.any;
 }
+// GetPrototypeFromConstructor (10.1.14) FOR A NATIVE THAT MAKES ITS OWN
+// OBJECT. `class A extends Array` reaches Array through super() with `this`
+// the instance [[Construct]] made from A.prototype; Array answers an array of
+// its own, and this gives that array the instance's prototype when it is not
+// the intrinsic - so the answer IS an A (ArrayCreate's proto argument, and
+// AllocateTypedArray's). bind_this_name then makes it `this`.
+inline void adopt_subclass_prototype(context & cx, value made, const object_object * intrinsic) {
+    if (!made.is_array()) { return; }
+    const value self = cx.current_this();
+    if (!constructing_this(self)) { return; }
+    const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+    if (!proto.is_object() || proto.as_heap() == intrinsic) { return; }
+    static_cast<array_object *>(made.as_heap())->prototype = proto;
+}
 
 // A REAL ITERATOR over a list that already exists - what `keys()`, `values()`
 // and `entries()` answer on an Array, a Map and a Set, and what
@@ -255,7 +269,14 @@ namespace detail {
 // sparse"); this keeps it rather than widening it.
 [[nodiscard]] inline double array_like_length(context & cx, value self) {
     if (self.is_array()) {
-        return static_cast<double>(static_cast<array_object *>(self.as_heap())->length());
+        auto * arr = static_cast<array_object *>(self.as_heap());
+        // A typed array's `length` is a prototype getter an OWN property may
+        // shadow (Object.defineProperty(ta, "length", {value: 4000}) is what
+        // Array.prototype.concat's spreading then reads); an Array's is its own.
+        const bool shadowed = arr->elements != element_kind::none && arr->named &&
+                              (arr->named->find("length") != nullptr ||
+                               arr->named->find_accessor("length") != nullptr);
+        if (!shadowed) { return static_cast<double>(arr->length()); }
     }
     const value raw = cx.lookup_property(self, "length");
     if (!numeric_arg(cx, raw)) { return 0.0; }
@@ -471,6 +492,14 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
 
 // IsArray, 7.2.2: a Proxy is asked through to its target, and a revoked one
 // (both slots null) is a TypeError - FALSE with the throw in flight.
+// An arguments object: an array_object on Object.prototype carrying the marker
+// context::make_arguments_object defines - not an Array exotic object (7.2.2),
+// and "[object Arguments]" to Object.prototype.toString.
+[[nodiscard]] inline bool is_arguments_object(value v) {
+    if (!v.is_array()) { return false; }
+    const auto * arr = static_cast<const array_object *>(v.as_heap());
+    return arr->named && arr->named->find("@#Arguments") != nullptr;
+}
 [[nodiscard]] inline bool is_array_value(context & cx, value v, bool & out) {
     for (int hops = 0; hops < 64 && v.is_kind(heap_kind::proxy); ++hops) {
         auto * p = static_cast<proxy_object *>(v.as_heap());
@@ -487,7 +516,7 @@ inline constexpr double max_generic_walk = 16777216.0; // 2^24
     // spreading and ArraySpeciesCreate all say no to one.
     out = v.is_array() &&
           static_cast<const array_object *>(v.as_heap())->elements == element_kind::none &&
-          !static_cast<const array_object *>(v.as_heap())->is_view();
+          !static_cast<const array_object *>(v.as_heap())->is_view() && !is_arguments_object(v);
     return true;
 }
 

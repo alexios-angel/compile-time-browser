@@ -230,12 +230,23 @@ void compiler_impl::collect_reexports(std::int32_t idx) {
             out_.reexports.push_back(program::reexport{"", "", specifier});
             return;
         }
-        // `export * as ns from './m.js'`: ONE name, holding the namespace.
-        // Not built - a namespace is a value rather than a cell, so it does
-        // not fit the alias the loader wires - and refused by name rather
-        // than silently exporting nothing.
-        fail("`export * as ns from` is not implemented yet - ES modules are staged in "
-             "docs/plans/modules.md");
+        // `export * as ns from './m.js'` (16.2.2.3: an ExportEntry with
+        // [[ImportName]] all and no local binding): ONE export, holding the
+        // namespace. It is compiled as `import * as <hidden> from './m.js';
+        // export { <hidden> as ns }` - the hidden local is not an identifier,
+        // so nothing in the module can name it, and the loader wires nothing:
+        // the cell is this module's own, adopted at entry and written with
+        // the namespace before the first statement runs.
+        const vp::node & spec = at(kids(n).front());
+        const std::string hidden = "*namespace*:" + std::string{spec.text};
+        const std::uint16_t r = declare_local(hidden);
+        proto().emit(instruction{op::load_undef, r});
+        bind_export(std::string{spec.text}, r);
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t ns = alloc_reg();
+        proto().emit(instruction{op::load_namespace, ns, name_operand(specifier)});
+        proto().emit(instruction{op::cell_set, r, ns});
+        release_to(mark);
         return;
     }
     for (const std::int32_t spec_index : kids(n)) {
@@ -258,7 +269,13 @@ void compiler_impl::export_bindings(std::int32_t outer,
         const vp::node & declared = at(n.a);
         if (declared.kind == vp::nk::var_decl) {
             for (const std::int32_t d : kids(declared)) {
-                if (!at(d).text.empty()) {
+                if (at(d).b >= 0) {
+                    // `export const [a, {b}] = ...`: every name the pattern
+                    // binds is an export (16.2.3.2 BoundNames).
+                    std::vector<std::string> names;
+                    pattern_names(at(d).b, names);
+                    for (std::string & name : names) { out.emplace_back(name, name); }
+                } else if (!at(d).text.empty()) {
                     out.emplace_back(std::string{at(d).text}, std::string{at(d).text});
                 }
             }
