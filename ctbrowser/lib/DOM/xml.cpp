@@ -563,8 +563,11 @@ private:
             // `(null, class)` or `(xhtml, class)`, and every browser says the
             // first.
             const std::string_view prefix = prefix_of(attr_name);
-            const std::string_view attr_uri =
-                prefix.empty() ? std::string_view{} : resolve(prefix, false);
+            // ...but `xmlns` itself is in the XMLNS namespace (Namespaces in
+            // XML 6.1, DOM's "xmlns" attribute), like `xmlns:p`.
+            const std::string_view attr_uri = attr_name == "xmlns" ? xmlns_namespace
+                                              : prefix.empty()     ? std::string_view{}
+                                                                   : resolve(prefix, false);
             if (!prefix.empty() && attr_uri.empty()) {
                 fail("undeclared namespace prefix " + std::string{prefix} + " on " + attr_name);
                 return;
@@ -755,10 +758,15 @@ private:
 
     // The two vocabularies `node` distinguishes. Everything else is `other`
     // with its URI recorded on the document (document::element_namespace) -
-    // `node` has no room for one, see dom/node.hpp.
+    // `node` has no room for one, see dom/node.hpp. THE NULL NAMESPACE IS
+    // `other` TOO: `<root>` in a document with no default namespace is in no
+    // namespace at all (Namespaces in XML 6.2), not an HTML element - it
+    // serialises without an `xmlns`, matches no HTML interface, runs no
+    // script. It used to come out as HTML, so every DOMParser-made XML
+    // document re-serialised with `xmlns="http://www.w3.org/1999/xhtml"`.
     [[nodiscard]] static node_ns ns_of(std::string_view uri) {
         if (uri == svg_namespace) { return node_ns::svg; }
-        if (uri.empty() || uri == xhtml_namespace) { return node_ns::html; }
+        if (uri == xhtml_namespace) { return node_ns::html; }
         return node_ns::other;
     }
 
