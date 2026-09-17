@@ -347,11 +347,22 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 std::string composite;
             };
             std::vector<point> points;
+            const auto * known = style::css::find_property(property);
             for (const animation_keyframe & k : e.keyframes) {
                 for (const auto & [name, text] : k.values) {
-                    if (name == property) {
-                        points.push_back(point{k.offset, text, k.easing, k.composite});
+                    if (name != property) { continue; }
+                    // A CSS-wide keyword in a keyframe is its computed value
+                    // (CSS Animations 1 §3): `initial` is the table's, as is
+                    // `unset` for a property that does not inherit.
+                    // ponytail: `inherit` needs the parent's computed text,
+                    // which the underlying callback cannot ask for yet.
+                    std::string_view value = text;
+                    if (known != nullptr &&
+                        (ascii_iequals(value, "initial") ||
+                         (ascii_iequals(value, "unset") && !known->inherited))) {
+                        value = known->initial;
                     }
+                    points.push_back(point{k.offset, std::string{value}, k.easing, k.composite});
                 }
             }
             // THE UNDERLYING VALUE (§5.4.3): what the animations before this
@@ -364,11 +375,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             std::string base = seen != out.end()
                                    ? seen->second
                                    : std::string{trim(underlying(property), html_whitespace)};
-            if (base.empty()) {
-                if (const auto * known = style::css::find_property(property)) {
-                    base = std::string{known->initial};
-                }
-            }
+            if (base.empty() && known != nullptr) { base = std::string{known->initial}; }
             if (points.front().offset != 0) {
                 points.insert(points.begin(), point{0, base, "linear", "replace"});
             }
