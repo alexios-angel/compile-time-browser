@@ -1,6 +1,42 @@
 # What native Bootstrap needs next
 
-## Current boundary: Unicode keys after filtered prefix assignments, 2026-09-17
+## Current boundary: fresh Config defaults, 2026-09-17
+
+**`f1450d60`** compiles the isolated original Bootstrap `Default` and `DefaultType`
+empty getter bodies through the existing local class proof. Every getter read,
+including a dependency read, gets a fresh allocation. Fully expanded getter
+functions are removed only after complete closure and symbol-use checks. Getter references
+from module, function and operation attributes, unresolved targets and incomplete
+budgets refuse before mutation. General object returns, nonempty getter literals/stores and
+inherited receivers remain outside this proof.
+
+The focused class lit case passes **1/1 (92.67s): 72 Node/interpreter source
+observations / 168 native executions / 144 unprepared / 93 preparation refusals**,
+plus **16 ordinary constructed-method executions / 20 refusals**, both policies,
+layouts and GCC/Clang. The new dependency's first complete budget is **267**.
+The initial unused-getter return refusal led to the complete definition-removal
+proof; no source case was dropped or generic object-return admission relaxed.
+
+**`fe56eae8`** independently preserves bounded signed Number products. Exact array
+CTest passes **1/1 (0.84s)** and four signed-number lit cases pass. Its new oracle
+measures **26 sites / 11 sound / zero violations / 11 of 15 precision**. Explicit
+build targets passed; all **1,820 hashes** match locally/remotely before docs.
+Stable formatting passes; pinned formatting retains **26 diagnostics in nine
+unchanged files**. Full suites and broad corpus/native/WPT/test262 runs were not run.
+
+**Next:** the complete original Config class in a defaults-only wrapper still
+refuses preparation: **class initialization requires complete capture-free source
+functions**. Node/interpreter both return **a=7**, and import skips no functions;
+`_typeCheckConfig$9` retains three blocks after SCF lifting. Full Config still needs
+structured/exceptional method proofs, throwing `NAME`, inherited receiver and
+`this.constructor` handling, and DOM/default composition. Full H's public
+UTF-16/Unicode case seam and normalized-key proof, retained callbacks and the
+application driver also remain. No browser source or runtime semantics changed.
+Bootstrap **19/574 / 0 of 47 globals**, Button **4/86 / 22 observations** and Data
+**7/7** are historical, not remeasured. See HANDOFF and
+`/tmp/ctcompile-config-focused/` for exact focused gates and failure/recovery evidence.
+
+## Previous boundary: Unicode keys after filtered prefix assignments, 2026-09-17
 
 **`08a812a6`** finishes the interrupted dynamic-assignment branch: `73ae525d`,
 `88e9f626` and `1d363a7b` are integrated with browser `0337cd15`. Recovery used
