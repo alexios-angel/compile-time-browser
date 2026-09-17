@@ -1,5 +1,51 @@
 # WPT — the next round, as briefs
 
+**Updated 2026-09-17, session 16 (in progress).** Round six is four worktree
+agents cut from `228d80d1` - V cssom-view (scroll containers, the scroll
+APIs, hit testing), CE custom elements (customized built-ins, the HTML
+element constructors, reactions, ElementInternals), H the HTML parser tail
+(foreign content, template, the serialisers, encoding sniffing), J the JS
+runtime (the test262 language tail, modules, the known VM bugs,
+structuredClone, a HostPromiseRejectionTracker hook) - with the root on
+frames, forms, events and the property table. Briefs in
+`~/Downloads/claude/wt/wpt11-session/round6/`; the measured rows land in
+`docs/wpt.md` / `docs/css-conformance.md` / `docs/test262.md` when the
+merged tree is gated.
+
+**What the root found this session, not fixed, each a brief's worth:**
+
+- **JS strings are BYTES** (`docs/script.md` says so on purpose):
+  `"\u0085".length` is 3 and `"\u00a0".length` is 2, `charCodeAt` and
+  `[i]` index bytes. Every WPT file that measures a non-ASCII string sees
+  it - dom/nodes/getElementsByClassName-whitespace-class-names.html's
+  sanity check (`className.length === 1`) is the plainest. This is the
+  largest single correctness gap left in the VM and it is architectural
+  (the string representation, every text builtin, the regex engine, the
+  DOM boundary): a plan of its own, not a brief.
+- **A default parameter read from a nested closure is `undefined`** -
+  `function f(p = {}) { return () => typeof p; }` - which HARNESS_ERRORs
+  every file that calls testharness's `promise_setup` (css/cssom-view
+  element-scroll-promises x3, html/dom/render-blocking x6, ...). Handed to
+  agent J mid-session; the same capture family as T3's object shorthand.
+- **No script runs in a frame** (`bindings/frames.cpp`'s header): the
+  realm is shared, so a frame's `<script>` would be the page's. dom/ranges'
+  five `Range-*Contents/insertNode/surroundContents` files (4,800 subtests)
+  drive an iframe's `run()`; webappapis' document.open files and the
+  cross-realm dom/events files want it too. Needs a per-frame global object
+  in the VM (a realm switch at every entry point) - a plan, not a brief.
+- **`encoding.py` needs a server**: dom/nodes/Document-characterSet-
+  normalization-1/2 (636 subtests) load `encoding.py?label=` frames.
+- **The form named getter** (`form.button`, form-nameditem.html, 11) needs
+  the form's wrapper to be a proxy, which `handle_of` and `wrappers_`
+  identity do not allow today.
+- **Custom property values are the author's bytes**, not the token
+  stream's serialisation: css-syntax/escaped-eof (an escaped EOF is U+FFFD),
+  serialize-consecutive-tokens (a comment between tokens that would
+  re-tokenise together), css-variables/variable-definition (`--x: ;` is
+  " "). One change in `check_declaration`'s custom-property branch.
+- **Live ranges** (dom/ranges Range-mutations-*, ~500 subtests) need
+  insert/remove/text hooks in `lib/DOM/document.cpp` - agent H's files.
+
 **Updated 2026-09-16, session 15.** Round four is MERGED (`13cc45c3` ->
 `6edb7421`, four `--no-ff` merges, gated 221/221 green) and, when the main
 tree is clean, integrated into `ctcompile-v1`. The four briefs
