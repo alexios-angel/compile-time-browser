@@ -374,10 +374,15 @@ void dom_bindings::install_iterable_declaration(context & cx, script::object_obj
             return value::object(it);
         });
     };
-    proto.define("@@iterator", live_iterator("values", 1), script::attr_builtin);
+    // ONE function for `values` and `[Symbol.iterator]` (WebIDL 3.7.10.1:
+    // the @@iterator property's value is %ArrayProto_values% for an array-
+    // like, i.e. the same function object) - Node-childNodes.html compares
+    // the two by identity.
+    const value values = live_iterator("values", 1);
+    proto.define("@@iterator", values, script::attr_builtin);
     if (named_only) { return; }
     proto.define("keys", live_iterator("keys", 0), script::attr_default);
-    proto.define("values", live_iterator("values", 1), script::attr_default);
+    proto.define("values", values, script::attr_default);
     proto.define("entries", live_iterator("entries", 2), script::attr_default);
     // `forEach` IS %Array.prototype.forEach% - WebIDL says so of an iterable
     // declaration, Node-childNodes.html asserts the identity, and the array's
