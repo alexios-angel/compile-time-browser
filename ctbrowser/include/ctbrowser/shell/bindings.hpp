@@ -1988,6 +1988,8 @@ private:
     [[nodiscard]] value make_xml_document(context & cx, std::string_view ns,
                                           std::string_view qualified_name,
                                           bool as_xml_document = true);
+    // A made document's URL is its maker's (HTML 8.6.2, DOMParser).
+    void take_url_of(context & cx, const dom_bindings & maker);
     // WHICH BINDINGS A WRAPPER BELONGS TO: this one, the primary, or one of the
     // primary's other secondaries. Null for anything that is not a node of any
     // document in the realm. `handle_of` answers only for this one's own
