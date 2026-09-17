@@ -27,7 +27,11 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
     case node_kind::element:
         made = doc_->create_element(from.tag(node).value_or(atom{}), from.element_ns(node),
                                     from.prefixed(node));
+        // The document-side namespace of an `other` element (MathML), and
         // THE WHOLE ATTRIBUTE, namespace and all - see clone_node.
+        if (const atom uri = from.element_namespace(node)) {
+            doc_->set_element_namespace(made, uri);
+        }
         for (const attribute & a : from.attributes(node)) { (void)doc_->set_attribute(made, a); }
         break;
     }
@@ -69,6 +73,9 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         // it off `element_ns` alone would answer for the wrong one.
         if (const auto it = src.namespaces_.find(source.key()); it != src.namespaces_.end()) {
             namespaces_.emplace(made.key(), it->second);
+        }
+        if (const atom uri = from.element_namespace(source)) {
+            doc_->set_element_namespace(made, uri);
         }
         // THE WHOLE ATTRIBUTE, namespace and all. Copying `(name, value)` put
         // a cloned `xlink:href` in no namespace, and `Node-cloneNode-svg.html`
@@ -215,6 +222,27 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
 // builds content. `tree_builder::parse` replaces the document's root, so it
 // runs against a SCRATCH document; that document shares this one's atom table,
 // so copying across needs no name remapping.
+//
+// IN THE ELEMENT'S OWN CONTEXT (HTML 13.2.9): `table.innerHTML = "<tr>"` is a
+// row inside a tbody and `svg.innerHTML = "<circle/>"` an SVG circle. Parsed
+// as a <body>'s children, the first was nothing at all - "in body" ignores a
+// <tr> - and the second an HTML unknown element.
+namespace {
+[[nodiscard]] node_id parse_fragment_for(const document & doc, document & scratch, node_id context,
+                                         std::string_view markup) {
+    std::string tag{"body"};
+    node_ns ns = node_ns::html;
+    {
+        const auto txn = doc.read();
+        if (txn.kind(context).value_or(node_kind::element) == node_kind::element) {
+            tag = txn.local_name(context);
+            ns = txn.element_ns(context);
+        }
+    }
+    return parse_html_fragment(scratch, markup, tag, ns);
+}
+} // namespace
+
 void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
     if (!target || atoms_ == nullptr) { return; }
     {
@@ -224,7 +252,7 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
     document scratch{*atoms_};
-    const node_id body = parse_html_body_fragment(scratch, markup);
+    const node_id body = parse_fragment_for(*doc_, scratch, target, markup);
     const auto from = scratch.read();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, target); }
     mutated();
@@ -296,7 +324,7 @@ void dom_bindings::set_outer_html(context & cx, node_id target, std::string_view
         }
     }
     document scratch{*atoms_};
-    const node_id body = parse_html_body_fragment(scratch, markup);
+    const node_id body = parse_fragment_for(*doc_, scratch, parent, markup);
     const auto from = scratch.read();
     const node_id fragment = doc_->create_fragment();
     for (const node_id child : from.children(body)) { copy_subtree(from, child, fragment); }

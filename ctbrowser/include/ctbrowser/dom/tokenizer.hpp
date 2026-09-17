@@ -22,27 +22,22 @@
 //
 // This is the tokenizer half: bytes to tokens.
 //
-// FOREIGN CONTENT (SVG) differs from the spec in one deliberate way, and it is
-// worth understanding before changing anything here.
+// NAMES ARE LOWERCASED HERE, foreign content included, exactly as 13.2.5.8
+// says, and the tree builder's adjustment tables (13.2.6.5) put `viewBox`,
+// `foreignObject` and `definitionURL` back. It used to keep case inside an
+// <svg> instead and carry no tables; that was exact for a correctly-cased
+// document and wrong for `<svg viewbox>` and `<SVG VIEWBOX>`, both of which
+// the html5lib fixtures and getElementsByTagName-foreign-01 assert on.
 //
-// The spec lowercases every tag and attribute name unconditionally, then
-// carries ~95 pairs of adjustment tables to turn `viewbox` back into `viewBox`,
-// `preserveaspectratio` back into `preserveAspectRatio`, and so on. Those tables
-// exist ONLY to undo damage the spec's own tokenizer did. This tokenizer does
-// not do the damage: `set_preserve_case` keeps names as written while the tree
-// builder is inside an SVG, which is exact for every correctly-cased document
-// and needs no tables. `<svg VIEWBOX="...">` is the single divergence.
+// SEPARATELY, every token records the SOURCE SPAN it came from. The SVG
+// subtree is fully parsed into namespaced elements - script can reach it,
+// CSS can match it - but what reaches the RASTERISER is the original bytes,
+// sliced out of the input. Re-serialising the tree would be a second place
+// for the markup to be wrong.
 //
-// SEPARATELY, and not as a substitute for the above, every token records the
-// SOURCE SPAN it came from. The SVG subtree is fully parsed into namespaced
-// elements - script can reach it, CSS can match it - but what reaches the
-// RASTERISER is the original bytes, sliced out of the input. Re-serialising the
-// tree would be a second place for the markup to be wrong.
-//
-// The states it does NOT have: MathML, and the script-data escaped/
-// double-escaped ladder (a <script> containing the literal text "<!--<script>"
-// is tokenized as plain script data here, which ends the script at the first
-// </script> rather than the second).
+// It carries every state of 13.2.5, the script-data escaped and double-escaped
+// ladder included; the MathML and SVG facts it does not know are the tree
+// builder's (the adjusted current node decides CDATA, set_cdata_allowed).
 
 namespace ctbrowser::html {
 
@@ -115,24 +110,12 @@ public:
     explicit tokenizer(std::string_view input) : input_(input) {}
 
     // The tree builder switches this after emitting a start tag, per the spec.
+    // `for_tag` is the "appropriate end tag"; empty for a fragment parse, where
+    // no start tag has been emitted and so no end tag ends the text.
     void set_content_model(content_model model, std::string_view for_tag);
 
-    // FOREIGN CONTENT: keep tag and attribute names exactly as written, and
-    // read <![CDATA[...]]> as text.
-    //
-    // The spec lowercases unconditionally and then has ~95 pairs of adjustment
-    // tables to put `viewBox`, `preserveAspectRatio` and the rest back. Those
-    // tables exist ONLY to undo damage the spec's own tokenizer did; not doing
-    // the damage is exact for every correctly-cased document, which is all real
-    // SVG, and costs one bool instead of a table.
-    //
-    // The one divergence, worth knowing rather than discovering: `<svg
-    // VIEWBOX="...">` gives `VIEWBOX` here where the spec gives `viewBox`. A
-    // case-insensitive normalisation pass would close it if it ever matters.
-    void set_preserve_case(bool preserve) noexcept { preserve_case_ = preserve; }
     // `<![CDATA[` is a CDATA section only when the adjusted current node is
-    // not an HTML element (13.2.5.42) - which includes an SVG <title>, where
-    // case is NOT preserved because its children are HTML.
+    // not an HTML element (13.2.5.42) - an SVG <title> included.
     void set_cdata_allowed(bool allowed) noexcept { cdata_allowed_ = allowed; }
 
     [[nodiscard]] bool at_end() const noexcept { return at_ >= input_.size(); }
@@ -190,7 +173,7 @@ private:
     [[nodiscard]] token tag_open_state();
     [[nodiscard]] token end_tag_open_state();
     [[nodiscard]] token tag_name_state(token & out);
-    [[nodiscard]] token attributes(token & out, bool preserve_case);
+    [[nodiscard]] token attributes(token & out);
     void attribute_value(std::string & out, char quote);
     // `</name` in RCDATA, RAWTEXT and script data: the end tag when `name` is
     // the appropriate one and something that ends a tag follows, else text.
@@ -229,7 +212,6 @@ private:
     // Where the script data escaped states are, across text runs: 0 script
     // data, 1 escaped, 2 double escaped.
     int script_escape_ = 0;
-    bool preserve_case_ = false;
     bool cdata_allowed_ = false;
     bool truncated_ = false;
     bool starved_ = false;

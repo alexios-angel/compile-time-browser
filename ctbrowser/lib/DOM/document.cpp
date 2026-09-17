@@ -653,6 +653,19 @@ void document::set_template_content(node_id element, node_id fragment) {
     template_contents_.emplace_back(element, fragment);
 }
 
+atom document::element_namespace(node_id element) const {
+    const auto it = element_namespaces_.find(shadow_key(element));
+    return it == element_namespaces_.end() ? atom{} : it->second;
+}
+
+atom read_txn::element_namespace(node_id id) const noexcept {
+    return doc_->element_namespace(id);
+}
+
+void document::set_element_namespace(node_id element, atom uri) {
+    element_namespaces_.insert_or_assign(shadow_key(element), uri);
+}
+
 std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_tree how) {
     const auto txn = read();
     if (!txn.contains(host)) { return std::unexpected{dom_error::no_such_node}; }
@@ -729,7 +742,7 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
 }
 
 atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
-    if (element_ns != node_ns::svg) { return atom{}; }
+    if (element_ns == node_ns::html) { return atom{}; }
     const std::string_view text = atoms_->text(name);
     // `xmlns` ALONE is the one unprefixed name in the table, and the colon test
     // is what keeps every ordinary SVG attribute - `d`, `viewBox`, `fill` - to
@@ -738,10 +751,21 @@ atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
     if (colon == std::string_view::npos) {
         return text == "xmlns" ? atoms_->intern(xmlns_namespace) : atom{};
     }
+    // THE TEN NAMES, EXACTLY: `xml:base` and `xlink:foo` are not in the table
+    // and stay unprefixed attributes in no namespace (webkit02.dat).
     const std::string_view prefix = text.substr(0, colon);
-    if (prefix == "xlink") { return atoms_->intern(xlink_namespace); }
-    if (prefix == "xml") { return atoms_->intern(xml_namespace); }
-    if (prefix == "xmlns") { return atoms_->intern(xmlns_namespace); }
+    const std::string_view local = text.substr(colon + 1);
+    if (prefix == "xlink") {
+        for (const std::string_view known :
+             {"actuate", "arcrole", "href", "role", "show", "title", "type"}) {
+            if (local == known) { return atoms_->intern(xlink_namespace); }
+        }
+        return atom{};
+    }
+    if (prefix == "xml") {
+        return local == "lang" || local == "space" ? atoms_->intern(xml_namespace) : atom{};
+    }
+    if (prefix == "xmlns") { return local == "xlink" ? atoms_->intern(xmlns_namespace) : atom{}; }
     return atom{};
 }
 

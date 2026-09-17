@@ -509,6 +509,7 @@ private:
         const std::string_view uri = resolve(prefix_of(qualified), true);
         const node_id id = doc_.create_element(atoms_.intern(qualified), ns_of(uri),
                                                !prefix_of(qualified).empty());
+        if (ns_of(uri) == node_ns::other) { doc_.set_element_namespace(id, atoms_.intern(uri)); }
         if (open_.empty()) {
             root_ = id;
             doc_.set_document_element(id);
@@ -713,10 +714,9 @@ private:
         return {};
     }
 
-    // The two vocabularies this engine distinguishes. Everything else is
-    // `other`: `node` has no room for a URI - see dom/node.hpp - so an element
-    // in a third namespace keeps its tag and loses its URI, which is the same
-    // deal `createElementNS` already strikes for one.
+    // The two vocabularies `node` distinguishes. Everything else is `other`
+    // with its URI recorded on the document (document::element_namespace) -
+    // `node` has no room for one, see dom/node.hpp.
     [[nodiscard]] static node_ns ns_of(std::string_view uri) {
         if (uri == svg_namespace) { return node_ns::svg; }
         if (uri.empty() || uri == xhtml_namespace) { return node_ns::html; }
