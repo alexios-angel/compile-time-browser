@@ -250,8 +250,10 @@ constexpr property_syntax table[] = {
      false},
     {"text-overflow", k::freeform, "", "clip", false, false},
     {"text-shadow", k::freeform, "", "none", true, false},
-    {"white-space", k::keyword_only, "normal pre nowrap pre-wrap pre-line break-spaces", "normal",
-     true, false},
+    // CSS Text 4 §3's SHORTHAND of white-space-collapse, text-wrap-mode and
+    // white-space-trim (table_modules.cpp): the six keywords are spellings of
+    // the first two, split in shorthands.cpp.
+    {"white-space", k::freeform, "", "normal", true, false, true},
     {"word-break", k::keyword_only, "normal break-all keep-all break-word manual auto-phrase",
      "normal", true, false},
     {"overflow-wrap", k::keyword_only, "normal break-word anywhere", "normal", true, false},

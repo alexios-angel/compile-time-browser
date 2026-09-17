@@ -1550,6 +1550,33 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         return function_of(atoms_->intern(name));
     };
 
+    // EVERY SHORTHAND expand_shorthand DOES NOT SPLIT goes through the CSSOM's
+    // declaration block, which knows each one's grammar
+    // (properties/shorthands.cpp): `font`, `white-space`, `animation`, the
+    // flow-relative margins, insets and borders, `place-*`, `columns` ... What
+    // comes back is validated and canonical; a value the grammar refuses, or a
+    // shape the block keeps whole, is an empty block and the declaration
+    // stays as it was.
+    const auto split_via_block = [](std::string_view name, std::string_view text) {
+        css::declaration_block block;
+        if (css::longhands_of(name).empty()) { return block; } // a longhand
+        (void)css::set_declaration(block, name, text, false);
+        if (block.size() == 1 && ascii_iequals(block[0].name, name)) { block.clear(); }
+        return block;
+    };
+    // A `font` shorthand carries a font-size and a line-height of its own,
+    // and the two pre-passes below need those before pass two splits it.
+    const atom font_ = atoms_->intern_lower("font");
+    const auto component_of = [&](const declaration & d,
+                                  atom wanted) -> std::optional<std::string> {
+        if (d.property == wanted) { return d.value; }
+        if (d.property != font_ || css::may_have_var(d.value)) { return std::nullopt; }
+        for (const css::declaration & one : split_via_block("font", d.value)) {
+            if (atoms_->intern_lower(one.name) == wanted) { return one.value; }
+        }
+        return std::nullopt;
+    };
+
     // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
     //
     // `em` means the element's own font size on every property except font-size
@@ -1633,8 +1660,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             read.push_back(atoms_->intern(name));
         };
         fold([&](const declaration & d) {
-            if (d.property != font_size_) { return; }
-            std::string value{d.value};
+            const std::optional<std::string> held = component_of(d, font_size_);
+            if (!held) { return; }
+            std::string value{*held};
             if (css::may_have_var(value)) {
                 read.clear();
                 const std::optional<std::string> done =
@@ -1718,8 +1746,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         conditions.lengths = ctx;
         conditions.property = "line-height";
         fold([&](const declaration & d) {
-            if (d.property != line_height_) { return; }
-            std::string value{d.value};
+            const std::optional<std::string> held = component_of(d, line_height_);
+            if (!held) { return; }
+            std::string value{*held};
             if (css::may_have_var(value)) {
                 const std::optional<std::string> done =
                     css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
@@ -1796,53 +1825,6 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
         const std::string mapped = css::physical_property_of(name, writing_mode, direction);
         return mapped.empty() ? property : atoms_->intern_lower(mapped);
-    };
-    // ...AND THE LOGICAL SHORTHANDS (§4.2-4.4), which expand_shorthand does
-    // not know: split into their logical longhands here, each then mapped
-    // like any other. `margin-block: a b` is a start and an end;
-    // `border-block-width` the same for one component; `border-block-start`
-    // is `border-top`'s grammar on one flow-relative side and `border-block`
-    // that grammar on both sides of the axis.
-    const auto expand_logical = [&](std::string_view name, std::string_view text) {
-        std::vector<std::pair<std::string, std::string>> out;
-        const bool axis = name.ends_with("-block") || name.ends_with("-inline");
-        const auto pair = [&](std::string_view prefix, std::string_view suffix) {
-            const std::vector<std::string_view> parts = split_top_level(text, " \t\n\r\f");
-            if (parts.empty() || parts.size() > 2) { return; }
-            out.emplace_back(std::string{prefix} + "-start" + std::string{suffix},
-                             std::string{parts[0]});
-            out.emplace_back(std::string{prefix} + "-end" + std::string{suffix},
-                             std::string{parts.size() == 2 ? parts[1] : parts[0]});
-        };
-        if (axis && (name.starts_with("margin-") || name.starts_with("padding-") ||
-                     name.starts_with("inset-") || name.starts_with("scroll-margin-") ||
-                     name.starts_with("scroll-padding-"))) {
-            pair(name, "");
-        } else if (name.starts_with("border-") && name.size() > 6 &&
-                   (name.ends_with("-width") || name.ends_with("-style") ||
-                    name.ends_with("-color"))) {
-            const std::string_view prefix = name.substr(0, name.size() - 6);
-            if (prefix == "border-block" || prefix == "border-inline") {
-                pair(prefix, name.substr(name.size() - 6));
-            }
-        } else if (name == "border-block" || name == "border-inline" ||
-                   name == "border-block-start" || name == "border-block-end" ||
-                   name == "border-inline-start" || name == "border-inline-end") {
-            std::vector<std::string> sides;
-            if (axis) {
-                sides = {std::string{name} + "-start", std::string{name} + "-end"};
-            } else {
-                sides = {std::string{name}};
-            }
-            for (const auto & [top, part] : expand_shorthand("border-top", text)) {
-                // `border-top-width` -> `-width`, on each side asked for.
-                const std::string_view component = top.substr(10);
-                for (const std::string & side : sides) {
-                    out.emplace_back(side + std::string{component}, std::string{part});
-                }
-            }
-        }
-        return out;
     };
     // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
     // `line-height: 2lh` folded against its own answer would double it -
@@ -2079,17 +2061,30 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // computes to `0.012s` and `rotate: 100grad` to `90deg` (CSS Values 4
         // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
         // and still answers `96px` for `1in`.
-        const auto folded = [&](std::string text) {
-            if (auto canonical = css::canonical_dimension_text(text, lengths_for(d.property))) {
+        const auto folded = [&](std::string text, atom longhand) {
+            if (auto canonical = css::canonical_dimension_text(text, lengths_for(longhand))) {
                 return std::move(*canonical);
             }
             return text;
         };
         const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {
-            if (const auto logical = expand_logical(property, value); !logical.empty()) {
-                for (const auto & [name, text] : logical) {
-                    put(declaration{physical(atoms_->intern_lower(name)), folded(text)});
+            if (const css::declaration_block block = split_via_block(property, value);
+                !block.empty()) {
+                for (const css::declaration & one : block) {
+                    const atom longhand = atoms_->intern_lower(one.name);
+                    // The size a `font` carries was resolved by the pre-pass.
+                    const std::string text =
+                        longhand == font_size_ && font_size_resolved
+                            ? css::serialize_calc(css::calc_result{own_font_size, 0.0f, false})
+                            : folded(one.value, longhand);
+                    put(declaration{physical(longhand), text});
+                }
+                // ponytail: layout reads `white-space` itself (layout/box.hpp),
+                // so the shorthand's canonical value stays beside its longhands
+                // until it reads white-space-collapse and text-wrap-mode.
+                if (property == "white-space") {
+                    put(declaration{d.property, css::declaration_value(block, property)});
                 }
                 return;
             }
@@ -2101,11 +2096,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 unset();
                 return;
             }
-            put(declaration{physical(d.property), folded(std::move(value))});
+            put(declaration{physical(d.property), folded(std::move(value), d.property)});
             return;
         }
         for (const auto & [name, text] : expanded) {
-            put(declaration{physical(atoms_->intern_lower(name)), folded(std::string{text})});
+            const atom longhand = atoms_->intern_lower(name);
+            put(declaration{physical(longhand), folded(std::string{text}, longhand)});
         }
     });
 

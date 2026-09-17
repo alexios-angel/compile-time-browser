@@ -231,6 +231,9 @@ constexpr property_syntax modules[] = {
      false},
     {"white-space-collapse", k::keyword_only,
      "collapse preserve preserve-breaks preserve-spaces break-spaces", "collapse", true, false},
+    // `none | [ discard-before || discard-after || discard-inner ]`, CSS Text
+    // 4 §4.5; the shorthand's split checks the words, nothing trims with it.
+    {"white-space-trim", k::freeform, "", "none", false, false},
     {"word-wrap", k::keyword_only, "normal break-word anywhere", "normal", true, false},
     {"line-break", k::keyword_only, "auto loose normal strict anywhere", "auto", true, false},
     {"hyphens", k::keyword_only, "none manual auto", "manual", true, false},

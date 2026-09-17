@@ -1106,12 +1106,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // rule drops a trailing value that repeats the one two places before it, so
     // an ordinary <div>'s `margin` is `0px` rather than `0px 0px 0px 0px`.
     //
-    // EMPTY FOR THE REST, deliberately. `font`, `background`, `outline`,
-    // `list-style`, `transition`, `animation` and `text-decoration` are
-    // grammars rather than lists; engines disagree about how to rebuild them -
-    // Chrome disagrees with itself across versions - and CSSOM already says a
-    // shorthand that cannot be represented serialises to the empty string. That
-    // is the same answer, and the same reason, as `cssText` below.
+    // THE REST FOLD THE WAY `el.style` DOES: the longhands' computed values
+    // into a declaration block, read back as the shorthand through
+    // shorthands.cpp's one fold - `font` in CSS Fonts 4 §3.1's canonical form
+    // (font-computed), `animation` in CSS Animations 1 §5.9's, `white-space`
+    // as CSS Text 4's keyword when its longhands spell one. A shape that
+    // table keeps whole - `background`, `transition`, `text-decoration` - is
+    // "", which CSSOM says of a shorthand that cannot be represented.
     const auto longhand = [&answers, longhand_count](std::string_view name) -> std::string {
         for (std::size_t i = 0; i < longhand_count; ++i) {
             if (std::string_view{answers[i].first} == name) { return answers[i].second; }
@@ -1193,21 +1194,6 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             text = both("overflow-x", "overflow-y");
         } else if (p.name == "flex-flow") {
             text = both("flex-direction", "flex-wrap");
-        } else if (const std::string_view name = p.name;
-                   (name.ends_with("-block") || name.ends_with("-inline")) &&
-                   (name.starts_with("margin-") || name.starts_with("padding-") ||
-                    name.starts_with("inset-") || name.starts_with("scroll-"))) {
-            // THE LOGICAL PAIRS, CSS Logical 1 §4.2-4.3: start then end, both
-            // already answered above as the physical sides they mapped to.
-            text = both(std::string{name} + "-start", std::string{name} + "-end");
-        } else if (name.starts_with("border-") && name.size() > 6 &&
-                   (name.ends_with("-width") || name.ends_with("-style") ||
-                    name.ends_with("-color")) &&
-                   (name.substr(0, name.size() - 6) == "border-block" ||
-                    name.substr(0, name.size() - 6) == "border-inline")) {
-            const std::string axis{name.substr(0, name.size() - 6)};
-            const std::string kind{name.substr(name.size() - 6)};
-            text = both(axis + "-start" + kind, axis + "-end" + kind);
         } else if (p.name == "flex") {
             // THREE COMPONENTS THAT NEVER COLLAPSE: `flex: 0 1 auto` is the
             // initial value written out, and dropping a repeat would change
@@ -1218,6 +1204,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (!grow.empty() && !shrink.empty() && !basis.empty()) {
                 text = grow + " " + shrink + " " + basis;
             }
+        } else if (p.name != "all") {
+            style::css::declaration_block block;
+            for (const std::string_view longhand_name : style::css::longhands_of(p.name)) {
+                std::string held = longhand(longhand_name);
+                if (held.empty()) {
+                    block.clear();
+                    break;
+                }
+                block.push_back({std::string{longhand_name}, std::move(held), false});
+            }
+            if (!block.empty()) { text = style::css::declaration_value(block, p.name); }
         }
         shorthands.emplace_back(std::string{p.name}, std::move(text));
     }

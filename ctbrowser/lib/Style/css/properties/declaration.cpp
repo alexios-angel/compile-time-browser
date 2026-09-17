@@ -91,6 +91,39 @@ bool condition(std::string_view text, int depth) {
     return leaf(body.substr(1, body.size() - 2), depth);
 }
 
+// `animation-name`: `[ none | <keyframes-name> ]#` with `<keyframes-name> =
+// <custom-ident> | <string>` (CSS Animations 1 §5.1). A custom ident is not a
+// CSS-wide keyword, `default` or `none`; a string is written back as the
+// identifier it names, except one that spells a word an identifier could not
+// be - `"none"`, `"initial"` - which stays a string.
+[[nodiscard]] bool match_animation_name(const token_stream & ts, const scan & found,
+                                        std::string & out) {
+    bool want_name = true;
+    for (const std::size_t i : found.significant) {
+        const css_token & t = ts.tokens[i];
+        if (!want_name) {
+            if (t.type != token_type::comma) { return false; }
+            want_name = true;
+            continue;
+        }
+        want_name = false;
+        const std::string_view text = ts.text_of(t);
+        if (!out.empty()) { out += ", "; }
+        if (t.type == token_type::ident) {
+            if (is_wide_keyword(text) || ascii_iequals(text, "default")) { return false; }
+            out += ascii_iequals(text, "none") ? std::string{"none"} : std::string{text};
+            continue;
+        }
+        if (t.type != token_type::string) { return false; }
+        const std::string_view body = ts.value_of(t);
+        if (body.empty()) { return false; }
+        const bool reserved =
+            is_wide_keyword(body) || ascii_iequals(body, "default") || ascii_iequals(body, "none");
+        out += reserved ? string_text(body) : serialize_identifier(body);
+    }
+    return !want_name && !out.empty();
+}
+
 } // namespace
 
 bool is_wide_keyword(std::string_view word) noexcept {
@@ -327,6 +360,14 @@ value_check check_declaration(std::string_view property, std::string_view value,
             if (serialized.empty()) { return {}; }
             return yes(std::move(serialized));
         }
+    }
+
+    // `animation-name`'s `[ none | <keyframes-name> ]#` (above): `12`, `one
+    // two` and `one, initial` are refused, `"something"` is `something`.
+    if (ascii_iequals(property, "animation-name")) {
+        std::string serialized;
+        if (!match_animation_name(ts, found, serialized)) { return {}; }
+        return yes(std::move(serialized));
     }
 
     // THE KEYWORD COMBINATIONS (keywords.cpp): `overline underline` is
