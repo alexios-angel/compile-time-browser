@@ -81,6 +81,17 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
         if (std::ranges::find(src.unstarted_scripts_, source) != src.unstarted_scripts_.end()) {
             note_unstarted_script(made);
         }
+        // HTML 4.10.5 and 4.10.11's: a control's value, dirty value flag,
+        // checkedness and dirty checkedness go with it (the-input-element/
+        // cloning-steps.html, clone.html).
+        if (src.forms_ != nullptr && forms_ != nullptr) {
+            if (src.forms_ == forms_) {
+                forms_->clone_state(source, made);
+            } else if (const control_state * held = src.forms_->find(source)) {
+                const auto txn = doc_->read();
+                forms_->state_of(txn, *atoms_, made) = *held;
+            }
+        }
         break;
     }
     if (deep) {

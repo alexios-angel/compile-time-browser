@@ -92,6 +92,18 @@ public:
 
     [[nodiscard]] const control_state * find(node_id id) const;
 
+    // HTML 4.10.5 / 4.10.11's cloning steps: the copy takes the source's
+    // value, dirty value flag, checkedness and dirty checkedness. A source
+    // nobody has touched has no state and the copy seeds from its attributes,
+    // which is the same answer.
+    void clone_state(node_id source, node_id made) {
+        if (const auto it = states_.find(source.key()); it != states_.end()) {
+            control_state copy = it->second;
+            copy.pending_attribute.reset();
+            states_.insert_or_assign(made.key(), std::move(copy));
+        }
+    }
+
     // After a DOM write: every seeded <input> whose type attribute moved runs
     // its type-change steps now (state_of does), and the `value` attributes
     // those steps left pending are handed to `write` - the store cannot write

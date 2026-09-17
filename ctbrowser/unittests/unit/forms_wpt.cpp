@@ -306,9 +306,13 @@ void test_value_sanitization_and_type_change() {
        " var d = document.createElement('input'); d.type = 'datetime-local'; d.value = "
        "'2014-01-01 11:11:00'; o.push(d.value);"
        " var t = document.createElement('input'); t.value = null; o.push(t.value === '');"
+       " var c = document.createElement('input'); c.value = 'foo bar'; var cc = c.cloneNode();"
+       " cc.setAttribute('value', 'other'); o.push(cc.value);"
+       " var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;"
+       " o.push(cb.cloneNode().checked);"
        " return o.join(); })()",
        "\"  foobar  \",foobar,true,50,#000000,#abcdef,#abcdef,#abcdef,#abcdef,typed,on,true,"
-       "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true");
+       "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true,foo bar,true");
 }
 
 int main() {
