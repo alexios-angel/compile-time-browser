@@ -412,6 +412,62 @@ void test_async_rejection() {
         "fr");
 }
 
+// TWO ASYNC FUNCTIONS SUSPENDED AT ONCE. An interpreted callee's frame starts
+// inside its caller's window (op::call: base + a + 1), and the suspension cut
+// the register stack at the callee's base - every caller register above the
+// callee slot went with it, and the NEXT call's resize refilled them with
+// undefined. `f(1); g(2);` had g read `v` as undefined (2026-09-17).
+void test_concurrent_awaits() {
+    expect_after_turn("var result = '';"
+                      "async function f(v) { const r = await v; return r + '/' + v; }"
+                      "async function g(v) { const r = await v; return r + '/' + v; }"
+                      "f(1).then(x => { result += x; }); g(2).then(x => { result += ' ' + x; });",
+                      "1/1 2/2");
+    expect_after_turn("var result = '';"
+                      "class C { static async #a(v) { return await v; }"
+                      "  static async b(v) { return await this.#a(v); } }"
+                      "class D { static async b(v) { return await v; } }"
+                      "C.b(1).then(x => { result += x; }); D.b(2).then(x => { result += x; });",
+                      "21"); // D settles first: C.b awaits twice
+    // THE SAME CUT FROM THE CALLER'S SIDE: testharness.js's promise_setup calls
+    // the page's async function and then reads its own `properties` - the
+    // registers above the suspended callee's slot - and got undefined
+    // ("Cannot read properties of undefined (reading 'hasOwnProperty')",
+    // every WPT file using promise_setup). The callee suspends INSIDE the
+    // caller's window; the caller's registers must survive it.
+    expect_after_turn("var result = '';"
+                      "function promise_setup(func, properties = {}) {"
+                      "  Promise.resolve().then(function () {"
+                      "    var r = func(); result += typeof properties + ':' +"
+                      "    properties.hasOwnProperty('x') + ':' + (typeof r.then); }); }"
+                      "promise_setup(async () => { await 1; });",
+                      "object:false:function");
+}
+
+// %AsyncIteratorPrototype%[Symbol.asyncDispose] (27.1.3.2): `return` called
+// and awaited, undefined answered; no `return` is undefined at once; a throw
+// from the getter or the call is the rejection.
+void test_async_dispose() {
+    // (An async generator's own `.return()` at a yield does not run its
+    // finally yet - coroutines.cpp says so - so the iterator here is hand-made.)
+    expect_after_turn("var result = ''; const proto = Object.getPrototypeOf(Object.getPrototypeOf("
+                      "Object.getPrototypeOf((async function* () {})())));"
+                      "const it = { __proto__: proto, return() { result += 'ret';"
+                      " return Promise.resolve({ done: true, value: 5 }); } };"
+                      "it[Symbol.asyncDispose]().then(v => { result += ':' + v + ':' +"
+                      " it[Symbol.asyncDispose].name; });",
+                      "ret:undefined:[Symbol.asyncDispose]");
+    expect_after_turn("var result = ''; const it = { __proto__: Object.getPrototypeOf("
+                      "Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})()))),"
+                      " return() { throw new RangeError('r'); } };"
+                      "it[Symbol.asyncDispose]().catch(e => { result = e.name; });",
+                      "RangeError");
+    expect_after_turn("var result = 'x'; const it = { __proto__: Object.getPrototypeOf("
+                      "Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})()))) };"
+                      "it[Symbol.asyncDispose]().then(v => { result = String(v); });",
+                      "undefined");
+}
+
 // `async function*`: every request is a promise of the record, queued behind
 // the body; `yield` awaits its operand; a throw rejects the request; the body
 // may park on an `await` between two requests.
@@ -581,6 +637,8 @@ int main() {
     test_async_and_promises();
     test_promise_handlers_are_microtasks();
     test_async_rejection();
+    test_concurrent_awaits();
+    test_async_dispose();
     test_async_generators();
     test_for_await();
     REPORT("vm_async");

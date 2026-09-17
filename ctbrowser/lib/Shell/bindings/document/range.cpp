@@ -27,12 +27,14 @@ using namespace detail;
 // mutation records already live; a second copy here would be a second
 // chance to disagree with them.
 //
-// ponytail: NOT LIVE TO OTHER MUTATIONS. DOM keeps every range's boundary
-// points up to date as the tree changes; a range here follows only its OWN
-// edits (the `splitText` insertNode does, the collapse extract does). The
-// live-range list needs a hook where document::remove_child, insert_before
-// and set_text run, which this file cannot reach - see the report.
-// Range-mutations-*.html is what measures it.
+// LIVE, AS DOM 5.5 SAYS: the document logs every child inserted or removed
+// (with its index at that moment) and every data write (as a "replace data"),
+// and `settle_live_ranges` below runs the specification's range steps over
+// that log from mutated(), before any script can read a boundary. A range's
+// own algorithms (deleteContents, extractContents, insertNode) run under
+// that liveness too, as the specification writes them - each sets its final
+// points explicitly at the end. Range-mutations-*.html is what measures it;
+// before this a range followed only its own edits.
 
 namespace {
 
@@ -544,7 +546,10 @@ void dom_bindings::install_range(context & cx) {
                                      position](context & c, std::span<value> a) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
-        const double how = context::to_number(arg(a, 0));
+        // WebIDL `unsigned short`: ToNumber, truncate, modulo 2^16 - so 65536
+        // is START_TO_START and 1.5 is START_TO_END (Range-compareBoundaryPoints
+        // walks every such value, 1,325 subtests).
+        const double how = static_cast<double>(context::to_uint32(arg(a, 0)) % 65536u);
         const value other = arg(a, 1);
         if (!(how == 0 || how == 1 || how == 2 || how == 3)) {
             throw_dom_exception(c, "NotSupportedError",
@@ -869,38 +874,69 @@ void dom_bindings::install_range(context & cx) {
     // document or fragment - handed back as a DocumentFragment.
     // ponytail: the parse is innerHTML's, in body context; a `<tr>` in a
     // table context loses its row the way innerHTML on a <div> would.
-    method("createContextualFragment",
-           [start_of, type_of, parent_of, call_on](context & c, std::span<value> a) {
-               script::object_object * self = self_object(c);
-               if (self == nullptr) { return value::undefined(); }
-               const std::string markup = arg_string(c, a, 0);
-               spot node = start_of(c, self).node;
-               while (!node.none() && !node.is_attr() && type_of(node) != type_element &&
-                      type_of(node) != type_document && type_of(node) != type_fragment) {
-                   node = parent_of(node);
-               }
-               if (node.none() || node.is_attr()) { return value::null(); }
-               const spot document_node{node.owner, node.owner->doc_->document_node()};
-               std::string tag = "body";
-               if (type_of(node) == type_element) {
-                   const auto txn = node.owner->doc_->read();
-                   tag = std::string{txn.local_name(node.id)};
-                   if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
-               }
-               const value scratch = call_on(c, document_node, "createElement", {c.string(tag)});
-               if (!scratch.is_object_like()) { return value::null(); }
-               c.store_property(scratch, "innerHTML", c.string(markup));
-               const value fragment = call_on(c, document_node, "createDocumentFragment", {});
-               while (true) {
-                   const value first = c.lookup_property(scratch, "firstChild");
-                   if (!first.is_object_like()) { break; }
-                   const value append = c.lookup_property(fragment, "appendChild");
-                   if (!append.is_callable()) { break; }
-                   (void)c.call(append, std::span<const value>{&first, 1}, fragment);
-                   if (c.throw_pending()) { break; }
-               }
-               return fragment;
-           });
+    method("createContextualFragment", [start_of, type_of, parent_of, call_on](context & c,
+                                                                               std::span<value> a) {
+        script::object_object * self = self_object(c);
+        if (self == nullptr) { return value::undefined(); }
+        const std::string markup = arg_string(c, a, 0);
+        spot node = start_of(c, self).node;
+        while (!node.none() && !node.is_attr() && type_of(node) != type_element &&
+               type_of(node) != type_document && type_of(node) != type_fragment) {
+            node = parent_of(node);
+        }
+        if (node.none() || node.is_attr()) { return value::null(); }
+        const spot document_node{node.owner, node.owner->doc_->document_node()};
+        std::string tag = "body";
+        if (type_of(node) == type_element) {
+            const auto txn = node.owner->doc_->read();
+            tag = std::string{txn.local_name(node.id)};
+            if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
+        }
+        const value scratch = call_on(c, document_node, "createElement", {c.string(tag)});
+        if (!scratch.is_object_like()) { return value::null(); }
+        c.store_property(scratch, "innerHTML", c.string(markup));
+        const value fragment = call_on(c, document_node, "createDocumentFragment", {});
+        while (true) {
+            const value first = c.lookup_property(scratch, "firstChild");
+            if (!first.is_object_like()) { break; }
+            const value append = c.lookup_property(fragment, "appendChild");
+            if (!append.is_callable()) { break; }
+            (void)c.call(append, std::span<const value>{&first, 1}, fragment);
+            if (c.throw_pending()) { break; }
+        }
+        // IN AN XML DOCUMENT the fragment is the XML parser's, and the
+        // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
+        // in are unwrapped - their children stand in their place
+        // (createContextualFragment-xhtml.xhtml, what every browser does).
+        if (node.owner->doc_->xml()) {
+            const value query = c.lookup_property(fragment, "querySelectorAll");
+            const value selector = c.string("html, head, body");
+            const value wrappers =
+                query.is_callable() ? c.call(query, std::span<const value>{&selector, 1}, fragment)
+                                    : value::undefined();
+            const double count = wrappers.is_object_like()
+                                     ? context::to_number(c.lookup_property(wrappers, "length"))
+                                     : 0;
+            for (double i = count; i-- > 0;) {
+                const value wrapper =
+                    c.lookup_property(wrappers, std::to_string(static_cast<std::size_t>(i)));
+                if (!wrapper.is_object_like()) { continue; }
+                const value parent = c.lookup_property(wrapper, "parentNode");
+                const value insert = c.lookup_property(parent, "insertBefore");
+                if (!insert.is_callable()) { continue; }
+                while (true) {
+                    const value child = c.lookup_property(wrapper, "firstChild");
+                    if (!child.is_object_like()) { break; }
+                    const value args[2] = {child, wrapper};
+                    (void)c.call(insert, args, parent);
+                    if (c.throw_pending()) { break; }
+                }
+                const value remove = c.lookup_property(wrapper, "remove");
+                if (remove.is_callable()) { (void)c.call(remove, {}, wrapper); }
+            }
+        }
+        return fragment;
+    });
     proto->define("@@toStringTag", cx.string("Range"), script::attr_configurable);
 
     // `new Range()`: collapsed at (document, 0) of the realm's document.
@@ -915,6 +951,7 @@ void dom_bindings::install_range(context & cx) {
             auto * made = static_cast<script::object_object *>(self.as_heap());
             if (!made->prototype.is_object()) { made->prototype = proto_value; }
             store_points(*made, document_, 0, document_, 0);
+            register_live_range(self);
             return self;
         });
     ctor->define("prototype", proto_value, script::attr_none);
@@ -1006,7 +1043,125 @@ value dom_bindings::create_range(context & cx) {
     made->define(std::string{start_offset_slot}, value::number(0), script::attr_none);
     made->define(std::string{end_node_slot}, document_, script::attr_none);
     made->define(std::string{end_offset_slot}, value::number(0), script::attr_none);
+    register_live_range(value::object(made));
     return value::object(made);
+}
+
+// ============================================================================
+// THE LIVE RANGE STEPS
+// ============================================================================
+
+void dom_bindings::register_live_range(value range) {
+    primary().live_ranges_.push_back(range);
+}
+
+void dom_bindings::each_live_boundary(const std::function<void(const live_boundary &)> & fn) {
+    if (cx_ == nullptr || doc_ == nullptr) { return; }
+    // A copy: a callback may register a range (wrap() does not, but the
+    // list is the primary's and `fn` is not audited).
+    const std::vector<value> ranges = primary().live_ranges_;
+    for (const value & held : ranges) {
+        auto * range = static_cast<script::object_object *>(held.as_heap());
+        for (const auto & [node_slot, offset_slot] : {std::pair{start_node_slot, start_offset_slot},
+                                                      std::pair{end_node_slot, end_offset_slot}}) {
+            const value node = slot(range, node_slot);
+            live_boundary at{range, node_slot, offset_slot, node_id{},
+                             context::to_number(slot(range, offset_slot))};
+            // A boundary of THIS document - not an Attr, not another
+            // document's node.
+            if (is_the_document(node)) {
+                at.node = doc_->document_node();
+            } else if (const node_id id = handle_of(node)) {
+                at.node = id;
+            } else {
+                continue;
+            }
+            fn(at);
+        }
+    }
+}
+
+void dom_bindings::move_live_boundary(const live_boundary & at, node_id node, double offset) {
+    at.range->set(std::string{at.node_slot},
+                  node == doc_->document_node() ? document_ : wrap(*cx_, node));
+    at.range->set(std::string{at.offset_slot}, value::number(offset));
+}
+
+// The range steps of DOM 4.2.3 "insert" (step 7 - for each live range whose
+// start node is parent and start offset is greater than child's index,
+// increase its start offset by count; likewise end), "remove" (steps 5-8 -
+// a boundary inside the removed node goes to (parent, index); one on the
+// parent past it moves down by one) and 4.10.2 "replace data" (steps 8-11 -
+// a boundary inside the replaced span goes to its start; one after it moves
+// by the difference in length). `this` is the bindings whose document
+// logged the edits; the ranges are the realm's.
+void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & writes) {
+    if (cx_ == nullptr || doc_ == nullptr || primary().live_ranges_.empty()) { return; }
+    using edit = document::write_note::edit;
+    for (const document::write_note & note : writes) {
+        if (note.kind == edit::attribute) { continue; }
+        const auto txn = doc_->read();
+        each_live_boundary([&](const live_boundary & at) {
+            switch (note.kind) {
+            case edit::removed: {
+                // Inside the removed node - which may since have been put
+                // somewhere else, and is still its own subtree's root.
+                bool inside = false;
+                for (node_id up = at.node; up && txn.contains(up); up = dom_parent(txn, up)) {
+                    if (up == note.child) {
+                        inside = true;
+                        break;
+                    }
+                }
+                if (inside) {
+                    move_live_boundary(at, note.node, note.index);
+                } else if (at.node == note.node && at.offset > note.index) {
+                    move_live_boundary(at, at.node, at.offset - 1);
+                }
+                break;
+            }
+            case edit::inserted:
+                if (at.node == note.node && at.offset > note.index) {
+                    move_live_boundary(at, at.node, at.offset + 1);
+                }
+                break;
+            case edit::data: {
+                if (at.node != note.node) { break; }
+                const double offset = note.data.offset;
+                const double end = offset + note.data.count;
+                if (at.offset > offset && at.offset <= end) {
+                    move_live_boundary(at, at.node, offset);
+                } else if (at.offset > end) {
+                    move_live_boundary(at, at.node, at.offset + note.data.added - note.data.count);
+                }
+                break;
+            }
+            case edit::attribute: break;
+            }
+        });
+    }
+}
+
+void dom_bindings::split_live_ranges(node_id node, node_id made, double offset, node_id parent,
+                                     double made_index) {
+    each_live_boundary([&](const live_boundary & at) {
+        if (at.node == node && at.offset > offset) {
+            move_live_boundary(at, made, at.offset - offset);
+        } else if (parent && at.node == parent && at.offset == made_index) {
+            move_live_boundary(at, at.node, at.offset + 1);
+        }
+    });
+}
+
+void dom_bindings::absorb_live_ranges(node_id current, node_id parent, double index, node_id node,
+                                      double length) {
+    each_live_boundary([&](const live_boundary & at) {
+        if (at.node == current) {
+            move_live_boundary(at, node, length + at.offset);
+        } else if (at.node == parent && at.offset == index) {
+            move_live_boundary(at, node, length);
+        }
+    });
 }
 
 } // namespace ctbrowser::shell

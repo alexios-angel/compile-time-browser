@@ -705,15 +705,14 @@ public:
     // bind_this_name): a native pushes no frame, so frames_.back() is its
     // caller's - the derived constructor whose `super()` just returned. An
     // arrow's frame (a `super()` inside one) rebinds only the arrow's own
-    // receiver. ONLY WHEN THE PARENT IS A COMPILED FUNCTION: a native parent
-    // (Array, Object, a bound function) reached through super() is CALLED
-    // with the instance as `this`, and what it answers is an object of its
-    // own, not a return override - binding it lost `class A extends Array`
-    // its A.prototype (test262 subclass-builtins, gate 3).
+    // receiver. A NATIVE PARENT TOO: Error, Map, Date fill the instance and
+    // answer it, and Array and the typed arrays answer an array of their own
+    // carrying the instance's prototype (adopt_subclass_prototype) - either
+    // way the answer is the [[Construct]] result and is `this` from here.
+    // Until 2026-09-17 a native parent was skipped, so `class A extends
+    // Array` built a plain object that was never an array.
     void rebind_receiver(value v) {
-        if (frames_.empty()) { return; }
-        const closure_object * me = frames_.back().closure;
-        if (me == nullptr || !me->proto_link.is_kind(heap_kind::function)) { return; }
+        if (frames_.empty() || frames_.back().closure == nullptr) { return; }
         frames_.back().receiver = v;
     }
     // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
@@ -896,6 +895,9 @@ public:
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
     // See store_rejected_: a store from strict code asks this afterwards.
     void clear_store_rejected() noexcept { store_rejected_ = false; }
+    // Was the last store refused (a non-writable property, a `set` trap
+    // answering false, a non-extensible receiver)? Reflect.set's answer.
+    [[nodiscard]] bool store_rejected() const noexcept { return store_rejected_; }
     void strict_store_check(std::string_view name) {
         if (!store_rejected_) { return; }
         store_rejected_ = false;
@@ -949,7 +951,10 @@ public:
     // op::construct keeps its own inline path because it does not need a nested
     // interpreter loop; this is for the spread form and for `Reflect.construct`,
     // which both do.
-    [[nodiscard]] value construct(value callee, std::span<const value> args);
+    // `new_target` defaults to the callee (a plain `new`); a proxy's
+    // [[Construct]] and Reflect.construct pass their own.
+    [[nodiscard]] value construct(value callee, std::span<const value> args,
+                                  value new_target = value::undefined());
 
     // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
     // ToPrimitive (7.1.1) with a hint - "default", "number" or "string": the
@@ -962,7 +967,11 @@ public:
     // The handler's trap of this name, or undefined when it has none. Public
     // for the standard library: `hasOwnProperty` must ask a proxy's handler the
     // same question `in` asks it, and `window` is a proxy.
-    [[nodiscard]] value proxy_trap(value proxy, const std::string & name);
+    // GetMethod (7.3.10): null/undefined is "no trap" (undefined here); a
+    // revoked proxy or a non-callable trap is the TypeError, and `failed`,
+    // when given, is set for that and for a getter's throw - the caller must
+    // not forward to the target after either (see the definition).
+    [[nodiscard]] value proxy_trap(value proxy, const std::string & name, bool * failed = nullptr);
     // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
     // else truncates toward zero and wraps modulo 2^32.
     [[nodiscard]] static std::int32_t to_int32(value v) {
@@ -1209,6 +1218,41 @@ public:
     void set_promise_factory(std::function<value(context &, value, bool)> make) {
         promise_factory_ = std::move(make);
     }
+    // HostPromiseRejectionTracker (27.2.1.9), for the host to wire
+    // `unhandledrejection` / `rejectionhandled` from: called with `handled`
+    // false when a promise is rejected while no reaction was ever attached to
+    // it (RejectPromise step 7, [[PromiseIsHandled]] false), and with `handled`
+    // true when a reaction is later attached to such a promise
+    // (PerformPromiseThen step 9 - `then`, `catch`, `finally`, an `await`).
+    // No JS semantics change and nothing is dispatched here; without a
+    // tracker the calls are dropped. [[PromiseIsHandled]] is the promise's
+    // private `@#PromiseIsHandled` slot (builtins/async.cpp).
+    void set_rejection_tracker(std::function<void(value promise, bool handled)> track) {
+        rejection_tracker_ = std::move(track);
+    }
+    void track_promise_rejection(value promise, bool handled) {
+        if (rejection_tracker_) { rejection_tracker_(promise, handled); }
+    }
+    // [[PromiseIsHandled]]: read and set through one member so attach_resume
+    // (an await is a PerformPromiseThen) and the standard library agree.
+    [[nodiscard]] static bool promise_is_handled(value promise) {
+        if (!promise.is_object()) { return true; }
+        const value * flag = static_cast<object_object *>(promise.as_heap())
+                                 ->find(std::string_view{"@#PromiseIsHandled"});
+        return flag != nullptr && truthy(*flag);
+    }
+    // PerformPromiseThen steps 9 and 11 for `promise`: the tracker's "handle"
+    // when it was rejected unhandled, then the flag.
+    void mark_promise_handled(value promise) {
+        if (!promise.is_object() || promise_is_handled(promise)) { return; }
+        auto * p = static_cast<object_object *>(promise.as_heap());
+        const value * rejected = p->find(std::string_view{"__rejected"});
+        const value * settled = p->find(std::string_view{"__settled"});
+        if (settled != nullptr && truthy(*settled) && rejected != nullptr && truthy(*rejected)) {
+            track_promise_rejection(promise, true);
+        }
+        p->define(std::string_view{"@#PromiseIsHandled"}, value::boolean(true), attr_none);
+    }
     // A PENDING promise, and settling one. What a host needs to model work that
     // finishes later - a fetch off the event loop, a decode, a file read - now
     // that `await` can actually suspend on one.
@@ -1361,6 +1405,13 @@ public:
     // data member or an accessor called with that receiver. The fallback every
     // arm of lookup_property ends in; see the definition for why.
     [[nodiscard]] value from_object_prototype(value receiver, const std::string & name);
+    // THE EXPLICIT CHAIN FROM `from` UPWARD, for `receiver`: a data member or an
+    // accessor called with the receiver, the implicit Object.prototype at the
+    // top, an explicit null ending it, and a link that is not a plain object
+    // (an array, a function) carrying on in its own arm of lookup_property.
+    // Shared by an object's walk and an array with a prototype of its own.
+    [[nodiscard]] value lookup_along(object_object * from, value receiver,
+                                     const std::string & name);
 
     // `delete o.k` - the NAMED form. delete_index is the computed one and they
     // are separate opcodes because the key arrives differently: a name is a
@@ -1884,6 +1935,10 @@ public:
         value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
         return settled != nullptr && !truthy(*settled);
     }
+    // %ThrowTypeError% (10.2.4.1): ONE per realm, anonymous, arity 0, frozen -
+    // the getter and setter of Function.prototype's `caller` and `arguments`
+    // and of an unmapped arguments object's `callee`. Made on first use.
+    [[nodiscard]] value throw_type_error();
     // THE JOB THAT RESUMES AN AWAIT OF A SETTLED VALUE: (coroutine, value,
     // rejected) -> resume. One native per context, made on first use.
     [[nodiscard]] value await_job() {
@@ -1906,6 +1961,7 @@ public:
         auto * record = allocate<object_object>();
         record->set("co", coroutine);
         static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
+        mark_promise_handled(promise); // an await is a PerformPromiseThen (27.7.5.3)
     }
 
 private:
@@ -2028,6 +2084,7 @@ private:
     // in, so after it runs the frame's copy is the one that still has them.
     [[nodiscard]] value make_arguments_object(call_frame & fr, const value * slots,
                                               std::uint32_t argc);
+
     [[nodiscard]] value gather_rest_values(const call_frame & fr, const value * slots,
                                            std::uint32_t argc, std::uint32_t from);
 
@@ -2206,6 +2263,7 @@ private:
             for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
         }
         visit(root_label::microtasks, await_job_); // the one native every settled await queues
+        visit(root_label::prototypes, throw_type_error_);
         // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
         // register once the module has finished evaluating, so without this a
         // collection between two modules frees the bindings the second one is
@@ -2347,6 +2405,7 @@ private:
     std::function<double()> clock_;
     std::function<value(context &)> pending_promise_factory_;
     std::function<void(context &, value, value, bool)> promise_settler_;
+    std::function<void(value, bool)> rejection_tracker_; // see set_rejection_tracker
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
@@ -2448,7 +2507,8 @@ private:
     // bridge read it after a store from STRICT code and throw the TypeError
     // (10.1.9.2 / 13.15.2 PutValue step 6.b).
     bool store_rejected_ = false;
-    value await_job_ = value::undefined(); // see await_job(); a root in each_root
+    value await_job_ = value::undefined();        // see await_job(); a root in each_root
+    value throw_type_error_ = value::undefined(); // see throw_type_error(); a root too
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;

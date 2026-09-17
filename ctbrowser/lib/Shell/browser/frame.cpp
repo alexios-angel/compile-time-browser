@@ -5,6 +5,37 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// THE VIEWPORT'S OVERFLOW, CSS Overflow 3 §3.3: the root's `overflow-y`
+// propagates to the viewport, and when the root's is `visible` the body's
+// does instead. A viewport at `hidden` or `clip` shows no scrollbar - it
+// still scrolls programmatically, which is what scrollintoview.html's
+// `body { padding: 4000px; overflow: hidden }` measures against innerWidth.
+[[nodiscard]] bool viewport_hides_overflow(atom_table & atoms,
+                                           const ctbrowser::style::style_map & resolved,
+                                           const read_txn & txn) {
+    const auto overflow_y = [&](node_id id) -> std::string_view {
+        if (!id) { return {}; }
+        const auto found = resolved.find(ctbrowser::style::engine::key_of(id));
+        if (found == resolved.end() || !found->second) { return {}; }
+        return trim(found->second->get(atoms.intern("overflow-y")), html_whitespace);
+    };
+    const node_id root = txn.root();
+    std::string_view used = overflow_y(root);
+    if (used.empty() || ascii_iequals(used, "visible")) {
+        for (const node_id child : txn.children(root)) {
+            if (txn.element_ns(child) == node_ns::html && txn.local_name(child) == "body") {
+                used = overflow_y(child);
+                break;
+            }
+        }
+    }
+    return ascii_iequals(used, "hidden") || ascii_iequals(used, "clip");
+}
+
+} // namespace
+
 double browser::next_wakeup_ms() {
     double soonest = std::numeric_limits<double>::infinity();
     if (bindings_) {
@@ -121,7 +152,12 @@ void browser::resize(int width, int height) {
     // frame and hundreds of `dirty::layout` ones, which is what Chrome does too - and a
     // page with no `@media` at all never re-resolves, which is the invariant
     // browser.hpp states about a resize.
-    mark(media_environment_changed() ? dirty::styles : dirty::layout);
+    const bool flipped = media_environment_changed();
+    // AND REPORT IT TO THE PAGE'S MediaQueryLists (CSSOM View §13) - whether
+    // or not a SHEET's query flipped; a list's query need not be in any
+    // sheet. The `change` events go out on the next tick.
+    if (bindings_) { bindings_->report_media_query_changes(); }
+    mark(flipped ? dirty::styles : dirty::layout);
 }
 
 // Push the window's size and the user's preferences into the style engine. Returns
@@ -133,11 +169,16 @@ bool browser::media_environment_changed() {
     return styles_->set_environment(env);
 }
 
-void browser::scroll_to(float y) {
+void browser::scroll_to(float x, float y) {
+    const float clamped_x = std::clamp(x, 0.0f, max_scroll_x());
     const float clamped = std::clamp(y, 0.0f, max_scroll());
-    if (clamped == scroll_y_) { return; }
+    if (clamped == scroll_y_ && clamped_x == scroll_x_) { return; }
     scroll_y_ = clamped;
-    layers_.scroll_to(0, scroll_y_);
+    scroll_x_ = clamped_x;
+    layers_.scroll_to(scroll_x_, scroll_y_);
+    // The page hears about it on the next tick, whoever moved the view - the
+    // wheel, a key, the scrollbar or window.scrollTo (CSSOM View §13.1).
+    if (bindings_) { bindings_->queue_scroll_event(node_id{}); }
     // The page's tiles survive - they are in CONTENT space, which is the
     // point of the whole design - but the scrollbar's thumb is a function
     // of where we now are, so its two rectangles are redrawn AND its tile
@@ -152,12 +193,15 @@ void browser::scroll_to(float y) {
 }
 
 bool browser::on_scrollbar(float x) const noexcept {
-    return max_scroll() > 0 && options_.scrollbar_width > 0 &&
-           x >= static_cast<float>(options_.width) - options_.scrollbar_width;
+    return has_scrollbar() && x >= static_cast<float>(options_.width) - options_.scrollbar_width;
 }
 
 float browser::max_scroll() const noexcept {
     return std::max(0.0f, content_height_ - static_cast<float>(options_.height));
+}
+
+float browser::max_scroll_x() const noexcept {
+    return std::max(0.0f, content_width_ - layout_width_);
 }
 
 rect browser::viewport() const noexcept {
@@ -253,9 +297,18 @@ void browser::run_layout() {
     };
     boxes_ = builder.build(txn, txn.root());
     const ctbrowser::layout::engine eng{measure()};
+    // THE PAGE IS AS TALL AS ITS SCROLLING AREA (CSSOM View §2), not as its
+    // root box: an absolutely positioned box below the fold is reachable by
+    // scrolling in every browser, and the scroll-behavior-main-frame-window
+    // tests lay their whole content out that way.
+    // (With no viewport floor: a short page stays shorter than the window.)
+    const auto page_height = [&](float width) {
+        return std::max(fragments_.bounds.height,
+                        ctbrowser::layout::viewport_scrolling_area(fragments_, width, 0).height);
+    };
     fragments_ =
         eng.run(boxes_, static_cast<float>(options_.width), static_cast<float>(options_.height));
-    content_height_ = fragments_.bounds.height;
+    content_height_ = page_height(static_cast<float>(options_.width));
 
     // TWO PASSES when the page overflows: the scrollbar takes width away
     // from the content, and content laid out at the full width would run
@@ -263,12 +316,18 @@ void browser::run_layout() {
     // TALLER, so a page that overflowed still overflows - it never
     // oscillates between needing a bar and not.
     layout_width_ = static_cast<float>(options_.width);
-    if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height)) {
+    scrollbar_shown_ = !viewport_hides_overflow(atoms_, resolved_, txn);
+    if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height) &&
+        scrollbar_shown_) {
         layout_width_ = static_cast<float>(options_.width) - options_.scrollbar_width;
         fragments_ = eng.run(boxes_, layout_width_, static_cast<float>(options_.height));
-        content_height_ = fragments_.bounds.height;
+        content_height_ = page_height(layout_width_);
     }
+    content_width_ = ctbrowser::layout::viewport_scrolling_area(fragments_, layout_width_,
+                                                                static_cast<float>(options_.height))
+                         .width;
     scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
+    scroll_x_ = std::clamp(scroll_x_, 0.0f, max_scroll_x());
     // offsetWidth and friends read the fragment tree, so they answer with
     // THIS layout rather than the one before it.
     if (bindings_) {
@@ -321,7 +380,7 @@ void browser::record() {
         paint_replaced(id, box, content, style, into);
     };
     layers_ = recorder_.record_layers(fragments_);
-    layers_.scroll_to(0, scroll_y_);
+    layers_.scroll_to(scroll_x_, scroll_y_);
     page_layers_ = layers_.layers.size(); // everything after this is chrome
     record_chrome();
     svg_.end_frame();

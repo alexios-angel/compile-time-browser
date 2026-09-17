@@ -27,6 +27,7 @@ enum class shape : std::uint8_t {
     pair,       // 1-2 values: start/end, x/y or row/column; one sets both
     place,      // `place-*`: an align value then a justify one, each of several words
     grid_lines, // grid-row / grid-column / grid-area: `/`-separated grid lines
+    slash_pair, // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
     bar,        // `a || b || c`: each part goes to the longhand that takes it
     flex,       // Flexbox 1 §7.1.1's own defaults
     font,       // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
@@ -109,6 +110,7 @@ constexpr shorthand_syntax table[] = {
     {"grid-column", shape::grid_lines, "grid-column-start grid-column-end", ""},
     {"grid-area", shape::grid_lines,
      "grid-row-start grid-column-start grid-row-end grid-column-end", ""},
+    {"container", shape::slash_pair, "container-name container-type", ""},
     {"place-content", shape::place, "align-content justify-content", ""},
     {"place-items", shape::place, "align-items justify-items", ""},
     {"place-self", shape::place, "align-self justify-self", ""},
@@ -413,6 +415,26 @@ split split_border(std::span<const std::string_view> parts, std::vector<std::str
     return split::ok;
 }
 
+// `container`: the name, then `/` and the type, each checked as its own
+// longhand (CSS Conditional 5 §4.3).
+split split_slash_pair(const expansion & e, std::string_view value,
+                       std::vector<std::string> & out) {
+    const std::vector<std::string_view> halves = split_top_level(value, "/");
+    if (halves.empty() || halves.size() > 2) { return split::invalid; }
+    out.clear();
+    for (std::size_t i = 0; i < 2; ++i) {
+        if (i >= halves.size()) {
+            out.emplace_back(initial_of(e.longhands[i]));
+            continue;
+        }
+        bool valid = false;
+        std::string text = canonical(e.longhands[i], trim(halves[i], html_whitespace), valid);
+        if (!valid) { return split::invalid; }
+        out.push_back(std::move(text));
+    }
+    return split::ok;
+}
+
 split split_value(const expansion & e, std::string_view text, std::vector<std::string> & out) {
     const std::string_view value = trim(text, html_whitespace);
     if (is_wide_keyword(value)) {
@@ -433,6 +455,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     }
     case shape::grid_lines:
         return split_grid_lines(e.syntax->name, value, out) ? split::ok : split::invalid;
+    case shape::slash_pair: return split_slash_pair(e, value, out);
     case shape::bar: return split_bar(e, parts, out);
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
@@ -509,6 +532,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);
+    case shape::slash_pair:
+        return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
     case shape::bar: return fold_bar(e, v);
     case shape::flex: return join(v);
     case shape::font: return fold_font(v);

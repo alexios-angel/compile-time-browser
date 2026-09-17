@@ -12,6 +12,17 @@ using namespace detail;
 
 namespace {
 
+// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
+// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
+// onload="init()">` and `document.body.onresize = f` both address the window.
+[[nodiscard]] bool forwards_to_window(std::string_view name) {
+    for (const std::string_view each :
+         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
+        if (name == each) { return true; }
+    }
+    return false;
+}
+
 // WHAT A THROWN VALUE IS CALLED, for the text side of a report.
 //
 // `window.onerror` takes a STRING first - twenty years of shipped code reads it
@@ -22,7 +33,11 @@ namespace {
 // `toString` that throws, and a reporter that faults is the one thing worse
 // than a fault nobody reports. (`context::describe_thrown` is the same shape
 // and is private to the VM.)
-[[nodiscard]] std::string describe_thrown(context & cx, value thrown) {
+} // namespace
+
+namespace detail {
+
+std::string describe_thrown(context & cx, value thrown) {
     if (!thrown.is_object()) { return cx.to_string(thrown); }
     const value name = cx.lookup_property(thrown, "name");
     const value message = cx.lookup_property(thrown, "message");
@@ -32,10 +47,6 @@ namespace {
     if (!body.empty()) { text += ": " + body; }
     return text;
 }
-
-} // namespace
-
-namespace detail {
 
 // THE ONE `isTrusted` GETTER OF THIS REALM, fetched back off Event.prototype.
 //
@@ -553,8 +564,10 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // everything, and nothing anywhere said why.
     // ...and after an event, which is the other checkpoint a browser has: a
     // listener that resolves a promise has its handlers run before the next
-    // event is dispatched, not at some later frame.
-    cx.drain_microtasks();
+    // event is dispatched, not at some later frame. NOT from inside the
+    // mutation observer microtask, though: a checkpoint does not nest
+    // (HTML's "performing a microtask checkpoint" flag).
+    if (!primary().delivering_mutations_) { cx.drain_microtasks(); }
     note_callback_fault(type);
     return prevented(event);
 }
@@ -959,6 +972,28 @@ bool dom_bindings::invoke_listener(context & cx, value callback, value receiver,
     return false;
 }
 
+// DOM "invoke" step 6's table: the prefixed spelling a trusted event of the
+// unprefixed type reaches when nothing listened for the unprefixed one.
+[[nodiscard]] std::string_view legacy_event_type_of(std::string_view type) {
+    if (type == "animationend") { return "webkitAnimationEnd"; }
+    if (type == "animationiteration") { return "webkitAnimationIteration"; }
+    if (type == "animationstart") { return "webkitAnimationStart"; }
+    if (type == "transitionend") { return "webkitTransitionEnd"; }
+    return {};
+}
+
+// The event type an `on<name>` handler is for: the name without `on`, in the
+// four prefixed families' camelCase spelling (`onwebkitanimationend` is for
+// `webkitAnimationEnd`).
+[[nodiscard]] std::string event_type_of_handler(std::string_view name) {
+    const std::string_view bare = name.substr(2);
+    for (const std::string_view legacy : {"webkitAnimationEnd", "webkitAnimationIteration",
+                                          "webkitAnimationStart", "webkitTransitionEnd"}) {
+        if (ascii_iequals(bare, legacy)) { return std::string{legacy}; }
+    }
+    return ascii_lower_copy(bare);
+}
+
 void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
     // THE EVENT IS ROOTED FOR THE CALL. An event the ENGINE made - a sheet's
     // load from browser::tick, an image's from the registry - lives only in
@@ -1042,58 +1077,134 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // happened mid-dispatch could be swept while this loop still held it. The
     // re-find below reads the callback back out of `listeners_`, which IS
     // traced, and finding nothing is exactly the `removed` check.
-    std::vector<std::uint64_t> queued;
-    const auto belongs = [&](const listener & l) {
-        if (l.on != step.on || l.type != type || l.capture != capturing) { return false; }
-        if (l.on == listen_on::node && l.target != step.node) { return false; }
-        if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { return false; }
-        return true;
+    // THE INNER INVOKE (DOM 2.10 "inner invoke"), once for the event's type
+    // and - when nothing at all was found for it and the event is trusted -
+    // once more under the legacy type of the table in "invoke" step 6:
+    // `animationend` reaches a `webkitAnimationEnd` listener on an element
+    // that has no listener for the unprefixed name (EventListener-invoke-
+    // legacy, the four webkit-*-event files). Answers whether anything ran.
+    const auto inner_invoke = [&](std::string_view type) -> bool {
+        bool found = false;
+        std::vector<std::uint64_t> queued;
+        const auto belongs = [&](const listener & l) {
+            if (l.on != step.on || l.type != type || l.capture != capturing) { return false; }
+            if (l.on == listen_on::node && l.target != step.node) { return false; }
+            if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { return false; }
+            return true;
+        };
+        for (const listener & l : listeners_) {
+            if (!l.spent && belongs(l)) { queued.push_back(l.callback.bits()); }
+        }
+        for (const std::uint64_t identity : queued) {
+            // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
+            // stopping the listeners that would have run next at this very step, so
+            // a check hoisted out of the loop implements the other method.
+            if (flag_of(*cx_, event, stop_immediate_property)) { return found; }
+            const auto entry = std::ranges::find_if(listeners_, [&](const listener & l) {
+                return !l.spent && l.callback.bits() == identity && belongs(l);
+            });
+            // Gone since the copy was taken - removed by a listener that ran
+            // earlier at this step, or by its AbortSignal.
+            if (entry == listeners_.end()) { continue; }
+            found = true;
+            if (entry->handler) {
+                // The event handler's listener: the handler property AS IT IS NOW,
+                // at the place the handler was first set (HTML 8.1.8.1).
+                value thrown = value::undefined();
+                const bool threw =
+                    fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+                report_fault(threw, thrown);
+                continue;
+            }
+            if (entry->once) { entry->spent = true; }
+            // COPIED OUT BEFORE THE CALL. `entry` is an iterator into a vector a
+            // listener can grow (addEventListener) or shrink (an AbortSignal), so
+            // nothing may touch it once script is running.
+            const value callback = entry->callback;
+            const bool passive = entry->passive;
+            // SET AND CLEARED rather than saved and restored: an event that is
+            // already being dispatched is refused, so one can never be inside two
+            // of these at once. It stays set across a NESTED dispatch on purpose -
+            // the flag belongs to the event, so a listener of some other event that
+            // reaches back for this one and cancels it is refused too, which is
+            // what concept-event-listener-inner-invoke steps 10 and 15 say.
+            auto * carrier = static_cast<script::object_object *>(event.as_heap());
+            if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
+            value thrown = value::undefined();
+            value returned = value::undefined();
+            const bool threw = invoke_listener(*cx_, callback, object_of_step(*cx_, step), event,
+                                               thrown, returned);
+            if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
+            // PER LISTENER, not per dispatch. A throw from the first of three must
+            // not stop the other two - which it did twice over, first because every
+            // later `call` declines while the VM's failure flag is up and then
+            // because the throw left the dispatch entirely - and each one that
+            // throws is its own report.
+            report_fault(threw, thrown);
+        }
+        // A HANDLER NOBODY REGISTERED A LISTENER FOR - a parsed attribute the
+        // write log never saw, a name whose event type is not its lowercase
+        // spelling - still runs, after the listeners, as it always did.
+        // ...but NOT a body's or frameset's forwarded handler (`<body onerror>`,
+        // `onload`...): that one is the WINDOW's, registered at the window step,
+        // and running it here too would call it twice - and without the five
+        // arguments an ErrorEvent at the window is owed
+        // (body-element-synthetic-errorevent.html).
+        const bool forwarded = step.on == listen_on::node &&
+                               forwards_to_window("on" + ascii_lower_copy(type)) &&
+                               body_or_frameset_of(object_of_step(*cx_, step));
+        if (!capturing && !flag_of(*cx_, event, stop_immediate_property) &&
+            !has_handler_listener(step, type) && !forwarded) {
+            value thrown = value::undefined();
+            const bool threw =
+                fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
+            found = found || threw ||
+                    cx_->lookup_property(object_of_step(*cx_, step), "on" + ascii_lower_copy(type))
+                        .is_callable();
+            report_fault(threw, thrown);
+        }
+        return found;
     };
+    if (inner_invoke(type)) { return; }
+    const std::string_view legacy = legacy_event_type_of(type);
+    if (legacy.empty() || !flag_of(*cx_, event, trusted_property)) { return; }
+    auto * carrier = static_cast<script::object_object *>(event.as_heap());
+    carrier->set("type", cx_->string(std::string{legacy}));
+    (void)inner_invoke(legacy);
+    carrier->set("type", cx_->string(std::string{type}));
+}
+
+bool dom_bindings::has_handler_listener(path_step at, std::string_view type) const {
     for (const listener & l : listeners_) {
-        if (!l.spent && belongs(l)) { queued.push_back(l.callback.bits()); }
+        if (!l.handler || l.on != at.on || l.type != type) { continue; }
+        if (l.on == listen_on::node && l.target != at.node) { continue; }
+        if (l.on == listen_on::object && l.host.bits() != at.host.bits()) { continue; }
+        return true;
     }
-    for (const std::uint64_t identity : queued) {
-        // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
-        // stopping the listeners that would have run next at this very step, so
-        // a check hoisted out of the loop implements the other method.
-        if (flag_of(*cx_, event, stop_immediate_property)) { return; }
-        const auto found = std::ranges::find_if(listeners_, [&](const listener & l) {
-            return !l.spent && l.callback.bits() == identity && belongs(l);
-        });
-        // Gone since the copy was taken - removed by a listener that ran
-        // earlier at this step, or by its AbortSignal.
-        if (found == listeners_.end()) { continue; }
-        if (found->once) { found->spent = true; }
-        // COPIED OUT BEFORE THE CALL. `found` is an iterator into a vector a
-        // listener can grow (addEventListener) or shrink (an AbortSignal), so
-        // nothing may touch it once script is running.
-        const value callback = found->callback;
-        const bool passive = found->passive;
-        // SET AND CLEARED rather than saved and restored: an event that is
-        // already being dispatched is refused, so one can never be inside two
-        // of these at once. It stays set across a NESTED dispatch on purpose -
-        // the flag belongs to the event, so a listener of some other event that
-        // reaches back for this one and cancels it is refused too, which is
-        // what concept-event-listener-inner-invoke steps 10 and 15 say.
-        auto * carrier = static_cast<script::object_object *>(event.as_heap());
-        if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
-        value thrown = value::undefined();
-        value returned = value::undefined();
-        const bool threw =
-            invoke_listener(*cx_, callback, object_of_step(*cx_, step), event, thrown, returned);
-        if (passive) { carrier->set(std::string{passive_property}, value::boolean(false)); }
-        // PER LISTENER, not per dispatch. A throw from the first of three must
-        // not stop the other two - which it did twice over, first because every
-        // later `call` declines while the VM's failure flag is up and then
-        // because the throw left the dispatch entirely - and each one that
-        // throws is its own report.
-        report_fault(threw, thrown);
-    }
-    if (!capturing && !flag_of(*cx_, event, stop_immediate_property)) {
-        value thrown = value::undefined();
-        const bool threw = fire_handler_property(object_of_step(*cx_, step), type, event, &thrown);
-        report_fault(threw, thrown);
-    }
+    return false;
+}
+
+void dom_bindings::activate_event_handler(context & cx, path_step at, std::string_view type) {
+    if (has_handler_listener(at, type)) { return; }
+    listener made;
+    made.target = at.node;
+    made.on = at.on;
+    made.host = at.host;
+    made.type = std::string{type};
+    made.handler = true;
+    // An identity of its own, traced through the listener list.
+    made.callback = value::object(cx.allocate<script::native_object>(
+        "event handler", [](context &, std::span<value>) { return value::undefined(); }));
+    listeners_.push_back(std::move(made));
+}
+
+void dom_bindings::deactivate_event_handler(path_step at, std::string_view type) {
+    std::erase_if(listeners_, [&](const listener & l) {
+        if (!l.handler || l.on != at.on || l.type != type) { return false; }
+        if (l.on == listen_on::node && l.target != at.node) { return false; }
+        if (l.on == listen_on::object && l.host.bits() != at.host.bits()) { return false; }
+        return true;
+    });
 }
 
 namespace {
@@ -1269,6 +1380,7 @@ constexpr std::string_view window_event_handlers[] = {
 // A HANDLER THAT WILL NOT COMPILE IS NULL, which HTML says in as many words:
 // the uncompiled handler is discarded and the attribute reads null, rather than
 // the page taking a SyntaxError from a read.
+
 value dom_bindings::compile_handler_attribute(context & cx, value self, const std::string & name) {
     const node_id id = handle_of(self);
     if (!id || doc_ == nullptr || atoms_ == nullptr) { return value::undefined(); }
@@ -1316,31 +1428,48 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
         }
     }
     const bool with_form = form.is_object_like();
+    // THE `with` BLOCKS ENCLOSE THE FUNCTION, they are not inside it: the
+    // scope chain is the function's OUTER environment (step 10 builds it
+    // before step 11 makes the function), so a parameter or local of the
+    // handler shadows the element's properties and not the other way round.
+    // Inside the body they shadowed `event` itself - `<body onerror>` read
+    // `this.event`, the window's current event, where HTML hands the handler
+    // the message string. A Window's `onerror` takes the five parameters
+    // (event, source, lineno, colno, error) - step 11's one special case.
+    const bool window_error =
+        name == "onerror" && forwards_to_window(name) && body_or_frameset_of(self);
+    // NAMED AFTER THE ATTRIBUTE: step 11's source text is `function
+    // onclick(event) {\n<body>\n}`, which is what `handler.toString()` and
+    // `handler.name` answer (event-handler-sourcetext.html). ponytail: a
+    // named function expression binds its name inside the body, which the
+    // specification's function does not; `onclick="onclick = f"` would write
+    // that binding (silently, in sloppy code) rather than the element's.
+    const bool identifier = std::ranges::all_of(name, [](const char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               ch == '_' || ch == '$';
+    });
     script::program compiled = script::compiler::compile(
-        std::string{"return (function (document, form) { return function (event) {\n"
-                    "with (document) { "} +
-        (with_form ? "with (form) { " : "") + "with (this) {\n" + source + "\n}" +
-        (with_form ? " }" : "") + " } }; });");
+        std::string{"return (function (document, form) { with (document) { "} +
+        (with_form ? "with (form) { " : "") + "with (this) { return function " +
+        (identifier ? name : std::string{}) + "(" +
+        (window_error ? "event, source, lineno, colno, error" : "event") + ") {\n" + source +
+        "\n}; }" + (with_form ? " }" : "") + " } });");
     value made = value::undefined();
     if (compiled.ok) {
         const value outer = cx.run_nested(cx.own_program(std::move(compiled)));
         const value scope[] = {document_, form};
-        if (outer.is_callable()) { made = cx.call(outer, scope); }
+        // `this` of the outer call is the element: the innermost object
+        // environment of the chain.
+        if (outer.is_callable()) { made = cx.call(outer, scope, self); }
+    } else {
+        // Step 11's "if body is not parsable... report the exception": the
+        // window hears the SyntaxError, as it hears a script's, and the
+        // handler is null (compile-error-in-attribute.html).
+        (void)dispatch_error("uncaught SyntaxError: " + compiled.error);
     }
     object->define(source_slot(name), cx.string(source), script::attr_none);
     object->define(compiled_slot(name), made, script::attr_none);
     return made;
-}
-
-// THE WINDOW-REFLECTING BODY ELEMENT EVENT HANDLER SET, HTML 8.1.8.2: six
-// names that on a `<body>` or `<frameset>` ARE the Window's handler - `<body
-// onload="init()">` and `document.body.onresize = f` both address the window.
-[[nodiscard]] bool forwards_to_window(std::string_view name) {
-    for (const std::string_view each :
-         {"onblur", "onerror", "onfocus", "onload", "onresize", "onscroll"}) {
-        if (name == each) { return true; }
-    }
-    return false;
 }
 
 // The body or frameset element `self` wraps, or none.
@@ -1474,6 +1603,61 @@ void dom_bindings::event_handler_set(context & cx, value self, const std::string
     (void)object->erase(source_slot(name));
     (void)object->erase(compiled_slot(name));
     if (object == window_object()) { cx.define_global(name, stored); }
+    // ...AND ITS LISTENER IS REGISTERED NOW, OR DROPPED: the handler's place
+    // among addEventListener's listeners is where it was first set
+    // (event-handler-spec-example.window.js).
+    dom_bindings & owner = target_owner(self);
+    const path_step at = owner.step_of(object == window_object() ? value::object(object) : self);
+    const std::string type = event_type_of_handler(name);
+    if (stored.is_null()) {
+        owner.deactivate_event_handler(at, type);
+    } else {
+        owner.activate_event_handler(cx, at, type);
+    }
+}
+
+// THE ATTRIBUTE WRITES THE DOCUMENT LOGGED since the last mutation: an
+// `on*` content attribute activates its handler's listener the moment it is
+// set (HTML 8.1.8.1 - the attribute change steps), and deactivates it when
+// it goes with no IDL handler assigned in its place.
+void dom_bindings::settle_attribute_writes(const std::vector<document::write_note> & writes) {
+    if (cx_ == nullptr || doc_ == nullptr) { return; }
+    for (const document::write_note & note : writes) {
+        if (note.kind != document::write_note::edit::attribute || !note.node) { continue; }
+        const std::string_view name = atoms_->text(note.name);
+        if (name.size() < 3 || name[0] != 'o' || name[1] != 'n') { continue; }
+        bool present = false;
+        {
+            const auto txn = doc_->read();
+            if (!txn.contains(note.node) ||
+                txn.kind(note.node).value_or(node_kind::element) != node_kind::element) {
+                continue;
+            }
+            present = txn.has_attribute(note.node, note.name);
+        }
+        // A body/frameset's window-forwarded handler belongs to the window step.
+        const value self = wrap(*cx_, note.node);
+        path_step at{note.node, listen_on::node};
+        auto * object = static_cast<script::object_object *>(self.as_heap());
+        if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {
+            at = path_step{node_id{}, listen_on::window};
+            object = window_object();
+        }
+        const std::string type = event_type_of_handler(name);
+        if (present) {
+            // THE ATTRIBUTE'S VALUE IS THE HANDLER NOW (8.1.8.1's attribute
+            // change steps): an IDL assignment before it - `el.onclick = null`
+            // - no longer shadows the markup, and the same text set again
+            // compiles again (event-handler-removal.window.js).
+            (void)object->erase(assigned_slot(std::string{name}));
+            (void)object->erase(source_slot(std::string{name}));
+            (void)object->erase(compiled_slot(std::string{name}));
+            activate_event_handler(*cx_, at, type);
+        } else if (const value * assigned = object->find(assigned_slot(std::string{name}));
+                   assigned == nullptr || assigned->is_null()) {
+            deactivate_event_handler(at, type);
+        }
+    }
 }
 
 // EVERY ONE OF THEM, ON EVERY OBJECT HTML PUTS THEM ON.

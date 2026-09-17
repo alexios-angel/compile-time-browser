@@ -79,6 +79,7 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
         doc_->set_encoding(declared);
     }
     scroll_y_ = 0;
+    scroll_x_ = 0;
     author_sheet_loaded_ = false;
     style_error_.clear();
     resource_loads_.clear();

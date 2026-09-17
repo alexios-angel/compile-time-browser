@@ -417,18 +417,26 @@ value context::binary_op(op kind, value lhs, value rhs) {
         return value::number(to_number(l) + to_number(r));
     }
 
-    if (value made; bigint_binary(kind, lhs, rhs, made)) { return made; }
-    // `to_number_value`, NOT `to_number`: ToNumber on an object runs
-    // valueOf/toString first. Without it `[] - 0` was 0 while `-[]` was NaN,
-    // which is one conversion spelled two ways.
+    // 13.15.3 ApplyStringOrNumericBinaryOperator: ToNumeric of BOTH operands
+    // first - ToPrimitive with hint number, left then right - and only then
+    // the BigInt/Number decision. `{valueOf() { return 2n; }} - 1n` is 1n; it
+    // was the mixing TypeError, because the object reached bigint_binary
+    // unconverted.
+    const value l = numeric_operand(lhs);
+    if (throw_pending()) { return value::undefined(); }
+    const value r = numeric_operand(rhs);
+    if (throw_pending()) { return value::undefined(); }
+    if (value made; bigint_binary(kind, l, r, made)) { return made; }
+    // `to_number_value`, NOT `to_number`: ToNumber runs valueOf/toString on
+    // an object - none is left here - and a Symbol is its TypeError.
     switch (kind) {
-    case op::sub: return value::number(to_number_value(lhs) - to_number_value(rhs));
-    case op::mul: return value::number(to_number_value(lhs) * to_number_value(rhs));
-    case op::div: return value::number(to_number_value(lhs) / to_number_value(rhs));
-    case op::mod: return value::number(std::fmod(to_number_value(lhs), to_number_value(rhs)));
+    case op::sub: return value::number(to_number_value(l) - to_number_value(r));
+    case op::mul: return value::number(to_number_value(l) * to_number_value(r));
+    case op::div: return value::number(to_number_value(l) / to_number_value(r));
+    case op::mod: return value::number(std::fmod(to_number_value(l), to_number_value(r)));
     // `**` is context::exponentiate, not libm's pow: the specification's edge
     // cases for it do not agree with C's.
-    case op::pow: return value::number(exponentiate(to_number_value(lhs), to_number_value(rhs)));
+    case op::pow: return value::number(exponentiate(to_number_value(l), to_number_value(r)));
     default: break;
     }
     // Same position as binary_op_static's default arm: unreachable from the

@@ -286,7 +286,10 @@ void test_document_active_element_follows_focus() {
     page.load_html(R"(<html><body>
     <input id=a><input id=b>
     <script>
-    function active() { return document.activeElement ? document.activeElement.id : 'none'; }
+    function active() {
+      var a = document.activeElement;
+      return a === document.body ? 'body' : (a ? a.id : 'none');
+    }
     </script></body></html>)");
     page.frame();
 
@@ -308,10 +311,10 @@ void test_document_active_element_follows_focus() {
     const auto & log = log_of(page);
     check(log.size() == 4, "four answers");
     if (log.size() != 4) { return; }
-    check(log[0] == "start=none", "nothing is focused to begin with");
+    check(log[0] == "start=body", "nothing is focused to begin with: the body (HTML 6.6.2)");
     check(log[1] == "scripted=b", "element.focus() is visible as activeElement");
     check(log[2] == "tabbed=a", "and Tab moves it, wrapping past the last control");
-    check(log[3] == "blurred=none", "and blur clears it");
+    check(log[3] == "blurred=body", "and blur clears it, back to the body");
 }
 
 // A page that errors ONCE used to report that error for ever: run_script only

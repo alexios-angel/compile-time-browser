@@ -19,7 +19,6 @@
 #include "stylesheets/internal.hpp"
 
 #include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/engine.hpp>
@@ -125,37 +124,6 @@ void dom_bindings::install_css_interface(context & cx) {
 
     css_interface_ = value::object(css);
     cx.define_global("CSS", css_interface_);
-
-    // `matchMedia(query)`, CSSOM View §4.2: a MediaQueryList whose `media` is
-    // the list SERIALISED - the same serialiser `MediaList.mediaText` uses, so
-    // `(min-width: 10px) and (min-height: 10px)` is neither sorted nor
-    // deduplicated (mediaquery-sort-dedup) - and whose `matches` is the same
-    // evaluation the cascade gives an `@media` rule, against the same
-    // environment. Phaser asks it `(orientation: portrait)` and Babylon
-    // `(pointer: fine)`. A bare global, as `getComputedStyle` is: `window` is a
-    // proxy that falls back to the globals.
-    //
-    // ponytail: `matches` is read once and no `change` event ever fires; the
-    // listener methods accept and forget. Wire them to the engine's media
-    // re-evaluation when a page needs the event.
-    cx.define_native("matchMedia", [this](context & c, std::span<value> args) {
-        const std::string text = args.empty() ? std::string{} : c.to_string(args[0]);
-        auto * list = c.allocate<script::object_object>();
-        list->set("media", c.string(detail::serialize_media_query_list(
-                               detail::parse_media_query_list(text))));
-        list->set("matches",
-                  value::boolean(style::css::evaluate(style::css::parse_media_query_list(text),
-                                                      selector_engine().environment())));
-        list->set("onchange", value::null());
-        for (const char * name :
-             {"addListener", "removeListener", "addEventListener", "removeEventListener"}) {
-            list->set(name,
-                      value::object(c.allocate<script::native_object>(
-                          name, [](context &, std::span<value>) { return value::undefined(); })));
-        }
-        list->define("@@toStringTag", c.string("MediaQueryList"), script::attr_configurable);
-        return value::object(list);
-    });
 }
 
 } // namespace ctbrowser::shell

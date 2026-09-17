@@ -11,10 +11,10 @@
 // A RATCHET, PER FILE. The table below is the measured count of passing cases
 // in each file; a file that passes fewer fails this test, and one that passes
 // more fails it too - so an improvement has to be recorded, and a regression
-// in one file cannot hide behind a gain in another. What does not pass and
-// why is in the tree builder's header: MathML has no namespace in this DOM,
-// the SVG attribute case-adjustment table is deliberately not carried, and
-// the scripted_* files need a script runner this test does not have.
+// in one file cannot hide behind a gain in another. What does not pass:
+// the scripted_* files need a script runner this test does not have, and
+// webkit02's `<selectedcontent>` cases want the customizable-select
+// mirroring of an option's children, which the tree builder does not do.
 //
 // SKIPS WITHOUT THE CORPUS: the fixtures live in ~/.cache/wpt (fetched by
 // tools/wpt/fetch-wpt.sh), and a checkout without them has nothing to measure
@@ -22,6 +22,7 @@
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/dom/xml.hpp>
 
 #include "check.hpp"
 
@@ -150,7 +151,8 @@ void serialize(const read_txn & txn, const document & doc, atom_table & atoms, n
         if (ns == node_ns::svg) {
             tag = "svg " + tag;
         } else if (ns != node_ns::html) {
-            tag = "? " + tag;
+            const std::string_view uri = atoms.text(txn.element_namespace(node));
+            tag = (uri == mathml_namespace ? "math " : "? ") + tag;
         }
         out += "|" + pad + "<" + tag + ">\n";
         std::vector<std::pair<std::string, std::string>> attrs;
@@ -193,8 +195,8 @@ struct expectation {
     int fail;
 };
 
-// MEASURED 2026-09-16 against the WPT checkout's html5lib-tests. Document
-// cases and HTML-context fragment cases, `#script-off` excluded.
+// MEASURED 2026-09-17 against the WPT checkout's html5lib-tests. Document
+// cases and fragment cases in every context, `#script-off` excluded.
 constexpr expectation expected[] = {
     {"adoption01", 18, 0},
     {"adoption02", 3, 0},
@@ -204,17 +206,17 @@ constexpr expectation expected[] = {
     {"domjs-unsafe", 49, 0},
     {"entities01", 75, 0},
     {"entities02", 26, 0},
-    {"foreign-fragment", 3, 0},
-    {"html5test-com", 24, 6},
+    {"foreign-fragment", 66, 0},
+    {"html5test-com", 30, 0},
     {"inbody01", 4, 0},
     {"isindex", 4, 0},
     {"main-element", 3, 0},
-    {"math", 0, 8},
+    {"math", 8, 0},
     {"menuitem-element", 20, 0},
     {"namespace-sensitivity", 1, 0},
     {"pending-spec-changes", 3, 0},
     {"pending-spec-changes-plain-text-unsafe", 1, 0},
-    {"plain-text-unsafe", 27, 10},
+    {"plain-text-unsafe", 41, 0},
     {"processing-instructions", 123, 0},
     {"quirks01", 4, 0},
     {"ruby", 21, 0},
@@ -228,35 +230,35 @@ constexpr expectation expected[] = {
     {"tables01", 19, 0},
     {"template", 113, 0},
     {"tests1", 112, 0},
-    {"tests10", 38, 16},
-    {"tests11", 3, 10},
-    {"tests12", 0, 2},
+    {"tests10", 54, 0},
+    {"tests11", 13, 0},
+    {"tests12", 2, 0},
     {"tests14", 7, 0},
     {"tests15", 14, 0},
     {"tests16", 191, 0},
     {"tests17", 13, 0},
     {"tests18", 35, 0},
-    {"tests19", 93, 10},
+    {"tests19", 103, 0},
     {"tests2", 63, 0},
-    {"tests20", 52, 12},
-    {"tests21", 22, 1},
+    {"tests20", 64, 0},
+    {"tests21", 23, 0},
     {"tests22", 5, 0},
     {"tests23", 5, 0},
     {"tests24", 8, 0},
     {"tests25", 26, 0},
-    {"tests26", 16, 4},
+    {"tests26", 20, 0},
     {"tests3", 24, 0},
-    {"tests4", 8, 1},
+    {"tests4", 9, 0},
     {"tests5", 16, 0},
     {"tests6", 52, 0},
     {"tests7", 34, 0},
     {"tests8", 10, 0},
-    {"tests9", 2, 25},
+    {"tests9", 27, 0},
     {"tests_innerHTML_1", 81, 0},
     {"tricky01", 9, 0},
     {"void-in-phrasing", 13, 0},
-    {"webkit01", 51, 1},
-    {"webkit02", 41, 7},
+    {"webkit01", 52, 0},
+    {"webkit02", 44, 4},
 };
 
 } // namespace
@@ -282,14 +284,18 @@ int main() {
         int fail = 0;
         for (const dat_case & c : parse_dat(text)) {
             if (c.script_off) { continue; }
-            // Foreign contexts ("svg path", "math ms") need namespaced
-            // context elements this entry point does not take.
-            if (c.has_fragment && c.fragment.find(' ') != std::string::npos) { continue; }
             atom_table atoms;
             document doc{atoms};
             std::string actual = "#document\n";
             if (c.has_fragment) {
-                const node_id root = parse_html_fragment(doc, c.data, c.fragment);
+                // A foreign context is written "svg path" or "math ms".
+                std::string_view context = c.fragment;
+                node_ns context_ns = node_ns::html;
+                if (const std::size_t space = context.find(' '); space != std::string::npos) {
+                    context_ns = context.substr(0, space) == "svg" ? node_ns::svg : node_ns::other;
+                    context = context.substr(space + 1);
+                }
+                const node_id root = parse_html_fragment(doc, c.data, context, context_ns);
                 const auto txn = doc.read();
                 for (const node_id child : txn.children(root)) {
                     serialize(txn, doc, atoms, child, 1, actual);

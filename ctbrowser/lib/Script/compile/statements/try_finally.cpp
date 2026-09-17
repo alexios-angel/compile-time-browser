@@ -37,7 +37,11 @@ void compiler_impl::compile_try(const vp::node & n) {
     compile_stmt(n.a);
     proto().emit(instruction{op::pop_handler});
     --handler_depth_;
-    if (finally_block >= 0) { compile_stmt(finally_block); }
+    if (finally_block >= 0) {
+        ++completion_suspended_; // a normal finally keeps the try's value (14.15.3)
+        compile_stmt(finally_block);
+        --completion_suspended_;
+    }
     const std::size_t done = proto().emit(instruction{op::jump});
 
     // The catch block. push_handler's operand is a RELATIVE address, so it
@@ -54,7 +58,11 @@ void compiler_impl::compile_try(const vp::node & n) {
         compile_stmt(at(catch_clause).a);
         pop_scope();
     }
-    if (finally_block >= 0) { compile_stmt(finally_block); }
+    if (finally_block >= 0) {
+        ++completion_suspended_; // a normal finally keeps the try's value (14.15.3)
+        compile_stmt(finally_block);
+        --completion_suspended_;
+    }
     patch_here(done);
     pop_scope();
 }
@@ -134,7 +142,9 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
     const finally_context open = std::move(finallies_.back());
     finallies_.pop_back();
     for (const std::size_t arrival : open.arrivals) { patch_here(arrival); }
+    ++completion_suspended_; // a normal finally keeps the try's value (14.15.3)
     compile_stmt(finally_block);
+    --completion_suspended_;
     emit_finally_dispatch(open);
     (void)scratch;
     pop_scope();

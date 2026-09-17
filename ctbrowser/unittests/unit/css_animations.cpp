@@ -255,6 +255,26 @@ void test_events_fire_as_the_clock_moves() {
     CHECK_EQ(logged(), std::string{"animationcancel:fade:0.03:A"});
     // Nothing left to wake up for.
     CHECK(page.next_wakeup_ms() == std::numeric_limits<double>::infinity());
+
+    // THE LEGACY TYPES (DOM "invoke" step 6): a trusted `animationend` with
+    // no listener for that name reaches a `webkitAnimationEnd` listener and
+    // the `onwebkitanimationend` handler, under the prefixed type; one that
+    // has an unprefixed listener does not; a synthetic event is never mapped.
+    CHECK(page.run_script(
+        "var u = document.createElement('div'); document.body.appendChild(u);"
+        "u.addEventListener('webkitAnimationEnd', function (e) { log.push('legacy:' + e.type); });"
+        "u.onwebkitanimationend = function (e) { log.push('handler:' + e.type); };"
+        "u.style.animation = 'fade 20ms';"
+        "u.dispatchEvent(new AnimationEvent('animationend'));"
+        "getComputedStyle(u).opacity;"));
+    (void)page.tick(40);
+    CHECK_EQ(logged(), std::string{"legacy:webkitAnimationEnd handler:webkitAnimationEnd"});
+    CHECK(page.run_script(
+        "u.addEventListener('animationend', function (e) { log.push('plain:' + e.type); });"
+        "u.style.animation = 'none'; getComputedStyle(u).opacity; u.style.animation = 'fade 20ms';"
+        " getComputedStyle(u).opacity;"));
+    (void)page.tick(40);
+    CHECK_EQ(logged(), std::string{"plain:animationend"});
 }
 
 } // namespace

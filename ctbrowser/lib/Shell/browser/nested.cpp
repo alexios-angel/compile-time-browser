@@ -114,6 +114,9 @@ void browser::layout_frames() {
                     layout->styles->add_sheet(css, ctbrowser::style::author_origin);
                 }
                 const auto txn = doc.read();
+                // The before-change style (CSS Transitions 1 §3), as the
+                // page's resolve_styles keeps it.
+                const ctbrowser::style::style_map before = std::move(layout->resolved);
                 layout->resolved = layout->styles->resolve_all(txn);
                 // A ROOT WITH `overflow: scroll` ALWAYS HAS ITS SCROLLBARS, and
                 // CSS Values 4 §6.1.2 takes them out of the viewport units - the
@@ -129,6 +132,18 @@ void browser::layout_frames() {
                     (void)layout->styles->set_environment(env);
                     layout->resolved = layout->styles->resolve_all(txn);
                 }
+                // THE FRAME'S STYLE CHANGE EVENT, which the page's
+                // resolve_styles also ends with: it starts the frame's
+                // transitions and animations, and it bumps the bindings'
+                // restyle stamp - the only thing that tells a computed-style
+                // object cached on a wrapper that its entries are stale when
+                // NOTHING IN THE FRAME'S DOCUMENT CHANGED and only its viewport
+                // did. Without it `100vw` in a frame resized from 200px to
+                // 400px kept answering 200px (viewport-units-invalidation).
+                each.bindings->update_css_animations(txn, before, layout->resolved);
+                // AND ITS MediaQueryLists: a frame resized across a query's
+                // breakpoint reports the change (CSSOM View §13), next tick.
+                each.bindings->report_media_query_changes();
                 ctbrowser::layout::box_builder builder{atoms_, layout->resolved, measure()};
                 layout->boxes = builder.build(txn, txn.root());
                 const ctbrowser::layout::engine eng{measure()};

@@ -895,6 +895,11 @@ def main():
                             "message": r.message,
                             "subtests": r.subtests,
                             "seconds": round(r.seconds, 2),
+                            # A crash's last words - the driver's stderr tail -
+                            # ride in the JSON, because a CRASH row that says
+                            # only "SIGABRT" cannot be diagnosed from the
+                            # JSON alone and the log is gone with the process.
+                            **({"log": r.log.strip()[-1500:]} if r.status == Outcome.CRASH else {}),
                         }
                         for r in sorted(results, key=lambda r: r.rel)
                     ],

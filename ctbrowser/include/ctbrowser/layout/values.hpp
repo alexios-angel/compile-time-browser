@@ -428,6 +428,24 @@ enum class display_kind : std::uint8_t {
 
 [[nodiscard]] inline display_kind parse_display(std::string_view text, display_kind fallback) {
     if (text == "none") { return display_kind::none; }
+    // THE TWO-VALUE SYNTAX, CSS Display 3 §2.1: `<display-outside>
+    // <display-inside>`, with `list-item` allowed beside either. The outside
+    // decides the level, the inside the formatting context - so `inline
+    // list-item` is an inline box (client-props-inline-list-item) and `inline
+    // flow-root` is an inline-block.
+    if (const std::size_t space = text.find(' '); space != std::string_view::npos) {
+        const std::string_view first = text.substr(0, space);
+        const std::string_view second = text.substr(space + 1);
+        const bool inline_outside = first == "inline" || second == "inline";
+        const std::string_view inside = first == "inline" || first == "block" ? second : first;
+        if (inside == "flex") {
+            return inline_outside ? display_kind::inline_flex : display_kind::flex;
+        }
+        if (inline_outside) {
+            return inside == "flow-root" ? display_kind::inline_block : display_kind::inline_level;
+        }
+        return inside == "list-item" ? display_kind::list_item : display_kind::block;
+    }
     if (text == "block") { return display_kind::block; }
     if (text == "inline") { return display_kind::inline_level; }
     if (text == "inline-block") { return display_kind::inline_block; }

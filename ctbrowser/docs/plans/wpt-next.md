@@ -1,5 +1,132 @@
 # WPT — the next round, as briefs
 
+**Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
+(`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after
+the `/mnt/c` outage cut session 16 off with the three branches committed
+but unmerged. Gated 226/227 (one stale unit expectation, `92f5d7c7`).
+Measured at `9f8da347` (rows in `docs/wpt.md`, `docs/test262.md`,
+`docs/css-conformance.md`): five suites 783 -> **805**, wide 2,404 ->
+**2,696 files** (231k -> 239k subtests), test262 39,175 -> **39,731**
+(81.7%), css 1,352 -> 1,413. Biggest: custom-elements 14 -> 70, cssom-view
+26 -> 68, html/syntax 109 -> 209.
+
+**Round seven** is four worktree agents cut from `92f5d7c7`, briefs in
+`~/Downloads/claude/wt/wpt11-session/round7/`: A3 CSS interpolation and
+composition (the value-type interpolation in `lib/Style/easing.cpp`,
+`composite: add/accumulate`, transforms and shadows - the largest failing
+cluster in the wide css corpus), K CSS Color 4/5 computed values
+(`color-mix()`, `none`, powerless components, relative colour, lab/lch:
+3,200 failing subtests in css-color), L2 the logical properties mapped onto
+the physical ones in the cascade plus the `font`/`white-space`/`animation`
+shorthands' computed values, J2 the JS runtime (RegExp `\p{...}` with a
+generated UCD table - 596 tests - the async-generator `return()`/`finally`
+tail, module re-exports in the test262 host, mapped arguments). The root
+took MediaQueryList (`194ea703`: an EventTarget, `change` on resize, a
+frame's own `matchMedia`) and the live ranges (`c1110fac`: DOM 5.5's range
+steps over the document's write log - dom/ranges Range-mutations-*).
+
+**Round eight, briefs written and waiting** (`~/Downloads/claude/wt/
+wpt11-session/round8-brief-*.md`), in order of what they unblock:
+- **REALM** - one realm per browsing context in the VM (a globals table +
+  global object every function records; `context::call` switches). The
+  single largest lever left: dom/ranges' five `Range-*Contents/insertNode`
+  files (4,600 subtests drive an iframe's `run()`), css/selectors
+  attribute-case (518), ~20 webappapis document.open files, the frame-
+  handler and cross-realm files. lib/Script - after J2's branch lands.
+- **FLAT** - the flat tree in style and layout: shadow trees get computed
+  styles and boxes, slots render their assigned nodes, scoped sheets. Every
+  shadow-dom layout file and every custom element that renders into its
+  shadow root. lib/Style/engine.cpp + lib/Layout/box_builder.cpp.
+- **CE2** - scoped custom element registries (custom-elements/registries/*,
+  25 files, ~330 subtests) and CE's leftovers.
+
+**What round six's agents left for their own areas** (from their reports):
+- CE: SCOPED REGISTRIES proper (custom-elements/registries/*, ~330
+  subtests, 25 files) - `Element/ShadowRoot/Document.customElementRegistry`,
+  `registry.initialize()`, `ElementCreationOptions.customElementRegistry`,
+  `attachShadow({customElementRegistry})`: a registry record per element,
+  `element/shadow.cpp` and `document/install.cpp` carrying it. An
+  element-created hook in the tree builder (`document::set_element_hook`)
+  for synchronous construction under `document.write` (44+ subtests);
+  `Reflect.construct(HTMLElement, [], NewTarget)` needs a `new_target()`
+  accessor for natives (19); `:defined` and the form pseudo-classes for
+  form-associated custom elements (~35); `createElementNS` through
+  `create_html_element` (6). The one TIMEOUT: `ElementInternals-target-
+  element-is-held-strongly.html` (1e5 elements, then gc).
+- V: `scrollWidthHeight-negative-margin-002` (430/600: `direction: rtl`
+  leftward overflow, flex items with negative margins), `scrollintoview`
+  (20/40, an auto-width floor), `HTMLImageElement-x-and-y-ignore-transforms`
+  (the translate accumulation was lost in a failed edit), `scrollWidthHeight-
+  contain-layout` (the end-padding rule). Paint: `lib/Paint/record.cpp`'s
+  recorder does not apply element scroll offsets - a scrolled container's
+  content paints unscrolled - and `clips_children` should include
+  scroll/auto/overlay/clip. `getBoundingClientRect` should be the union of
+  `getClientRects`. `blob:` URL frames load as quirks. Scrollers in
+  `chrome.cpp`/`selection.cpp` ignore `scroll_x_`.
+- J: async generator `.return()` at a `yield` does not run `finally`
+  (coroutines.cpp "still finishes on the spot": ~70 tests); `tools/ct262`
+  has no `wire_reexports` (113 module files); `import defer` (60); mapped
+  arguments (18); direct eval (76 + 27 `super`); tail calls (34); for-of
+  destructuring iterator-close-on-throw (22); RegExp property escapes (596)
+  and the `v` flag (57+28) - round seven's J2 has all of these but tail
+  calls. JS strings are still BYTES (the largest architectural gap).
+- Three SIGABRTs under the runner's 4 GB cap, undiagnosed: dom/nodes/
+  NodeList-static-length-getter-tampered-1, html/webappapis/dynamic-markup-
+  insertion/document-write/032, dom/ranges/Range-mutations-dataChange.
+
+**Updated 2026-09-17, session 16 (in progress).** Round six is four worktree
+agents cut from `228d80d1` - V cssom-view (scroll containers, the scroll
+APIs, hit testing), CE custom elements (customized built-ins, the HTML
+element constructors, reactions, ElementInternals), H the HTML parser tail
+(foreign content, template, the serialisers, encoding sniffing), J the JS
+runtime (the test262 language tail, modules, the known VM bugs,
+structuredClone, a HostPromiseRejectionTracker hook) - with the root on
+frames, forms, events and the property table. Briefs in
+`~/Downloads/claude/wt/wpt11-session/round6/`; the measured rows land in
+`docs/wpt.md` / `docs/css-conformance.md` / `docs/test262.md` when the
+merged tree is gated.
+
+**What the root found this session, not fixed, each a brief's worth:**
+
+- **JS strings are BYTES** (`docs/script.md` says so on purpose):
+  `"\u0085".length` is 3 and `"\u00a0".length` is 2, `charCodeAt` and
+  `[i]` index bytes. Every WPT file that measures a non-ASCII string sees
+  it - dom/nodes/getElementsByClassName-whitespace-class-names.html's
+  sanity check (`className.length === 1`) is the plainest. This is the
+  largest single correctness gap left in the VM and it is architectural
+  (the string representation, every text builtin, the regex engine, the
+  DOM boundary): a plan of its own, not a brief.
+- **A default parameter read from a nested closure is `undefined`** -
+  `function f(p = {}) { return () => typeof p; }` - which HARNESS_ERRORs
+  every file that calls testharness's `promise_setup` (css/cssom-view
+  element-scroll-promises x3, html/dom/render-blocking x6, ...). Handed to
+  agent J mid-session; the same capture family as T3's object shorthand.
+- **No script runs in a frame** (`bindings/frames.cpp`'s header): the
+  realm is shared, so a frame's `<script>` would be the page's. dom/ranges'
+  five `Range-*Contents/insertNode/surroundContents` files (4,800 subtests)
+  drive an iframe's `run()`; css/selectors/attribute-selectors/attribute-
+  case/{semantics,syntax}.html (518 subtests) HARNESS_ERROR because the
+  quirks frame's `var mode = "quirks mode"` never ran and `global.mode`
+  read the page's; webappapis' document.open files and the cross-realm
+  dom/events files want it too. The shape it needs in the VM: a REALM (a
+  globals table + global object) that every function object records at
+  creation and that `context::call` switches to for the call's duration,
+  so a frame's closure invoked by the page still sees the frame's globals;
+  the bindings then run a frame's `<script>`s and handlers under the
+  frame's realm. Agent J's territory; one session's work.
+- **`encoding.py` needs a server**: dom/nodes/Document-characterSet-
+  normalization-1/2 (636 subtests) load `encoding.py?label=` frames.
+- **The form named getter** (`form.button`, form-nameditem.html, 11) needs
+  the form's wrapper to be a proxy, which `handle_of` and `wrappers_`
+  identity do not allow today.
+- **Custom property values are the author's bytes**, not the token
+  stream's serialisation: css-syntax/escaped-eof (an escaped EOF is U+FFFD),
+  serialize-consecutive-tokens (a comment between tokens that would
+  re-tokenise together), css-variables/variable-definition (`--x: ;` is
+  " "). One change in `check_declaration`'s custom-property branch.
+- **Live ranges** (dom/ranges Range-mutations-*, ~500 subtests) need
+  insert/remove/text hooks in `lib/DOM/document.cpp` - agent H's files.
+
 **Updated 2026-09-16, session 15.** Round four is MERGED (`13cc45c3` ->
 `6edb7421`, four `--no-ff` merges, gated 221/221 green) and, when the main
 tree is clean, integrated into `ctcompile-v1`. The four briefs

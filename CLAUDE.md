@@ -116,10 +116,13 @@ load-bearing: **`docs/tools.md`**.
   than a PNG. `shell/page/svg_cache.hpp` caches by `(content, width, height)` and the
   painter passes the *snapped* rect. Optional: with no plutosvg a page lays out
   IDENTICALLY and simply draws no graphics.
-- **`<svg>` keeps its capitals.** The tokenizer preserves case inside foreign
-  content, so `viewBox` never becomes `viewbox` and the spec's ~95 adjustment
-  tables are unnecessary. Separately, every token carries its source span, so
-  the RASTERISER gets the author's bytes while the DOM gets a real parsed,
+- **`<svg>` keeps its capitals, the spec's way.** Since 2026-09-17 the
+  tokenizer lowercases every name as HTML says and `lib/DOM/treebuilder.cpp`
+  carries the SVG tag/attribute adjustment tables of 13.2.6.5, so `viewBox`
+  comes out `viewBox` because the table says so, not because the tokenizer
+  looked away (MathML is foreign content too: `node_ns::other` with the URI
+  recorded on the document). Separately, every token carries its source span,
+  so the RASTERISER gets the author's bytes while the DOM gets a real parsed,
   namespaced subtree. Anything walking the DOM for `<title>`, `<style>` or
   `<script>` must check `element_ns` — SVG has all three and they intern to the
   same atoms.

@@ -188,16 +188,16 @@ std::optional<double> unit_to_px(double value, std::string_view unit, const leng
     if (ascii_iequals(unit, "rlh")) { return value * ctx.root_line_height; }
     // THE VIEWPORT UNITS, all six spellings of each axis. There is no dynamic
     // toolbar here, so the small, large, dynamic and default viewports are one
-    // and the same; and the writing mode is horizontal, so `vi` is `vw` and
-    // `vb` is `vh`. viewport-units-compute asks for all twenty-four.
-    //
-    // ponytail: horizontal-tb assumed for `vi`/`vb`; thread the writing mode
-    // through length_context when a vertical page asks.
+    // and the same. `vi` is the inline axis - the width in a horizontal
+    // writing mode and the height in a vertical one (`ctx.vertical`) - and
+    // `vb` the other. viewport-units-compute asks for all twenty-four.
     const auto viewport_axis = [&](std::string_view suffix) -> std::optional<double> {
         const double w = ctx.viewport_width;
         const double h = ctx.viewport_height;
-        if (suffix == "w" || suffix == "i") { return w; }
-        if (suffix == "h" || suffix == "b") { return h; }
+        if (suffix == "w") { return w; }
+        if (suffix == "h") { return h; }
+        if (suffix == "i") { return ctx.vertical ? h : w; }
+        if (suffix == "b") { return ctx.vertical ? w : h; }
         if (suffix == "min") { return std::min(w, h); }
         if (suffix == "max") { return std::max(w, h); }
         return std::nullopt;

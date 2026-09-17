@@ -372,39 +372,40 @@ void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
     cx.settle_promise(waiting.promise, with, rejected);
 }
 
-value dom_bindings::fetch_now(context & cx, const std::string & url) {
-    std::vector<std::byte> body;
-    int status = 200;
-    std::string type;
-    std::string failure;
-
+dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & url) {
+    loaded_resource out;
     if (assets_ != nullptr && assets_->contains(url)) {
         const std::span<const std::byte> baked = assets_->find(url);
-        body.assign(baked.begin(), baked.end());
+        out.body.assign(baked.begin(), baked.end());
     } else if (url.find("://") == std::string::npos && assets_ != nullptr) {
         // A relative url is a file next to the page, which is what a
         // page-local `fetch("data.json")` means.
-        body = assets_->load(url);
-        if (body.empty()) {
-            status = 404;
-            failure = "no such resource: " + url;
+        out.body = assets_->load(url);
+        if (out.body.empty()) {
+            out.status = 404;
+            out.failure = "no such resource: " + url;
         }
     } else if (network_allowed_) {
         const http_response response = http_get(url);
-        status = response.status;
-        type = response.content_type;
-        body = std::move(response.body);
-        if (!response.completed()) { failure = response.error; }
+        out.status = response.status;
+        out.type = response.content_type;
+        out.body = std::move(response.body);
+        if (!response.completed()) { out.failure = response.error; }
     } else {
-        failure = "network access is off and " + url + " was not baked in";
+        out.failure = "network access is off and " + url + " was not baked in";
     }
+    if (out.type.empty()) { out.type = mime_for_path(url); }
+    return out;
+}
 
-    if (!failure.empty()) {
+value dom_bindings::fetch_now(context & cx, const std::string & url) {
+    loaded_resource loaded = load_resource(url);
+    if (!loaded.failure.empty()) {
         // A network failure REJECTS, which is what a page's catch branch is
         // written for. A 404 does not - it is a Response with ok false.
-        return make_rejection(cx, failure);
+        return make_rejection(cx, loaded.failure);
     }
-    return make_response(cx, url, status, type, std::move(body));
+    return make_response(cx, url, loaded.status, loaded.type, std::move(loaded.body));
 }
 
 value dom_bindings::make_rejection(context & cx, const std::string & message) {

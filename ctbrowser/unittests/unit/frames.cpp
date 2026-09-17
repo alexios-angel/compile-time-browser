@@ -45,6 +45,9 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
 // the expression logged.
 [[nodiscard]] std::string answer(const std::string & body, const std::string & expression) {
     browser page{browser_options{400, 300}};
+    // An address, so a frame's `location` resolves against something: a
+    // submission's `?query` is only a query of an absolute URL.
+    page.set_location("file:///pages/the-page.html");
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
     // A `setTimeout` INSIDE the window's load handler. One tick does, in
@@ -102,9 +105,13 @@ void test_a_frame_has_a_document_of_its_own() {
        " return (e instanceof d.defaultView.DOMException) && e.name === 'SyntaxError'; } })()",
        "true");
     is(one_frame, "'TypeError' in document.getElementById('f').contentWindow", "true");
-    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame has no location of
-    // its own here, and the page's must not be reachable through it.
-    is(one_frame, "typeof document.getElementById('f').contentWindow.location", "undefined");
+    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame's `location` is
+    // its own document's, never the page's.
+    is(one_frame,
+       "(function () { var w = document.getElementById('f').contentWindow;"
+       " return (w.location === window.location) + ',' + /inner\\.html$/.test(w.location.href);"
+       " })()",
+       "false,true");
 }
 
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {
@@ -327,6 +334,19 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
 
 } // namespace
 
+// HTML 4.10.21.3: a GET submission aimed at a frame this document names
+// navigates the frame to the action with the entries as its query - the
+// frame's own `location` reads it back and its document is the action's.
+void test_a_form_submits_into_a_named_frame() {
+    is("<form id=fm action=inner.html target=f><input name=a value='x y'><input name=b value=2>"
+       "</form><iframe id=f name=f></iframe>",
+       "(function () { document.getElementById('fm').submit();"
+       " var w = document.getElementById('f').contentWindow;"
+       " return w.location.search + '|' + w.document.title + '|' + (w.location === "
+       "w.document.location) + '|' + (w.location === window.location); })()",
+       "?a=x+y&b=2|inner|true|false");
+}
+
 int main() {
     test_a_frame_document_is_laid_out_at_the_size_of_its_box();
     test_the_frames_are_indexed_on_the_window();
@@ -343,5 +363,6 @@ int main() {
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();
     test_a_frame_runs_no_script();
+    test_a_form_submits_into_a_named_frame();
     REPORT("frames");
 }

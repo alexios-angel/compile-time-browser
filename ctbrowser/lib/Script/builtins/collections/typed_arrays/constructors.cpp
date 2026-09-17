@@ -19,6 +19,11 @@
 
 #include "internal.hpp"
 
+namespace ctbrowser::script {
+// Defined in vm/objects/lookup.cpp; see the note there.
+object_object * typed_array_prototype(context & cx, element_kind kind);
+} // namespace ctbrowser::script
+
 namespace ctbrowser::script::builtins_detail {
 
 namespace {
@@ -556,7 +561,9 @@ void install_typed_arrays(context & cx) {
         const auto width = static_cast<double>(bytes_per_element(kind));
         auto * ctor =
             cx.allocate<native_object>(each.name, [kind](context & c, std::span<value> a) {
-                return construct_typed_array(c, kind, a);
+                const value made = construct_typed_array(c, kind, a);
+                detail::adopt_subclass_prototype(c, made, typed_array_prototype(c, kind));
+                return made;
             });
         ctor->proto_link = value::object(typed_ctor);
         detail::constant(ctor, "BYTES_PER_ELEMENT", value::number(width));

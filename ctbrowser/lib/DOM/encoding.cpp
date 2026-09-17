@@ -2,6 +2,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <cstdint>
 #include <utility>
 
 // encoding: the Encoding Standard's names-and-labels table, and HTML's prescan.
@@ -324,6 +325,62 @@ struct prescan_attribute {
     return ascii_iequals(bytes.substr(at, word.size()), word);
 }
 
+// "Get an XML encoding", HTML 13.2.3.2: `<?xml` at the very start of the
+// stream, then `encoding`, `=`, a quoted value with no whitespace or control
+// in it, all before the declaration's `>`. Case-sensitive throughout - `<?XML`
+// is not one. Applied to the same bytes the prescan saw, once it found nothing.
+[[nodiscard]] std::string xml_declaration_encoding(std::string_view bytes) {
+    if (!bytes.starts_with("<?xml")) { return {}; }
+    const std::size_t end = bytes.find('>');
+    if (end == std::string_view::npos) { return {}; }
+    const std::string_view declaration = bytes.substr(0, end);
+    std::size_t at = declaration.find("encoding");
+    if (at == std::string_view::npos) { return {}; }
+    at += 8;
+    const auto skip_space = [&] {
+        while (at < declaration.size() && static_cast<unsigned char>(declaration[at]) <= 0x20) {
+            ++at;
+        }
+    };
+    skip_space();
+    if (at >= declaration.size() || declaration[at] != '=') { return {}; }
+    ++at;
+    skip_space();
+    if (at >= declaration.size()) { return {}; }
+    const char quote = declaration[at];
+    if (quote != '"' && quote != '\'') { return {}; }
+    ++at;
+    const std::size_t close = declaration.find(quote, at);
+    if (close == std::string_view::npos) { return {}; }
+    const std::string_view label = declaration.substr(at, close - at);
+    for (const char c : label) {
+        if (static_cast<unsigned char>(c) <= 0x20) { return {}; }
+    }
+    std::string name{encoding_from_label(label)};
+    if (name == "UTF-16BE" || name == "UTF-16LE") { name = "UTF-8"; }
+    return name;
+}
+
+#include <ctbrowser/dom/encoding_tables.inc>
+
+// The row of single_byte_indexes for a name, in the generator's order;
+// ISO-8859-8-I decodes as ISO-8859-8 (the difference is directionality).
+[[nodiscard]] const std::u16string_view * single_byte_index(std::string_view name) {
+    constexpr std::string_view names[] = {
+        "IBM866",       "ISO-8859-2",    "ISO-8859-3",   "ISO-8859-4",   "ISO-8859-5",
+        "ISO-8859-6",   "ISO-8859-7",    "ISO-8859-8",   "ISO-8859-10",  "ISO-8859-13",
+        "ISO-8859-14",  "ISO-8859-15",   "ISO-8859-16",  "KOI8-R",       "KOI8-U",
+        "macintosh",    "windows-874",   "windows-1250", "windows-1251", "windows-1252",
+        "windows-1253", "windows-1254",  "windows-1255", "windows-1256", "windows-1257",
+        "windows-1258", "x-mac-cyrillic"};
+    static_assert(std::size(names) == std::size(single_byte_indexes));
+    if (name == "ISO-8859-8-I") { name = "ISO-8859-8"; }
+    for (std::size_t i = 0; i < std::size(names); ++i) {
+        if (names[i] == name) { return &single_byte_indexes[i]; }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 std::string_view encoding_from_label(std::string_view label) {
@@ -369,16 +426,19 @@ std::string_view encoding_from_meta_content(std::string_view content) {
 }
 
 std::string prescan_encoding(std::string_view bytes) {
-    // 13.2.3.2 "BOM sniffing" comes first and is decisive.
+    // 13.2.3.1 "BOM sniffing" comes first and is decisive.
     if (bytes.starts_with("\xEF\xBB\xBF")) { return "UTF-8"; }
     if (bytes.starts_with("\xFE\xFF")) { return "UTF-16BE"; }
     if (bytes.starts_with("\xFF\xFE")) { return "UTF-16LE"; }
+    // "Prescan for UTF-16 XML declarations": `<?x` in either byte order.
+    if (bytes.starts_with(std::string_view{"<\0?\0x\0", 6})) { return "UTF-16LE"; }
+    if (bytes.starts_with(std::string_view{"\0<\0?\0x", 6})) { return "UTF-16BE"; }
     const std::string_view head = bytes.substr(0, std::min<std::size_t>(bytes.size(), 1024));
     std::size_t at = 0;
     while (at < head.size()) {
         if (head.substr(at).starts_with("<!--")) {
             const std::size_t end = head.find("-->", at + 2);
-            if (end == std::string_view::npos) { return {}; }
+            if (end == std::string_view::npos) { return xml_declaration_encoding(bytes); }
             at = end + 3;
             continue;
         }
@@ -432,13 +492,71 @@ std::string prescan_encoding(std::string_view bytes) {
         if (head[at] == '<' && at + 1 < head.size() &&
             (head[at + 1] == '!' || head[at + 1] == '/' || head[at + 1] == '?')) {
             const std::size_t end = head.find('>', at);
-            if (end == std::string_view::npos) { return {}; }
+            if (end == std::string_view::npos) { return xml_declaration_encoding(bytes); }
             at = end + 1;
             continue;
         }
         ++at;
     }
-    return {};
+    // Aborted without an encoding: the XML declaration, over the whole stream
+    // the loader has - a `>` past the 1024th byte still ends it (xmldecl-2).
+    return xml_declaration_encoding(bytes);
+}
+
+std::string decode_document_bytes(std::string_view bytes, std::string_view name) {
+    if (name == "UTF-8" || name.empty()) {
+        if (bytes.starts_with("\xEF\xBB\xBF")) { bytes.remove_prefix(3); }
+        return std::string{bytes};
+    }
+    std::string out;
+    if (name == "UTF-16LE" || name == "UTF-16BE") {
+        const bool big = name == "UTF-16BE";
+        std::size_t at = 0;
+        if (bytes.size() >= 2 && bytes.starts_with(big ? "\xFE\xFF" : "\xFF\xFE")) { at = 2; }
+        out.reserve(bytes.size());
+        char32_t lead = 0;
+        for (; at + 1 < bytes.size(); at += 2) {
+            const auto lo = static_cast<unsigned char>(bytes[big ? at + 1 : at]);
+            const auto hi = static_cast<unsigned char>(bytes[big ? at : at + 1]);
+            const char32_t unit = static_cast<char32_t>((hi << 8) | lo);
+            if (lead != 0) {
+                if (unit >= 0xDC00 && unit <= 0xDFFF) {
+                    append_utf8(out, 0x10000 + ((lead - 0xD800) << 10) + (unit - 0xDC00));
+                    lead = 0;
+                    continue;
+                }
+                append_utf8(out, 0xFFFD);
+                lead = 0;
+            }
+            if (unit >= 0xD800 && unit <= 0xDBFF) {
+                lead = unit;
+            } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+                append_utf8(out, 0xFFFD);
+            } else {
+                append_utf8(out, unit);
+            }
+        }
+        // A trailing lead or an odd byte is one error each.
+        if (lead != 0 || at < bytes.size()) { append_utf8(out, 0xFFFD); }
+        return out;
+    }
+    if (name == "replacement") { return "\xEF\xBF\xBD"; }
+    const std::u16string_view * index =
+        name == "x-user-defined" ? nullptr : single_byte_index(name);
+    if (index == nullptr && name != "x-user-defined") { return std::string{bytes}; }
+    out.reserve(bytes.size() + bytes.size() / 2);
+    for (const char c : bytes) {
+        const auto b = static_cast<unsigned char>(c);
+        if (b < 0x80) {
+            out += c;
+            continue;
+        }
+        // x-user-defined maps the high half onto U+F780-U+F7FF; an index
+        // maps it through its row, U+0000 there meaning "no mapping".
+        const char32_t cp = index == nullptr ? 0xF780 + (b - 0x80) : (*index)[b - 0x80];
+        append_utf8(out, cp == 0 ? 0xFFFD : cp);
+    }
+    return out;
 }
 
 } // namespace ctbrowser

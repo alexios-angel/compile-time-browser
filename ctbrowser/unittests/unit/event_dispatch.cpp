@@ -519,8 +519,10 @@ void test_handler_properties() {
     const auto & log = log_of(page);
     check(log.size() == 2, "both the listener and the handler property fired");
     if (log.size() == 2) {
-        // `this` is the element, which is what a handler written this way reads.
-        check(log[0] == "listener" && log[1] == "handler click true",
+        // `this` is the element, which is what a handler written this way
+        // reads - and the handler was set FIRST, so it runs first (its
+        // listener was registered then; HTML 8.1.8.1).
+        check(log[0] == "handler click true" && log[1] == "listener",
               "the handler runs with the event and the element as `this`");
     }
 
@@ -529,12 +531,35 @@ void test_handler_properties() {
     (void)page.run_script("a.onclick = function () { console.log('replaced'); };");
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
-    check(log_of(page).size() == 4 && log_of(page)[3] == "replaced",
+    check(log_of(page).size() == 4 && log_of(page)[2] == "replaced" &&
+              log_of(page)[3] == "listener",
           "the second assignment replaced the first rather than adding to it");
     (void)page.run_script("a.onclick = null;");
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
     check(log_of(page).size() == 5, "and null removes it, leaving the listener");
+
+    // THE HANDLER'S PLACE IN THE LIST is where it was first set (HTML
+    // 8.1.8.1): assigned before a listener it runs before it, set to null and
+    // back it moves to the end, and a content attribute counts from the
+    // setAttribute (event-handler-spec-example.window.js).
+    (void)page.run_script(R"(
+        var b = document.createElement('button'); var order = [];
+        b.onclick = function () { order.push('h1'); };
+        b.addEventListener('click', function () { order.push('l1'); });
+        b.setAttribute('onclick', 'order.push("attr")');
+        b.addEventListener('click', function () { order.push('l2'); });
+        b.onclick = function () { order.push('h2'); };
+        b.click();
+        b.onclick = null; b.onclick = function () { order.push('h3'); }; b.click();
+        var c = document.createElement('button');
+        c.addEventListener('click', function () { order.push('m1'); });
+        c.setAttribute('onclick', 'order.push("c-attr")');
+        c.addEventListener('click', function () { order.push('m2'); });
+        c.click();
+        console.log('order=' + order.join());)");
+    check(log_of(page).back() == "order=h2,l1,l2,l1,l2,h3,m1,c-attr,m2",
+          "the handler listener keeps its registration order: " + log_of(page).back());
 }
 
 void test_events_bubble_and_can_be_prevented() {
@@ -584,6 +609,75 @@ void test_a_made_documents_nodes_have_a_path_that_ends_at_it() {
 
 } // namespace
 
+// AbortSignal IS AN EVENT TARGET (DOM 3.2): aborting fires `abort` at it once,
+// with the reason given or an AbortError, and the statics - `abort()` already
+// aborted and silent, `timeout()` a TimeoutError on the page's own timer, and
+// `any()` following its sources - answer the shapes a page checks.
+void test_abort_signal() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><script>
+        var log = '';
+        var ac = new AbortController();
+        var s = ac.signal;
+        log += (s instanceof AbortSignal) + ',' + (s instanceof EventTarget) + ';';
+        var fired = 0;
+        s.addEventListener('abort', function (e) { fired++; log += e.type + ':' + (e.target === s) + ';'; });
+        s.onabort = function () { fired++; };
+        ac.abort();
+        ac.abort();
+        log += fired + ',' + s.aborted + ',' + s.reason.name + ';';
+        var thrown = '';
+        try { s.throwIfAborted(); } catch (e) { thrown = e.name; }
+        log += thrown + ';';
+        var pre = AbortSignal.abort('why');
+        log += pre.aborted + ',' + pre.reason + ';';
+        var a = new AbortController(), b = new AbortController();
+        var both = AbortSignal.any([a.signal, b.signal]);
+        var anyFired = 0;
+        both.addEventListener('abort', function () { anyFired++; });
+        b.abort('b first');
+        a.abort('a second');
+        log += both.aborted + ',' + both.reason + ',' + anyFired + ';';
+        var t = AbortSignal.timeout(20);
+        t.addEventListener('abort', function () { log += 'timeout:' + t.reason.name + ';'; });
+        var bad = '';
+        try { AbortSignal.timeout(-1); } catch (e) { bad = e.name; }
+        log += bad + ';';
+        function report() { console.log(log); }
+      </script></body></html>)");
+    check(page.script_error().empty(), "the abort script ran: " + page.script_error());
+    for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "true,true;abort:true;2,true,AbortError;AbortError;true,why;"
+                                 "true,b first,1;TypeError;timeout:TimeoutError;",
+          "AbortSignal aborts once, with a reason, through any() and timeout(): " +
+              log_of(page).back());
+}
+
+// AN INLINE HANDLER'S SCOPE CHAIN (HTML 8.1.8.1 step 10) ENCLOSES THE
+// FUNCTION: `event` is the handler's own parameter, not the element's or the
+// window's `event` property, and a Window's `onerror` gets the five
+// (event, source, lineno, colno, error).
+void test_inline_handler_scope() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body onerror="log += typeof event + ',' + typeof source + ',' +
+        typeof lineno + ',' + typeof colno + ';'">
+    <div id=a title=t onclick="log += event.type + ':' + title + ':' + (this === a) + ';'">x</div>
+    <script>
+    var log = '';
+    var a = document.getElementById('a');
+    a.dispatchEvent(new Event('click'));
+    a.event = 'shadowed';
+    a.dispatchEvent(new Event('click'));
+    function report() { console.log(log); }
+    </script>
+    <script>nosuchthing();</script>
+    </body></html>)");
+    (void)page.run_script("report();");
+    check(log_of(page).back() == "click:t:true;click:t:true;string,string,number,number;",
+          "the parameter wins over `with`, and body onerror takes five: " + log_of(page).back());
+}
+
 int main() {
     test_a_made_documents_nodes_have_a_path_that_ends_at_it();
     test_click_dispatch();
@@ -595,5 +689,7 @@ int main() {
     test_the_event_interface_hierarchy();
     test_dispatch_refuses_and_binds_this();
     test_passive_listeners_and_a_throwing_one();
+    test_abort_signal();
+    test_inline_handler_scope();
     REPORT("event_dispatch");
 }

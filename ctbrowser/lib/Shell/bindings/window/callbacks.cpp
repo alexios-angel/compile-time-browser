@@ -133,7 +133,41 @@ std::size_t dom_bindings::run_due_callbacks() {
         } else {
             still->cancelled = true;
         }
-        (void)cx_->call(t.callback, {});
+        // BEHIND A FENCE, and REPORTED TO THE PAGE: HTML 8.6's timer task
+        // "reports the exception" - `window.onerror` hears a throw in a
+        // setTimeout callback (window-runtime-error.html), where before it
+        // was an engine fault the embedder alone saw. A STRING handler
+        // (initialisation steps 8.2) is compiled as a classic script and run
+        // the same way; one that does not parse is a SyntaxError reported
+        // likewise (compile-error-in-setTimeout.html).
+        bool threw = false;
+        value thrown = value::undefined();
+        if (t.callback.is_string()) {
+            script::program compiled = script::compiler::compile(cx_->to_string(t.callback));
+            if (!compiled.ok) {
+                (void)dispatch_error("uncaught SyntaxError: " + compiled.error);
+            } else {
+                const script::program & held = cx_->own_program(std::move(compiled));
+                for (const std::string & name : held.hoisted_vars) {
+                    if (!cx_->has_global(name)) { cx_->define_global(name, value::undefined()); }
+                }
+                auto * entry = cx_->allocate<script::closure_object>(&held.functions[0]);
+                entry->owner = &held;
+                (void)cx_->call_fenced(value::object(entry), {}, cx_->global_this(), threw, thrown);
+            }
+        } else {
+            (void)cx_->call_fenced(t.callback, {}, cx_->global_this(), threw, thrown);
+        }
+        if (threw || cx_->failed()) {
+            const context::rooted keep_thrown{*cx_, thrown};
+            const std::string fault = cx_->failed()
+                                          ? cx_->take_error()
+                                          : "uncaught " + detail::describe_thrown(*cx_, thrown);
+            const bool handled = dispatch_error_value(fault, thrown);
+            if (!handled && callback_error_.empty()) {
+                callback_error_ = "setTimeout callback: " + fault;
+            }
+        }
         note_callback_fault("setTimeout");
         ++ran;
     }
@@ -144,14 +178,42 @@ std::size_t dom_bindings::run_due_callbacks() {
     // follows draws.
     cx_->drain_microtasks();
 
-    std::vector<value> frame_callbacks;
+    // "Run the animation frame callbacks" (HTML 8.9.2): over a copy of the
+    // map, each entry only if it is STILL in the map - one callback may
+    // cancel the next (cancel-pending.html) - and a callback registered
+    // during the run waits for the next frame. Behind the fence and
+    // reported, as a timer's throw is: `window.onerror` hears it
+    // (callback-exception.html).
+    std::vector<animation_frame_callback> frame_callbacks;
     frame_callbacks.swap(animation_callbacks_);
-    for (const value & cb : frame_callbacks) {
+    const auto keep_frames = root_all(
+        frame_callbacks, [](const animation_frame_callback & frame, std::vector<value> & held) {
+            held.push_back(frame.callback);
+        });
+    for (const animation_frame_callback & frame : frame_callbacks) {
+        if (frame.id == 0) { continue; }
+        const bool cancelled = std::ranges::any_of(
+            cancelled_frames_, [&](std::uint32_t id) { return id == frame.id; });
+        if (cancelled) { continue; }
         const value ms = value::number(now_ms_);
-        (void)cx_->call(cb, std::span<const value>{&ms, 1});
+        bool threw = false;
+        value thrown = value::undefined();
+        (void)cx_->call_fenced(frame.callback, std::span<const value>{&ms, 1}, cx_->global_this(),
+                               threw, thrown);
+        if (threw || cx_->failed()) {
+            const context::rooted keep_thrown{*cx_, thrown};
+            const std::string fault = cx_->failed()
+                                          ? cx_->take_error()
+                                          : "uncaught " + detail::describe_thrown(*cx_, thrown);
+            const bool handled = dispatch_error_value(fault, thrown);
+            if (!handled && callback_error_.empty()) {
+                callback_error_ = "requestAnimationFrame callback: " + fault;
+            }
+        }
         note_callback_fault("requestAnimationFrame");
         ++ran;
     }
+    cancelled_frames_.clear();
     cx_->drain_microtasks();
     note_callback_fault("microtask");
     // THE FRAME IS OVER, SO THE CANVAS GETS ITS PIXELS. A WebGL context draws
@@ -261,9 +323,25 @@ void dom_bindings::install_timers(context & cx) {
         c.queue_microtask(callback);
         return value::undefined();
     });
-    cx.define_native("requestAnimationFrame", [this](context &, std::span<value> args) {
-        animation_callbacks_.push_back(arg(args, 0));
-        return value::number(++next_timer_id_);
+    cx.define_native("requestAnimationFrame", [this](context & c, std::span<value> args) {
+        const value callback = arg(args, 0);
+        if (!callback.is_callable()) {
+            c.throw_error("TypeError", "requestAnimationFrame: the callback is not a function");
+            return value::undefined();
+        }
+        animation_callbacks_.push_back(animation_frame_callback{++next_timer_id_, callback});
+        return value::number(next_timer_id_);
+    });
+    // `cancelAnimationFrame(handle)`: the entry leaves the map. A handle
+    // cancelled while the callbacks are running is remembered until the run
+    // ends, which is how the copy being run knows not to call it.
+    cx.define_native("cancelAnimationFrame", [this](context &, std::span<value> args) {
+        const double handle = context::to_number(arg(args, 0));
+        const auto id = static_cast<std::uint32_t>(handle);
+        std::erase_if(animation_callbacks_,
+                      [id](const animation_frame_callback & frame) { return frame.id == id; });
+        cancelled_frames_.push_back(id);
+        return value::undefined();
     });
 }
 

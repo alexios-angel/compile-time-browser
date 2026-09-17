@@ -452,6 +452,15 @@ struct array_object final : heap_object {
     [[nodiscard]] std::size_t length() const noexcept {
         return is_view() ? view_length : items.size();
     }
+    // AN EXPLICIT [[Prototype]], for a SUBCLASS INSTANCE - `class A extends
+    // Array` (ArrayCreate with proto from NewTarget, 10.4.2.2) and `class M
+    // extends Uint8Array` (23.2.5.1's AllocateTypedArray) - and for
+    // Object.setPrototypeOf on an array. null means the implicit one: the kind's
+    // own prototype for a typed array, else Array.prototype - which is what
+    // every array made by a literal or by Array itself has, and what lookup
+    // falls back to without walking anything. undefined is an explicit null
+    // [[Prototype]], as object_object::prototype spells it.
+    value prototype = value::null();
 
     // --- SPARSE STORAGE, and why an array needs any -------------------------
     //

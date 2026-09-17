@@ -123,15 +123,18 @@ DOCTYPE machines, bogus comments, script data escaped/double-escaped, the
 appropriate end tag, the named-reference algorithm with the 106 legacy
 no-semicolon names and the in-attribute rule, the C1 remap) and
 `lib/DOM/treebuilder.cpp` every insertion mode of 13.2.6.4 plus the foreign
-content rules of 13.2.6.5 - with the 2025 select rules (no "in select" mode)
-because the fixtures are. It measures 1601 of 1713 document cases and 120 of
-129 HTML-context fragment cases; `unittests/unit/html5lib_fixtures` pins
-every file's count. What remains is named in the tree builder's header:
-MathML (no namespace in this DOM), the SVG attribute case-adjustment table
-this engine deliberately does not carry, `<selectedcontent>` mirroring, and
-the scripted_* files. `parse_html_fragment(doc, markup, context)` is the
+content rules of 13.2.6.5 - MathML as `node_ns::other` with its URI on the
+document, the SVG tag and attribute adjustment tables, the fragment case
+taking the context's local name AND namespace - with the 2025 select rules
+(no "in select" mode) because the fixtures are. It measures 1899 of the
+html5lib fixtures with 10 failing (session 16, agent H; 1723/119 before);
+`unittests/unit/html5lib_fixtures` pins every file's count. What remains
+is named in the tree builder's header: `<selectedcontent>` mirroring (a
+forms rule) and the scripted_* files, which need scripts to run in a frame.
+`parse_html_fragment(doc, markup, local_name, ns, scripting)` is the
 fragment case with a context element, so a `<tr>` context makes `<td>` a
-cell; `innerHTML` still passes "body" and should pass the element's tag.
+cell; `innerHTML`/`outerHTML` pass the element's own context now, while
+`insertAdjacentHTML` and `setHTMLUnsafe` still parse in a body context.
 
 **Form controls and canvas 2D work.** `ctbrowser.shell:forms` holds control
 state (value, caret, selection, checked) keyed by node_id — NOT on the node,

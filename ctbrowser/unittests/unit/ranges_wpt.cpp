@@ -230,6 +230,49 @@ void test_insert_node_and_surround_contents() {
 
 // --- StaticRange ------------------------------------------------------------------
 
+// --- the live range steps, DOM 5.5 --------------------------------------------
+
+// Range-mutations-{appendChild,insertBefore,removeChild}.html: a boundary on
+// the parent past the edit moves with it; one inside a removed node lands
+// where the node was.
+void test_a_range_follows_tree_edits() {
+    is("(function () { var box = document.getElementById('box'), p1 = "
+       "document.getElementById('p1'),"
+       " p2 = document.getElementById('p2');"
+       " var r = document.createRange(); r.setStart(box, 1); r.setEnd(box, 3);"
+       " var out = [];"
+       " box.insertBefore(document.createElement('i'), p1); out.push(r.startOffset + '-' + "
+       "r.endOffset);"
+       " box.appendChild(document.createElement('b')); out.push(r.startOffset + '-' + r.endOffset);"
+       " box.removeChild(box.firstChild); out.push(r.startOffset + '-' + r.endOffset);"
+       " r.setEnd(p2.firstChild, 2); box.removeChild(p2);"
+       " out.push((r.endContainer === box) + ':' + r.endOffset);"
+       " box.insertBefore(p2, box.firstChild); out.push(r.startOffset + '-' + r.endOffset + ':' +"
+       " (r.endContainer === box));"
+       " return out.join('|'); })()",
+       "2-4|2-4|1-3|true:1|2-2:true");
+}
+
+// Range-mutations-{insertData,deleteData,replaceData,dataChange}.html,
+// Range-mutations-splitText.html, Node-normalize: the replace data steps, the
+// split steps and the absorption steps.
+void test_a_range_follows_data_edits() {
+    is("(function () { var t = document.getElementById('p1').firstChild;"
+       " var r = document.createRange(); r.setStart(t, 1); r.setEnd(t, 3); var out = [];"
+       " t.insertData(0, 'xy'); out.push(r.startOffset + '-' + r.endOffset);"
+       " t.deleteData(0, 1); out.push(r.startOffset + '-' + r.endOffset);"
+       " t.replaceData(2, 3, 'Q'); out.push(r.startOffset + '-' + r.endOffset);"
+       " t.data = 'hello'; out.push(r.startOffset + '-' + r.endOffset);"
+       " r.setStart(t, 1); r.setEnd(t, 4); var made = t.splitText(2);"
+       " out.push((r.startContainer === t) + ':' + r.startOffset + ',' + (r.endContainer === made)"
+       " + ':' + r.endOffset);"
+       " var p = t.parentNode; var q = document.createRange(); q.setStart(p, 1); q.setEnd(p, 2);"
+       " p.normalize(); out.push(r.startOffset + '-' + r.endOffset + ',' + (r.endContainer === t)"
+       " + ',' + (q.startContainer === t) + ':' + q.startOffset + ',' + q.endOffset);"
+       " return out.join('|'); })()",
+       "3-5|2-4|2-2|0-0|true:1,true:2|1-4,true,true:2,1");
+}
+
 void test_static_range_is_a_snapshot() {
     // StaticRange-constructor.html: four required members, a doctype or an
     // Attr refused, an inverted or too-long pair allowed, nothing live.
@@ -260,6 +303,8 @@ int main() {
     test_comparisons_over_two_documents_and_an_attr();
     test_delete_extract_and_clone_contents();
     test_insert_node_and_surround_contents();
+    test_a_range_follows_tree_edits();
+    test_a_range_follows_data_edits();
     test_static_range_is_a_snapshot();
     REPORT("ranges_wpt");
 }

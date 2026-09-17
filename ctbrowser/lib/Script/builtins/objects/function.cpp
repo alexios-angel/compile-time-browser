@@ -247,12 +247,7 @@ void install_function(context & cx) {
     // %ThrowTypeError% - `f.caller` on a strict function (a class, an arrow, a
     // built-in) is a TypeError. A sloppy function answers null before the
     // chain gets here (lookup_property's closure arm), as every browser does.
-    const value thrower = detail::accessor_fn(cx, "", [](context & c, std::span<value>) {
-        c.throw_error("TypeError", "'caller', 'callee', and 'arguments' properties may not be "
-                                   "accessed on strict mode functions or the arguments objects "
-                                   "for calls to them");
-        return value::undefined();
-    });
+    const value thrower = cx.throw_type_error(); // one per realm, 10.2.4.1
     function_proto->define_accessor("caller", thrower, thrower, attr_configurable);
     function_proto->define_accessor("arguments", thrower, thrower, attr_configurable);
     cx.set_prototype(context::proto_kind::function, function_proto);
@@ -301,7 +296,26 @@ value dynamic_function(context & c, std::span<value> a, const char * keyword) {
         return value::undefined();
     }
     const program & kept = c.own_program(std::move(compiled));
-    return c.run_nested(kept);
+    const value made = c.run_nested(kept);
+    // CreateDynamicFunction step 22-24 (OrdinaryFunctionCreate off
+    // GetPrototypeFromConstructor(newTarget)): under `new` from a subclass -
+    // `class F extends Function {}`, reached through super() - the closure's
+    // [[Prototype]] is the instance's, F.prototype, and not the intrinsic.
+    // The same shape as detail::adopt_subclass_prototype for an array.
+    if (made.is_kind(heap_kind::function)) {
+        const value self = c.current_this();
+        if (detail::constructing_this(self)) {
+            const value proto = static_cast<object_object *>(self.as_heap())->prototype;
+            if (proto.is_object() &&
+                proto.as_heap() != c.prototype(context::proto_kind::function) &&
+                proto.as_heap() != c.prototype(context::proto_kind::generator_function) &&
+                proto.as_heap() != c.prototype(context::proto_kind::async_function) &&
+                proto.as_heap() != c.prototype(context::proto_kind::async_generator_function)) {
+                static_cast<closure_object *>(made.as_heap())->proto_link = proto;
+            }
+        }
+    }
+    return made;
 }
 } // namespace
 

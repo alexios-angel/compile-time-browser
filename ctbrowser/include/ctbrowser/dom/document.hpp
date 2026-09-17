@@ -104,6 +104,10 @@ public:
                                                       std::string_view local) const noexcept;
     [[nodiscard]] bool has_attribute_ns(node_id, std::string_view ns,
                                         std::string_view local) const noexcept;
+    // An `other` element's recorded namespace URI - see document::element_namespace.
+    [[nodiscard]] atom element_namespace(node_id) const noexcept;
+    // A <template>'s contents fragment - see document::template_content.
+    [[nodiscard]] node_id template_content(node_id) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] node_id document_node() const noexcept;
@@ -210,7 +214,17 @@ public:
     std::expected<void, dom_error> remove_attribute(node_id, atom name);
     std::expected<void, dom_error> remove_attribute_ns(node_id, std::string_view ns,
                                                        std::string_view local);
-    std::expected<void, dom_error> set_text(node_id, std::string_view value);
+    // `edit`, when given, is the "replace data" (DOM 4.10.2) this write is -
+    // offset, count and the replacement's length, in UTF-16 code units - which
+    // the live ranges read (the write log below). Without it the write is a
+    // replacement of the whole data.
+    struct data_edit {
+        std::uint32_t offset = 0;
+        std::uint32_t count = 0;
+        std::uint32_t added = 0;
+    };
+    std::expected<void, dom_error> set_text(node_id, std::string_view value,
+                                            std::optional<data_edit> edit = std::nullopt);
 
     // A <template>'s CONTENTS, HTML 4.12.3: the DocumentFragment its children
     // are parsed into, which is NOT a child of the element - a document query
@@ -220,6 +234,16 @@ public:
     // are a handful of templates in a page. Empty when the element has none.
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
+
+    // THE NAMESPACE URI OF AN ELEMENT `node_ns` DOES NOT NAME - an `other`
+    // element's. `node` has no room for a URI (node_ns says why), and a page
+    // holds a handful of these: the HTML parser's MathML, an XML document's
+    // own vocabulary. Kept beside the template contents, by element, so the
+    // parsers can record what they know and `namespaceURI` can answer it.
+    // The empty atom for an element nothing recorded; an HTML or SVG
+    // element's URI follows from its `element_ns` and is not kept here.
+    [[nodiscard]] atom element_namespace(node_id element) const;
+    void set_element_namespace(node_id element, atom uri);
 
     // Shadow roots are detached fragments with sparse host/mode metadata.
     // Closed mode affects exposure to script, not these native tree queries.
@@ -253,6 +277,7 @@ public:
     void set_shadow_declarative(node_id root, bool declarative);
     // Snapshot for callers that walk trees and may attach another root.
     [[nodiscard]] std::vector<node_id> shadow_roots() const;
+    [[nodiscard]] bool has_shadow_roots() const noexcept { return !shadow_roots_.empty(); }
 
     // --- the parse path -----------------------------------------------------
     // The parsers' append: no detach, no cycle check, no version bump, because
@@ -319,6 +344,15 @@ public:
     [[nodiscard]] bool xml() const noexcept { return xml_; }
     void set_xml(bool on) noexcept { xml_ = on; }
 
+    // THE SCRIPTING FLAG (HTML 13.2.6.4.4), which is the document's: on for a
+    // document with a browsing context, off for one nothing will ever run a
+    // script in - DOMParser's, createHTMLDocument's. The parser reads it for
+    // `<noscript>` (raw text when on, elements when off), and so must every
+    // fragment parse on the document afterwards, which is why it is kept
+    // rather than passed. `parse_html` records the flag it was given.
+    [[nodiscard]] bool scripting() const noexcept { return scripting_; }
+    void set_scripting(bool on) noexcept { scripting_ = on; }
+
     // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
     // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
     // that is what a page observes anyway); the loader that has the bytes sets
@@ -335,6 +369,7 @@ private:
     // FALSE by default: every document this engine has ever built came from the
     // HTML tree builder, and `parse_xml` is the only thing that sets it.
     bool xml_ = false;
+    bool scripting_ = true;
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
@@ -355,11 +390,10 @@ private:
     // unprefixed and unnamespaced, and `dom/nodes/Attr-prefix.html` asserts
     // both halves against each other.
     //
-    // The specification lists ten names; this matches the three PREFIXES those
-    // ten use, which differs only for something like `xlink:actuate`'s
-    // unlisted neighbours - and putting `xlink:anything` in the XLink namespace
-    // is what an author writing it means. Costs one enum compare on every
-    // attribute of an HTML document, which is where it returns.
+    // The specification's ten names, exactly - `xml:base` is not one of them
+    // and stays an attribute in no namespace, as webkit02.dat asserts. Costs
+    // one enum compare on every attribute of an HTML document, which is where
+    // it returns.
     [[nodiscard]] atom foreign_namespace_of(node_ns element_ns, atom name) const;
 
     // --- the write log, for the MutationObserver diff ---------------------
@@ -370,17 +404,33 @@ private:
     // while a reader has asked (`log_writes(true)`), every set_attribute* and
     // set_text notes what it wrote, and `take_writes` drains the notes. Off,
     // it costs one load per write.
+    //
+    // AND THE TREE EDITS, for the live ranges (DOM 5.5): every child inserted
+    // or removed is noted with its parent and its index at that moment, in
+    // order - a node moved by insert_before is one `removed` and one
+    // `inserted` - and a data write carries its "replace data" arguments.
 public:
     struct write_note {
-        node_id node;
-        atom name; // the attribute's qualified name; unused for a text write
-        bool text = false;
+        enum class edit : std::uint8_t {
+            attribute,
+            data,
+            inserted,
+            removed
+        };
+        node_id node;      // the element or character data written; the PARENT of a child
+        atom name;         // the attribute's qualified name; unused otherwise
+        bool text = false; // `kind == data`
+        edit kind = edit::attribute;
+        node_id child;           // inserted/removed: which
+        std::uint32_t index = 0; // ...and where in `node`'s children it was
+        data_edit data;          // data: the replacement, in code units
     };
     void log_writes(bool on);
     [[nodiscard]] std::vector<write_note> take_writes();
 
 private:
     void note_write(node_id id, atom name, bool text);
+    void note_edit(write_note::edit kind, node_id parent, node_id child, std::size_t index);
     bool log_writes_ = false;
     std::vector<write_note> writes_log_;
 
@@ -390,6 +440,7 @@ private:
     // because a page holds a few and a lookup happens once per `.content`
     // read.
     std::vector<std::pair<node_id, node_id>> template_contents_;
+    flat_map<std::uint64_t, atom> element_namespaces_;
     flat_map<std::uint64_t, node_id> shadow_roots_;
     flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
     node_id root_{};

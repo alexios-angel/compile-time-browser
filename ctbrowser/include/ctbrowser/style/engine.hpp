@@ -129,7 +129,8 @@ public:
           line_height_(atoms.intern_lower("line-height")),
           font_family_(atoms.intern_lower("font-family")),
           font_weight_(atoms.intern_lower("font-weight")),
-          font_style_(atoms.intern_lower("font-style")) {}
+          font_style_(atoms.intern_lower("font-style")),
+          writing_mode_(atoms.intern_lower("writing-mode")) {}
 
     // HOW WIDE A RUN OF TEXT IS IN A FACE, for the `ch` unit. CSS Values 4
     // §6.1.1: `ch` is the advance of the `0` glyph in the element's font, and
@@ -759,6 +760,7 @@ private:
     atom font_size_;
     atom line_height_;
     atom font_family_, font_weight_, font_style_;
+    atom writing_mode_;
     text_measure measure_;
     // The advance of `0` per face and size already measured: a page has a
     // handful of faces and thousands of elements, and the backend's lookup is

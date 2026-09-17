@@ -8,6 +8,10 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 void dom_bindings::install_document(context & cx) {
+    // The document's write log is on from here: `mutated()` drains it on
+    // every write for the mutation observers and the attribute change steps
+    // (settle_attribute_writes), at one push per write.
+    if (doc_ != nullptr) { doc_->log_writes(true); }
     auto * doc = cx.allocate<script::object_object>();
 
     set_method(cx, *doc, "getElementById", [this](context & c, std::span<value> args) {
@@ -30,7 +34,7 @@ void dom_bindings::install_document(context & cx) {
         // on screen until it is appended. A DEFINED name is constructed
         // through the author's class - see bindings/custom_elements.cpp.
         if (!doc_->xml()) {
-            const value made = create_html_element(c, name);
+            const value made = create_html_element(c, name, arg(args, 1));
             if (ascii_iequals(name, "script")) { note_unstarted_script(handle_of(made)); }
             return made;
         }
@@ -141,8 +145,13 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         }
         const bool deep = context::truthy(arg(args, 1));
-        const auto from = owner->doc_->read();
-        return wrap(c, clone_node(from, source, deep, owner == this ? nullptr : owner));
+        node_id made;
+        {
+            const auto from = owner->doc_->read();
+            made = clone_node(from, source, deep, owner == this ? nullptr : owner);
+        }
+        upgrade_created_subtree(made); // [CEReactions] - see custom_elements.cpp
+        return wrap(c, made);
     });
     // `adoptNode(node)`, DOM 4.5. A Document is a NotSupportedError, a shadow
     // root a HierarchyRequestError, and otherwise the node is removed from its
@@ -914,6 +923,7 @@ void dom_bindings::install_document(context & cx) {
     install_document_as_node(cx, *doc);
     install_tree_accessors(cx, *doc);
     install_traversal(cx, *doc);
+    install_document_geometry(cx, *doc); // scrollingElement, elementFromPoint (geometry.cpp)
     document_target_ = value::object(doc);
     document_ = make_document_proxy(cx, document_target_);
     // NOT A GLOBAL WHEN THIS IS A DOCUMENT A PAGE MADE. There is one `document`
@@ -991,7 +1001,10 @@ void dom_bindings::refresh_document() {
     // property refreshed on the tick answered a read taken in the same
     // statement as the write with the value from before it, which is the shape
     // of nearly every test in html/dom's title group: set it, read it back.
-    doc->set("activeElement", wrap(*cx_, focused_));
+    // HTML 6.6.2: when nothing in the document is focused the answer is the
+    // body element, and null only while there is no body (a page reads
+    // `document.activeElement === document.body` after blur()).
+    doc->set("activeElement", wrap(*cx_, focused_ ? focused_ : body_element()));
 }
 
 } // namespace ctbrowser::shell

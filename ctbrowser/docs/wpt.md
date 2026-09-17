@@ -14,6 +14,62 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-17, midday: round six merged
+
+**805 of the 1,102 that ran (73.0%) in the five suites; wide corpus 2,696 of
+5,154 (52.3%), 239,070 subtests PASS** - from 783 / 2,404 / 231,262 at
+`9cd0a9e4` (round five): five suites **+22 files**, wide **+292 files**,
++7,808 subtests. Engine at `9f8da347` on `ctbrowser-wpt` (`92f5d7c7` is the
+same engine plus one corrected unit expectation): round six's four agents
+on `228d80d1` - H the HTML parser tail (merged by session 16 as `05404d4d`),
+and J the JS runtime (`8a993f13`), CE custom elements (`ab60122e`), V CSSOM
+View (`9f8da347`), which session 16 could not merge before the `/mnt/c`
+mount failed and session 17 merged first thing - plus the root's session-16
+work on frames, forms and events. Gated 226/227 on the merged tree, the one
+red being the root's own ungated `selectors` unit expectation (fixed in
+`92f5d7c7`; the engine was right). Same instrument as every row below:
+devbox, 4 jobs, `CTBROWSER_GL_DRIVER=deterministic`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/css-values` | **171** (+2) | 89 | 7 | 0 | 4 | 237 | 508 | 7,611 / 2,717 |
+| `css/cssom` | **156** (+5) | 36 | 0 | 0 | 0 | 29 | 221 | 3,168 / 391 |
+| `dom/events` | **78** (+7) | 9 | 4 | 0 | 0 | 85 | 176 | 660 / 29 |
+| `dom/nodes` | **247** (+2) | 43 | 18 | 1 | 0 | 53 | 362 | 12,061 / 731 |
+| `html/dom` | **153** (+6) | 71 | 13 | 0 | 2 | 137 | 376 | 60,524 / 165 |
+| **total** | **805** | 248 | 42 | 1 | 6 | 541 | 1643 | 84,024 / 4,033 |
+805 of the 1102 that ran (73.0%); subtests 84,024 PASS, 4,033 FAIL, 33 NOTRUN, 39 TIMEOUT
+
+(The deltas are against the round-four table, which is the last per-suite
+table; round five's +2 were `dom/events` 70 -> 71 and `dom/nodes` 244 ->
+245, already inside these numbers.)
+
+The wide corpus, by top-level directory, files PASS (subtests PASS / FAIL):
+`css` **1,413** of 2,925 (59,562 / 43,529 - the module table is in
+`docs/css-conformance.md`), `html` **676** (73,206 / 1,810), `dom` **381**
+(51,490 / 5,241), `shadow-dom` **62** (8,488 / 318), `custom-elements`
+**70** (3,467 / 651), `domparsing` 14 (262 / 1,350), `selection` 41
+(33,326 / 729), `url` 39 (9,269 / 665). The moves, each an agent's:
+- **`custom-elements` 14 -> 70 files, subtests 2,356 -> 3,467** (CE: the
+  HTML element constructors, customized built-ins, spec-order `define()`,
+  ElementInternals with the form-associated members and CustomStateSet,
+  per-frame registries, `new CustomElementRegistry()`).
+- **`css/cssom-view` 26 -> 68 files, subtests 412 -> 1,084** (V: the
+  scrolling area, the scroll APIs on elements and the window, scroll state,
+  hit testing, `GeometryUtils`, `checkVisibility`, the viewport's overflow).
+- **`html/syntax` 109 -> 209** (H: foreign content with the adjustment
+  tables, `<template>`, the serialisers, encoding sniffing - session 16's
+  own merge), `html/dom` 147 -> 153, `dom/events` 71 -> 78, `dom/nodes` 245
+  -> 247, `css/cssom` 151 -> 156, `css` 1,352 -> 1,413.
+- test262 **39,175 -> 39,731** (J; `docs/test262.md`).
+
+**Three CRASHes, all SIGABRT under the runner's 4 GB address-space cap and
+none of them new code paths** (they were TIMEOUT or FAIL before):
+`dom/nodes/NodeList-static-length-getter-tampered-1.html`, `html/webappapis/
+dynamic-markup-insertion/document-write/032.html`, `dom/ranges/
+Range-mutations-dataChange.html`. Not yet diagnosed; the first thing to look
+at next, since a crash is a crash whatever the cap.
+
 ## The baseline — 2026-09-16, night: round five merged
 
 **783 of the 1,104 that ran (70.9%) in the five suites; wide corpus 2,404 of
