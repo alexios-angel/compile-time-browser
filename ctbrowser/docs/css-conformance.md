@@ -43,6 +43,92 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
+## 2-wide. Every CSS module, measured — 2026-09-17, midday: round six (V: CSSOM View)
+
+Round six's agent V built CSSOM View's scrolling half (`docs/wpt.md`'s row
+of this SHA says what), and the root's session-16 property work
+(`container-*`, `vi`/`vb` by writing mode, `name in el.style`,
+`unicode-range`, `var()` with one name) landed in between. Same instrument
+as the tables below, engine at `9f8da347`, deltas against `6edb7421`
+(round four - the last module table; round five's C2 touched only
+`css/selectors`' shadow pseudo-classes, whose files did not move):
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **11** (+0) | 0 | 0 | 0 | 0 | 0 | 11 | 92 / 0 |
+| `css/css-align` | **43** (+0) | 14 | 0 | 0 | 0 | 0 | 57 | 1,094 / 227 |
+| `css/css-anchor-position` | **3** (+0) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **24** (+0) | 18 | 0 | 0 | 0 | 1 | 43 | 360 / 230 |
+| `css/css-backgrounds` | **52** (+0) | 55 | 0 | 0 | 0 | 45 | 152 | 3,699 / 2,346 |
+| `css/css-box` | **26** (+0) | 14 | 0 | 0 | 0 | 0 | 40 | 450 / 477 |
+| `css/css-break` | **18** (+0) | 4 | 0 | 0 | 0 | 0 | 22 | 376 / 164 |
+| `css/css-cascade` | **48** (+1) | 45 | 1 | 0 | 0 | 60 | 154 | 1,005 / 140 |
+| `css/css-color` | **28** (+0) | 36 | 0 | 0 | 0 | 257 | 321 | 9,420 / 3,200 |
+| `css/css-color-adjust` | **4** (+0) | 3 | 0 | 0 | 0 | 0 | 7 | 131 / 16 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **7** (+3) | 33 | 1 | 0 | 172 | 204 | 417 | 1,674 / 122 |
+| `css/css-contain` | **4** (+0) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+0) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **23** (+0) | 11 | 0 | 0 | 0 | 1 | 35 | 753 / 236 |
+| `css/css-fonts` | **52** (+0) | 48 | 0 | 0 | 0 | 0 | 100 | 2,273 / 2,006 |
+| `css/css-forced-color-adjust` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (+0) | 60 | 0 | 0 | 0 | 2 | 76 | 356 / 3,790 |
+| `css/css-grid` | **21** (+0) | 53 | 0 | 0 | 0 | 3 | 77 | 1,614 / 2,096 |
+| `css/css-images` | **22** (+0) | 9 | 0 | 0 | 0 | 0 | 31 | 3,017 / 199 |
+| `css/css-inline` | **10** (+0) | 10 | 0 | 0 | 0 | 0 | 20 | 214 / 119 |
+| `css/css-link-params` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **9** (+0) | 16 | 0 | 0 | 0 | 0 | 25 | 335 / 163 |
+| `css/css-logical` | **32** (+0) | 30 | 0 | 0 | 0 | 0 | 62 | 620 / 146 |
+| `css/css-masking` | **20** (+0) | 28 | 0 | 0 | 0 | 1 | 49 | 1,199 / 4,884 |
+| `css/css-multicol` | **25** (+0) | 14 | 0 | 0 | 0 | 0 | 39 | 1,125 / 345 |
+| `css/css-nesting` | **11** (+0) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **19** (+0) | 17 | 0 | 0 | 0 | 0 | 36 | 286 / 93 |
+| `css/css-overscroll-behavior` | **2** (+0) | 2 | 0 | 0 | 0 | 0 | 4 | 54 / 13 |
+| `css/css-page` | **6** (+0) | 6 | 0 | 0 | 0 | 0 | 12 | 43 / 30 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** (+0) | 11 | 0 | 0 | 0 | 0 | 32 | 822 / 239 |
+| `css/css-properties-values-api` | **5** (+2) | 63 | 0 | 0 | 1 | 0 | 69 | 79 / 163 |
+| `css/css-pseudo` | **0** (+0) | 5 | 0 | 0 | 0 | 0 | 5 | 144 / 139 |
+| `css/css-rhythm` | **12** (+0) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **7** (+0) | 2 | 0 | 0 | 0 | 0 | 9 | 41 / 6 |
+| `css/css-scroll-anchoring` | **4** (+0) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **22** (+0) | 4 | 0 | 0 | 0 | 0 | 26 | 412 / 61 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **5** (+0) | 16 | 0 | 0 | 0 | 0 | 21 | 233 / 2,118 |
+| `css/css-size-adjust` | **2** (+0) | 3 | 0 | 0 | 0 | 0 | 5 | 160 / 55 |
+| `css/css-sizing` | **11** (+0) | 26 | 0 | 0 | 0 | 0 | 37 | 2,149 / 1,085 |
+| `css/css-syntax` | **18** (+1) | 21 | 0 | 0 | 1 | 8 | 48 | 382 / 47 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **65** (+0) | 32 | 0 | 0 | 0 | 0 | 97 | 1,159 / 773 |
+| `css/css-text-decor` | **18** (+0) | 17 | 0 | 0 | 0 | 0 | 35 | 418 / 774 |
+| `css/css-transforms` | **25** (+0) | 41 | 0 | 0 | 0 | 27 | 93 | 1,592 / 3,743 |
+| `css/css-transitions` | **12** (+0) | 18 | 0 | 0 | 0 | 0 | 30 | 551 / 358 |
+| `css/css-ui` | **24** (+0) | 28 | 0 | 0 | 0 | 0 | 52 | 995 / 399 |
+| `css/css-values` | **171** (+2) | 89 | 7 | 0 | 4 | 237 | 508 | 7,611 / 2,717 |
+| `css/css-variables` | **26** (+0) | 34 | 1 | 0 | 0 | 186 | 247 | 432 / 153 |
+| `css/css-view-transitions` | **8** (+0) | 4 | 0 | 0 | 0 | 0 | 12 | 337 / 687 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 164 / 8 |
+| `css/css-writing-modes` | **15** (+0) | 1 | 0 | 0 | 0 | 0 | 16 | 50 / 2 |
+| `css/cssom` | **156** (+5) | 36 | 0 | 0 | 0 | 29 | 221 | 3,168 / 391 |
+| `css/cssom-view` | **68** (+42) | 138 | 10 | 0 | 1 | 22 | 239 | 1,084 / 1,034 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **13** (+0) | 15 | 0 | 0 | 0 | 0 | 28 | 358 / 2,052 |
+| `css/mediaqueries` | **9** (+0) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **11** (+0) | 32 | 0 | 0 | 0 | 4 | 47 | 1,366 / 3,582 |
+| `css/selectors` | **126** (+5) | 72 | 7 | 0 | 6 | 313 | 524 | 4,538 / 951 |
+| **total** | **1413** | 1298 | 29 | 0 | 185 | 1488 | 4413 | 59,562 / 43,529 |
+1413 of the 2925 that ran (48.3%); subtests 59,562 PASS, 43,529 FAIL
+
+**1,413 files PASS of 2,925 (from 1,352), +61, and the modules that moved:**
+`css/css-cascade` 47 -> 48, `css/css-conditional` 4 -> 7, `css/css-properties-values-api` 3 -> 5, `css/css-syntax` 17 -> 18, `css/css-values` 169 -> 171, `css/cssom` 151 -> 156, `css/cssom-view` 26 -> 68, `css/selectors` 121 -> 126. `css/cssom-view` (+42) is most of it; `css/selectors` +5 (`:heading`,
+`:defined`, `:has-slotted`), `css/cssom` +5, `css-conditional` +3
+(`@container`), `css-properties-values-api` +2, `css-cascade`,
+`css-syntax`, `css-values`. Nothing lost at the file level.
+
 ## 2-wide. Every CSS module, measured — 2026-09-16, evening: round four (G2)
 
 Round four's agent G2 tightened the value grammars round two's agent G had

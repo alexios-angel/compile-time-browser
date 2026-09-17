@@ -1,5 +1,64 @@
 # WPT — the next round, as briefs
 
+**Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
+(`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after
+the `/mnt/c` outage cut session 16 off with the three branches committed
+but unmerged. Gated 226/227 (one stale unit expectation, `92f5d7c7`).
+Measured at `9f8da347` (rows in `docs/wpt.md`, `docs/test262.md`,
+`docs/css-conformance.md`): five suites 783 -> **805**, wide 2,404 ->
+**2,696 files** (231k -> 239k subtests), test262 39,175 -> **39,731**
+(81.7%), css 1,352 -> 1,413. Biggest: custom-elements 14 -> 70, cssom-view
+26 -> 68, html/syntax 109 -> 209.
+
+**Round seven** is four worktree agents cut from `92f5d7c7`, briefs in
+`~/Downloads/claude/wt/wpt11-session/round7/`: A3 CSS interpolation and
+composition (the value-type interpolation in `lib/Style/easing.cpp`,
+`composite: add/accumulate`, transforms and shadows - the largest failing
+cluster in the wide css corpus), K CSS Color 4/5 computed values
+(`color-mix()`, `none`, powerless components, relative colour, lab/lch:
+3,200 failing subtests in css-color), L2 the logical properties mapped onto
+the physical ones in the cascade plus the `font`/`white-space`/`animation`
+shorthands' computed values, J2 the JS runtime (RegExp `\p{...}` with a
+generated UCD table - 596 tests - the async-generator `return()`/`finally`
+tail, module re-exports in the test262 host, mapped arguments). The root
+took MediaQueryList (`194ea703`: an EventTarget, `change` on resize, a
+frame's own `matchMedia`) and the live ranges (`c1110fac`: DOM 5.5's range
+steps over the document's write log - dom/ranges Range-mutations-*).
+
+**What round six's agents left for their own areas** (from their reports):
+- CE: SCOPED REGISTRIES proper (custom-elements/registries/*, ~330
+  subtests, 25 files) - `Element/ShadowRoot/Document.customElementRegistry`,
+  `registry.initialize()`, `ElementCreationOptions.customElementRegistry`,
+  `attachShadow({customElementRegistry})`: a registry record per element,
+  `element/shadow.cpp` and `document/install.cpp` carrying it. An
+  element-created hook in the tree builder (`document::set_element_hook`)
+  for synchronous construction under `document.write` (44+ subtests);
+  `Reflect.construct(HTMLElement, [], NewTarget)` needs a `new_target()`
+  accessor for natives (19); `:defined` and the form pseudo-classes for
+  form-associated custom elements (~35); `createElementNS` through
+  `create_html_element` (6). The one TIMEOUT: `ElementInternals-target-
+  element-is-held-strongly.html` (1e5 elements, then gc).
+- V: `scrollWidthHeight-negative-margin-002` (430/600: `direction: rtl`
+  leftward overflow, flex items with negative margins), `scrollintoview`
+  (20/40, an auto-width floor), `HTMLImageElement-x-and-y-ignore-transforms`
+  (the translate accumulation was lost in a failed edit), `scrollWidthHeight-
+  contain-layout` (the end-padding rule). Paint: `lib/Paint/record.cpp`'s
+  recorder does not apply element scroll offsets - a scrolled container's
+  content paints unscrolled - and `clips_children` should include
+  scroll/auto/overlay/clip. `getBoundingClientRect` should be the union of
+  `getClientRects`. `blob:` URL frames load as quirks. Scrollers in
+  `chrome.cpp`/`selection.cpp` ignore `scroll_x_`.
+- J: async generator `.return()` at a `yield` does not run `finally`
+  (coroutines.cpp "still finishes on the spot": ~70 tests); `tools/ct262`
+  has no `wire_reexports` (113 module files); `import defer` (60); mapped
+  arguments (18); direct eval (76 + 27 `super`); tail calls (34); for-of
+  destructuring iterator-close-on-throw (22); RegExp property escapes (596)
+  and the `v` flag (57+28) - round seven's J2 has all of these but tail
+  calls. JS strings are still BYTES (the largest architectural gap).
+- Three SIGABRTs under the runner's 4 GB cap, undiagnosed: dom/nodes/
+  NodeList-static-length-getter-tampered-1, html/webappapis/dynamic-markup-
+  insertion/document-write/032, dom/ranges/Range-mutations-dataChange.
+
 **Updated 2026-09-17, session 16 (in progress).** Round six is four worktree
 agents cut from `228d80d1` - V cssom-view (scroll containers, the scroll
 APIs, hit testing), CE custom elements (customized built-ins, the HTML

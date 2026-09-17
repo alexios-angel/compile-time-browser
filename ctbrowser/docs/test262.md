@@ -1149,6 +1149,61 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## Measured at `9f8da347` — 2026-09-17, round six (J: the VM tail)
+
+Round six's agent J worked the VM: an `await` no longer truncates the
+register stack below its caller (the "default parameter read as undefined"
+bug that HARNESS_ERRORed every WPT file calling `promise_setup`), a boxed
+block-level `let` whose initialiser holds a closure is a cell before the
+initialiser runs, `export * as ns from` and `export` of a destructuring
+declaration, structuredClone per HTML 2.7, `class A extends Array` instances
+ARE arrays, typed arrays without an own `length`, %ThrowTypeError%, the
+arguments object's shape, ToNumeric before the BigInt decision, proxy traps
+as GetMethod with `[[Construct]]` carrying new.target and the get/set/has
+invariants, an eval program's completion value, well-formed
+`JSON.stringify`, `%AsyncIteratorPrototype%[Symbol.asyncDispose]`, `class
+F extends Function`. Same instrument (devbox, 4 workers, 10 s, 2 GB), before
+= `6edb7421` for `language`/`annexB` and `273773cd` for `built-ins` (which
+were byte-identical through round five); the rows shown are those plus every
+`built-ins` area that moved by five or more files:
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `language` | 23,726 | 21904 | **22,107** | +203 | 1,597 | 0/1/0 | 21 |
+| `annexB` | 1,086 | 776 | **776** | +0 | 267 | 1/0/0 | 42 |
+| `built-ins/Object` | 3,411 | 3321 | **3,332** | +11 | 77 | 0/0/0 | 2 |
+| `built-ins/Array` | 3,082 | 2825 | **2,896** | +71 | 169 | 0/1/0 | 16 |
+| `built-ins/TypedArray` | 1,446 | 1267 | **1,419** | +152 | 20 | 0/0/0 | 7 |
+| `built-ins/TypedArrayConstructors` | 738 | 569 | **606** | +37 | 56 | 0/0/0 | 76 |
+| `built-ins/Proxy` | 311 | 174 | **218** | +44 | 57 | 0/0/0 | 36 |
+| **total** | **48,624** | 39,175 | **39,731** | +556 | 8,054 | 4/2/0 | 833 |
+39,731 of 48,624 (81.7%); of the 47,791 that ran 83.1%
+
+**39,731 of 48,624 (81.7%); of the 47,791 that ran, 83.1%** - from 39,175
+(80.6%): **+556**. J's own per-directory measure on its gate-4 binary
+(before its last two commits) saw +203 / -2 in `language` and +343 / -27 in
+`built-ins`, the 27 lost all in `bc8b3f7f`'s proxy `[[Construct]]` and
+addressed by `e80643ea`; this row, on the merged tree, is the first measure
+with those in and the per-area totals above are the whole of it. `annexB`
+is unchanged at 776.
+
+**BYTECODE SHAPE** (for the native backend): a boxed block-level `let`/`const`
+whose initialiser contains a function or class now emits `load_undef;
+new_cell; init -> tmp; cell_set` where it was `init; new_cell`; other
+declarations are unchanged. And an `await` no longer shrinks `registers_`
+below the caller's `frame_size + 8`. AGENT-SYNC.md carries the full JOURNAL
+line; ctjs gitlink unchanged at `3cb2ef9`.
+
+**Still the biggest holes** (`docs/plans/wpt-next.md` has the briefs):
+`Temporal` 4,603; `RegExp` 924 - 469 `property-escapes/generated` (the UCD
+tables behind `\p{...}`, a generated-data job, round seven's J2), 57 + 28
+the `v` flag; `language` 1,597 - 173 "Expected SameValue" (class fields,
+async generators), 93 negative-parse SyntaxErrors the compiler does not
+raise, 91 "Expected a TypeError", 64 "Expected a ReferenceError", 60 `import
+defer` (the loader takes `defer` as a default import's name), 32 "call stack
+exhausted" (tail calls), the eval-code cluster (76: direct eval's scope);
+`annexB` 267; `Array` 169; `Proxy` 57.
+
 ## Measured at `6edb7421` — 2026-09-16, round four (T2: language + annexB)
 
 Round four's agent T2 worked `test/language` and `test/annexB`; the other
