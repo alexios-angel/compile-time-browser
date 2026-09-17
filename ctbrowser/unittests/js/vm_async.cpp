@@ -412,6 +412,25 @@ void test_async_rejection() {
         "fr");
 }
 
+// TWO ASYNC FUNCTIONS SUSPENDED AT ONCE. An interpreted callee's frame starts
+// inside its caller's window (op::call: base + a + 1), and the suspension cut
+// the register stack at the callee's base - every caller register above the
+// callee slot went with it, and the NEXT call's resize refilled them with
+// undefined. `f(1); g(2);` had g read `v` as undefined (2026-09-17).
+void test_concurrent_awaits() {
+    expect_after_turn("var result = '';"
+                      "async function f(v) { const r = await v; return r + '/' + v; }"
+                      "async function g(v) { const r = await v; return r + '/' + v; }"
+                      "f(1).then(x => { result += x; }); g(2).then(x => { result += ' ' + x; });",
+                      "1/1 2/2");
+    expect_after_turn("var result = '';"
+                      "class C { static async #a(v) { return await v; }"
+                      "  static async b(v) { return await this.#a(v); } }"
+                      "class D { static async b(v) { return await v; } }"
+                      "C.b(1).then(x => { result += x; }); D.b(2).then(x => { result += x; });",
+                      "12");
+}
+
 // `async function*`: every request is a promise of the record, queued behind
 // the body; `yield` awaits its operand; a throw rejects the request; the body
 // may park on an `await` between two requests.
@@ -581,6 +600,7 @@ int main() {
     test_async_and_promises();
     test_promise_handlers_are_microtasks();
     test_async_rejection();
+    test_concurrent_awaits();
     test_async_generators();
     test_for_await();
     REPORT("vm_async");
