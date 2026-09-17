@@ -318,6 +318,57 @@ struct premultiplied {
     return color_text({lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b), lerp(a.a, b.a)});
 }
 
+// A LEGACY COLOUR - named, hex, rgb(), hsl(), hwb() - interpolates in sRGB;
+// a pair with a modern one in it interpolates in Oklab (CSS Color 4 §12.1)
+// and reads back as `oklab()`.
+[[nodiscard]] bool legacy_color(std::string_view text) {
+    const std::string_view lowered_start = text.substr(0, std::min<std::size_t>(text.size(), 12));
+    const std::string head = ascii_lower_copy(lowered_start);
+    for (const std::string_view modern : {"color(", "lab(", "lch(", "oklab(", "oklch(",
+                                          "color-mix(", "light-dark(", "device-cmyk("}) {
+        if (head.starts_with(modern)) { return false; }
+    }
+    return true;
+}
+
+// sRGB to Oklab (Björn Ottosson's matrices, as CSS Color 4 §17.4 gives them),
+// with a channel outside the gamut carried through sign-preserved.
+struct oklab {
+    double l, a, b;
+};
+
+[[nodiscard]] oklab oklab_of(const css::srgb_color & c) {
+    const auto linear = [](double v) {
+        const double m = std::fabs(v);
+        const double out = m <= 0.04045 ? m / 12.92 : std::pow((m + 0.055) / 1.055, 2.4);
+        return v < 0 ? -out : out;
+    };
+    const double r = linear(c.r), g = linear(c.g), b = linear(c.b);
+    const double l = std::cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const double m = std::cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const double s = std::cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return {0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s};
+}
+
+[[nodiscard]] std::string lerp_oklab(const css::srgb_color & from, const css::srgb_color & to,
+                                     double p) {
+    const oklab x = oklab_of(from), y = oklab_of(to);
+    const auto lerp = [p](double a, double b) { return (1 - p) * a + p * b; };
+    const double alpha = std::clamp(lerp(from.a, to.a), 0.0, 1.0);
+    const auto channel = [&](double a, double b) {
+        const double premultiplied = lerp(a * from.a, b * to.a);
+        const double v = alpha == 0 ? 0.0 : premultiplied / alpha;
+        return std::fabs(v) < 5e-7 ? 0.0 : v; // no `-0` for a grey's chroma
+    };
+    std::string out = "oklab(" + css::serialize_number(std::clamp(channel(x.l, y.l), 0.0, 1.0)) +
+                      " " + css::serialize_number(channel(x.a, y.a)) + " " +
+                      css::serialize_number(channel(x.b, y.b));
+    if (alpha < 1) { out += " / " + css::serialize_number(alpha); }
+    return out + ')';
+}
+
 // CSS Color 4 §12.4: colours add channel by channel, premultiplied, the alpha
 // summed and clamped.
 [[nodiscard]] std::string add_color(const css::srgb_color & x, const css::srgb_color & y) {
@@ -878,7 +929,8 @@ struct filter_fn {
         }
     }
     if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
-        return lerp_color(*a, *b, p);
+        return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
+                                                      : lerp_oklab(*a, *b, p);
     }
     if (const std::optional<numeric_pair> n = numeric_of(from, to, ctx)) {
         return numeric_text(property, mix(n->a, n->b, p));

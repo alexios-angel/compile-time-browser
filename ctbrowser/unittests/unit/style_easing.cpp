@@ -126,6 +126,11 @@ void test_interpolation() {
           "rgba(0.0000, 0.0000, 255.0000, 0.5000)");
     CHECK(interpolate_text("color", "yellow", "green", -0.3, context) ==
           "rgba(255.0000, 255.0000, 0.0000, 1.0000)");
+    // A modern colour on either side interpolates in Oklab (CSS Color 4 §12.1).
+    CHECK(interpolate_text("color", "rgb(0 0 0)", "color(srgb 1 1 1)", 0.3, context)
+              .starts_with("oklab(0.3 "));
+    CHECK(interpolate_text("color", "color(srgb 0 0 0)", "color(srgb 1 1 1)", 1.5, context)
+              .starts_with("oklab(1 "));
     // Lists item by item, and a shadow list padded with transparent zeros.
     CHECK(interpolate_text("border-width", "0px 10px", "10px 30px", 0.5, context) == "5px 20px");
     CHECK(interpolate_text("box-shadow", "rgb(10, 20, 30) 1px 2px 3px 4px", "none", 0.5, context) ==
