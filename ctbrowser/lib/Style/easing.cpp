@@ -739,6 +739,34 @@ struct decomposed2d {
     return matrix_text(recompose(z));
 }
 
+// --- ratios ---
+
+// A `<ratio>` as one number: `1 / 2`, `0.5`, `2 / 0` is infinite. Nothing
+// for `auto` or a degenerate pair, which stay discrete.
+[[nodiscard]] std::optional<double> ratio_of(std::string_view text) {
+    const std::vector<std::string_view> parts = split_top_level(text, "/");
+    if (parts.empty() || parts.size() > 2) { return std::nullopt; }
+    double n[2] = {1, 1};
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const std::optional<double> v = number_of(trim(parts[i], html_whitespace));
+        if (!v || *v < 0) { return std::nullopt; }
+        n[i] = *v;
+    }
+    if (n[1] == 0 || n[0] == 0) { return std::nullopt; }
+    return n[0] / n[1];
+}
+
+// CSS Sizing 4 §7.1: a ratio interpolates as the logarithm of its value,
+// and the answer is written as `<number> / 1`.
+[[nodiscard]] std::optional<std::string> interpolate_ratio(std::string_view from,
+                                                           std::string_view to, double p) {
+    const std::optional<double> a = ratio_of(from);
+    const std::optional<double> b = ratio_of(to);
+    if (!a || !b) { return std::nullopt; }
+    const double mixed = std::exp((1 - p) * std::log(*a) + p * std::log(*b));
+    return css::serialize_number(mixed) + " / 1";
+}
+
 // --- the pair ---
 
 // CSS Values 4 §4.1: two values interpolate when they are one number, length
@@ -756,6 +784,9 @@ struct decomposed2d {
     interpolable = true;
     if (property == "transform") {
         if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
+    }
+    if (property == "aspect-ratio") {
+        if (const std::optional<std::string> r = interpolate_ratio(from, to, p)) { return *r; }
     }
     if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
         return lerp_color(*a, *b, p);

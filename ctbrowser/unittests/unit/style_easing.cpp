@@ -107,6 +107,10 @@ void test_interpolation() {
     CHECK(interpolate_text("text-align", "left", "right", 0.5, context) == "right");
     CHECK(interpolate_text("left", "10px", "2s", 0.5, context) == "2s");
     CHECK(interpolate_text("left", "0", "400px", 0.5, context) == "200px");
+    // A ratio interpolates as its logarithm (CSS Sizing 4 §7.1).
+    CHECK(interpolate_text("aspect-ratio", "0.5", "2", 0.5, context) == "1 / 1");
+    CHECK(interpolate_text("aspect-ratio", "1 / 2", "2 / 1", 1.5, context) == "4 / 1");
+    CHECK(interpolate_text("aspect-ratio", "auto", "2 / 1", 0.4, context) == "auto");
     // Colours premultiplied in sRGB, clamped to the gamut when extrapolated.
     CHECK(interpolate_text("color", "rgb(0, 0, 255)", "rgba(255, 0, 0, 0)", 0.5, context) ==
           "rgba(0.0000, 0.0000, 255.0000, 0.5000)");
