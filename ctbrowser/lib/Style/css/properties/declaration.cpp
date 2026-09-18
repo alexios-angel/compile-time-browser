@@ -343,6 +343,12 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    if (ascii_iequals(property, "background")) {
+        std::string serialized;
+        if (!match_background(simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
     // THE BACKGROUND AND MASK LAYER LISTS (backgrounds.cpp).
     if (ascii_istarts_with(property, "background-") || ascii_istarts_with(property, "mask-")) {
         std::string serialized;

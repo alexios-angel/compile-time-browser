@@ -7,7 +7,7 @@
 // `removeProperty("margin")` removes four, and `cssText` reconstructs the
 // shorthand only when all of them are there with one priority. The table below
 // splits the shorthands whose grammar is positional or a `||` of typed parts;
-// one it does not model - `background`, `font`, `grid` - or any value holding a
+// one it does not model - `grid`, `transition` - or any value holding a
 // `var()` is kept whole, exactly as every property was before this existed.
 
 #include "expansion.hpp"
@@ -26,6 +26,7 @@ namespace {
 enum class shape : std::uint8_t {
     sides,        // 1-4 values: top, right, bottom, left, in `margin`'s way
     pair,         // 1-2 values: start/end, x/y or row/column; one sets both
+    background,   // comma-separated layers, with color in the final layer only
     border_image, // source || slice [ / width? [ / outset ]? ] || repeat
     radius,       // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,        // `place-*`: an align value then a justify one, each of several words
@@ -154,7 +155,7 @@ constexpr shorthand_syntax table[] = {
     {"place-self", shape::place, "align-self justify-self", ""},
     {"font", shape::font,
      "font-style font-variant font-weight font-stretch font-size line-height font-family", ""},
-    {"background", shape::whole,
+    {"background", shape::background,
      "background-color background-image background-position background-size "
      "background-repeat background-attachment background-origin background-clip",
      ""},
@@ -676,8 +677,8 @@ bool split_radius(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
-// Each || component is contiguous; a slash can follow only the slice or width.
-bool split_border_image(std::string_view value, std::vector<std::string> & out) {
+// Delimiters outside functions must remain separate even without authored whitespace.
+[[nodiscard]] std::string space_slashes(std::string_view value) {
     const token_stream ts = tokenize(value);
     std::string spaced;
     std::size_t start = 0;
@@ -694,6 +695,12 @@ bool split_border_image(std::string_view value, std::vector<std::string> & out) 
         }
     }
     spaced += value.substr(start);
+    return spaced;
+}
+
+// Each || component is contiguous; a slash can follow only the slice or width.
+bool split_border_image(std::string_view value, std::vector<std::string> & out) {
+    const std::string spaced = space_slashes(value);
     const auto parts = split_top_level(spaced, html_whitespace);
     const auto names = longhands_of("border-image");
     out.clear();
@@ -731,6 +738,93 @@ bool split_border_image(std::string_view value, std::vector<std::string> & out) 
     return !parts.empty();
 }
 
+// CSS Backgrounds: each layer shares the existing longhand grammars.
+bool split_background(std::string_view value, std::vector<std::string> & out) {
+    const auto names = longhands_of("background");
+    const auto layers = split_top_level(value, ",");
+    if (layers.empty()) { return false; }
+    // split_top_level discards empty fields; the token stream keeps layer boundaries.
+    const token_stream ts = tokenize(value);
+    int depth = 0;
+    std::size_t commas = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) { ++depth; }
+        if (token.type == token_type::close_paren) { --depth; }
+        if (depth == 0 && token.type == token_type::comma) { ++commas; }
+    }
+    if (commas + 1 != layers.size()) { return false; }
+    out.assign(names.size(), {});
+    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
+        std::vector<std::string> values;
+        for (const auto name : names) { values.emplace_back(initial_of(name)); }
+        std::array<bool, 8> given{};
+        const std::string spaced = space_slashes(layers[layer]);
+        const auto parts = split_top_level(spaced, html_whitespace);
+        if (parts.empty()) { return false; }
+        std::size_t at = 0;
+        const auto take = [&](std::size_t component, std::size_t maximum) {
+            if (given[component]) { return false; }
+            for (std::size_t count = std::min(maximum, parts.size() - at); count > 0; --count) {
+                const std::string_view text{parts[at].data(),
+                                            static_cast<std::size_t>(parts[at + count - 1].data() +
+                                                                     parts[at + count - 1].size() -
+                                                                     parts[at].data())};
+                // A layer has one <image>, so use the existing scalar image grammar.
+                const value_check checked = check_declaration(
+                    component == 1 ? "border-image-source" : names[component], text, false);
+                if (!checked.valid || is_wide_keyword(checked.serialized)) { continue; }
+                values[component] = checked.serialized;
+                given[component] = true;
+                at += count;
+                return true;
+            }
+            return false;
+        };
+        while (at < parts.size()) {
+            const auto box = [](std::string_view part) {
+                return ascii_iequals_any(
+                    part, {"border-box", "padding-box", "content-box", "border-area", "text"});
+            };
+            if (box(parts[at])) {
+                if (given[6]) { return false; }
+                given[6] = given[7] = true;
+                std::vector<std::string> boxes;
+                bool area = false, text = false;
+                while (at < parts.size() && box(parts[at])) {
+                    const std::string word = ascii_lower_copy(parts[at++]);
+                    if (word == "border-area") {
+                        if (area) { return false; }
+                        area = true;
+                    } else if (word == "text") {
+                        if (text) { return false; }
+                        text = true;
+                    } else {
+                        boxes.push_back(word);
+                    }
+                }
+                if (boxes.size() > (area || text ? 1u : 2u)) { return false; }
+                values[6] = boxes.empty() ? "border-box" : boxes.front();
+                values[7] = area   ? (text ? "border-area text" : "border-area")
+                            : text ? "text"
+                                   : boxes.back();
+                continue;
+            }
+            if (take(1, 1) || take(4, 2) || take(5, 1) || take(0, 1)) { continue; }
+            if (!take(2, 4)) { return false; }
+            if (at < parts.size() && parts[at] == "/") {
+                ++at;
+                if (!take(3, 2)) { return false; }
+            }
+        }
+        if (given[0] && layer + 1 != layers.size()) { return false; }
+        out[0] = values[0];
+        for (std::size_t i = 1; i < names.size(); ++i) {
+            out[i] += (layer == 0 ? "" : ", ") + values[i];
+        }
+    }
+    return true;
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
@@ -764,6 +858,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::sides:
     case shape::pair: return split_positional(e, parts, out);
     case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
+    case shape::background: return split_background(value, out) ? split::ok : split::invalid;
     case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
@@ -834,6 +929,43 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     }
     if (v[4] != "stretch") { out += (out.empty() ? "" : " ") + v[4]; }
     return out.empty() ? "none" : out;
+}
+
+[[nodiscard]] std::string fold_background(std::span<const std::string> v) {
+    const auto names = longhands_of("background");
+    std::array<std::vector<std::string_view>, 8> lists;
+    for (std::size_t i = 1; i < lists.size(); ++i) {
+        lists[i] = split_top_level(v[i], ",");
+        if (lists[i].size() != lists[1].size()) { return {}; }
+    }
+    std::string out;
+    for (std::size_t layer = 0; layer < lists[1].size(); ++layer) {
+        std::vector<std::string> parts;
+        const auto value = [&](std::size_t i) { return trim(lists[i][layer], html_whitespace); };
+        const auto initial = [&](std::size_t i) { return value(i) == initial_of(names[i]); };
+        if (!initial(1)) { parts.emplace_back(value(1)); }
+        if (!initial(2) || !initial(3)) {
+            std::string position{value(2)};
+            if (split_top_level(position, html_whitespace).size() == 1) { position += " center"; }
+            parts.push_back(std::move(position));
+            if (!initial(3)) { parts.push_back("/ " + std::string{value(3)}); }
+        }
+        if (!initial(4)) { parts.emplace_back(value(4)); }
+        if (!initial(5)) { parts.emplace_back(value(5)); }
+        const bool special_clip = value(7) == "text" || value(7).starts_with("border-area");
+        if (special_clip) {
+            if (value(6) != "border-box") { parts.emplace_back(value(6)); }
+            parts.emplace_back(value(7));
+        } else if (!initial(6) || !initial(7)) {
+            parts.emplace_back(value(6));
+            if (value(6) != value(7)) { parts.emplace_back(value(7)); }
+        }
+        if (layer + 1 == lists[1].size() && v[0] != initial_of(names[0]) && v[0] != "transparent") {
+            parts.push_back(v[0]);
+        }
+        out += (layer == 0 ? "" : ", ") + (parts.empty() ? std::string{"none"} : join(parts));
+    }
+    return out;
 }
 
 // `font`, folded: the keywords that are not `normal`, the size, ` / ` and
@@ -949,6 +1081,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::sides: return fold_sides(v);
     case shape::radius: return fold_radius(v);
     case shape::border_image: return fold_border_image(v);
+    case shape::background: return fold_background(v);
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);
@@ -1106,6 +1239,13 @@ bool put(declaration_block & block, std::string_view name, std::string_view text
 }
 
 } // namespace
+
+bool detail::match_background(std::string_view value, std::string & out) {
+    std::vector<std::string> parts;
+    if (!split_background(value, parts)) { return false; }
+    out = fold_background(parts);
+    return true;
+}
 
 bool detail::match_border_radius(std::string_view value, bool shorthand, std::string & out) {
     std::vector<std::string> parts;

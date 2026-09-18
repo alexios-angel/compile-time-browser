@@ -460,6 +460,60 @@ void test_columns() {
     CHECK(removed && block.empty());
 }
 
+// Background layer components reset omitted longhands and retain their own order.
+void test_background() {
+    using ctbrowser::style::css::supports_declaration;
+    declaration_block block;
+    CHECK(set_declaration(block, "background", "none", true));
+    CHECK_EQ(block.size(), std::size_t{8});
+    CHECK_EQ(declaration_value(block, "background-position"), std::string{"0% 0%"});
+    CHECK_EQ(declaration_value(block, "background-size"), std::string{"auto"});
+    CHECK_EQ(declaration_value(block, "background-origin"), std::string{"padding-box"});
+    CHECK_EQ(declaration_value(block, "background-clip"), std::string{"border-box"});
+    CHECK_EQ(declaration_priority(block, "background-attachment"), std::string{"important"});
+    CHECK_EQ(declaration_value(block, "background"), std::string{"none"});
+    CHECK(set_declaration(block, "background", "text border-area", false));
+    CHECK_EQ(declaration_value(block, "background-origin"), std::string{"border-box"});
+    CHECK_EQ(declaration_value(block, "background-clip"), std::string{"border-area text"});
+    CHECK_EQ(declaration_value(block, "background"), std::string{"border-area text"});
+    for (const auto & [value, expected] :
+         {std::pair{"no-repeat url(a)", "url(\"a\") no-repeat"},
+          {"url(a) 0% 0%/10rem", "url(\"a\") 0% 0% / 10rem auto"},
+          {"padding-box border-box", "none"},
+          {"border-area border-box", "border-area"},
+          {"border-area padding-box", "padding-box border-area"},
+          {"url(a) top left no-repeat, center/100% 100% white",
+           "url(\"a\") left top no-repeat, center center / 100% 100% white"}}) {
+        block.clear();
+        CHECK(supports_declaration("background", value));
+        CHECK(set_declaration(block, "background", value, false));
+        CHECK_EQ(declaration_value(block, "background"), std::string{expected});
+    }
+    CHECK_EQ(declaration_value(block, "background-image"), std::string{"url(\"a\"), none"});
+    CHECK_EQ(declaration_value(block, "background-repeat"), std::string{"no-repeat, repeat"});
+    for (const std::string_view invalid :
+         {"red, green", "black 0 url(a) / cover", "none none", "left /", "/ cover",
+          "left / cover / auto", "red blue", "left red top", "initial none",
+          "border-area border-area", "text text", "border-box padding-box content-box",
+          "left / -1px", "none,", ",none", "none,,none"}) {
+        block.clear();
+        CHECK_EQ(supports_declaration("background", invalid) ? std::string{invalid} : std::string{},
+                 std::string{});
+        CHECK(!set_declaration(block, "background", invalid, false));
+        CHECK(block.empty());
+    }
+    CHECK(!supports_declaration("background-position", "0 url(a)"));
+    CHECK(!supports_declaration("background-position", "calc(1px) red"));
+    CHECK(supports_declaration("background-position", "calc(1px + 2%) top"));
+    block.clear();
+    CHECK(set_declaration(block, "background", "var(--bg)", false));
+    CHECK_EQ(declaration_value(block, "background"), std::string{"var(--bg)"});
+    CHECK(set_declaration(block, "background", "inherit", false));
+    CHECK_EQ(declaration_value(block, "background-size"), std::string{"inherit"});
+    CHECK_EQ(round_trip("background: red !important; background: blue;"),
+             std::string{"background: red !important;"});
+}
+
 } // namespace
 
 int main() {
@@ -470,5 +524,6 @@ int main() {
     test_border_image();
     test_repeating_gradients();
     test_columns();
+    test_background();
     REPORT("cssom_declarations");
 }

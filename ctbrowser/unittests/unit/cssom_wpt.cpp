@@ -21,6 +21,32 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_background_cascade() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #target { font-size: 40px; --bg: none center / calc(1em - 60px) 1em no-repeat text;
+                  background: var(--bg); }
+        #child { font-size: 10px; background: inherit; }
+        </style><div id="target"><div id="child"></div></div><script>
+        for (const id of ['target', 'child']) {
+            const s = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + s.backgroundSize + '|' + s.backgroundRepeat + '|' +
+                        s.backgroundOrigin + '|' + s.backgroundClip);
+        }
+        const target = document.getElementById('target');
+        target.style.background = 'text border-area';
+        console.log('clip=' + getComputedStyle(target).backgroundClip);
+        target.style.background = 'none';
+        console.log('reset=' + getComputedStyle(target).backgroundRepeat + '|' +
+                    getComputedStyle(target).backgroundClip);
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "target="), std::string{"target=0px 40px|no-repeat|border-box|text"});
+    CHECK_EQ(logged(page, "child="), std::string{"child=0px 40px|no-repeat|border-box|text"});
+    CHECK_EQ(logged(page, "clip="), std::string{"clip=border-area text"});
+    CHECK_EQ(logged(page, "reset="), std::string{"reset=repeat|border-box"});
+}
+
 void test_image_color_scheme() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<div id="target"></div><script>
@@ -580,6 +606,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_background_cascade();
     test_image_color_scheme();
     test_computed_radial_size_ranges();
     test_computed_layer_size_ranges();

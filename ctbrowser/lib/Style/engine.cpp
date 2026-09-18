@@ -2048,9 +2048,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             // substituted syntax even if some math remains unresolved, keeping
             // negative literals distinct from negative calculation results.
             const bool image_components = ascii_iequals_any(
-                property, {"border-image", "border-image-width", "border-image-outset",
-                           "border-image-slice", "background-size", "mask-size", "background-image",
-                           "mask-image", "border-image-source", "list-style-image"});
+                property,
+                {"background", "border-image", "border-image-width", "border-image-outset",
+                 "border-image-slice", "background-size", "mask-size", "background-image",
+                 "mask-image", "border-image-source", "list-style-image"});
             if (had_var && (!css::may_have_math(value) || image_components)) {
                 const css::value_check checked =
                     css::check_declaration(property, image_components ? unfolded : value);

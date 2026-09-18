@@ -153,6 +153,8 @@ struct scan {
 // invalid list.
 [[nodiscard]] bool match_shadow_list(std::string_view property, const token_stream & ts,
                                      const scan & found, std::string & out);
+// Background shorthand expansion and serialization, defined in shorthands.cpp.
+[[nodiscard]] bool match_background(std::string_view value, std::string & out);
 // The comma-separated layer lists of background-* and mask-*. Defined in
 // backgrounds.cpp; an empty `out` is an invalid list.
 [[nodiscard]] bool match_background_list(std::string_view property, const token_stream & ts,
