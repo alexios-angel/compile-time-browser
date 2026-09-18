@@ -1,49 +1,48 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 20 recovery complete.** Latest browser source
-is `39f651a3`, including compiler history through `2904c366`. The combined
-browser gate passed **216/216** (68.27 seconds), with compiler tests excluded
-and `CTCOMPILE_MLIR=OFF`; formatting passed. The interrupted full CSS replay
-was rerun after source-hash verification: **1,592 -> 1,596 files PASS**,
-**70,275 -> 70,328 subtests PASS**, zero passing file or subtest losses.
+**Updated 2026-09-18: session 21 recovery complete.** Resumed the interrupted
+rectangle regression and column-wrap child draft, then committed both.
+Latest browser source is `7cfe95b5`; compiler history through `a0f1b0f7`
+is merged as `7f8531e8`. The final browser gate passed **216/216**
+(70.52 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
+formatting passed. Full CSS: **1,596 -> 1,599 files PASS** and
+**70,328 -> 70,375 subtests PASS**, zero passing file or subtest losses.
 
 Landed source commits:
 
-- `be67d400`: BigInt string conversion rejects numeric separators and
-  signed nondecimal prefixes; source literal grammar is unchanged.
-- `1eb790b0`: loose equality preserves BigInt/Symbol primitive identity,
-  converts Boolean operands to Number, and calls default-hint ToPrimitive
-  for actual objects. Both VM and AOT use the shared operation. The JS/VM
-  semantics changes are journaled for the compiler differential oracle.
-- `696ce3cb` (merged as `39f651a3`): `columns` handles unordered width/count
-  components, optional slash height and omitted-longhand resets. All four
-  columns parsing/interpolation files now pass.
+- `7cbc05fa` (merged as `6830e96c`): `column-wrap` support and reset through
+  `columns`; multicol **32 -> 34 PASS/39**, **1,413 -> 1,456 subtests PASS**.
+- `4d93744f`: composed 2D transforms and origins for client rectangles;
+  the scaled-viewport WPT now passes.
+- `7cfe95b5`: shared fragment geometry for rectangles, quads and coordinate
+  conversions. Restores seven GeometryUtils subtests lost in the first replay
+  and gains two more; preserves the untransformed DOMQuad constructor's
+  infinite-coordinate behavior with a regression test.
 
-Focused test262: BigInt **74 -> 76 PASS / 77**, one cross-realm SKIP;
-`equals` **44 -> 47 / 47** and `does-not-equals` **36 -> 38 / 38**.
-Seven files gained, zero lost. Whole test262 remains at its last complete
-measurement, **40,832/48,624**; non-CSS wide WPT directories were not replayed.
+Session 20's BigInt string grammar and loose-equality fixes remain landed;
+`test262.md` holds their measurements. No new JS/VM semantics change or
+whole-test262 measurement this session. Other wide WPT directories were not
+replayed. Binding geometry changes are journaled as SHARED; public interfaces
+and bytecode are unchanged.
 
 **Next clear failures:**
 
-- `column-wrap` support/reset: 43 remaining multicol subtests. The other
-  multicol failures are pseudo selectors (ten) and column-rule
-  computed/default values (four).
-- Scaled viewport rectangles ignore `transform: scale()` in
-  `Shell/bindings/element/views.cpp`; this is the last of round seven's
-  lost CSS files still failing after the recovery.
-- The existing elliptical border-radius expander drops the vertical axis.
-- Broader runtime work still includes separate realms and UTF-16 strings;
-  the focused BigInt and equality failures above are fixed.
+- Column-rule computed/default values: four multicol subtests. Initial
+  `column-rule-width` reports `medium` instead of `3px`; the shorthand drops
+  `medium`. Ten further multicol failures concern pseudo selectors.
+- `HTMLImageElement-x-and-y-ignore-transforms`: translation bookkeeping in
+  `Shell/bindings/element/views.cpp::locate` remains absent.
+- Elliptical border-radius expansion drops the vertical axis.
+- Transform geometry retains the existing 2D/px parser limit. Broader runtime
+  gaps include separate realms and UTF-16 strings.
 
-Evidence: `/tmp/ctbrowser20/` holds before/after focused JSON, the full
-`browser20-final-css.json`, `css-comparison.json`, `runtime-comparison.json`,
-browser gate logs, formatting and source hashes. The columns child branch,
-worktree and devbox copy were merged and removed. Session 19's recovery
-through `a42f2cdf` was integrated into main as `dfc0385d`; session 20 is
-ready to integrate when main is clean. Main's earlier ctjs checkout mismatch
-was corrected by the compiler owner. The `d2664e9` gitlink remains local;
-do not assume its object is published.
+Evidence: `/tmp/ctbrowser21/` holds final `browser21-corrected-css.json`,
+`corrected-css-comparison.json`, gate logs and `corrected-source.sha256`.
+The first replay's seven losses remain in `browser21-final-css.json` and
+`css-comparison.json`; do not use that intermediate result as the baseline.
+The columns child worktree, branch and devbox copy were removed. Integration
+status is recorded in the latest AGENT-SYNC journal. The `d2664e9` ctjs
+commit remains local; do not assume its object is published.
 
 Session 19's eight-directory wide baseline is in `/tmp/w-b722aa41/` against
 `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result and is

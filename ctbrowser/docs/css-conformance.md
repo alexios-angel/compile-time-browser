@@ -11,6 +11,34 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Column-wrap and transformed geometry — 2026-09-18
+
+Full CSS at `7cfe95b5`: **1,599/2,926 files PASS, 70,375 subtests PASS**;
+**+3 files and +47 subtests** since `39f651a3`, with zero passing file or
+subtest losses. The final browser gate passed **216/216** (70.52 seconds),
+excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-multicol` | 32 / 34 | 1,413 / 1,456 |
+| `css/css-values` | 175 / 176 | 7,676 / 7,677 |
+| `css/css-cascade` | 52 / 52 | 1,015 / 1,016 |
+| `css/cssom-view` | 78 / 78 | 1,139 / 1,141 |
+
+`column-wrap` now parses and resets through `columns`; its two animation
+files pass. The cascade gain is its new initial-value check. Composed 2D
+transforms fix scaled viewport rectangles, and shared geometry keeps
+`getBoxQuads` and coordinate conversions consistent with those rectangles.
+The first replay's seven GeometryUtils losses were corrected before this
+measurement; rotated corners and zero-scale quads gain two subtests.
+All other CSS modules match the preceding measurement.
+
+Next: multicol has four column-rule computed/default-value failures and
+ten pseudo-selector failures. Image `x`/`y` still fail the transform-ignoring
+coordinate test; elliptical radius expansion remains open. Transform
+geometry still has the existing 2D/px parser limit.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser21/`. No expectations changed.
+
 ## Columns recovery — 2026-09-18
 
 Full CSS at `39f651a3`: **1,596/2,926 files PASS, 70,328 subtests PASS**;
