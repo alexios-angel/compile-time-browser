@@ -973,13 +973,16 @@ struct DOMSource {
         return true;
     }
 
-    bool checkBody(ctjs::FuncOp function, bool entry) {
+    bool checkBody(ctjs::FuncOp function, bool entry, bool directReceiver = false) {
         auto & block = function.getBody().front();
         llvm::DenseSet<mlir::Value> values;
         for (mlir::BlockArgument argument : block.getArguments()) {
             if (!step()) { return false; }
             values.insert(argument);
-            if (entry || argument.getArgNumber() >= ctjs::implicit_arguments) { continue; }
+            if (entry || argument.getArgNumber() >= ctjs::implicit_arguments ||
+                (directReceiver && argument.getArgNumber() == ctjs::arg_receiver)) {
+                continue;
+            }
             for (mlir::OpOperand & use : argument.getUses()) {
                 if (!step()) { return false; }
                 auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
@@ -1127,6 +1130,10 @@ struct DOMSource {
                         return refuse("DOM helper branch contains an unproved local identity");
                     }
                 }
+                if (directReceiver &&
+                    llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(operation)) {
+                    return refuse("DOM direct helper contains a closure or capture");
+                }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
                     if (closure.getFunctionAttr().getInt() < 0 ||
                         closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
@@ -1149,7 +1156,96 @@ struct DOMSource {
         return visit(visit, block, 0, frame);
     }
 
-    bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false) {
+    bool inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Operation * call,
+                    mlir::ValueRange arguments, mlir::Value receiver, mlir::Value callee,
+                    llvm::MutableArrayRef<Capture> captures, unsigned depth) {
+        auto & block = function.getBody().front();
+        auto & body = target.getBody().front();
+        mlir::IRMapping mapping;
+        mapping.map(body.getArgument(ctjs::arg_callee), callee);
+        mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
+        for (auto [formal, actual] :
+             llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments), arguments)) {
+            if (!step()) { return false; }
+            mapping.map(formal, actual);
+        }
+        const auto cloneBody = [&](auto && self, mlir::Block & source,
+                                   mlir::OpBuilder & at) -> bool {
+            for (mlir::Operation & operation : source) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
+                    continue;
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+                    // Substitute at each invocation, including branch-local
+                    // loads, never bind a shared body to its first caller.
+                    auto & capture = captures[static_cast<unsigned>(load.getIndex())];
+                    mlir::Value value;
+                    if (capture.enclosingIndex >= 0) {
+                        value = ctjs::LoadUpvalueOp::create(at, load.getLoc(), load.getType(),
+                                                            block.getArgument(ctjs::arg_callee),
+                                                            capture.enclosingIndex);
+                        ++operationCount;
+                    } else {
+                        value = capture.value();
+                    }
+                    mapping.map(load.getResult(), value);
+                } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                    call->getResult(0).replaceAllUsesWith(mapping.lookup(result.getValue()));
+                } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
+                    mlir::OperationState state(operation.getLoc(), operation.getName());
+                    for (mlir::Value operand : operation.getOperands()) {
+                        if (!step()) { return false; }
+                        state.addOperands(mapping.lookup(operand));
+                    }
+                    state.addTypes(operation.getResultTypes());
+                    state.addAttributes(operation.getAttrs());
+                    for (unsigned i = 0; i < operation.getNumRegions(); ++i) { state.addRegion(); }
+                    auto * cloned = at.create(state);
+                    ++operationCount;
+                    for (auto [from, to] :
+                         llvm::zip(operation.getRegions(), cloned->getRegions())) {
+                        if (from.empty()) { continue; }
+                        auto & destination = to.emplaceBlock();
+                        for (mlir::BlockArgument argument : from.front().getArguments()) {
+                            if (!step()) { return false; }
+                            mapping.map(argument, destination.addArgument(argument.getType(),
+                                                                          argument.getLoc()));
+                        }
+                        mlir::OpBuilder nested(&destination, destination.begin());
+                        if (!self(self, from.front(), nested)) { return false; }
+                    }
+                    mapping.map(operation.getResults(), cloned->getResults());
+                } else {
+                    auto * cloned = at.clone(operation, mapping);
+                    // Regions (a normalized invoke) clone with the
+                    // same mapping; charge every nested operation.
+                    const auto counted = cloned->walk([&](mlir::Operation * inner) {
+                        if (inner == cloned) { return mlir::WalkResult::advance(); }
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        ++operationCount;
+                        return mlir::WalkResult::advance();
+                    });
+                    if (counted.wasInterrupted()) { return false; }
+                    if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
+                        callDepth[cloned] =
+                            1 + callDepth.lookup(call) + callDepth.lookup(&operation);
+                        if (depth + callDepth[cloned] >= 64) {
+                            return refuse("DOM helper call tree is recursive or too deep");
+                        }
+                    }
+                    ++operationCount;
+                }
+            }
+            return true;
+        };
+        mlir::OpBuilder at(call);
+        if (!cloneBody(cloneBody, body, at)) { return false; }
+        return true;
+    }
+
+    bool expand(ctjs::FuncOp function, unsigned depth, bool entry = false,
+                bool directReceiver = false) {
         if (!step()) { return false; }
         if (expanded.contains(function)) { return true; }
         // ponytail: bounded local call trees; recursive source needs a separate
@@ -1157,7 +1253,9 @@ struct DOMSource {
         if (depth == 64 || !active.insert(function).second) {
             return refuse("DOM helper call tree is recursive or too deep");
         }
-        if (!normalizeCompletion(function) || !checkBody(function, entry)) { return false; }
+        if (!normalizeCompletion(function) || !checkBody(function, entry, directReceiver)) {
+            return false;
+        }
         // Parameters with nested source functions may have an otherwise local
         // cell. Resolve those reads before specializing their intrinsic calls;
         // captured cells still wait for the unchanged child/capture proof.
@@ -1170,6 +1268,41 @@ struct DOMSource {
             if (!captured && !resolveCell(cell)) { return false; }
         }
         if (!foldNoMatchReplacements(function)) { return false; }
+        llvm::SmallVector<ctjs::CallDirectOp> directCalls;
+        const auto collected = function.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                call && undefined(call.getCalleeValue())) {
+                directCalls.push_back(call);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (collected.wasInterrupted()) { return false; }
+        for (ctjs::CallDirectOp call : directCalls) {
+            if (!step()) { return false; }
+            auto target = call.getTarget();
+            const auto index = target ? functionIndex(target) : std::nullopt;
+            if (!index || functions.lookup(*index) != target || !target.isPrivate() ||
+                creations.lookup(*index) != 0 || target.getUpvalueCount() != 0 ||
+                !undefined(call.getNewTarget()) ||
+                call.getArgs().size() + ctjs::implicit_arguments !=
+                    target.getBody().front().getNumArguments()) {
+                return refuse("DOM direct helper requires an exact uncaptured local call");
+            }
+            if (depth + callDepth.lookup(call) >= 63) {
+                return refuse("DOM helper call tree is recursive or too deep");
+            }
+            // The symbol is already the direct-call contract. This normalization
+            // proves no new source dispatch: it binds each actual receiver and
+            // retains every operation for the complete DOM entry reproof.
+            if (!expand(target, depth + 1, false, true) ||
+                !inlineCall(function, target, call, call.getArgs(), call.getReceiver(),
+                            call.getCalleeValue(), {}, depth)) {
+                return false;
+            }
+            callDepth.erase(call);
+            call.erase();
+        }
         auto & block = function.getBody().front();
         llvm::SmallVector<ctjs::CreateClosureOp> closures;
         llvm::SmallVector<ctjs::CreateObjectOp> methodObjects;
@@ -1348,99 +1481,13 @@ struct DOMSource {
                 if (!bindConstantArguments(closure, target)) { return false; }
                 if (!expand(target, depth + 1)) { return false; }
                 for (const Call & call : calls) {
-                    mlir::IRMapping mapping;
-                    auto & body = target.getBody().front();
-                    // Only retained uncaptured callback creators observe these
-                    // operands; their own bodies cannot observe implicit values.
-                    mapping.map(body.getArgument(ctjs::arg_callee),
-                                block.getArgument(ctjs::arg_callee));
-                    mapping.map(body.getArgument(ctjs::arg_receiver),
-                                block.getArgument(ctjs::arg_receiver));
-                    for (auto [formal, actual] :
-                         llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments),
-                                   call.arguments)) {
-                        mapping.map(formal, actual);
+                    // Live closure metadata retains its enclosing identities;
+                    // receiver-observing direct functions bind the actual instead.
+                    if (!inlineCall(function, target, call.operation, call.arguments,
+                                    block.getArgument(ctjs::arg_receiver),
+                                    block.getArgument(ctjs::arg_callee), captures, depth)) {
+                        return false;
                     }
-                    const auto cloneBody = [&](auto && self, mlir::Block & source,
-                                               mlir::OpBuilder & at) -> bool {
-                        for (mlir::Operation & operation : source) {
-                            if (!step()) { return false; }
-                            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
-                                    operation)) {
-                                continue;
-                            }
-                            if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                                // Substitute at each invocation, including branch-local
-                                // loads, never bind a shared body to its first caller.
-                                auto & capture = captures[static_cast<unsigned>(load.getIndex())];
-                                mlir::Value value;
-                                if (capture.enclosingIndex >= 0) {
-                                    value = ctjs::LoadUpvalueOp::create(
-                                        at, load.getLoc(), load.getType(),
-                                        block.getArgument(ctjs::arg_callee),
-                                        capture.enclosingIndex);
-                                    ++operationCount;
-                                } else {
-                                    value = capture.value();
-                                }
-                                mapping.map(load.getResult(), value);
-                            } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                                call.operation->getResult(0).replaceAllUsesWith(
-                                    mapping.lookup(result.getValue()));
-                            } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
-                                mlir::OperationState state(operation.getLoc(), operation.getName());
-                                for (mlir::Value operand : operation.getOperands()) {
-                                    if (!step()) { return false; }
-                                    state.addOperands(mapping.lookup(operand));
-                                }
-                                state.addTypes(operation.getResultTypes());
-                                state.addAttributes(operation.getAttrs());
-                                for (unsigned i = 0; i < operation.getNumRegions(); ++i) {
-                                    state.addRegion();
-                                }
-                                auto * cloned = at.create(state);
-                                ++operationCount;
-                                for (auto [from, to] :
-                                     llvm::zip(operation.getRegions(), cloned->getRegions())) {
-                                    if (from.empty()) { continue; }
-                                    auto & destination = to.emplaceBlock();
-                                    for (mlir::BlockArgument argument :
-                                         from.front().getArguments()) {
-                                        if (!step()) { return false; }
-                                        mapping.map(argument,
-                                                    destination.addArgument(argument.getType(),
-                                                                            argument.getLoc()));
-                                    }
-                                    mlir::OpBuilder nested(&destination, destination.begin());
-                                    if (!self(self, from.front(), nested)) { return false; }
-                                }
-                                mapping.map(operation.getResults(), cloned->getResults());
-                            } else {
-                                auto * cloned = at.clone(operation, mapping);
-                                // Regions (a normalized invoke) clone with the
-                                // same mapping; charge every nested operation.
-                                const auto counted = cloned->walk([&](mlir::Operation * inner) {
-                                    if (inner == cloned) { return mlir::WalkResult::advance(); }
-                                    if (!step()) { return mlir::WalkResult::interrupt(); }
-                                    ++operationCount;
-                                    return mlir::WalkResult::advance();
-                                });
-                                if (counted.wasInterrupted()) { return false; }
-                                if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(cloned)) {
-                                    callDepth[cloned] = 1 + callDepth.lookup(call.operation) +
-                                                        callDepth.lookup(&operation);
-                                    if (depth + callDepth[cloned] >= 64) {
-                                        return refuse(
-                                            "DOM helper call tree is recursive or too deep");
-                                    }
-                                }
-                                ++operationCount;
-                            }
-                        }
-                        return true;
-                    };
-                    mlir::OpBuilder at(call.operation);
-                    if (!cloneBody(cloneBody, body, at)) { return false; }
                     methods.erase(call.operation);
                     callDepth.erase(call.operation);
                     call.operation->erase();
