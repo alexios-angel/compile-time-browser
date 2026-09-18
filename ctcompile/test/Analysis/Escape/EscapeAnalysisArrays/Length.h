@@ -1072,7 +1072,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                 const bool exactZero =
                     literal == "#ctjs.string<\"0\">" || literal == "#ctjs.boolean<false>" ||
                     literal == "#ctjs.null" ||
-                    (literal == "#ctjs.number<13830554455654793216>" &&
+                    ((literal == "#ctjs.number<13830554455654793216>" ||
+                      literal == "#ctjs.string<\"-1\">") &&
                      (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
                                            operands == "%zero, %input")));
                 run({.what = "only independently bounded bitwise inputs supply an exact index",
@@ -1613,6 +1614,25 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                           "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
          .arrays = "a:[]",
          .exit = "a -> {a}"});
+    for (const std::string operation :
+         {"unary bitnot %text", "binary sub %text, %text", "binary mul %text, %zero",
+          "binary div %zero, %text", "binary mod %text, %one"}) {
+        run({.what = "negative String conversion supplies an exact empty length",
+             .body = values + one +
+                     "  %text = ctjs.constant #ctjs.string<\"-1\">\n"
+                     "  %wanted = ctjs." +
+                     operation + "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+             .arrays = "a:[]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "a negative String intermediate outside the bound cannot recover an exact length",
+         .body = values + one +
+                 "  %text = ctjs.constant #ctjs.string<\"-4294967295\">\n"
+                 "  %outside = ctjs.binary sub %text, %one\n"
+                 "  %recovered = ctjs.binary sub %outside, %text\n"
+                 "  %wanted = ctjs.binary add %recovered, %one\n"
+                 "  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n",
+         .failure = ArrayContentsFailure::UnknownIndex});
     run({.what = "a canonical String offset produces an exact Number shrink target",
          .body = values + "  %one = ctjs.constant #ctjs.string<\"1\">\n" + read + subtract +
                  "  ctjs.set_property %a[%key], %index\n  ctjs.return %a\n",
@@ -1704,7 +1724,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             const auto body = values + "  %input = ctjs.constant " + literal +
                               "\n  %wanted = " + producer +
                               "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n";
-            if (literal == "#ctjs.number<13830554455654793216>" &&
+            if ((literal == "#ctjs.number<13830554455654793216>" ||
+                 literal == "#ctjs.string<\"-1\">") &&
                 (producer == "ctjs.binary mul %input, %zero" ||
                  producer == "ctjs.binary div %input, %input" ||
                  producer == "ctjs.binary mod %input, %input" ||

@@ -1,0 +1,150 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negative-string
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negative-string.claims
+
+// Negative canonical Strings convert only at numeric operations; snapshots keep their original inputs.
+// IMPORT-LABEL: ctjs.func @snapshotReleased$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @snapshotReturned$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @subReleased$
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @powerReturned$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @bitsReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @shiftReturned$
+// IMPORT: ctjs.binary_static ushr
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.get_property
+// IMPORT-LABEL: ctjs.func @stringAddition$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @unknownInput$
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @noncanonicalInput$
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @outsideBound$
+// IMPORT: ctjs.binary sub
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function snapshotReleased() {
+    var child = {}, array = [child, child, child], inputs = ['-1'], saved = 0;
+    var input = inputs[0];
+    inputs[0] = child;
+    var step = +input;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function snapshotReturned() {
+    var child = {}, array = [child, child, child], inputs = ['-1'], saved = 0;
+    var input = inputs[0];
+    inputs[0] = child;
+    var step = input * 1;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function subReleased() {
+    var child = {}, array = [child, child, child], saved = 0, step = 0 - '-1';
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function powerReturned() {
+    var child = {}, array = [child, child, child], saved = 0, step = (-1) ** '-1';
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function bitsReleased() {
+    var child = {}, array = [child, child, child], saved = 0, start = ~'-1';
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+function shiftReturned() {
+    var child = {}, array = [child, child, child], saved = 0, step = '-1' >>> '-1';
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = array['-1'];
+    return 0;
+}
+function stringAddition() {
+    var child = {}, array = [child, child, child], saved = 0, step = '-1' + 0;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function unknownInput(input) {
+    var child = {}, array = [child, child, child], saved = 0, step = +input;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function noncanonicalInput() {
+    var child = {}, array = [child, child, child], saved = 0, step = +'-01';
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function outsideBound() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var outside = '-4294967295' - 1, step = outside - '-4294967295';
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+snapshotReleased();
+var snapshotRetained = snapshotReturned();
+subReleased();
+var powerRetained = powerReturned();
+bitsReleased();
+var shiftRetained = shiftReturned();
+originalKey();
+stringAddition();
+unknownInput('-1');
+noncanonicalInput();
+outsideBound();

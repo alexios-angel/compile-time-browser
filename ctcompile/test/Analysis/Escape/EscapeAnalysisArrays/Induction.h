@@ -754,6 +754,93 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                            "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
                            "  %magnitude = ctjs.unary plus %maximum"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    const std::string negativeText = "  %text = ctjs.constant #ctjs.string<\"-1\">\n";
+    for (const auto & [operation, expected] :
+         {std::pair{"unary plus %text", "13830554455654793216"},
+          std::pair{"unary neg %text", "4607182418800017408"},
+          std::pair{"unary bitnot %text", "0"},
+          std::pair{"binary sub %text, %zero", "13830554455654793216"},
+          std::pair{"binary sub %zero, %text", "4607182418800017408"},
+          std::pair{"binary sub %text, %text", "0"},
+          std::pair{"binary mul %text, %one", "13830554455654793216"},
+          std::pair{"binary mul %one, %text", "13830554455654793216"},
+          std::pair{"binary div %text, %one", "13830554455654793216"},
+          std::pair{"binary div %one, %text", "13830554455654793216"},
+          std::pair{"binary mod %text, %one", "0"},
+          std::pair{"binary mod %zero, %text", "0"},
+          std::pair{"binary pow %text, %three", "13830554455654793216"},
+          std::pair{"binary pow %text, %two", "4607182418800017408"},
+          std::pair{"binary pow %one, %text", "4607182418800017408"},
+          std::pair{"binary_static bitand %text, %one", "4607182418800017408"},
+          std::pair{"binary_static bitor %zero, %text", "13830554455654793216"},
+          std::pair{"binary_static bitxor %text, %text", "0"},
+          std::pair{"binary_static shl %text, %one", "13835058055282163712"},
+          std::pair{"binary_static shr %text, %one", "13830554455654793216"},
+          std::pair{"binary_static ushr %text, %text", "4607182418800017408"}}) {
+        run({.what = "negative canonical String conversion preserves exact operator results",
+             .body = prefix + negativeText + "  %actual = ctjs." + operation +
+                     " {storage_test_id = \"actual\"}\n"
+                     "  %expected = ctjs.constant #ctjs.number<" +
+                     expected +
+                     ">\n  %index = ctjs.binary sub %actual, %expected\n"
+                     "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one",
+             .exit = "actual -> {}"});
+    }
+    const auto savedNegativeText = replace(
+        negativeChild, makeNegativeUnit,
+        negativeText + "  %inputs = ctjs.create_array [%text] {storage_test_id = \"inputs\"}\n"
+                       "  %saved = ctjs.get_property %inputs[%zero]\n"
+                       "  ctjs.set_property %inputs[%zero], %x\n"
+                       "  %minus = ctjs.unary plus %saved\n");
+    run({.what = "negative String conversion uses the saved input before container mutation",
+         .body = savedNegativeText,
+         .arrays = "a:[one,x]; inputs:[x]",
+         .reads = "inputs[0]=ctjs.constant; a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "negative String conversion discharges only unreturned saved children",
+         .body = replace(savedNegativeText, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]; inputs:[x]",
+         .reads = "inputs[0]=ctjs.constant; a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    const auto carriedNegativeText =
+        replace(carriedNegative, makeNegative, negativeText + "  %unit = ctjs.unary plus %text\n");
+    run({.what = "converted negative Strings preserve simultaneous CFG transport",
+         .body = carriedNegativeText,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    reject("a converted negative String cannot change on the CFG backedge",
+           replace(carriedNegativeText, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("a repeated negative String conversion needs independent invariance",
+           replace(replace(savedNegativeText, "  %minus = ctjs.unary plus %saved\n", ""),
+                   "  %step =", "  %minus = ctjs.unary plus %saved\n  %step ="));
+    reject("the original negative String keeps its property key after conversion",
+           replace(savedNegativeText, "%base[%i]", "%base[%saved]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("negative String Add retains concatenation rather than a Number magnitude",
+           replace(savedNegativeText, "unary plus %saved", "binary add %saved, %zero"));
+    reject("negative String conversion cannot borrow an unknown saved input",
+           replace(savedNegativeText, "unary plus %saved", "unary plus %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    for (const std::string text :
+         {"-0", "-01", "--1", "-+1", "-1.0", "-1e0", " -1", "-1 ", "-0x1", "-4294967296"}) {
+        reject(
+            "negative String conversion requires bounded canonical decimal digits",
+            replace(savedNegativeText, "#ctjs.string<\"-1\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    run({.what = "negative canonical String conversion includes the exact magnitude bound",
+         .body = prefix + "  %text = ctjs.constant #ctjs.string<\"-4294967295\">\n"
+                          "  %expected = ctjs.constant #ctjs.number<13974669643728551936>\n"
+                          "  %actual = ctjs.unary plus %text {storage_test_id = \"actual\"}\n"
+                          "  %index = ctjs.binary sub %actual, %expected\n"
+                          "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one",
+         .exit = "actual -> {}"});
     for (const std::string literal :
          {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
         for (const std::string kind : {"plus", "neg", "bitnot"}) {
@@ -952,8 +1039,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              {"#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">", "#ctjs.number<4602678819172646912>",
               "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
               "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>"}) {
-            reject("signed bitwise inputs require exact bounded Numbers without coercion",
-                   replace(snapshot, "ctjs.unary neg %magnitude", "ctjs.constant " + input));
+            const auto body =
+                replace(snapshot, "ctjs.unary neg %magnitude", "ctjs.constant " + input);
+            if (input == "#ctjs.string<\"-1\">") {
+                run({.what = "negative canonical Strings share exact signed bitwise conversion",
+                     .body = body,
+                     .arrays = "a:[one,x]; seed:[]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("signed bitwise inputs require exact bounded primitive conversion", body);
+            }
         }
     }
     struct bitwise_case {
@@ -1339,8 +1435,18 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          {"02", "+2", "-2", "2.0", "2e0", " 2", "0x2", "4294967295", "NaN"}) {
         reject("negative String offsets require the existing bounded canonical decimal proof",
                replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"));
-        reject("left String subtraction requires the same bounded canonical decimal proof",
-               replace(leftStringSub, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">"));
+        const auto left =
+            replace(leftStringSub, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">");
+        if (text == "-2") {
+            run({.what = "a canonical negative left String preserves its exact stride",
+                 .body = left,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one",
+                 .exit = "one -> {}"},
+                "x");
+        } else {
+            reject("left String subtraction requires bounded canonical decimal conversion", left);
+        }
     }
     reject("repeated left String producers still need independent invariance",
            replace(replace(leftStringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
@@ -1927,8 +2033,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="));
         for (const std::string invalid :
              {"01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
-            reject("both power operands need bounded canonical String evidence",
-                   replace(source, "#ctjs.string<\"1\">", "#ctjs.string<\"" + invalid + "\">"));
+            const auto body =
+                replace(source, "#ctjs.string<\"1\">", "#ctjs.string<\"" + invalid + "\">");
+            if (invalid == "-1" && !stringBase) {
+                run({.what = "a negative String exponent preserves the exact negative unit stride",
+                     .body = body,
+                     .arrays = "a:[one,x]; seed:[]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("String powers require bounded conversion and a progressing stride", body);
+            }
         }
     }
     for (const std::string exponent : {"%minus", "%magnitude", "%three"}) {
@@ -2220,8 +2335,16 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
               "#ctjs.number<13826050856027422720>", "#ctjs.number<13974669643730649088>",
               "#ctjs.number<18442240474082181120>", "#ctjs.number<9221120237041090560>",
               "#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">"}) {
-            reject("signed unary literal strides require exact nonzero bounded Numbers",
-                   replace(literalChild, negativeLiteral, constant));
+            const auto body = replace(literalChild, negativeLiteral, constant);
+            if (constant == "#ctjs.string<\"-1\">") {
+                run({.what = "negative canonical String unary strides retain original children",
+                     .body = body,
+                     .arrays = "a:[one,x]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("signed unary strides require exact nonzero bounded conversion", body);
+            }
         }
         reject(
             "signed unary literals cannot be recomputed on the CFG backedge",

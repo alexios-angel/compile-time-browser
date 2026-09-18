@@ -579,6 +579,35 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y] | a:[x,y]",
                     .reads = "a[0]=x; a[0]=x; a[1]=y",
                     .exit = "x -> {x}; y -> {y}"});
+    const auto negativeStrings = replace(carriedNegative, makeNegative,
+                                         "  %text = scf.if %flag -> (!ctjs.value) {\n"
+                                         "    %left = ctjs.constant #ctjs.string<\"-1\">\n"
+                                         "    scf.yield %left : !ctjs.value\n"
+                                         "  } else {\n"
+                                         "    %right = ctjs.constant #ctjs.string<\"-2\">\n"
+                                         "    scf.yield %right : !ctjs.value\n  }\n"
+                                         "  %unit = ctjs.unary plus %text\n");
+    rows.push_back({.what = "negative String predecessors preserve separate structured strides",
+                    .body = negativeStrings,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "y -> {y}; x -> {x}"});
+    rows.push_back({.what = "negative String structured strides release only unreturned children",
+                    .body = replace(negativeStrings, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "zero -> {}; zero -> {}"});
+    reject("negative String snapshots cannot change across structured yields",
+           replace(negativeStrings, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("a noncanonical negative String cannot borrow another predecessor's conversion",
+           replace(negativeStrings, "#ctjs.string<\"-2\">", "#ctjs.string<\"-02\">"));
+    reject("unknown structured String inputs cannot borrow another predecessor's conversion",
+           replace(negativeStrings, "scf.yield %right :", "scf.yield %p :"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("repeated structured negative String producers need independent invariance",
+           replace(replace(negativeStrings,
+                           "    %step =", "    %repeated = ctjs.unary plus %text\n    %step ="),
+                   "sub %i, %d", "sub %i, %repeated"));
     const auto savedNegative =
         replace(replace(savedUnit, "  %unit = ctjs.get_property %seed[%name]",
                         "  %magnitude = ctjs.get_property %seed[%name]\n"
@@ -737,13 +766,20 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                         .exit = "zero -> {}"});
         reject("signed bitwise snapshots cannot change across structured yields",
                replace(carried, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
-        reject("bitwise snapshots cannot borrow Numbers from another structured predecessor",
-               replace(carried, "  %operand = ctjs.unary neg %one\n",
-                       "  %negative = ctjs.unary neg %one\n"
-                       "  %text = ctjs.constant #ctjs.string<\"-1\">\n"
-                       "  %operand = scf.if %flag -> (!ctjs.value) {\n"
-                       "    scf.yield %negative : !ctjs.value\n"
-                       "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
+        const auto stringPredecessor =
+            replace(carried, "  %operand = ctjs.unary neg %one\n",
+                    "  %negative = ctjs.unary neg %one\n"
+                    "  %text = ctjs.constant #ctjs.string<\"-1\">\n"
+                    "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                    "    scf.yield %negative : !ctjs.value\n"
+                    "  } else {\n    scf.yield %text : !ctjs.value\n  }\n");
+        rows.push_back({.what = "bitwise proves each Number and negative String predecessor",
+                        .body = stringPredecessor,
+                        .arrays = "a:[x,y] | a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                        .exit = "y -> {y}; y -> {y}"});
+        reject("a noncanonical String cannot borrow another structured predecessor's Number",
+               replace(stringPredecessor, "#ctjs.string<\"-1\">", "#ctjs.string<\"-01\">"));
     }
     const std::string primitiveBits = "  %operand = scf.if %flag -> (!ctjs.value) {\n"
                                       "    %truth = ctjs.constant #ctjs.boolean<true>\n"
@@ -1353,8 +1389,14 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject("a repeated structured product cannot borrow an earlier iteration",
            replace(replace(savedProduct, "  %unit = ctjs.binary mul %one, %negative\n", ""),
                    "    %step =", "    %unit = ctjs.binary mul %one, %negative\n    %step ="));
-    reject("structured products cannot borrow a coercible String",
-           replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-2\">"));
+    rows.push_back(
+        {.what = "structured products convert the original canonical negative String",
+         .body = replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-2\">"),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"});
+    reject("structured products require canonical negative String spelling",
+           replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-02\">"));
     reject("structured multiplication must prove every predecessor's signed Number",
            replace(carriedProduct, "  %negative = ctjs.unary neg %magnitude\n",
                    "  %negative = scf.if %flag -> (!ctjs.value) {\n"
