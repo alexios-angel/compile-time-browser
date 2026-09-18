@@ -14,6 +14,29 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Positive integer animation follow-up — 2026-09-18
+
+Full `css/` replay at `f5a00a58`: **1,592 of 2,926 runnable files PASS
+(54.4%), 70,275 subtests PASS**. Against `73833c09`: **+1 file and +52
+passing subtests, zero passing files or subtests lost**. Against the
+recovered `b722aa41` baseline, the session gained **57 files and 1,334
+subtests**, with no losses. The corpus, four workers, 4 GB cap and
+deterministic GL driver are unchanged.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `f5a00a58` | 1,592 | 1,118 | 25 | 0 | 191 | 1,488 | 70,275 / 32,813 |
+
+The shared numeric animation result now clamps positive integers to one,
+matching their parsing grammar. `column-count-interpolation` passes;
+orphans/widows also gain subtests. `columns-interpolation` still fails on
+the slash grammar, and scaled viewport rectangles remain open. The browser
+gate passed **233/233** (69.00 seconds); formatting passed.
+Evidence: `/tmp/ctbrowser-resume/positive-integers/` contains the full CSS
+JSON, before/after and session comparisons, gate log and source hashes.
+The earlier CSS/BigInt recovery through `9e7b6fdf` was integrated into
+`ctcompile-v1` as `b71d8034`.
+
 ## CSS recovery — 2026-09-18
 
 **1,591 of 2,926 runnable CSS files PASS (54.4%), 70,223 subtests PASS**
