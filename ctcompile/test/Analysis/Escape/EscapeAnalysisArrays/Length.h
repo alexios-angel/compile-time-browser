@@ -496,10 +496,18 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.boolean<true>",
                                       "#ctjs.null",
                                       "#ctjs.undefined"}) {
+        const auto body =
+            values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed;
+        if (literal == "#ctjs.boolean<true>") {
+            run({.what = "the original Boolean offset selects its exact overwritten slot",
+                 .body = body,
+                 .arrays = "a:[zero]",
+                 .exit = "a -> {a}"});
+            continue;
+        }
         run({.what = "subtraction still refuses unproved or missing indices",
-             .body =
-                 values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed,
-             .failure = literal == "#ctjs.number<13830554455654793216>"
+             .body = body,
+             .failure = literal == "#ctjs.number<13830554455654793216>" || literal == "#ctjs.null"
                             ? ArrayContentsFailure::MissingElement
                             : ArrayContentsFailure::UnknownIndex});
     }
@@ -1250,6 +1258,41 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,length]",
         .exit = "result -> {a,result}"};
     run(literalShrink);
+    for (const std::string left : {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const std::string right :
+             {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+            const auto body = values + "  %left = ctjs.constant " + left +
+                              "\n  %right = ctjs.constant " + right +
+                              "\n  %index = ctjs.binary sub %left, %right "
+                              "{storage_test_id = \"index\"}\n"
+                              "  ctjs.set_property %a[%key], %index\n"
+                              "  %result = ctjs.create_array [%a, %index] "
+                              "{storage_test_id = \"result\"}\n"
+                              "  ctjs.return %result\n";
+            if (left != "#ctjs.boolean<true>" && right == "#ctjs.boolean<true>") {
+                run({.what = "negative primitive differences cannot become array lengths",
+                     .body = body,
+                     .failure = ArrayContentsFailure::UnknownIndex});
+                continue;
+            }
+            const bool retained = left == "#ctjs.boolean<true>" && right != "#ctjs.boolean<true>";
+            run({.what = "primitive subtraction preserves zero/unit length and result identity",
+                 .body = body,
+                 .arrays = retained ? "a:[x]; result:[a,index]" : "a:[]; result:[a,index]",
+                 .exit = retained ? "result -> {a,result,x}" : "result -> {a,result}"},
+                retained ? "" : "x");
+        }
+    }
+    for (const std::string operands : {"%truth, %negative", "%negative, %truth"}) {
+        run({.what = "primitive subtraction cannot cancel an out-of-bound signed result",
+             .body = values +
+                     "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                     "  %negative = ctjs.unary neg %bound\n"
+                     "  %truth = ctjs.constant #ctjs.boolean<true>\n"
+                     "  %difference = ctjs.binary sub " +
+                     operands + "\n  %index = ctjs.binary sub %difference, %difference\n" + indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
     const contents_row productShrink{
         .what = "a signed zero product supplies a non-growing length and keeps its origin",
         .body = values + one + read +
@@ -1651,6 +1694,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             }
             if ((literal == "#ctjs.boolean<false>" || literal == "#ctjs.null") &&
                 (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input" ||
+                 producer == "ctjs.binary sub %input, %zero" ||
                  producer == "ctjs.binary mul %input, %zero" ||
                  producer == "ctjs.binary_static ushr %input, %input")) {
                 run({.what = "Boolean/null numeric conversion supplies an exact empty length",

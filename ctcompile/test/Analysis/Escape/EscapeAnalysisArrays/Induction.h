@@ -1176,6 +1176,59 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .exit = "x -> {x}"});
     const auto carriedSub =
         replace(carriedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
+    for (const std::string literal :
+         {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const bool primitiveLeft : {false, true}) {
+            const std::string number = literal == "#ctjs.boolean<true>" ? "%two" : "%one";
+            const std::string difference =
+                "  %minus = ctjs.binary sub " +
+                (primitiveLeft ? "%saved, " + number : number + ", %saved") + "\n";
+            auto source = replace(
+                subChild, makeSubUnit,
+                "  %primitive = ctjs.constant " + literal +
+                    " {storage_test_id = \"primitive\"}\n"
+                    "  %inputs = ctjs.create_array [%primitive] {storage_test_id = \"inputs\"}\n"
+                    "  %saved = ctjs.get_property %inputs[%zero]\n"
+                    "  ctjs.set_property %inputs[%zero], %x\n" +
+                    difference);
+            if (!primitiveLeft) {
+                source = replace(source, "binary sub %i, %minus", "binary add %i, %minus");
+            }
+            run({.what = "primitive subtraction retains CFG snapshots after operand replacement",
+                 .body = source,
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=primitive; a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "primitive subtraction releases only unreturned CFG children",
+                 .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=primitive; a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            reject("subtraction cannot turn its original Boolean/null into an own key",
+                   replace(source, "%base[%i]", "%base[%primitive]"),
+                   ArrayContentsFailure::UnknownIndex);
+            reject("repeated primitive subtraction needs independent invariance",
+                   replace(replace(source, difference, ""), "  %step =", difference + "  %step ="));
+            reject("primitive subtraction cannot borrow an unknown operand",
+                   replace(source, "ctjs.constant " + literal, "ctjs.unary plus %p"),
+                   ArrayContentsFailure::UnsupportedOperation);
+            reject("Undefined cannot borrow primitive subtraction evidence",
+                   replace(source, literal, "#ctjs.undefined"));
+        }
+    }
+    const auto primitiveCarriedSub =
+        replace(carriedSub, "  %unit = ctjs.binary sub %zero, %magnitude\n",
+                "  %nil = ctjs.constant #ctjs.null\n"
+                "  %unit = ctjs.binary sub %nil, %magnitude\n");
+    run({.what = "primitive subtraction snapshots survive exact CFG backedge transport",
+         .body = primitiveCarriedSub,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    reject("primitive subtraction snapshots cannot change across CFG backedges",
+           replace(primitiveCarriedSub, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
     run({.what = "negative Sub snapshots retain their exact final overshoot after array growth",
          .body =
              replace(replace(carriedSub, "^exit(%sum :", "^exit(%index :"), "  ctjs.return %result",

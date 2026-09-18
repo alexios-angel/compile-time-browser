@@ -832,6 +832,35 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .exit = "zero -> {}"});
     const auto carriedSub =
         replace(carriedNegative, "unary neg %magnitude", "binary sub %one, %magnitude");
+    const std::string primitiveDifference = "  %unit = ctjs.binary sub %operand, %magnitude\n";
+    const auto primitiveSub = replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                                      "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                                      "    %truth = ctjs.constant #ctjs.boolean<true>\n"
+                                      "    scf.yield %truth : !ctjs.value\n"
+                                      "  } else {\n    %nil = ctjs.constant #ctjs.null\n"
+                                      "    scf.yield %nil : !ctjs.value\n  }\n" +
+                                          primitiveDifference);
+    rows.push_back({.what = "primitive subtraction proves separate structured predecessor strides",
+                    .body = primitiveSub,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "y -> {y}; x -> {x}"});
+    rows.push_back({.what = "primitive subtraction releases only unreturned structured children",
+                    .body = replace(primitiveSub, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "zero -> {}; zero -> {}"});
+    reject("primitive subtraction snapshots cannot change on structured backedges",
+           replace(primitiveSub, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+    reject("primitive subtraction cannot borrow another predecessor's operand",
+           replace(primitiveSub, "scf.yield %nil :", "scf.yield %p :"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("Undefined cannot borrow structured primitive subtraction evidence",
+           replace(primitiveSub, "#ctjs.null", "#ctjs.undefined"));
+    reject("repeated structured primitive subtraction needs independent invariance",
+           replace(replace(primitiveSub, "    %step =",
+                           replace(primitiveDifference, "%unit =", "%repeated =") + "    %step ="),
+                   "binary sub %i, %d", "binary sub %i, %repeated"));
     rows.push_back({.what = "structured Sub snapshots preserve exact reordered transport",
                     .body = carriedSub,
                     .arrays = "a:[x,y]",

@@ -1705,19 +1705,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     boundedNumberSum(left, right, result);
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                    auto original = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    if (!original && left.string()) { original = ownArrayIndex(lhs); }
-                    auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
-                    const auto number =
-                        right.integerNumber ? right.integerNumber : boundedNumber(rhs);
-                    const auto stringOffset =
-                        literal && llvm::isa<ctjs::StringAttr>(literal.getValue())
-                            ? ownArrayIndex(rhs)
-                            : std::nullopt;
-                    const auto offset = number ? number : stringOffset;
-                    // Held Numbers keep their read-time value; canonical decimal
-                    // Strings convert exactly without object hooks. Both operands
-                    // are bounded integers; guard subtraction before unsigned wrap.
+                    const auto original = boundedConvertedNumber(left);
+                    const auto offset = boundedConvertedNumber(right);
+                    // Boolean/null and canonical Strings share unary's exact
+                    // conversion. Held operands keep their read-time values;
+                    // guard bounded subtraction before unsigned wrap.
                     if (original && offset && *offset <= *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original - *offset;
