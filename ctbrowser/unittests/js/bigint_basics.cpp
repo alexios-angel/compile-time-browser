@@ -82,6 +82,32 @@ int main() {
     js_expect("1n === 1n", "true");                              // by VALUE, not by allocation
     js_expect("2n === 1n", "false");
 
+    // Loose equality converts Booleans to Number and objects to primitives.
+    js_expect("[0n == false, false == 0n, 1n == true, true == 1n,"
+              " 2n != true, true != 2n, 0n == null, 0n == undefined].join(',')",
+              "true,true,true,true,true,true,false,false");
+    js_expect("[Object(1n) == 1n, 1n == Object(1n), Object(1n) != 2n,"
+              " 2n != Object(1n), Object(1n) == Object(1n)].join(',')",
+              "true,true,true,true,false");
+    js_expect(R"JS((function() {
+        var calls = '';
+        var object = {valueOf() { calls += 'v'; return {}; },
+                      toString() { calls += 's'; return '1'; }};
+        return [object == 1n, 1n != object, calls].join(',');
+    })())JS",
+              "true,false,vsvs");
+    js_expect(R"JS((function() {
+        var marker = {};
+        var object = {valueOf() { throw marker; }};
+        try { return 1n == object; } catch (e) { return e === marker; }
+    })())JS",
+              "true");
+    js_expect(R"JS((function() {
+        var object = {valueOf() { return {}; }, toString() { return {}; }};
+        try { return object != 1n; } catch (e) { return e.name; }
+    })())JS",
+              "TypeError");
+
     // --- conversion ------------------------------------------------------------
     js_expect("String(1n)", "1"); // the digits, with no trailing `n`
     js_expect("`${5n}`", "5");
@@ -95,6 +121,10 @@ int main() {
     js_expect("BigInt(5)", "5");
     js_expect("BigInt(\"42\")", "42");
     js_expect("BigInt(\"0x10\")", "16");
+    js_expect("BigInt('  +0010  ')", "10");
+    js_expect("BigInt('-0010')", "-10");
+    js_expect("BigInt('0o10')", "8");
+    js_expect("BigInt('0b10')", "2");
     js_expect("BigInt(true)", "1");
     js_expect("typeof BigInt(5)", "bigint");
     js_expect("typeof BigInt", "function");
@@ -177,6 +207,14 @@ int main() {
     throws("BigInt(1.5)", "RangeError");
     throws("BigInt(NaN)", "RangeError");
     throws("BigInt(\"zz\")", "SyntaxError");
+    // StringIntegerLiteral permits signs only on decimal digits, and no separators.
+    for (const char * text :
+         {"-0x1", "+0X1", "-0o1", "+0O1", "-0b1", "+0B1", "1_0", "0xF_F", "_1", "1_"}) {
+        const std::string quoted = "'" + std::string{text} + "'";
+        throws(("BigInt(" + quoted + ")").c_str(), "SyntaxError");
+        throws(("BigInt.asIntN(8, " + quoted + ")").c_str(), "SyntaxError");
+        js_expect("1n == " + quoted, "false");
+    }
     throws("BigInt()", "TypeError");
     throws("BigInt(null)", "TypeError");
     throws("BigInt(Symbol())", "TypeError");

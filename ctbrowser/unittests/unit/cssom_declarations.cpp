@@ -194,11 +194,80 @@ void test_reads_and_all() {
     CHECK_EQ(serialize_declaration_block(block), std::string{"--ab: value; --0: x;"});
 }
 
+// css/css-multicol/parsing/columns-*: width/count in either order and optional height.
+void test_columns() {
+    using ctbrowser::style::css::supports_declaration;
+    for (const auto & [value, expected] : {std::pair{"auto 10em", "10em"},
+                                           {"2 auto", "2"},
+                                           {"auto auto", "auto"},
+                                           {"0 1", "0px 1"},
+                                           {"1 0", "0px 1"},
+                                           {"2 10px/100px", "10px 2 / 100px"},
+                                           {"auto / 100px", "auto / 100px"},
+                                           {"10px 2 / auto", "10px 2"},
+                                           {"auto / auto", "auto"},
+                                           {"calc(20px / 2) / 100px", "calc(10px) / 100px"}}) {
+        declaration_block block;
+        CHECK(supports_declaration("columns", value));
+        CHECK(set_declaration(block, "columns", value, false));
+        CHECK_EQ(block.size(), std::size_t{4});
+        CHECK_EQ(declaration_value(block, "column-wrap"), std::string{"auto"});
+        CHECK_EQ(declaration_value(block, "columns"), std::string{expected});
+    }
+    for (const std::string_view invalid :
+         {"initial initial", "inherit inherit", "auto auto auto", "10px 20px", "0 0", "/ 100px",
+          "/ auto", "/", "auto /", "2 100px /", "auto // 100px", "auto / 100px / 200px",
+          "auto / initial", "initial / auto", "auto / -1px", "auto / 10%", "wrap", "2 nowrap",
+          "10px / 100px wrap"}) {
+        declaration_block block;
+        CHECK(!supports_declaration("columns", invalid));
+        CHECK(!set_declaration(block, "columns", invalid, false));
+        CHECK(block.empty());
+    }
+    declaration_block block;
+    CHECK(set_declaration(block, "columns", "2 10px / 100px", true));
+    CHECK_EQ(declaration_value(block, "column-width"), std::string{"10px"});
+    CHECK_EQ(declaration_value(block, "column-count"), std::string{"2"});
+    CHECK_EQ(declaration_value(block, "column-height"), std::string{"100px"});
+    CHECK_EQ(declaration_priority(block, "column-height"), std::string{"important"});
+    CHECK_EQ(declaration_priority(block, "column-wrap"), std::string{"important"});
+    CHECK(set_declaration(block, "columns", "auto", false));
+    CHECK_EQ(declaration_value(block, "column-height"), std::string{"auto"});
+    CHECK(set_declaration(block, "columns", "inherit", false));
+    CHECK_EQ(declaration_value(block, "column-height"), std::string{"inherit"});
+    CHECK_EQ(declaration_value(block, "column-wrap"), std::string{"inherit"});
+    CHECK_EQ(round_trip("columns: 2 10px / 100px"), std::string{"columns: 10px 2 / 100px;"});
+
+    // column-wrap-reset-interpolation: the shorthand resets this longhand but cannot set it.
+    for (const std::string_view value : {"auto", "wrap", "nowrap", "initial", "inherit"}) {
+        CHECK(supports_declaration("column-wrap", value));
+    }
+    for (const std::string_view invalid : {"none", "wrap nowrap", "10px", "auto / wrap"}) {
+        CHECK(!supports_declaration("column-wrap", invalid));
+    }
+    block.clear();
+    CHECK(set_declaration(block, "columns", "100px / 100px", false));
+    CHECK(set_declaration(block, "column-wrap", "NoWrAp", false));
+    CHECK_EQ(declaration_value(block, "column-wrap"), std::string{"nowrap"});
+    CHECK_EQ(declaration_value(block, "columns"), std::string{});
+    CHECK_EQ(serialize_declaration_block(block),
+             std::string{"column-width: 100px; column-count: auto; column-height: 100px; "
+                         "column-wrap: nowrap;"});
+    CHECK(set_declaration(block, "columns", "100px / 100px", false));
+    CHECK_EQ(declaration_value(block, "column-wrap"), std::string{"auto"});
+    CHECK_EQ(declaration_value(block, "columns"), std::string{"100px / 100px"});
+    CHECK_EQ(round_trip("column-wrap: wrap; columns: 2"), std::string{"columns: 2;"});
+    bool removed = false;
+    CHECK_EQ(remove_declaration(block, "columns", removed), std::string{"100px / 100px"});
+    CHECK(removed && block.empty());
+}
+
 } // namespace
 
 int main() {
     test_shorthand_values();
     test_logical_groups();
     test_reads_and_all();
+    test_columns();
     REPORT("cssom_declarations");
 }

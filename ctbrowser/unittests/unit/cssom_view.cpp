@@ -227,6 +227,8 @@ void test_geometry_utils() {
         <script>
         const target = document.getElementById('target'), source = document.getElementById('source');
         const r = new DOMRect(1, 2, 3, 4), p = new DOMPoint(5, 6);
+        const infinite = DOMQuad.fromRect({x: Infinity, y: 1, width: 2, height: 3});
+        console.log('infinite=' + (infinite.p1.x === Infinity) + ',' + infinite.p1.y);
         console.log('rect=' + r.right + ',' + r.bottom + ',' + JSON.stringify(r) + ',' +
                     (r instanceof DOMRectReadOnly) + ',' + p.w + ',' + DOMQuad.fromRect(r).p3.x);
         const q = source.getBoxQuads()[0];
@@ -254,6 +256,7 @@ void test_geometry_utils() {
                     document.body.scrollParent + ',' + screenX + ',' + window.screenTop);
         </script></body></html>)");
     CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "infinite="), std::string{"infinite=true,1"});
     CHECK_EQ(logged(page, "rect="),
              std::string{"rect=4,6,{\"x\":1,\"y\":2,\"width\":3,\"height\":4,\"top\":2,"
                          "\"right\":4,\"bottom\":6,\"left\":1},true,1,4"});
@@ -294,6 +297,75 @@ void test_hidden_viewport_overflow_keeps_no_scrollbar() {
     CHECK(!page.has_scrollbar());
 }
 
+// A scaled ancestor changes both rectangle APIs, without changing layout metrics.
+void test_transformed_client_rects() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><style>
+        body { margin: 0 }
+        #parent { width: 200px; height: 100px; transform: scale(0.5); transform-origin: 0 0 }
+        #child { width: 100px; height: 60px }
+        </style><div id=parent><div id=child></div></div><script>
+        const child = document.getElementById('child');
+        const bounds = child.getBoundingClientRect(), first = child.getClientRects()[0];
+        console.log('scaled=' + bounds.width + ',' + bounds.height + ',' +
+                    first.width + ',' + first.height + ',' + child.offsetWidth);
+        const quad = child.getBoxQuads()[0], qb = quad.getBounds();
+        console.log('quad=' + qb.width + ',' + qb.height + ',' + quad.p3.x + ',' + quad.p3.y);
+        const parent = document.getElementById('parent');
+        function report(name) {
+            const r = child.getBoundingClientRect();
+            console.log(name + '=' + [r.x, r.y, r.width, r.height].map(Math.round).join(','));
+        }
+        parent.style.transform = 'scale(2)';
+        parent.style.transformOrigin = '50% 50%';
+        child.style.transform = 'translate(10px, 5px)';
+        report('origin');
+        parent.style.transform = 'rotate(90deg)';
+        parent.style.transformOrigin = '0 0';
+        child.style.transform = 'rotate(-90deg)';
+        child.style.transformOrigin = '0 0';
+        report('rotations');
+        parent.style.transform = 'none';
+        child.style.transform = 'scale(-1, 2)';
+        child.style.transformOrigin = 'right bottom';
+        report('reflected');
+        const reflected = child.getBoxQuads()[0];
+        console.log('corners=' + reflected.p1.x + ',' + reflected.p1.y + ',' +
+                    reflected.p3.x + ',' + reflected.p3.y);
+        const mapped = document.convertPointFromNode({x: 10, y: 20}, child);
+        const back = child.convertPointFromNode(mapped, document);
+        const converted = document.convertRectFromNode({x: 1, y: 2, width: 3, height: 4}, child).getBounds();
+        console.log('mapped=' + [mapped.x, mapped.y, back.x, back.y, converted.x, converted.y,
+                                converted.width, converted.height].join(','));
+        const relative = child.getBoxQuads({relativeTo: child})[0].getBounds();
+        console.log('relative=' + [relative.x, relative.y, relative.width, relative.height].join(','));
+        child.style.transform = 'translate(10px, 20px) scale(2)';
+        child.style.transformOrigin = '0 0';
+        report('list');
+        child.style.transform = 'none';
+        child.style.width = '300px';
+        child.style.height = '300px';
+        parent.style.transform = 'scale(0.5)';
+        parent.style.marginLeft = '40px';
+        parent.style.marginTop = '20px';
+        parent.style.overflow = 'hidden';
+        parent.scrollLeft = 20;
+        parent.scrollTop = 40;
+        report('scrolled');
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "scaled="), std::string{"scaled=50,30,50,30,100"});
+    CHECK_EQ(logged(page, "quad="), std::string{"quad=50,30,50,30"});
+    CHECK_EQ(logged(page, "origin="), std::string{"origin=-80,-40,200,120"});
+    CHECK_EQ(logged(page, "rotations="), std::string{"rotations=0,0,100,60"});
+    CHECK_EQ(logged(page, "reflected="), std::string{"reflected=100,-60,100,120"});
+    CHECK_EQ(logged(page, "corners="), std::string{"corners=200,-60,100,60"});
+    CHECK_EQ(logged(page, "mapped="), std::string{"mapped=190,-20,10,20,196,-56,3,8"});
+    CHECK_EQ(logged(page, "relative="), std::string{"relative=0,0,100,60"});
+    CHECK_EQ(logged(page, "list="), std::string{"list=10,20,200,120"});
+    CHECK_EQ(logged(page, "scrolled="), std::string{"scrolled=30,0,150,150"});
+}
+
 } // namespace
 
 int main() {
@@ -304,5 +376,6 @@ int main() {
     test_quirks_mode_scrolling_element();
     test_geometry_utils();
     test_hidden_viewport_overflow_keeps_no_scrollbar();
+    test_transformed_client_rects();
     REPORT("cssom_view");
 }

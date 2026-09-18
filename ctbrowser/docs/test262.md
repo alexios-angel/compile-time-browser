@@ -1149,6 +1149,35 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## BigInt string grammar and loose equality — 2026-09-18
+
+Focused devbox measurements recovered from the interrupted session and
+replayed after the equality fix. Same pinned corpus, four workers,
+10-second timeout and 2 GB address-space cap.
+
+| area | files | PASS before / after | FAIL before / after | SKIP |
+|---|---:|---:|---:|---:|
+| `built-ins/BigInt` | 77 | 74 / 76 | 2 / 0 | 1 |
+| `language/expressions/equals` | 47 | 44 / 47 | 3 / 0 | 0 |
+| `language/expressions/does-not-equals` | 38 | 36 / 38 | 2 / 0 | 0 |
+
+**Seven files gained, zero lost.** `be67d400` rejects numeric separators
+and signed nondecimal prefixes in StringIntegerLiteral; its intermediate
+BigInt replay measured 75 PASS, one FAIL and one SKIP. Source BigInt literals
+retain their own grammar. The shared loose-equality operation converts
+Booleans to Number and distinguishes heap-stored BigInt/Symbol primitives
+from objects, so object comparisons perform ToPrimitive and preserve its
+exceptions. VM opcodes and the AOT bridge call this same operation.
+
+The browser CTest gate passed **216/216** (66.98 seconds), with compiler
+tests excluded; formatting passed. Fresh final JSON files
+`browser20-finalize-{BigInt,equals,does-not-equals}.json` reproduce the table.
+
+The remaining BigInt skip requires cross-realm support. These focused runs
+do not update the whole-corpus total below. Evidence:
+`/tmp/ctbrowser20/` contains the before/intermediate/after JSON, failing and
+passing regression logs, and `runtime-comparison.json` with the gained paths.
+
 ## BigInt measured at `96781de5` — 2026-09-18
 
 Focused devbox replay of `test/built-ins/BigInt`: **63 -> 74 PASS**,

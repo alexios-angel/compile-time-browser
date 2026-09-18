@@ -14,6 +14,65 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Column-wrap and transformed geometry — 2026-09-18
+
+Full `css/` replay at `7cfe95b5`: **1,599/2,926 runnable files PASS,
+70,375 subtests PASS**. Against `39f651a3`: **+3 files and +47 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `7cfe95b5` | 1,599 | 1,111 | 25 | 0 | 191 | 1,488 | 70,375 / 32,715 |
+
+`7cbc05fa` adds `column-wrap` and its reset through `columns`, gaining
+`column-wrap-reset-interpolation` and `discrete-no-interpolation`.
+`4d93744f` applies composed 2D transforms to both client-rectangle APIs,
+fixing `viewport-relative-lengths-scaled-viewport`. `7cfe95b5` shares that
+geometry with quads and coordinate conversions, retaining rotated corners.
+The shared transform parser still models 2D transforms with px lengths;
+3D transforms and relative transform lengths remain open.
+
+The first full replay exposed seven GeometryUtils subtest losses; the
+shared geometry correction restores all seven and gains two more. A
+separate regression preserves infinite coordinates in `DOMQuad.fromRect`.
+No expectations changed. The final browser CTest gate passed **216/216**
+(70.52 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
+formatting passed and all nine changed source/test hashes matched the devbox.
+
+Evidence: `/tmp/ctbrowser21/` contains `browser21-corrected-css.json`,
+`corrected-css-comparison.json`, `measure-corrected-css.log`,
+`final-browser-gate.log`, `last-format.log` and `corrected-source.sha256`.
+The initial replay and its seven losses remain in `browser21-final-css.json`
+and `css-comparison.json`. Other WPT directories and test262 were not replayed;
+the preceding runtime measurements remain unchanged.
+
+## Columns and runtime recovery — 2026-09-18
+
+Full `css/` replay at `39f651a3`: **1,596/2,926 runnable files PASS,
+70,328 subtests PASS**. Against `f5a00a58`: **+4 files and +53 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `39f651a3` | 1,596 | 1,114 | 25 | 0 | 191 | 1,488 | 70,328 / 32,761 |
+
+`696ce3cb` parses the unordered width/count components of `columns`, its
+optional `/ column-height`, and resets omitted longhands. The interpolation,
+computed, valid and invalid columns files now pass. Multicol gains 52
+subtests; `all-prop-initial-xml` gains the newly exposed `column-height`
+check. Scaled viewport rectangles remain open.
+
+The combined browser CTest gate passed **216/216** (68.27 seconds), with
+compiler tests excluded and `CTCOMPILE_MLIR=OFF`; formatting passed. The
+interrupted CSS sweep produced no JSON and was rerun after verifying the
+committed source hashes. Evidence: `/tmp/ctbrowser20/` contains
+`browser20-final-css.json`, `css-comparison.json`, `recovered-css.log`,
+`combined-gate.log`, `combined-source.sha256` and `recovered-format.log`.
+The separate runtime fixes gain seven focused test262 files, recorded in
+`test262.md`; other WPT directories and whole test262 were not replayed.
+
 ## Positive integer animation follow-up — 2026-09-18
 
 Full `css/` replay at `f5a00a58`: **1,592 of 2,926 runnable files PASS

@@ -253,24 +253,13 @@ std::string_view context::type_of(value v) {
 bool context::loose_equals(value a, value b) {
     if (a.is_nullish() && b.is_nullish()) { return true; }
     if (a.is_nullish() || b.is_nullish()) { return false; }
+    if (a.is_boolean()) { a = value::number(a.as_boolean() ? 1 : 0); }
+    if (b.is_boolean()) { b = value::number(b.as_boolean() ? 1 : 0); }
     if (a.is_number() && b.is_number()) { return a.as_number() == b.as_number(); }
     if (a.is_string() && b.is_string()) {
         return static_cast<string_object *>(a.as_heap())->text ==
                static_cast<string_object *>(b.as_heap())->text;
     }
-    // A STRING IS ON THE HEAP TOO, so "both heap means compare identity" is not
-    // the test - it caught `"" == []` and answered false before ToPrimitive ever
-    // ran. Only two genuine OBJECTS compare by identity.
-    // AN OBJECT AGAINST A PRIMITIVE COERCES THROUGH ToPrimitive - 7.2.15 steps
-    // 10 and 11 - and then the comparison is retried on the result. Falling
-    // straight through to ToNumber instead makes the object NaN, so the answer
-    // was always false: `0 == []`, `1 == [1]` and `"" == []` are all TRUE in
-    // every browser and were all false here.
-    //
-    // The guard against re-entering forever is that to_primitive hands back the
-    // object UNCHANGED when neither valueOf nor toString produces a primitive;
-    // in that case there is nothing to retry with and the numeric compare below
-    // is the right answer.
     // `1n == 1` IS TRUE while `1n === 1` is false - loose equality compares the
     // mathematical values across the two numeric types, which is exactly the
     // distinction the two operators exist to draw.
@@ -303,15 +292,16 @@ bool context::loose_equals(value a, value b) {
             return parsed && *parsed == static_cast<bigint_object *>(b.as_heap())->digits;
         }
     }
-    const bool a_object = a.is_heap() && !a.is_string();
-    const bool b_object = b.is_heap() && !b.is_string();
+    if (a.is_kind(heap_kind::symbol) && b.is_kind(heap_kind::symbol)) { return a == b; }
+    // Strings, BigInts and Symbols are primitives despite being heap allocated.
+    // Only actual objects compare by identity or undergo ToPrimitive.
+    const bool a_object = a.is_object_like();
+    const bool b_object = b.is_object_like();
     if (a_object && b_object) { return a == b; }
     if (a_object != b_object) {
         const value primitive = a_object ? to_primitive(a) : to_primitive(b);
-        const bool progressed = a_object ? !(primitive == a) : !(primitive == b);
-        if (progressed) {
-            return a_object ? loose_equals(primitive, b) : loose_equals(a, primitive);
-        }
+        if (throw_pending()) { return false; }
+        return a_object ? loose_equals(primitive, b) : loose_equals(a, primitive);
     }
     return to_number(a) == to_number(b); // the coercing cases
 }

@@ -1,10 +1,12 @@
 // dom_bindings - the views onto an element that are OBJECTS rather than
 // values: `attributes`, `style`, `classList`, `blocking`, `dataset` and the tree accessors.
 
+#include "../computed_style/internal.hpp"
 #include "internal.hpp"
 
 #include <ctbrowser/dom/token_list.hpp>
 #include <ctbrowser/layout/overflow.hpp>
+#include <ctbrowser/shell/page/canvas.hpp>
 
 namespace ctbrowser::shell {
 
@@ -234,25 +236,73 @@ struct scroll_arguments {
 
 } // namespace
 
-// §7 "getClientRects()": every fragment of the element, in viewport
-// coordinates and tree order - an inline split over lines has one per line.
-std::vector<rect> dom_bindings::client_rects_of(node_id self) {
-    flush_layout();
-    std::vector<rect> out;
+// Every fragment carries its untransformed box and the mapping from box-local
+// coordinates to the viewport. Rectangle and GeometryUtils APIs share this walk.
+std::vector<dom_bindings::box_geometry> dom_bindings::client_boxes_of(node_id self,
+                                                                      std::string_view kind) const {
+    std::vector<box_geometry> out;
     if (fragments_ == nullptr || !self) { return out; }
     const point viewport = viewport_scroll();
     const auto walk = [&](auto && walk_, const layout::fragment & at, float dx, float dy,
-                          bool fixed) -> void {
+                          bool fixed, transform matrix) -> void {
         const rect box = at.absolute_bounds(dx, dy);
         const bool is_fixed =
             fixed || (at.box != nullptr && at.box->position == layout::position_kind::fixed);
-        if (at.source == self) {
-            rect r = box;
-            if (!is_fixed) {
-                r.x -= viewport.x;
-                r.y -= viewport.y;
+        // Layout already applies a translation to fragment positions. Replace
+        // that shift with the full transform about this box's origin, then
+        // compose with its ancestors before bounding the four corners.
+        // ponytail: same 2D/px transform subset as computed style; extend the
+        // shared parser for 3D and relative transform lengths.
+        if (at.box != nullptr && !is_inline_box(at)) {
+            if (const auto m = transform_matrix(cascade_value(at.source, "transform"))) {
+                const transform local{static_cast<float>((*m)[0]), static_cast<float>((*m)[1]),
+                                      static_cast<float>((*m)[2]), static_cast<float>((*m)[3]),
+                                      static_cast<float>((*m)[4]), static_cast<float>((*m)[5])};
+                style::css::length_context lengths;
+                lengths.font_size = at.box->font_size;
+                lengths.line_height = at.box->line_height;
+                lengths.viewport_width = static_cast<float>(viewport_width_);
+                lengths.viewport_height = static_cast<float>(viewport_height_);
+                style::css::color_context context;
+                context.lengths = &lengths;
+                const std::string origin = style::css::computed_transform_property(
+                    "transform-origin", cascade_value(at.source, "transform-origin"), context,
+                    box.width, box.height);
+                point pivot{box.width / 2, box.height / 2};
+                const auto parts = split_top_level(origin, html_whitespace);
+                if (parts.size() >= 2) {
+                    pivot = {layout::parse_length(parts[0]).resolve(box.width, lengths.font_size),
+                             layout::parse_length(parts[1]).resolve(box.height, lengths.font_size)};
+                }
+                const point shift{at.box->translate.x.resolve(box.width, lengths.font_size),
+                                  at.box->translate.y.resolve(box.height, lengths.font_size)};
+                matrix = transform::translation(-box.x - pivot.x, -box.y - pivot.y)
+                             .then(local)
+                             .then(transform::translation(box.x - shift.x + pivot.x,
+                                                          box.y - shift.y + pivot.y))
+                             .then(matrix);
             }
-            out.push_back(r);
+        }
+        if (at.source == self) {
+            rect selected = box;
+            const layout::resolved_edges e = layout::edges_of(at);
+            if (kind == "margin") {
+                selected = {box.x - at.margin_left, box.y - at.margin_top,
+                            box.width + at.margin_left + at.margin_right,
+                            box.height + at.margin_top + at.margin_bottom};
+            } else if (kind == "padding" || kind == "content") {
+                const float left = e.border_left + (kind == "content" ? e.pad_left : 0);
+                const float top = e.border_top + (kind == "content" ? e.pad_top : 0);
+                const float right = e.border_right + (kind == "content" ? e.pad_right : 0);
+                const float bottom = e.border_bottom + (kind == "content" ? e.pad_bottom : 0);
+                selected = {box.x + left, box.y + top, std::max(0.0f, box.width - left - right),
+                            std::max(0.0f, box.height - top - bottom)};
+            }
+            transform to_viewport = transform::translation(selected.x, selected.y).then(matrix);
+            if (!is_fixed) {
+                to_viewport = to_viewport.then(transform::translation(-viewport.x, -viewport.y));
+            }
+            out.push_back({rect{0, 0, selected.width, selected.height}, to_viewport});
         }
         point inner{box.x, box.y};
         if (at.box != nullptr && at.box->scroll_container && at.source) {
@@ -261,10 +311,28 @@ std::vector<rect> dom_bindings::client_rects_of(node_id self) {
             inner.y -= offset.y;
         }
         for (const layout::fragment & child : at.children) {
-            walk_(walk_, child, inner.x, inner.y, is_fixed);
+            walk_(walk_, child, inner.x, inner.y, is_fixed, matrix);
         }
     };
-    walk(walk, *fragments_, 0, 0, false);
+    walk(walk, *fragments_, 0, 0, false, transform{});
+    return out;
+}
+
+rect dom_bindings::box_geometry::bounding_rect() const {
+    const point origin = to_viewport.apply(0, 0);
+    const point x_axis{to_viewport.a * bounds.width, to_viewport.b * bounds.width};
+    const point y_axis{to_viewport.c * bounds.height, to_viewport.d * bounds.height};
+    return {origin.x + std::min(0.0f, x_axis.x) + std::min(0.0f, y_axis.x),
+            origin.y + std::min(0.0f, x_axis.y) + std::min(0.0f, y_axis.y),
+            std::abs(x_axis.x) + std::abs(y_axis.x), std::abs(x_axis.y) + std::abs(y_axis.y)};
+}
+
+std::vector<rect> dom_bindings::client_rects_of(node_id self) {
+    flush_layout();
+    std::vector<rect> out;
+    for (const box_geometry & box : client_boxes_of(self, "border")) {
+        out.push_back(box.bounding_rect());
+    }
     return out;
 }
 
@@ -323,21 +391,26 @@ void dom_bindings::install_element_geometry(context & cx) {
         std::string box = dict_string(c, options, "box");
         if (box.empty()) { box = "border"; }
         const value out = c.make_array();
-        const std::optional<rect> own = box_rect_of(c, c.current_this(), box);
-        if (!own) { return out; }
-        point origin{};
+        dom_bindings * owner = owner_of(c.current_this());
+        if (owner == nullptr) { return out; }
+        owner->flush_layout();
+        const auto own = owner->client_boxes_of(owner->handle_of(c.current_this()), box);
+        if (own.empty()) { return out; }
+        transform to_relative;
         if (const value relative = dict_member(c, options, "relativeTo");
             !relative.is_undefined()) {
-            const std::optional<rect> base = box_rect_of(c, relative, "border");
+            const auto base = box_geometry_of(relative, "border");
             if (!base) {
                 throw_dom_exception(c, "NotFoundError", "getBoxQuads: relativeTo has no box");
                 return value::undefined();
             }
-            origin = point{base->x, base->y};
+            to_relative = base->to_viewport.inverse();
         }
         auto * items = static_cast<script::array_object *>(out.as_heap());
-        items->items.push_back(
-            make_dom_quad(c, rect{own->x - origin.x, own->y - origin.y, own->width, own->height}));
+        for (const box_geometry & part : own) {
+            items->items.push_back(
+                make_dom_quad(c, part.bounds, part.to_viewport.then(to_relative)));
+        }
         return out;
     });
     // convertQuadFromNode / convertRectFromNode / convertPointFromNode: the
@@ -353,14 +426,15 @@ void dom_bindings::install_element_geometry(context & cx) {
                 std::string to_box = dict_string(c, options, "toBox");
                 if (from_box.empty()) { from_box = "border"; }
                 if (to_box.empty()) { to_box = "border"; }
-                const std::optional<rect> source = box_rect_of(c, from, from_box);
-                const std::optional<rect> target = box_rect_of(c, c.current_this(), to_box);
+                const auto source = box_geometry_of(from, from_box);
+                const auto target = box_geometry_of(c.current_this(), to_box);
                 if (!source || !target) {
                     throw_dom_exception(c, "NotFoundError",
                                         std::string{name} + ": the node has no box");
                     return value::undefined();
                 }
-                const point shift{source->x - target->x, source->y - target->y};
+                const transform conversion =
+                    source->to_viewport.then(target->to_viewport.inverse());
                 const value given = args.empty() ? value::undefined() : args[0];
                 const auto number = [&](value v, const char * member) {
                     const value held =
@@ -369,24 +443,26 @@ void dom_bindings::install_element_geometry(context & cx) {
                 };
                 const std::string_view which = name;
                 if (which == "convertPointFromNode") {
-                    return make_dom_point(c, number(given, "x") + shift.x,
-                                          number(given, "y") + shift.y);
+                    const point p = conversion.apply(static_cast<float>(number(given, "x")),
+                                                     static_cast<float>(number(given, "y")));
+                    return make_dom_point(c, p.x, p.y);
                 }
                 if (which == "convertRectFromNode") {
-                    return make_dom_quad(c, rect{static_cast<float>(number(given, "x") + shift.x),
-                                                 static_cast<float>(number(given, "y") + shift.y),
-                                                 static_cast<float>(number(given, "width")),
-                                                 static_cast<float>(number(given, "height"))});
+                    return make_dom_quad(c,
+                                         rect{static_cast<float>(number(given, "x")),
+                                              static_cast<float>(number(given, "y")),
+                                              static_cast<float>(number(given, "width")),
+                                              static_cast<float>(number(given, "height"))},
+                                         conversion);
                 }
                 const value quad = make_dom_quad(c, rect{});
                 auto * made = static_cast<script::object_object *>(quad.as_heap());
                 for (const char * corner : {"p1", "p2", "p3", "p4"}) {
                     const value p = given.is_object_like() ? c.lookup_property(given, corner)
                                                            : value::undefined();
-                    made->define(
-                        corner,
-                        make_dom_point(c, number(p, "x") + shift.x, number(p, "y") + shift.y),
-                        script::attr_none);
+                    const point mapped = conversion.apply(static_cast<float>(number(p, "x")),
+                                                          static_cast<float>(number(p, "y")));
+                    made->define(corner, make_dom_point(c, mapped.x, mapped.y), script::attr_none);
                 }
                 return quad;
             });

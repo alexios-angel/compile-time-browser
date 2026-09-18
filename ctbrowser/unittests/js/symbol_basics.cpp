@@ -27,6 +27,16 @@ int main() {
     js_expect("(function(){var s=Symbol();return s === s})()", "true");
     js_expect("Boolean(Symbol())", "true"); // truthy, like every non-falsy primitive
 
+    // A Symbol is a primitive even though the VM stores it on the heap.
+    js_expect(R"JS((function() {
+        var symbol = Symbol('x'), calls = '';
+        var object = {[Symbol.toPrimitive](hint) { calls += hint + ','; return symbol; }};
+        return [object == symbol, symbol == object, object != symbol,
+                symbol != object, symbol == Symbol('x'), symbol == 'Symbol(x)',
+                symbol == Object(symbol), calls].join(';');
+    })())JS",
+              "true;true;false;false;false;false;true;default,default,default,default,");
+
     // --- the well-known symbols -----------------------------------------------
     js_expect("typeof Symbol.iterator", "symbol");
     js_expect("typeof Symbol.asyncIterator", "symbol");

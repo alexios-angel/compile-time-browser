@@ -83,6 +83,7 @@ namespace ctbrowser::shell::detail {
 [[nodiscard]] std::string used_px_text(float value);
 [[nodiscard]] std::string color_text(color c);
 [[nodiscard]] std::optional<color> system_color(std::string_view text);
+[[nodiscard]] std::optional<std::array<double, 6>> transform_matrix(std::string_view text);
 [[nodiscard]] std::string transform_matrix_text(std::string_view text);
 [[nodiscard]] std::string collapse_keyword(std::string_view text);
 [[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box);
