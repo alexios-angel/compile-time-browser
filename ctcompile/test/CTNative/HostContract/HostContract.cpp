@@ -112,6 +112,30 @@ module {
               parsed->elementParameters == contract.elementParameters && parsed->roots.empty(),
           "DOM manifest declares only the selected function and its typed parameter positions");
     if (!parsed) { llvm::consumeError(parsed.takeError()); }
+    for (const auto provider : {"ctbrowser-dom-v1", "ctbrowser-dom-session-v1"}) {
+        for (const auto identities :
+             {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
+              "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",
+              "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]",
+              "[\"__ctbrowser_class_defined\",\"Error\",\"Error\"]"}) {
+            const auto request = replaced(
+                replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
+                (std::string("\"initial_intrinsics\":") + identities + ",\"element_parameters\""));
+            auto classes = parseHostContract(request);
+            const bool allowed =
+                std::string_view(identities) == "[\"__ctbrowser_class_defined\"]" ||
+                std::string_view(identities) == "[\"__ctbrowser_class_defined\",\"Error\"]" ||
+                std::string_view(identities) == "[\"Error\",\"__ctbrowser_class_defined\"]";
+            check(static_cast<bool>(classes) == allowed,
+                  "DOM class declarations allow only helper and optional unique Error");
+            if (classes) {
+                check(!DOMEntryAnalysis(*module, *classes).proved(),
+                      "class declarations require preparation before typed DOM admission");
+            } else {
+                llvm::consumeError(classes.takeError());
+            }
+        }
+    }
     for (llvm::StringRef change :
          {"[]", "[1]", "[0,0]", "[0,-1]", "[0,1.5]", "[4294967296]", "[\"0\"]", "null"}) {
         auto invalid = parseHostContract(replaced(json, "[0]", change));

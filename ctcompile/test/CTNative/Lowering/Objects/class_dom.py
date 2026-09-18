@@ -31,7 +31,15 @@ ELEMENT_CLASS = """class Button {
   }
   return new Button(element).press();
 """
+ERROR_CLASS = """class Shape {
+    static get NAME() { throw new Error('unused NAME'); }
+    constructor(element) { this.element = element; }
+    read() { return this.element.getAttribute('x') === null; }
+  }
+  return new Shape(element).read();
+"""
 CLASS_CASES = {
+    "class_error_unused": (ERROR_CLASS, "1000"),
     "class_key": (CLASS + READ, "1000"),
     "class_order": (
         CLASS + """  const saved = element.getAttribute(shape.read());
@@ -285,6 +293,18 @@ TWO_ELEMENT_CLASSES = {
     "method_transitive_bad_field_after_good",
 }
 CLASS_REFUSALS = {
+    "class_error_read": ERROR_CLASS.replace("  return new Shape", "  Shape.NAME; return new Shape"),
+    "class_error_replaced": ERROR_CLASS.replace(
+        "  return new Shape", "  Error = 9; return new Shape"
+    ),
+    "class_error_returned": ERROR_CLASS.replace("throw new Error", "return new Error"),
+    "class_error_message": ERROR_CLASS.replace("'unused NAME'", "ambient()"),
+    "class_error_unknown_effect": ERROR_CLASS.replace(
+        "  return new Shape", "  element.unknown(); return new Shape"
+    ),
+    "class_error_unused_read": ERROR_CLASS.replace(
+        "    read() {", "    unused() { return this.constructor.NAME; }\n    read() {"
+    ),
     "ambient_entry": CLASS + "  ambient();\n" + READ,
     "ambient_method": CLASS.replace("read() {", "unused() { ambient(); }\n    read() {") + READ,
     "prototype_replaced": CLASS
@@ -904,7 +924,8 @@ def main():
             request = dict(
                 contract,
                 provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1",
-                initial_intrinsics=["__ctbrowser_class_defined"],
+                initial_intrinsics=["__ctbrowser_class_defined"]
+                + (["Error"] if name.startswith("class_error_") else []),
             )
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
@@ -913,6 +934,22 @@ def main():
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))
+            # Preserve the original optional-Error requests as successful lowerings.
+            dom.lower(
+                args,
+                ir,
+                dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Error"]),
+                f"{name}-{owned}-extra-authority",
+            )
+            if name == "class_error_unused":
+                dom.lower(
+                    args,
+                    ir,
+                    dict(request, initial_intrinsics=["__ctbrowser_class_defined"]),
+                    f"{name}-{owned}-undeclared-error",
+                    success=False,
+                )
+                refusals += 1
             for control, changed in (
                 ("missing-entry", dict(request, entry="missing$999")),
                 ("missing-element", dict(request, element_parameters=[])),
@@ -923,8 +960,10 @@ def main():
                     dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Object"]),
                 ),
                 (
-                    "extra-authority",
-                    dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Error"]),
+                    "duplicate-error",
+                    dict(
+                        request, initial_intrinsics=["__ctbrowser_class_defined", "Error", "Error"]
+                    ),
                 ),
             ):
                 dom.lower(args, ir, changed, f"{name}-{owned}-{control}", success=False)

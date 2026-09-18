@@ -1465,17 +1465,22 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     };
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
-        contract.initialIntrinsics.size() != 1 ||
-        contract.initialIntrinsics.front() != host_detail::classDefinedIntrinsic ||
+        !llvm::is_contained(contract.initialIntrinsics, host_detail::classDefinedIntrinsic) ||
+        !(contract.initialIntrinsics.size() == 1 ||
+          (contract.initialIntrinsics.size() == 2 &&
+           llvm::is_contained(contract.initialIntrinsics, "Error"))) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.absentBindings.empty() || !contract.undefinedBindings.empty() ||
         !contract.realmOwnDataProperties.empty()) {
-        return refuse("DOM class initialization requires exactly the standard class helper");
+        return refuse("DOM class initialization requires the standard class helper and optional "
+                      "Error identity");
     }
     classInitialization proof{module, maxSteps};
     if (!proof.prove(contract, true)) { return refuse(proof.reason); }
     // Reuse the binding proof before consuming its declaration. This projected
-    // contract proves only helper identity; DOM parameters are proved later.
+    // contract proves helper and optional Error identity; DOM parameters are
+    // proved later. Referenced throwing getters retain their original bodies
+    // and must still pass the final typed DOM proof after rewriting.
     HostContract binding = contract;
     binding.provider = HostContract::Provider::closedSource;
     binding.elementParameters.clear();

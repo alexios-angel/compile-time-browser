@@ -156,8 +156,11 @@ calls expand; JSON aggregate behavior is unchanged.
 
 Class/DOM composition now reuses the complete original class proof in that private
 transaction. The public class pass remains closed-source-only with unused entry
-parameters. A DOM request may instead supply exactly `__ctbrowser_class_defined`;
-its binding is proved before consumption, and mixed intrinsic declarations refuse.
+parameters. A DOM request may supply `__ctbrowser_class_defined` and optional
+unique `Error`. Both bindings and complete original getter bodies are proved
+before their declarations are consumed. Unused literal-message Error getters
+may then disappear; referenced throws still require final typed DOM proof and
+currently refuse. Other mixed intrinsic declarations remain unsupported.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent

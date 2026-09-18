@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 25; ++control) {
+        for (unsigned control = 0; control < 35; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -448,6 +448,24 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                    control == 21 ? "key = {}" : "key = element.unknown()");
                 }
             }
+            if (control >= 25) {
+                source = "function guarded(element) { class Shape { "
+                         "static get NAME() { throw new Error('unused NAME'); } "
+                         "constructor(value) { this.element = value; } "
+                         "read() { return this.element.getAttribute('x'); } "
+                         "} const shape = new Shape(element); " +
+                         std::string(control == 30 ? "Shape.NAME; " : "") +
+                         std::string(control == 31 ? "element.unknown(); " : "") +
+                         "return shape.read() === null; }";
+                if (control == 27) { source += " Error = 9;"; }
+                if (control == 34) {
+                    source.insert(source.find("return shape.read()"), "Error = 9; ");
+                }
+                if (control == 28) { source.replace(source.find("throw new"), 9, "return new"); }
+                if (control == 29) {
+                    source.replace(source.find("'unused NAME'"), 13, "unknown()");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -458,15 +476,18 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             request.entry = guarded(*candidate).getSymName().str();
             request.elementParameters = {0};
             request.initialIntrinsics = {"__ctbrowser_class_defined"};
-            if (control == 2) { request.initialIntrinsics.push_back("Error"); }
+            if (control == 2 || (control >= 25 && control != 26)) {
+                request.initialIntrinsics.push_back("Error");
+            }
+            if (control == 33) { request.initialIntrinsics.push_back("Error"); }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
             auto error = ctnative::prepareDOMEntry(*candidate, request,
-                                                   control == 3                    ? 0
+                                                   control == 3 || control == 32   ? 0
                                                    : control == 4 || control == 17 ? 1000
                                                                                    : 100000);
-            if (control != 0 && control != 5 && control != 8 && control != 13 && control != 19 &&
-                control != 23) {
+            if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
+                control != 19 && control != 23 && control != 25) {
                 check(static_cast<bool>(error), "unproved class/DOM composition refuses");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&

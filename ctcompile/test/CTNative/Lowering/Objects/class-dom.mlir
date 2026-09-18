@@ -19,3 +19,5 @@
 // DefaultType keeps its original fresh-empty getter; unused formal defaults
 // retain effects and defaults run only for omitted or undefined arguments.
 // Unknown defaults still refuse when supplied arguments skip their execution.
+// Unused throwing NAME getters require declared Error identity and complete body proof.
+// Replaced bindings, escaping errors, effectful messages and live throws still refuse.
