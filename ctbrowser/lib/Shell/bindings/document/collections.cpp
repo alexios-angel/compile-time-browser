@@ -581,6 +581,8 @@ value dom_bindings::make_live_collection(context & cx,
                      refresh(c);
                      const std::string key = c.to_string(args[1]);
                      if (const std::optional<std::size_t> at = whole_index(key)) {
+                         constexpr std::size_t max_index = 1000000;
+                         if (*at > max_index) { return value::undefined(); }
                          return *at < held->members.size() ? member(c, held->members[*at])
                                                            : value::undefined();
                      }
@@ -645,9 +647,13 @@ value dom_bindings::make_live_collection(context & cx,
                      if (args.empty() || !args[0].is_object()) { return out; }
                      refresh(c);
                      auto & items = static_cast<script::array_object *>(out.as_heap())->items;
+                     std::size_t count = 0;
+                     constexpr std::size_t max_keys = 1000000;
                      static_cast<script::object_object *>(args[0].as_heap())
                          ->each_own_key([&](const std::string & key) {
-                             if (!key.starts_with("@@")) { items.push_back(c.string(key)); }
+                             if (!key.starts_with("@@") && count++ < max_keys) {
+                                 items.push_back(c.string(key));
+                             }
                          });
                      return out;
                  }));

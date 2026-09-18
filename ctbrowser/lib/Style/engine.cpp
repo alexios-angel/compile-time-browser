@@ -1291,29 +1291,28 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     //   revert-layer, revert-rule
     //             likewise, one layer or one rule back - see rolled_back
     //
-    // THE ROLLBACKS ARE ANSWERED FROM THE SORTED MATCHES rather than from
-    // intermediate states of the fold: the value with some set of
-    // declarations removed is the last remaining declaration of the property
-    // in cascade order, and the matches are already in that order. `folding`
-    // is the position in it of the rule being applied, or the size for the
-    // style attribute, which every rule precedes.
+    // Rollbacks search the declarations produced by the fold, after variable
+    // substitution, shorthand expansion and logical-to-physical mapping. The
+    // raw rule may say `margin` or `margin-block`, neither of which would match
+    // a rollback of `margin-top`. Keep the rule index for origin/layer tests.
+    std::vector<std::pair<std::size_t, declaration>> applied;
+    // `folding` is the current rule's position, or the size for inline style.
     std::size_t folding = matches_.size();
-    // The last declaration of `property` before `limit` that `keep` admits,
-    // or the size when there is none.
-    const auto rolled_back = [this](atom property, std::size_t limit, const auto & keep) {
-        for (std::size_t i = limit; i-- > 0;) {
-            const rule & r = matches_[i];
-            if (keep(r) && declarations_[r.declaration].property == property) { return i; }
+    const auto rolled_back = [this, &applied](atom property, std::size_t limit, const auto & keep) {
+        for (std::size_t i = applied.size(); i-- > 0;) {
+            const auto & [at, d] = applied[i];
+            if (at < limit && d.property == property && keep(matches_[at])) { return i; }
         }
-        return matches_.size();
+        return applied.size();
     };
-    const auto put = [&out, &parent, &folding, &rolled_back, this](const declaration & d) {
+    const auto put = [&out, &parent, &folding, &rolled_back, &applied,
+                      this](const declaration & d) {
         std::string value = d.value;
         const std::string_view property = atoms_->text(d.property);
         // THE ROLLBACK KEYWORDS, each the cascade with some declarations
         // struck out (CSS Cascade 5 §7.3): `revert` strikes the author origin,
-        // so the answer is the last user-agent declaration - the whole list,
-        // since important UA rules sort after the author's; `revert-layer`
+        // so the answer is the last user-agent declaration (important UA
+        // rules that sort after the author's still apply later); `revert-layer`
         // strikes the current layer of the current origin, the style
         // attribute counting as a layer above all of them; `revert-rule` (a
         // Cascade 6 draft) strikes the current rule - the declarations filed
@@ -1321,7 +1320,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // itself, so this loops, always to an earlier position.
         std::size_t at = folding;
         for (int guard = 0; guard < 16; ++guard) {
-            std::size_t found = matches_.size();
+            std::size_t found = applied.size();
             if (value == "revert") {
                 found = rolled_back(d.property, matches_.size(),
                                     [](const rule & r) { return r.origin == 0; });
@@ -1340,12 +1339,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             } else {
                 break;
             }
-            if (found == matches_.size()) {
+            if (found == applied.size()) {
                 value = "unset";
                 break;
             }
-            at = found;
-            value = declarations_[matches_[found].declaration].value;
+            at = applied[found].first;
+            value = applied[found].second.value;
+        }
+        if (folding < matches_.size()) {
+            applied.emplace_back(folding, declaration{d.property, value});
         }
         if (value == "inherit") {
             value = std::string{parent ? parent->get(d.property) : std::string_view{}};
@@ -1550,6 +1552,33 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         return function_of(atoms_->intern(name));
     };
 
+    // EVERY SHORTHAND expand_shorthand DOES NOT SPLIT goes through the CSSOM's
+    // declaration block, which knows each one's grammar
+    // (properties/shorthands.cpp): `font`, `white-space`, `animation`, the
+    // flow-relative margins, insets and borders, `place-*`, `columns` ... What
+    // comes back is validated and canonical; a value the grammar refuses, or a
+    // shape the block keeps whole, is an empty block and the declaration
+    // stays as it was.
+    const auto split_via_block = [](std::string_view name, std::string_view text) {
+        css::declaration_block block;
+        if (css::longhands_of(name).empty()) { return block; } // a longhand
+        (void)css::set_declaration(block, name, text, false);
+        if (block.size() == 1 && ascii_iequals(block[0].name, name)) { block.clear(); }
+        return block;
+    };
+    // A `font` shorthand carries a font-size and a line-height of its own,
+    // and the two pre-passes below need those before pass two splits it.
+    const atom font_ = atoms_->intern_lower("font");
+    const auto component_of = [&](const declaration & d,
+                                  atom wanted) -> std::optional<std::string> {
+        if (d.property == wanted) { return d.value; }
+        if (d.property != font_ || css::may_have_var(d.value)) { return std::nullopt; }
+        for (const css::declaration & one : split_via_block("font", d.value)) {
+            if (atoms_->intern_lower(one.name) == wanted) { return one.value; }
+        }
+        return std::nullopt;
+    };
+
     // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
     //
     // `em` means the element's own font size on every property except font-size
@@ -1633,8 +1662,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             read.push_back(atoms_->intern(name));
         };
         fold([&](const declaration & d) {
-            if (d.property != font_size_) { return; }
-            std::string value{d.value};
+            const std::optional<std::string> held = component_of(d, font_size_);
+            if (!held) { return; }
+            std::string value{*held};
             if (css::may_have_var(value)) {
                 read.clear();
                 const std::optional<std::string> done =
@@ -1718,8 +1748,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         conditions.lengths = ctx;
         conditions.property = "line-height";
         fold([&](const declaration & d) {
-            if (d.property != line_height_) { return; }
-            std::string value{d.value};
+            const std::optional<std::string> held = component_of(d, line_height_);
+            if (!held) { return; }
+            std::string value{*held};
             if (css::may_have_var(value)) {
                 const std::optional<std::string> done =
                     css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
@@ -1752,25 +1783,53 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // `vi`/`vb` swap axes in a vertical one (CSS Values 4 §6.1.2), and the
     // property inherits, so the parent's answer stands until a declaration
     // says otherwise - a keyword, never a length, so nothing to fold.
-    bool vertical = parent && parent->inherited &&
-                    !parent->inherited->get(writing_mode_).starts_with("horizontal") &&
-                    !parent->inherited->get(writing_mode_).empty();
-    fold([&](const declaration & d) {
-        if (d.property != writing_mode_) { return; }
-        const std::string_view text = trim(d.value, html_whitespace);
-        if (css::may_have_var(text)) { return; }
-        // `initial` is horizontal-tb; the other wide keywords keep the
-        // parent's answer on an inherited property.
-        if (ascii_iequals(text, "initial")) {
-            vertical = false;
-            return;
+    // ...AND ITS DIRECTION, settled the same way: the two together decide
+    // which physical side a logical property lands on (CSS Logical 1 §2).
+    const auto inherited_keyword = [&](atom property, std::string_view initial) {
+        std::string held;
+        if (parent && parent->inherited) {
+            held = ascii_lower_copy(parent->inherited->get(property));
         }
-        if (css::is_wide_keyword(text)) { return; }
-        const std::string lowered = ascii_lower_copy(text);
-        vertical = lowered.starts_with("vertical-") || lowered.starts_with("sideways-");
-    });
+        if (held.empty()) { held = initial; }
+        fold([&](const declaration & d) {
+            if (d.property != property) { return; }
+            const std::string_view text = trim(d.value, html_whitespace);
+            if (css::may_have_var(text)) { return; }
+            // `initial` is the initial value; the other wide keywords keep
+            // the parent's answer on an inherited property.
+            if (ascii_iequals(text, "initial")) {
+                held = initial;
+                return;
+            }
+            if (css::is_wide_keyword(text)) { return; }
+            held = ascii_lower_copy(text);
+        });
+        return held;
+    };
+    const std::string writing_mode = inherited_keyword(writing_mode_, "horizontal-tb");
+    const std::string direction = inherited_keyword(atoms_->intern_lower("direction"), "ltr");
+    const bool vertical =
+        writing_mode.starts_with("vertical-") || writing_mode.starts_with("sideways-");
     css::length_context lengths = font_context(own_font_size, own_line_height, own_zero_advance);
     lengths.vertical = vertical;
+    // THE LOGICAL -> PHYSICAL MAPPING, CSS Logical 1 §4. A flow-relative
+    // property is stored as the physical one it maps to on THIS element, at
+    // the declaration's own position in the fold: `margin-left: 1px;
+    // margin-inline-start: 2px` is 2px in ltr and the reverse order is 1px -
+    // whichever spelling of the logical property group came later wins - and
+    // layout and getComputedStyle only ever read the physical side. A
+    // property that is not logical maps to itself.
+    const auto physical = [&](atom property) -> atom {
+        const std::string_view name = atoms_->text(property);
+        if (name.find("block") == std::string_view::npos &&
+            name.find("inline") == std::string_view::npos &&
+            name.find("start") == std::string_view::npos &&
+            name.find("end") == std::string_view::npos) {
+            return property; // nothing flow-relative in the name
+        }
+        const std::string mapped = css::physical_property_of(name, writing_mode, direction);
+        return mapped.empty() ? property : atoms_->intern_lower(mapped);
+    };
     // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
     // `line-height: 2lh` folded against its own answer would double it -
     // and `line_height_lengths` above is what that property folds with; and
@@ -1867,7 +1926,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // whenever an earlier declaration set the same property, and which one
         // is right depends on when the value became invalid - see both callers.
         const auto unset = [&] {
-            const auto erase = [&out](atom property_to_erase) {
+            const auto erase = [&](atom property_to_erase) {
+                if (folding < matches_.size()) {
+                    applied.emplace_back(folding, declaration{property_to_erase, "unset"});
+                }
                 for (std::size_t i = 0; i < out.size(); ++i) {
                     if (out[i].property == property_to_erase) {
                         out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
@@ -1883,7 +1945,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 erase(atoms_->intern("overflow-x"));
                 erase(atoms_->intern("overflow-y"));
             } else {
-                erase(d.property);
+                erase(physical(d.property));
             }
         };
         const bool had_var = css::may_have_var(value);
@@ -1935,6 +1997,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 value = std::move(checked.serialized);
             }
         }
+        // ...BUT THE DECLARATION BLOCK SPLITS THE UNFOLDED VALUE: its grammars
+        // take a math function as a component, and each longhand's is folded
+        // below against the LONGHAND's own bases and range - a shorthand has
+        // neither (`border-block-width: 3px calc(10px - 0.5em)` is 3px and a
+        // width clamped to 0px, not a refused `-10px`).
+        const std::string unfolded = value;
         // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
         // argument as the shorthands: `-1 * var(x)` has no arithmetic to do
         // before substitution, and `border: calc(var(w) * 2) solid red` cannot
@@ -2006,14 +2074,43 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // computes to `0.012s` and `rotate: 100grad` to `90deg` (CSS Values 4
         // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
         // and still answers `96px` for `1in`.
-        const auto folded = [&](std::string text) {
-            if (auto canonical = css::canonical_dimension_text(text, lengths_for(d.property))) {
+        const auto folded = [&](std::string text, atom longhand) {
+            if (auto canonical = css::canonical_dimension_text(text, lengths_for(longhand))) {
                 return std::move(*canonical);
             }
             return text;
         };
         const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {
+            if (const css::declaration_block block = split_via_block(property, unfolded);
+                !block.empty()) {
+                for (const css::declaration & one : block) {
+                    const atom longhand = atoms_->intern_lower(one.name);
+                    std::string text = one.value;
+                    if (longhand == font_size_ && font_size_resolved) {
+                        // The size a `font` carries was resolved by the pre-pass.
+                        text = css::serialize_calc(css::calc_result{own_font_size, 0.0f, false});
+                    } else if (css::may_have_math(text)) {
+                        css::length_context bases = lengths_for(longhand);
+                        bases.property = one.name;
+                        const css::folded_value done =
+                            css::fold_math(text, bases, css::math_context_of(one.name));
+                        if (done.ok) { text = std::move(done.text); }
+                        if (const css::property_syntax * known = css::find_property(one.name);
+                            known != nullptr && known->nonnegative) {
+                            text = css::non_negative(text);
+                        }
+                    }
+                    put(declaration{physical(longhand), folded(std::move(text), longhand)});
+                }
+                // ponytail: layout reads `white-space` itself (layout/box.hpp),
+                // so the shorthand's canonical value stays beside its longhands
+                // until it reads white-space-collapse and text-wrap-mode.
+                if (property == "white-space") {
+                    put(declaration{d.property, css::declaration_value(block, property)});
+                }
+                return;
+            }
             // A substituted token stream is validated only now. If it is
             // not overflow grammar, the winning shorthand is invalid at
             // computed-value time and resets both axes; a parse-time
@@ -2022,11 +2119,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 unset();
                 return;
             }
-            put(declaration{d.property, folded(std::move(value))});
+            put(declaration{physical(d.property), folded(std::move(value), d.property)});
             return;
         }
         for (const auto & [name, text] : expanded) {
-            put(declaration{atoms_->intern_lower(name), folded(std::string{text})});
+            const atom longhand = atoms_->intern_lower(name);
+            put(declaration{physical(longhand), folded(std::string{text}, longhand)});
         }
     });
 

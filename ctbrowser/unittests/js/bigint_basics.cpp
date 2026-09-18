@@ -100,6 +100,51 @@ int main() {
     js_expect("typeof BigInt", "function");
     js_expect("Number(1n)", "1"); // the EXPLICIT conversion, which is permitted
 
+    // Constructor coercion uses the number hint exactly once, before ToBigInt.
+    js_expect("BigInt(Object(42))", "42");
+    js_expect("BigInt(Object(42n))", "42");
+    js_expect("BigInt.call({}, 42)", "42");
+    js_expect(R"JS((function() {
+        var calls = 0, hint;
+        var result = BigInt({[Symbol.toPrimitive](h) { ++calls; hint = h; return '42'; }});
+        return [result, calls, hint].join(',');
+    })())JS",
+              "42,1,number");
+    js_expect(R"JS((function() {
+        var calls = '';
+        var result = BigInt({valueOf() { calls += 'v'; return {}; },
+                             toString() { calls += 's'; return '42'; }});
+        return result + ':' + calls;
+    })())JS",
+              "42:vs");
+    js_expect(R"JS((function() {
+        var marker = {};
+        try { BigInt({valueOf() { throw marker; }, toString() { throw 1; }}); }
+        catch (e) { return e === marker; }
+    })())JS",
+              "true");
+    js_expect(R"JS((function() {
+        var calls = 0;
+        try { BigInt({valueOf() { ++calls; return Infinity; }}); }
+        catch (e) { return e.name + ':' + calls; }
+    })())JS",
+              "RangeError:1");
+    js_expect("(255n).toString(undefined)", "255");
+    js_expect("(255n).toString(16.9)", "ff");
+    js_expect("(255n).toString({valueOf() { return 16; }})", "ff");
+    js_expect(R"JS((function() {
+        var marker = {};
+        try { (1n).toString({valueOf() { throw marker; }}); }
+        catch (e) { return e === marker; }
+    })())JS",
+              "true");
+    js_expect(R"JS((function() {
+        var calls = 0;
+        try { BigInt.prototype.toString.call(1, {valueOf() { ++calls; return 16; }}); }
+        catch (e) { return e.name + ':' + calls; }
+    })())JS",
+              "TypeError:0");
+
     // --- the refusals, which are the safety property --------------------------
     // Mixing a BigInt with a Number in arithmetic is a TypeError. An engine
     // that coerced instead would round at exactly the point the type was
@@ -132,6 +177,21 @@ int main() {
     throws("BigInt(1.5)", "RangeError");
     throws("BigInt(NaN)", "RangeError");
     throws("BigInt(\"zz\")", "SyntaxError");
+    throws("BigInt()", "TypeError");
+    throws("BigInt(null)", "TypeError");
+    throws("BigInt(Symbol())", "TypeError");
+    throws("BigInt({valueOf() { return null; }})", "TypeError");
+    throws("BigInt({valueOf() { return 1.5; }})", "RangeError");
+    throws("BigInt({valueOf() { return 'zz'; }})", "SyntaxError");
+    throws("BigInt({[Symbol.toPrimitive]() { return {}; }})", "TypeError");
+    for (const char * radix : {"0", "1", "37", "NaN", "Infinity", "-Infinity", "null"}) {
+        const std::string expression = "(1n).toString(" + std::string{radix} + ")";
+        throws(expression.c_str(), "RangeError");
+    }
+    throws("(1n).toString(Symbol())", "TypeError");
+    throws("(1n).toString(2n)", "TypeError");
+    throws("(1n).toString({valueOf() { return Symbol(); }})", "TypeError");
+    throws("(1n).toString({valueOf() { return 2n; }})", "TypeError");
 
     // 21.2.2.1-2 asIntN / asUintN: the value modulo 2^bits, two's complement
     // for the signed form; ToBigInt refuses a Number where BigInt() converts.

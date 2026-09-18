@@ -369,7 +369,9 @@ public:
         for (const std::string_view name : names) {
             if (name == property) { return true; }
         }
-        return false;
+        // The `white-space` shorthand's inherited longhands (CSS Text 4 §3).
+        return property == "white-space-collapse" || property == "text-wrap-mode" ||
+               property == "text-wrap-style";
     }
 
     // --- the single-element path -------------------------------------------

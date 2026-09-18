@@ -14,6 +14,7 @@
 #include "internal.hpp"
 
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/easing.hpp>
 
 namespace ctbrowser::style::css {
 
@@ -23,19 +24,27 @@ namespace {
 
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
 enum class shape : std::uint8_t {
-    sides,      // 1-4 values: top, right, bottom, left, in `margin`'s way
-    pair,       // 1-2 values: start/end, x/y or row/column; one sets both
-    place,      // `place-*`: an align value then a justify one, each of several words
-    grid_lines, // grid-row / grid-column / grid-area: `/`-separated grid lines
-    slash_pair, // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
-    bar,        // `a || b || c`: each part goes to the longhand that takes it
-    flex,       // Flexbox 1 §7.1.1's own defaults
-    font,       // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
-    border,     // `bar` over width/style/color, applied to four sides, plus
-                // border-image reset to its initial values
-    all,        // every longhand; CSS-wide keywords only
-    whole,      // a grammar this table does not split: only a CSS-wide keyword
-                // reaches the longhands, and only one folds back
+    sides,       // 1-4 values: top, right, bottom, left, in `margin`'s way
+    pair,        // 1-2 values: start/end, x/y or row/column; one sets both
+    place,       // `place-*`: an align value then a justify one, each of several words
+    grid_lines,  // grid-row / grid-column / grid-area: `/`-separated grid lines
+    slash_pair,  // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
+    bar,         // `a || b || c`: each part goes to the longhand that takes it
+    flex,        // Flexbox 1 §7.1.1's own defaults
+    font,        // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
+    border,      // `bar` over width/style/color, applied to four sides, plus
+                 // border-image reset to its initial values
+    border_axis, // `border-block` / `border-inline`: `bar` over width/style/
+                 // color applied to the axis's two sides (CSS Logical 1 §4.4)
+    white_space, // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
+                 // || <'text-wrap-mode'> || <'white-space-trim'>`
+    animation,   // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
+                 // first <time> is the duration and the second the delay, an
+                 // easing, a count, and the keywords of direction, fill mode
+                 // and play state before anything is a name
+    all,         // every longhand; CSS-wide keywords only
+    whole,       // a grammar this table does not split: only a CSS-wide keyword
+                 // reaches the longhands, and only one folds back
 };
 
 struct shorthand_syntax {
@@ -77,6 +86,30 @@ constexpr shorthand_syntax table[] = {
     {"border-bottom", shape::bar, "border-bottom-width border-bottom-style border-bottom-color",
      "none"},
     {"border-left", shape::bar, "border-left-width border-left-style border-left-color", "none"},
+    // The flow-relative borders, CSS Logical 1 §4.4: a side, an axis's two
+    // sides, and one component across an axis.
+    {"border-block-start", shape::bar,
+     "border-block-start-width border-block-start-style border-block-start-color", "none"},
+    {"border-block-end", shape::bar,
+     "border-block-end-width border-block-end-style border-block-end-color", "none"},
+    {"border-inline-start", shape::bar,
+     "border-inline-start-width border-inline-start-style border-inline-start-color", "none"},
+    {"border-inline-end", shape::bar,
+     "border-inline-end-width border-inline-end-style border-inline-end-color", "none"},
+    {"border-block", shape::border_axis,
+     "border-block-start-width border-block-start-style border-block-start-color "
+     "border-block-end-width border-block-end-style border-block-end-color",
+     "none"},
+    {"border-inline", shape::border_axis,
+     "border-inline-start-width border-inline-start-style border-inline-start-color "
+     "border-inline-end-width border-inline-end-style border-inline-end-color",
+     "none"},
+    {"border-block-width", shape::pair, "border-block-start-width border-block-end-width", ""},
+    {"border-block-style", shape::pair, "border-block-start-style border-block-end-style", ""},
+    {"border-block-color", shape::pair, "border-block-start-color border-block-end-color", ""},
+    {"border-inline-width", shape::pair, "border-inline-start-width border-inline-end-width", ""},
+    {"border-inline-style", shape::pair, "border-inline-start-style border-inline-end-style", ""},
+    {"border-inline-color", shape::pair, "border-inline-start-color border-inline-end-color", ""},
     {"outline", shape::bar, "outline-color outline-style outline-width", "none"},
     {"flex", shape::flex, "flex-grow flex-shrink flex-basis", ""},
     {"flex-flow", shape::bar, "flex-direction flex-wrap", "row"},
@@ -106,6 +139,8 @@ constexpr shorthand_syntax table[] = {
     {"column-rule", shape::bar, "column-rule-width column-rule-style column-rule-color", "medium"},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
+    {"white-space", shape::white_space, "white-space-collapse text-wrap-mode white-space-trim",
+     "normal"},
     {"grid-row", shape::grid_lines, "grid-row-start grid-row-end", ""},
     {"grid-column", shape::grid_lines, "grid-column-start grid-column-end", ""},
     {"grid-area", shape::grid_lines,
@@ -124,8 +159,11 @@ constexpr shorthand_syntax table[] = {
      "text-decoration-line text-decoration-style text-decoration-color", ""},
     {"transition", shape::whole,
      "transition-property transition-duration transition-timing-function transition-delay", ""},
-    {"animation", shape::whole,
-     "animation-name animation-duration animation-delay animation-iteration-count", ""},
+    {"animation", shape::animation,
+     "animation-duration animation-timing-function animation-delay animation-iteration-count "
+     "animation-direction animation-fill-mode animation-play-state animation-name "
+     "animation-timeline animation-range-start animation-range-end",
+     "none"},
     {"border-radius", shape::whole,
      "border-top-left-radius border-top-right-radius border-bottom-right-radius "
      "border-bottom-left-radius",
@@ -415,6 +453,172 @@ split split_border(std::span<const std::string_view> parts, std::vector<std::str
     return split::ok;
 }
 
+// `border-block` / `border-inline`: width || style || color on the axis's
+// start side, copied to its end side.
+split split_border_axis(const expansion & e, std::span<const std::string_view> parts,
+                        std::vector<std::string> & out) {
+    const expansion * start = expansion_of(e.longhands[0].substr(0, e.longhands[0].size() - 6));
+    std::vector<std::string> one;
+    const split result = split_bar(*start, parts, one);
+    if (result != split::ok) { return result; }
+    out = one;
+    out.insert(out.end(), one.begin(), one.end());
+    return split::ok;
+}
+
+// CSS Text 4 §3.1: the six `white-space` keywords as their collapse and wrap
+// longhands; each has `white-space-trim: none`.
+constexpr std::array<std::string_view, 3> white_space_keywords[] = {
+    {"normal", "collapse", "wrap"},           {"pre", "preserve", "nowrap"},
+    {"nowrap", "collapse", "nowrap"},         {"pre-wrap", "preserve", "wrap"},
+    {"break-spaces", "break-spaces", "wrap"}, {"pre-line", "preserve-breaks", "wrap"},
+};
+
+// `white-space`: a keyword of the table, or the three longhands in any order,
+// each at most once; the trim's `discard-*` words serialise in grammar order.
+split split_white_space(std::span<const std::string_view> parts, std::vector<std::string> & out) {
+    if (parts.empty()) { return split::invalid; }
+    if (parts.size() == 1) {
+        for (const auto & [keyword, collapse, mode] : white_space_keywords) {
+            if (ascii_iequals(parts[0], keyword)) {
+                out = {std::string{collapse}, std::string{mode}, "none"};
+                return split::ok;
+            }
+        }
+    }
+    static constexpr std::string_view trims = "discard-before discard-after discard-inner";
+    const std::string_view collapses = find_property("white-space-collapse")->keywords;
+    std::string collapse, mode, trim;
+    std::vector<std::string> discards;
+    for (const std::string_view part : parts) {
+        const std::string word = ascii_lower_copy(part);
+        const bool discard = std::find(discards.begin(), discards.end(), word) != discards.end();
+        if (collapse.empty() && has_keyword(collapses, word)) {
+            collapse = word;
+        } else if (mode.empty() && (word == "wrap" || word == "nowrap")) {
+            mode = word;
+        } else if (trim.empty() && discards.empty() && word == "none") {
+            trim = word;
+        } else if (trim.empty() && !discard && has_keyword(trims, word)) {
+            discards.push_back(word);
+        } else {
+            return split::invalid;
+        }
+    }
+    for (const std::string_view canonical : split_top_level(trims, " ")) {
+        if (std::find(discards.begin(), discards.end(), canonical) == discards.end()) { continue; }
+        trim += (trim.empty() ? "" : " ") + std::string{canonical};
+    }
+    out = {collapse.empty() ? "collapse" : collapse, mode.empty() ? "wrap" : mode,
+           trim.empty() ? "none" : trim};
+    return split::ok;
+}
+
+// The eight per-item longhands of `animation`, in the shorthand's canonical
+// order, with what an omitted one is. The three after them - timeline and the
+// range - are reset to their initial values by the shorthand and take no
+// value from it (CSS Animations 2 §5.9).
+constexpr std::array<std::pair<std::string_view, std::string_view>, 8> animation_items = {
+    {{"animation-duration", "auto"},
+     {"animation-timing-function", "ease"},
+     {"animation-delay", "0s"},
+     {"animation-iteration-count", "1"},
+     {"animation-direction", "normal"},
+     {"animation-fill-mode", "none"},
+     {"animation-play-state", "running"},
+     {"animation-name", "none"}}};
+
+[[nodiscard]] bool animation_default(std::size_t i, std::string_view text) {
+    return ascii_iequals(text, animation_items[i].second) || (i == 0 && ascii_iequals(text, "0s"));
+}
+
+// An easing function with its arguments respaced: `cubic-bezier( 0, -2, 1, 3 )`
+// is `cubic-bezier(0, -2, 1, 3)`. A keyword is itself.
+[[nodiscard]] std::string canonical_easing(std::string text) {
+    const std::size_t open = text.find('(');
+    if (open == std::string::npos || text.back() != ')') { return text; }
+    std::string out = ascii_lower_copy(text.substr(0, open + 1));
+    const std::string_view inner{text.data() + open + 1, text.size() - open - 2};
+    bool first = true;
+    for (const std::string_view argument : split_top_level(inner, ",")) {
+        out += (first ? "" : ", ") + std::string{trim(argument, html_whitespace)};
+        first = false;
+    }
+    return out + ")";
+}
+
+// `animation`: one `<single-animation>` per comma, each component to the
+// first longhand of its kind not yet given - the times in order, the
+// keywords of the typed longhands before the name takes what is left.
+split split_animation(std::string_view value, std::vector<std::string> & out) {
+    std::array<std::string, 8> lists;
+    for (const std::string_view item : split_top_level(value, ",")) {
+        std::array<std::string, 8> v;
+        std::array<bool, 8> given{};
+        for (std::size_t i = 0; i < 8; ++i) { v[i] = animation_items[i].second; }
+        const std::vector<std::string_view> parts =
+            split_top_level(trim(item, html_whitespace), " \t\n\r\f");
+        if (parts.empty()) { return split::invalid; }
+        for (const std::string_view part : parts) {
+            const auto take = [&](std::size_t i, std::string text) {
+                v[i] = std::move(text);
+                given[i] = true;
+            };
+            const value_check time = check_declaration("animation-delay", part, false);
+            if (time.valid && !is_wide_keyword(time.serialized)) {
+                if (!given[0]) {
+                    // The first <time> is the duration, which a negative
+                    // one cannot be: `animation: -1s -2s` is refused.
+                    if (!check_declaration("animation-duration", part, false).valid) {
+                        return split::invalid;
+                    }
+                    take(0, time.serialized);
+                } else if (!given[2]) {
+                    take(2, time.serialized);
+                } else {
+                    return split::invalid;
+                }
+                continue;
+            }
+            if (!given[1] && parse_easing(part)) {
+                take(1,
+                     canonical_easing(
+                         check_declaration("animation-timing-function", part, false).serialized));
+                continue;
+            }
+            const value_check count = check_declaration("animation-iteration-count", part, false);
+            if (!given[3] && count.valid && !is_wide_keyword(count.serialized)) {
+                take(3, count.serialized);
+                continue;
+            }
+            bool keyword = false;
+            for (const std::size_t i : {std::size_t{4}, std::size_t{5}, std::size_t{6}}) {
+                if (given[i] ||
+                    !has_keyword(find_property(animation_items[i].first)->keywords, part)) {
+                    continue;
+                }
+                take(i, ascii_lower_copy(part));
+                keyword = true;
+                break;
+            }
+            if (keyword) { continue; }
+            const value_check name = check_declaration("animation-name", part, false);
+            if (given[7] || !name.valid || is_wide_keyword(name.serialized) ||
+                name.serialized.find(',') != std::string::npos) {
+                return split::invalid;
+            }
+            take(7, name.serialized);
+        }
+        for (std::size_t i = 0; i < 8; ++i) { lists[i] += (lists[i].empty() ? "" : ", ") + v[i]; }
+    }
+    if (lists[0].empty()) { return split::invalid; }
+    out.assign(lists.begin(), lists.end());
+    for (std::size_t i = 8; i < 11; ++i) {
+        out.emplace_back(initial_of(longhands_of("animation")[i]));
+    }
+    return split::ok;
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
@@ -459,6 +663,9 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::bar: return split_bar(e, parts, out);
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
+    case shape::border_axis: return split_border_axis(e, parts, out);
+    case shape::white_space: return split_white_space(parts, out);
+    case shape::animation: return split_animation(value, out);
     case shape::font: return split_font(parts, out);
     case shape::all:
     case shape::whole: break;
@@ -487,11 +694,34 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
 }
 
 // `font`, folded: the keywords that are not `normal`, the size, ` / ` and
-// the line-height when it is not `normal`, then the family.
+// the line-height when it is not `normal`, then the family - CSS Fonts 4
+// §3.1's canonical form, which getComputedStyle reads back too, so the
+// COMPUTED spellings of the four are folded as well: a weight of `400` is
+// the initial, a stretch is one of the nine percentages the shorthand can
+// only spell as its keyword, and one it cannot spell makes the whole
+// unrepresentable.
 [[nodiscard]] std::string fold_font(std::span<const std::string> v) {
+    static constexpr std::pair<std::string_view, std::string_view> stretches[] = {
+        {"50%", "ultra-condensed"},  {"62.5%", "extra-condensed"}, {"75%", "condensed"},
+        {"87.5%", "semi-condensed"}, {"112.5%", "semi-expanded"},  {"125%", "expanded"},
+        {"150%", "extra-expanded"},  {"200%", "ultra-expanded"}};
     std::vector<std::string> parts;
     for (std::size_t i = 0; i < 4; ++i) {
-        if (!ascii_iequals(v[i], "normal")) { parts.push_back(v[i]); }
+        if (ascii_iequals(v[i], "normal")) { continue; }
+        if (i == 2 && v[i] == "400") { continue; }
+        if (i == 3) {
+            if (v[i] == "100%") { continue; }
+            bool keyword = false;
+            for (const auto & [percentage, name] : stretches) {
+                if (v[i] == percentage) {
+                    parts.emplace_back(name);
+                    keyword = true;
+                }
+            }
+            if (keyword) { continue; }
+            if (v[i].ends_with('%')) { return {}; }
+        }
+        parts.push_back(v[i]);
     }
     parts.push_back(v[4]);
     if (!ascii_iequals(v[5], "normal")) {
@@ -501,6 +731,51 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     if (v[6].empty()) { return {}; }
     parts.push_back(v[6]);
     return join(parts);
+}
+
+// `white-space`, folded: the keyword the longhands spell, else the parts that
+// are not initial (`preserve-breaks nowrap`), else `normal`.
+[[nodiscard]] std::string fold_white_space(std::span<const std::string> v) {
+    if (ascii_iequals(v[2], "none")) {
+        for (const auto & [keyword, collapse, mode] : white_space_keywords) {
+            if (ascii_iequals(v[0], collapse) && ascii_iequals(v[1], mode)) {
+                return std::string{keyword};
+            }
+        }
+    }
+    std::vector<std::string> parts;
+    if (!ascii_iequals(v[0], "collapse")) { parts.push_back(v[0]); }
+    if (!ascii_iequals(v[1], "wrap")) { parts.push_back(v[1]); }
+    if (!ascii_iequals(v[2], "none")) { parts.push_back(v[2]); }
+    return parts.empty() ? std::string{"normal"} : join(parts);
+}
+
+// `animation`, folded: per item, the components that are not their defaults in the
+// canonical order - a delay carries the duration before it, so the one time
+// is not read back as the other - and `none` for an item with nothing; ""
+// when the lists disagree in length or the reset longhands are not initial.
+[[nodiscard]] std::string fold_animation(std::span<const std::string> v) {
+    std::array<std::vector<std::string_view>, 8> lists;
+    for (std::size_t i = 0; i < 8; ++i) {
+        lists[i] = split_top_level(v[i], ",");
+        if (lists[i].size() != lists[0].size()) { return {}; }
+    }
+    for (std::size_t i = 8; i < 11; ++i) {
+        if (!ascii_iequals(v[i], initial_of(longhands_of("animation")[i]))) { return {}; }
+    }
+    std::string out;
+    for (std::size_t item = 0; item < lists[0].size(); ++item) {
+        std::vector<std::string> parts;
+        for (std::size_t i = 0; i < 8; ++i) {
+            const std::string_view text = trim(lists[i][item], html_whitespace);
+            const bool delay_needs_duration =
+                i == 0 && !animation_default(2, trim(lists[2][item], html_whitespace));
+            if (animation_default(i, text) && !delay_needs_duration) { continue; }
+            parts.emplace_back(text);
+        }
+        out += (out.empty() ? "" : ", ") + (parts.empty() ? std::string{"none"} : join(parts));
+    }
+    return out;
 }
 
 [[nodiscard]] std::string fold_bar(const expansion & e, std::span<const std::string> v) {
@@ -537,6 +812,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::bar: return fold_bar(e, v);
     case shape::flex: return join(v);
     case shape::font: return fold_font(v);
+    case shape::white_space: return fold_white_space(v);
+    case shape::animation: return fold_animation(v);
     case shape::border: {
         // Four equal sides per component, and border-image at its initial
         // values - CSS Backgrounds 3 §5.3: `border` resets it, so a block that
@@ -552,6 +829,14 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
             if (!ascii_iequals(v[i], initial_of(e.longhands[i]))) { return {}; }
         }
         return fold_bar(*expansion_of("border-top"), one);
+    }
+    case shape::border_axis: {
+        // The two sides equal, component by component.
+        for (std::size_t c = 0; c < 3; ++c) {
+            if (v[c] != v[c + 3]) { return {}; }
+        }
+        const expansion * start = expansion_of(e.longhands[0].substr(0, e.longhands[0].size() - 6));
+        return fold_bar(*start, v.subspan(0, 3));
     }
     }
     return {};

@@ -478,6 +478,15 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const std::string f = flags.is_undefined() ? std::string{} : c.to_string(flags);
         if (watch.threw()) { return value::undefined(); }
+        // 22.2.3.4 step 4-6: a pattern that is not a Pattern, or flags that
+        // are not flags, is a SyntaxError - judged by the same early-error
+        // scan a literal gets at parse time (the matcher's own reader is
+        // lenient where Annex B is, and only refuses what it cannot read).
+        if (const auto wrong = rx::rx_pattern_error(p, f)) {
+            c.throw_error("SyntaxError",
+                          "Invalid regular expression: /" + p + "/" + f + ": " + *wrong);
+            return value::undefined();
+        }
         const std::shared_ptr<rx::rx_prog> program = compiled(cache, p, f);
         if (!program->ok) {
             c.throw_error("SyntaxError", program->error);

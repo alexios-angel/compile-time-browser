@@ -1149,6 +1149,52 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## BigInt measured at `96781de5` — 2026-09-18
+
+Focused devbox replay of `test/built-ins/BigInt`: **63 -> 74 PASS**,
+**13 -> 2 FAIL**, one SKIP, 77 files; **11 gained, zero lost**. The fresh
+before run matched the saved `b722aa41` results. Same instrument: four
+workers, 10-second timeout, 2 GB address-space cap. The two affected CTests,
+`bigint_basics` and `symbol_basics`, passed.
+
+`BigInt(value)` now converts objects with the number hint before choosing
+NumberToBigInt or ToBigInt, preserving coercion exceptions. Its `toString`
+method converts and checks the radix before narrowing it to an integer.
+Remaining failures are `constructor-from-string-syntax-errors.js` (shared
+BigInt string grammar) and `wrapper-object-ordinary-toprimitive.js` (shared
+VM coercion). Native construction-state handling remains a separate gap.
+
+Evidence: `/tmp/browser-resume-bigint-{before,after}.json` and
+`/tmp/browser-resume-bigint-gate2.log`. A combined-tree replay at `b78e68cb`
+confirmed 74 PASS, two FAIL and one SKIP in
+`/tmp/ctbrowser-resume/final/browser-resume-final-bigint.json`. The whole
+test262 corpus was not replayed for this change; its last complete
+measurement remains below.
+
+## Measured at `b722aa41` — 2026-09-18, round seven (J2: RegExp and the async tail)
+
+**40,832 of 48,624 (84.0%; 85.4% of the 47,791 that ran)**, from 39,731 at
+`9f8da347`: **+1,101 files, PASS->FAIL 0**. Round seven's agent J2: `\p{..}`
+/ `\P{..}` property escapes over a generated UCD table
+(`lib/Script/regex_properties.inc`, `tools/gen/unicode_properties.py`),
+Canonicalize under `iu`, the `v` flag's ClassSetExpression (nested
+classes, `--`, `&&`, `\q{..}`, properties of strings), `new RegExp` judged
+by the literal's early-error scan, async generator `.return(v)` awaiting
+`v` and running `finally`, `yield*` forwarding return/throw, `import defer
+* as ns`, the test262 host resolving re-exports over the whole graph, an
+object rest that leaves out computed keys. Same instrument (devbox, 4
+workers, 10 s, 2 GB); the rows are every area that moved:
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `built-ins/RegExp` | 1,879 | 940 | **1,822** | +882 | 45 | 0/0/0 | 12 |
+| `language` | 23,726 | 22107 | **22,300** | +193 | 1,404 | 0/1/0 | 21 |
+| `built-ins/AsyncFromSyncIteratorPrototype` | 38 | 18 | **30** | +12 | 8 | 0/0/0 | 0 |
+| `built-ins/AsyncGeneratorPrototype` | 48 | 40 | **48** | +8 | 0 | 0/0/0 | 0 |
+| `annexB` | 1,086 | 776 | **781** | +5 | 262 | 1/0/0 | 42 |
+| `built-ins/String` | 1,223 | 1168 | **1,169** | +1 | 51 | 0/0/0 | 3 |
+| **total** | **48,624** | 39,731 | **40,832** | +1,101 | 6,956 | 1/2/0 | 833 |
+
 ## Measured at `9f8da347` — 2026-09-17, round six (J: the VM tail)
 
 Round six's agent J worked the VM: an `await` no longer truncates the

@@ -198,7 +198,9 @@ constexpr named named_colors[] = {
 // §6.2's system colours and the deprecated ones §6.3 keeps parsing, with the
 // light-scheme values Chromium ships: CSSOM makes a colour's resolved value
 // the used one, so `background-color: Menu` reads back as an `rgb()`
-// (getComputedStyle-resolved-colors). Nothing here is themed.
+// (getComputedStyle-resolved-colors). The dark table below is what
+// `color-scheme: dark` swaps in (CSS Color Adjust 1 §2); a name not in it
+// is the same in both schemes.
 constexpr named system_colors[] = {
     {"accentcolor", 0x0075FF},
     {"accentcolortext", 0xFFFFFF},
@@ -242,6 +244,17 @@ constexpr named system_colors[] = {
     {"window", 0xFFFFFF},
     {"windowframe", 0xCCCCCC},
     {"windowtext", 0x000000},
+};
+constexpr named dark_system_colors[] = {
+    {"activetext", 0xFF9E9E},   {"buttonborder", 0x6B6B6B},     {"buttonface", 0x6B6B6B},
+    {"buttontext", 0xFFFFFF},   {"canvas", 0x121212},           {"canvastext", 0xFFFFFF},
+    {"field", 0x3B3B3B},        {"fieldtext", 0xFFFFFF},        {"graytext", 0xA0A0A0},
+    {"highlight", 0x99C8FF},    {"highlighttext", 0x000000},    {"linktext", 0x9E9EFF},
+    {"selecteditem", 0x99C8FF}, {"selecteditemtext", 0x000000}, {"visitedtext", 0xD0ADF0},
+    {"appworkspace", 0x121212}, {"scrollbar", 0x121212},        {"menu", 0x121212},
+    {"menutext", 0xFFFFFF},     {"window", 0x121212},           {"windowtext", 0xFFFFFF},
+    {"threedface", 0x6B6B6B},   {"captiontext", 0xFFFFFF},      {"infobackground", 0x121212},
+    {"infotext", 0xFFFFFF},
 };
 
 [[nodiscard]] const named * find_named(std::span<const named> table, std::string_view word) {
@@ -324,41 +337,48 @@ enum class space : std::uint8_t {
     return std::nullopt;
 }
 
-// Which channel is the hue, or -1; which is the lightness; which is the
-// colourfulness (saturation or chroma). §12.2's analogous components.
-[[nodiscard]] int hue_slot(space s) noexcept {
-    return s == space::hsl || s == space::hwb ? 0 : (s == space::lch || s == space::oklch ? 2 : -1);
-}
-[[nodiscard]] int lightness_slot(space s) noexcept {
+// §12.2's ANALOGOUS COMPONENTS: which category each slot of each space is
+// in. A missing component carries forward to the slot of the same category
+// in another space, and the XYZ spaces count as super-saturated RGB. hwb's
+// whiteness and blackness are analogous to nothing.
+enum class part : std::uint8_t {
+    red,
+    green,
+    blue,
+    lightness,
+    colorfulness, // chroma, or hsl's saturation
+    hue,
+    opponent_a,
+    opponent_b,
+    whiteness,
+    blackness,
+};
+
+[[nodiscard]] std::array<part, 3> parts_of(space s) noexcept {
     switch (s) {
-    case space::hsl: return 2;
+    case space::hsl: return {part::hue, part::colorfulness, part::lightness};
+    case space::hwb: return {part::hue, part::whiteness, part::blackness};
     case space::lab:
+    case space::oklab: return {part::lightness, part::opponent_a, part::opponent_b};
     case space::lch:
-    case space::oklab:
-    case space::oklch: return 0;
-    default: return -1;
+    case space::oklch: return {part::lightness, part::colorfulness, part::hue};
+    default: return {part::red, part::green, part::blue};
     }
+}
+
+// The slot holding `p` in `s`, or -1.
+[[nodiscard]] int slot_of(space s, part p) noexcept {
+    const std::array<part, 3> parts = parts_of(s);
+    for (int i = 0; i < 3; ++i) {
+        if (parts[static_cast<std::size_t>(i)] == p) { return i; }
+    }
+    return -1;
+}
+[[nodiscard]] int hue_slot(space s) noexcept {
+    return slot_of(s, part::hue);
 }
 [[nodiscard]] int colorfulness_slot(space s) noexcept {
-    return s == space::hsl || s == space::lch || s == space::oklch ? 1 : -1;
-}
-[[nodiscard]] bool rgb_like(space s) noexcept {
-    switch (s) {
-    case space::srgb:
-    case space::srgb_linear:
-    case space::display_p3:
-    case space::display_p3_linear:
-    case space::a98_rgb:
-    case space::prophoto_rgb:
-    case space::rec2020: return true;
-    default: return false;
-    }
-}
-[[nodiscard]] bool xyz_like(space s) noexcept {
-    return s == space::xyz_d50 || s == space::xyz_d65;
-}
-[[nodiscard]] bool lab_like(space s) noexcept {
-    return s == space::lab || s == space::oklab;
+    return slot_of(s, part::colorfulness);
 }
 
 // The channel keywords a relative colour may use, per space, in slot order;
@@ -439,14 +459,14 @@ constexpr mat3 xyz_to_lin_a98{{{1829569.0 / 896150, -506331.0 / 896150, -308931.
                                {16779.0 / 1248040, -147721.0 / 1248040, 1266979.0 / 1248040}}};
 constexpr mat3 lin_2020_to_xyz{
     {{63426534.0 / 99577255, 20160776.0 / 139408157, 47086771.0 / 278816314},
-     {26158966.0 / 99577255, 472592262.0 / 697040785, 8267862.0 / 139408157},
+     {26158966.0 / 99577255, 472592308.0 / 697040785, 8267143.0 / 139408157},
      {0.0, 19567812.0 / 697040785, 295819943.0 / 278816314}}};
 constexpr mat3 xyz_to_lin_2020{
     {{30757411.0 / 17917100, -6372589.0 / 17917100, -4539589.0 / 17917100},
      {-19765991.0 / 29648200, 47925759.0 / 29648200, 467509.0 / 29648200},
      {792561.0 / 44930125, -1921689.0 / 44930125, 42328811.0 / 44930125}}};
 // ProPhoto is D50; these take it to and from XYZ D50.
-constexpr mat3 lin_prophoto_to_xyz{{{0.79776664490054, 0.13518129740053, 0.03134773412839},
+constexpr mat3 lin_prophoto_to_xyz{{{0.79776664490064230, 0.13518129740053308, 0.03134773412839220},
                                     {0.28807482881940, 0.71183523424187, 0.00008993693872},
                                     {0.0, 0.0, 0.82510460251046}}};
 constexpr mat3 xyz_to_lin_prophoto{
@@ -458,9 +478,9 @@ constexpr mat3 d65_to_d50{{{1.0479297925449969, 0.022946870601609652, -0.0501922
                            {-0.009243040646204504, 0.015055191490298152, 0.7518742814281371}}};
 constexpr mat3 d50_to_d65{{{0.955473421488075, -0.02309845494876471, 0.06325924320057072},
                            {-0.0283697093338637, 1.0099953980813041, 0.021041441191917323},
-                           {0.012314014864481998, -0.020507649298397317, 1.330365926242124}}};
+                           {0.012314014864481998, -0.020507649298898964, 1.330365926242124}}};
 constexpr mat3 xyz_to_lms{{{0.8190224379967030, 0.3619062600528904, -0.1288737815209879},
-                           {0.0329836539323885, 0.9292868615863434, 0.0361446663507367},
+                           {0.0329836539323885, 0.9292868615863434, 0.0361446663506424},
                            {0.0481771893596242, 0.2642395317527308, 0.6335478284694309}}};
 constexpr mat3 lms_to_oklab{{{0.2104542683093140, 0.7936177747023054, -0.0040720430116193},
                              {1.9779985324311684, -2.4285922420485799, 0.4505937096174110},
@@ -502,19 +522,16 @@ constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585}
     const double sign = v < 0 ? -1.0 : 1.0;
     return sign * std::pow(std::fabs(v), 256.0 / 563);
 }
+// rec2020 is display-referred: BT.1886's pure 2.4 gamma, not BT.2020's
+// camera curve (CSS Color 4 §10.8 since 2024; the corpus's rec2020 answers
+// are computed with it).
 [[nodiscard]] double lin_2020(double v) noexcept {
-    constexpr double alpha = 1.09929682680944;
-    constexpr double beta = 0.018053968510807;
-    const double a = std::fabs(v);
     const double sign = v < 0 ? -1.0 : 1.0;
-    return a < beta * 4.5 ? v / 4.5 : sign * std::pow((a + alpha - 1) / alpha, 1.0 / 0.45);
+    return sign * std::pow(std::fabs(v), 2.4);
 }
 [[nodiscard]] double gam_2020(double v) noexcept {
-    constexpr double alpha = 1.09929682680944;
-    constexpr double beta = 0.018053968510807;
-    const double a = std::fabs(v);
     const double sign = v < 0 ? -1.0 : 1.0;
-    return a > beta ? sign * (alpha * std::pow(a, 0.45) - (alpha - 1)) : 4.5 * v;
+    return sign * std::pow(std::fabs(v), 1.0 / 2.4);
 }
 [[nodiscard]] vec3 map3(const vec3 & v, double (*f)(double) noexcept) noexcept {
     return {f(v[0]), f(v[1]), f(v[2])};
@@ -539,24 +556,36 @@ constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585}
     };
     return {f(0), f(8), f(4)};
 }
-[[nodiscard]] vec3 rgb_to_hsl(const vec3 & rgb) noexcept {
+// The hue of an sRGB triple, the specification's rgbToHue: nought when the
+// channels are equal, and no rotation for a negative saturation - that is
+// hsl's own step below, and hwb does not take it.
+[[nodiscard]] double rgb_to_hue(const vec3 & rgb) noexcept {
     const double red = rgb[0], green = rgb[1], blue = rgb[2];
     const double max = std::max({red, green, blue});
     const double min = std::min({red, green, blue});
-    double hue = 0.0, sat = 0.0;
-    const double light = (min + max) / 2.0;
     const double d = max - min;
-    if (d != 0.0) {
-        sat = (light == 0.0 || light == 1.0) ? 0.0 : (max - light) / std::min(light, 1.0 - light);
-        if (max == red) {
-            hue = (green - blue) / d + (green < blue ? 6.0 : 0.0);
-        } else if (max == green) {
-            hue = (blue - red) / d + 2.0;
-        } else {
-            hue = (red - green) / d + 4.0;
-        }
-        hue *= 60.0;
+    if (d == 0.0) { return 0.0; }
+    double hue = 0.0;
+    if (max == red) {
+        hue = (green - blue) / d + (green < blue ? 6.0 : 0.0);
+    } else if (max == green) {
+        hue = (blue - red) / d + 2.0;
+    } else {
+        hue = (red - green) / d + 4.0;
     }
+    hue *= 60.0;
+    return hue >= 360.0 ? hue - 360.0 : hue;
+}
+[[nodiscard]] vec3 rgb_to_hsl(const vec3 & rgb) noexcept {
+    const double max = std::max({rgb[0], rgb[1], rgb[2]});
+    const double min = std::min({rgb[0], rgb[1], rgb[2]});
+    double hue = rgb_to_hue(rgb), sat = 0.0;
+    const double light = (min + max) / 2.0;
+    if (max != min) {
+        sat = (light == 0.0 || light == 1.0) ? 0.0 : (max - light) / std::min(light, 1.0 - light);
+    }
+    // A very out-of-gamut colour has a negative saturation: rotate the hue by
+    // 180 and use the positive one (csswg-drafts/9222).
     if (sat < 0) {
         hue += 180.0;
         sat = std::fabs(sat);
@@ -576,10 +605,9 @@ constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585}
     return rgb;
 }
 [[nodiscard]] vec3 rgb_to_hwb(const vec3 & rgb) noexcept {
-    const vec3 hsl = rgb_to_hsl(rgb);
     const double white = std::min({rgb[0], rgb[1], rgb[2]});
     const double black = 1.0 - std::max({rgb[0], rgb[1], rgb[2]});
-    return {hsl[0], white * 100.0, black * 100.0};
+    return {rgb_to_hue(rgb), white * 100.0, black * 100.0};
 }
 
 // §9 and §10: Lab (D50) and OKLab, to and from XYZ D65.
@@ -671,80 +699,117 @@ constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585}
     return xyz;
 }
 
-// IS THE HUE POWERLESS in this colour (§4.4)? A saturation or chroma at
-// nought - within 1e-5 of the channel's reference range, which is what the
-// corpus's `hsl(180 0.001% 50%)` and `lch(20 0.0015 180)` boundaries measure
-// - or an hwb whose white and black fill the whole colour.
-[[nodiscard]] bool hue_powerless(const resolved & r) noexcept {
-    switch (r.cs) {
-    case space::hsl: return !r.none[1] && r.c[1] <= 100.0 * 1e-5;
-    case space::hwb: return (r.none[1] ? 0.0 : r.c[1]) + (r.none[2] ? 0.0 : r.c[2]) >= 100.0 - 1e-3;
-    case space::lch: return !r.none[1] && r.c[1] <= 150.0 * 1e-5;
-    case space::oklch: return !r.none[1] && r.c[1] <= 0.4 * 1e-5;
-    default: return false;
+// §4.4.1's POWERLESS HUE: a colourfulness at or under the space's own epsilon
+// - `hsl(180 0.001% 50%)` and `lch(20 0.0015 180)` are the corpus's
+// boundaries - or an hwb whose white and black fill the whole colour. A
+// missing colourfulness is nought here, as it is for every other purpose.
+[[nodiscard]] double hue_epsilon(space s) noexcept {
+    switch (s) {
+    case space::hsl: return 0.001;
+    case space::lch: return 0.0015;
+    case space::oklch: return 0.000004;
+    default: return 0.0;
     }
 }
 
-// ONE COLOUR IN ANOTHER SPACE, §12.2's carrying forward of missing components
-// and §4.4's powerless ones: a `none` hue, lightness or colourfulness lands in
-// the analogous channel of the target; a Lab whose `a` and `b` are both
-// missing has no chroma and no hue; an RGB channel carries to its namesake in
-// another RGB space; a colour missing every channel is missing every channel
-// wherever it goes. A hue that is powerless on either side of a conversion
-// between DIFFERENT spaces becomes missing, which is the rule the relative
-// colour and interpolation tests both measure (color-computed-powerless).
+// A colour about to be converted, its powerless hue made missing (§4.4.1):
+// the colourfulness that made it powerless goes to nought so the conversion
+// does not amplify floating-point noise, and an hwb fills its white and
+// black to 100. A colour written by hand never has this done to it -
+// `hsl(180 0% 50%)` keeps its hue for as long as it stays hsl.
+void settle_powerless(resolved & r) noexcept {
+    const int h = hue_slot(r.cs);
+    if (h < 0) { return; }
+    if (r.cs == space::hwb) {
+        const double w = r.none[1] ? 0.0 : r.c[1];
+        const double b = r.none[2] ? 0.0 : r.c[2];
+        if (w + b < 99.999) { return; }
+        r.none[0] = true;
+        r.c[0] = 0.0;
+        if (w + b < 100.0) {
+            if (!r.none[1] && !r.none[2]) {
+                r.c[2] = 100.0 - w;
+            } else if (!r.none[1]) {
+                r.c[1] = 100.0;
+            } else if (!r.none[2]) {
+                r.c[2] = 100.0;
+            }
+        }
+        return;
+    }
+    const auto c = static_cast<std::size_t>(colorfulness_slot(r.cs));
+    const double chroma = r.none[c] ? 0.0 : r.c[c];
+    if (chroma > hue_epsilon(r.cs)) { return; }
+    r.none[static_cast<std::size_t>(h)] = true;
+    r.c[static_cast<std::size_t>(h)] = 0.0;
+    if (chroma > 0.0) { r.c[c] = 0.0; }
+}
+
 [[nodiscard]] bool srgb_family(space s) noexcept {
     return s == space::srgb || s == space::hsl || s == space::hwb;
 }
 
+// ONE COLOUR IN ANOTHER SPACE: §11.2's algorithm with §12.2's carrying
+// forward of missing components. The source's powerless hue is made missing
+// first; a missing component lands in the analogous slot of the target; and
+// when every source component WITHOUT an analogue is missing, every target
+// component without one is missing too - so `lab(50 none none)` is
+// `lch(50 none none)`, `hwb(180 none none)` is `hsl(180 none none)`, and
+// `rgb(none none none)` is missing everything wherever it goes. A hue the
+// conversion produces powerless is missing as well. A colour is never
+// converted to its own space, so a hand-written powerless hue stays.
 [[nodiscard]] resolved convert(const resolved & from, space to) {
     if (from.cs == to) { return from; }
+    resolved src = from;
+    settle_powerless(src);
+    vec3 c{};
+    for (std::size_t i = 0; i < 3; ++i) { c[i] = src.none[i] ? 0.0 : src.c[i]; }
     resolved out;
     out.cs = to;
     out.alpha = from.alpha;
     out.alpha_none = from.alpha_none;
-    // Within the sRGB family the conversion is the specification's own
-    // arithmetic and not a trip through XYZ, so `hsl(120 0% 50%)` comes back
-    // exactly 0.5 and rounds to 128 rather than to 127.
-    if (srgb_family(from.cs) && srgb_family(to)) {
-        vec3 rgb = from.c;
-        if (from.cs == space::hsl) { rgb = hsl_to_rgb(from.c[0], from.c[1], from.c[2]); }
-        if (from.cs == space::hwb) { rgb = hwb_to_rgb(from.c[0], from.c[1], from.c[2]); }
+    // Within the sRGB family, and between a Lab and its own LCH, the
+    // conversion is the specification's own arithmetic and not a trip through
+    // XYZ, so `hsl(120 0% 50%)` comes back exactly 0.5 and rounds to 128
+    // rather than 127, and `lab(50 10 0)` is `lch(50 10 0)` and not 360.
+    if (srgb_family(src.cs) && srgb_family(to)) {
+        vec3 rgb = c;
+        if (src.cs == space::hsl) { rgb = hsl_to_rgb(c[0], c[1], c[2]); }
+        if (src.cs == space::hwb) { rgb = hwb_to_rgb(c[0], c[1], c[2]); }
         out.c = to == space::srgb ? rgb : (to == space::hsl ? rgb_to_hsl(rgb) : rgb_to_hwb(rgb));
+    } else if ((src.cs == space::lab && to == space::lch) ||
+               (src.cs == space::oklab && to == space::oklch)) {
+        out.c = lab_to_lch(c);
+    } else if ((src.cs == space::lch && to == space::lab) ||
+               (src.cs == space::oklch && to == space::oklab)) {
+        out.c = lch_to_lab(c);
     } else {
-        out.c = from_xyz(to, to_xyz(from.cs, from.c));
+        out.c = from_xyz(to, to_xyz(src.cs, c));
     }
-    if (hue_slot(to) >= 0) {
-        out.c[static_cast<std::size_t>(hue_slot(to))] =
-            normalize_hue(out.c[static_cast<std::size_t>(hue_slot(to))]);
-    }
-    if (from.none[0] && from.none[1] && from.none[2]) {
-        out.none = {true, true, true};
-        return out;
-    }
-    const auto carry = [&](int from_slot, int to_slot) {
-        if (from_slot >= 0 && to_slot >= 0 && from.none[static_cast<std::size_t>(from_slot)]) {
-            out.none[static_cast<std::size_t>(to_slot)] = true;
-        }
-    };
-    carry(hue_slot(from.cs), hue_slot(to));
-    carry(lightness_slot(from.cs), lightness_slot(to));
-    carry(colorfulness_slot(from.cs), colorfulness_slot(to));
-    if (lab_like(from.cs) && lab_like(to)) {
-        carry(1, 1);
-        carry(2, 2);
-    }
-    if (lab_like(from.cs) && from.none[1] && from.none[2]) {
-        if (hue_slot(to) >= 0) { out.none[static_cast<std::size_t>(hue_slot(to))] = true; }
-        if (colorfulness_slot(to) >= 0) {
-            out.none[static_cast<std::size_t>(colorfulness_slot(to))] = true;
+    // The conversion's own powerless hue is judged on what it computed - a
+    // carried-forward missing saturation does not make `hwb(180 none none)`
+    // lose the hue it converts with - and the carried components are
+    // re-inserted after (§12.2's order).
+    settle_powerless(out);
+    const std::array<part, 3> from_parts = parts_of(src.cs);
+    const std::array<part, 3> to_parts = parts_of(to);
+    bool rest_any = false, rest_all_missing = true;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const int j = slot_of(to, from_parts[i]);
+        if (j >= 0) {
+            if (src.none[i]) { out.none[static_cast<std::size_t>(j)] = true; }
+        } else {
+            rest_any = true;
+            rest_all_missing = rest_all_missing && src.none[i];
         }
     }
-    if ((rgb_like(from.cs) && rgb_like(to)) || (xyz_like(from.cs) && xyz_like(to))) {
-        for (std::size_t i = 0; i < 3; ++i) { out.none[i] = from.none[i]; }
+    if (rest_any && rest_all_missing) {
+        for (std::size_t j = 0; j < 3; ++j) {
+            if (slot_of(src.cs, to_parts[j]) < 0) { out.none[j] = true; }
+        }
     }
-    if (hue_slot(to) >= 0 && (hue_powerless(from) || hue_powerless(out))) {
-        out.none[static_cast<std::size_t>(hue_slot(to))] = true;
+    if (const int h = hue_slot(to); h >= 0) {
+        out.c[static_cast<std::size_t>(h)] = normalize_hue(out.c[static_cast<std::size_t>(h)]);
     }
     return out;
 }
@@ -1213,9 +1278,13 @@ private:
             if (outcome == math_outcome::resolved) {
                 if (!sum.simple()) { return std::nullopt; }
                 const numeric_type type = sum.type();
+                // A percentage travels through the evaluator as a length with
+                // an unresolved part; one with no pixels is a <percentage>.
+                const bool percentage =
+                    type == numeric_type::length && sum.has_percent && sum.value == 0.0;
                 if (type == numeric_type::angle) {
                     if (!hue) { return std::nullopt; }
-                } else if (type != numeric_type::number) {
+                } else if (type != numeric_type::number && !percentage) {
                     return std::nullopt;
                 }
                 if (sum.has_percent && (!takes_percent || hue)) { return std::nullopt; }
@@ -1223,6 +1292,9 @@ private:
             out.text = simplify_math(out.raw_calc);
             if (!relative && parse_time_answerable(ts_, open, after)) {
                 const math_answer answer = evaluate_math(out.raw_calc, length_context{});
+                // `calc(0.56turn * -0.43turn)` is an angle squared: the
+                // symbolic pass cannot type it and the evaluator refuses it.
+                if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
                 if (answer.outcome == math_outcome::resolved) {
                     out.resolvable = true;
                     if (answer.value.has_percent && answer.value.px == 0.0) {
@@ -1307,7 +1379,7 @@ private:
             }
             break;
         }
-        if (out->items.empty() || out->items.size() > 2) { return nullptr; }
+        if (out->items.empty()) { return nullptr; }
         return out;
     }
 
@@ -1500,6 +1572,24 @@ private:
     return out;
 }
 
+// An absolute hsl()/hwb() an `rgb()` serialisation cannot stand in for:
+// its hue is powerless as written (§4.4.1), or its lightness is at either
+// end, so that converting the rgb() back makes the hue MISSING where the
+// author's colour kept it.
+[[nodiscard]] bool origin_loses_in_rgb(const parsed & p) {
+    if (p.cs != space::hsl && p.cs != space::hwb) { return false; }
+    vec3 c{};
+    for (std::size_t slot = 0; slot < 3; ++slot) {
+        const channel & ch = p.ch[slot];
+        c[slot] = ch.k == channel::kind::none
+                      ? 0.0
+                      : clamp_literal(literal_value(ch, p.cs, static_cast<int>(slot), true), p.cs,
+                                      static_cast<int>(slot), true, true);
+    }
+    if (p.cs == space::hwb) { return c[1] + c[2] >= 99.999; }
+    return c[1] <= hue_epsilon(space::hsl) || c[2] <= 0.0 || c[2] >= 100.0;
+}
+
 [[nodiscard]] std::string legacy_text(const resolved & r) {
     std::string out = byte_text(r.c[0] * 255.0) + ", " + byte_text(r.c[1] * 255.0) + ", " +
                       byte_text(r.c[2] * 255.0);
@@ -1543,9 +1633,24 @@ std::string serialize_specified(const parsed & p, bool as_origin);
 [[nodiscard]] std::string absolute_specified(const parsed & p, bool as_origin) {
     const bool srgb_function = p.cs == space::srgb || p.cs == space::hsl || p.cs == space::hwb;
     const bool legacy_function = p.fn == "rgb" || p.fn == "hsl" || p.fn == "hwb";
-    // §15.2: a legacy-syntax colour with every channel known is `rgb()`. In an
-    // origin the missing channels are known too - they are zero.
-    if (legacy_function && srgb_function && all_settled(p, p.fn == "rgb" || as_origin)) {
+    // §15.2: a legacy-syntax colour with every channel known is `rgb()`, and
+    // a top-level rgb() with a missing channel is one with that channel at
+    // nought.
+    //
+    // AN ORIGIN IS THE EXCEPTION, on purpose. The cascade is string-typed:
+    // the computed value of `hsl(from hsl(120 none 50%) h s l)` is computed
+    // from this serialisation, so an origin serialised as `rgb(128, 128,
+    // 128)` has lost its missing saturation, its hsl space (a hue that is
+    // powerless in hsl is missing after a conversion FROM rgb, and kept
+    // when there is none), and its exact channels. Chromium prints the
+    // rgb() here because it keeps the parsed tree beside the text; this
+    // engine keeps the modern form when the rgb() would lose something -
+    // a missing channel, a powerless hue, a lightness at either end - which
+    // is what the computed side (color-computed-none, -powerless,
+    // -relative-color, -color-mix) measures, at the cost of the seventy-odd
+    // specified serialisations that expect the rgb() form.
+    if (legacy_function && srgb_function && all_settled(p, p.fn == "rgb" && !as_origin) &&
+        !(as_origin && origin_loses_in_rgb(p))) {
         return legacy_text(settled_legacy(p));
     }
     std::string out = p.fn + "(";
@@ -1584,29 +1689,35 @@ std::string serialize_specified(const parsed & p, bool as_origin);
         if (!p.hue_method.empty()) { out += " " + p.hue_method + " hue"; }
         out += ", ";
     }
-    // The weights: both omitted when they are both 50%, both written otherwise
-    // - the one the author left out derived from the other (CSS Color 5
-    // §4.3). A weight with no answer yet keeps every item as written.
+    // The weights: the ones the author left out are derived from the ones
+    // written (CSS Values 5's normalisation, the remainder shared equally),
+    // and when every weight is the even share they are all omitted - so
+    // `red 50%, blue 50%` is `red, blue` and `red 50%, green, blue` is
+    // `red 50%, green 25%, blue 25%`. A calc() weight keeps every item as
+    // written.
     std::vector<std::optional<double>> weights;
     bool unresolved = false;
+    std::size_t omitted = 0;
+    double specified = 0.0;
     for (const mix_item & item : p.items) {
         if (!item.weight) {
             weights.emplace_back(std::nullopt);
+            ++omitted;
         } else if (item.weight->k == channel::kind::percent) {
             weights.emplace_back(item.weight->value);
-        } else if (item.weight->resolvable) {
-            weights.emplace_back(item.weight->resolved_value);
         } else {
             unresolved = true;
             weights.emplace_back(std::nullopt);
         }
+        if (weights.back()) { specified += *weights.back(); }
     }
-    if (!unresolved && p.items.size() == 2) {
-        if (weights[0] && !weights[1]) { weights[1] = 100.0 - *weights[0]; }
-        if (weights[1] && !weights[0]) { weights[0] = 100.0 - *weights[1]; }
-        if (weights[0] && weights[1] && *weights[0] == 50.0 && *weights[1] == 50.0) {
-            weights[0].reset();
-            weights[1].reset();
+    if (!unresolved && omitted < p.items.size()) {
+        for (std::optional<double> & w : weights) {
+            if (!w) { w = (100.0 - std::min(100.0, specified)) / static_cast<double>(omitted); }
+        }
+        const double share = 100.0 / static_cast<double>(p.items.size());
+        if (std::ranges::all_of(weights, [&](const auto & w) { return *w == share; })) {
+            for (std::optional<double> & w : weights) { w.reset(); }
         }
     }
     for (std::size_t i = 0; i < p.items.size(); ++i) {
@@ -1654,6 +1765,7 @@ std::string serialize_specified(const parsed & p, bool as_origin) {
 struct resolve_context {
     std::string_view current_color; // computed text, or empty
     const length_context * lengths = nullptr;
+    bool dark = false; // the used colour scheme
 };
 
 std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, int depth);
@@ -1776,6 +1888,10 @@ struct channel_answer {
         if (!a) { return std::nullopt; }
         out.alpha_none = a->none;
         out.alpha = a->none ? 0.0 : clamp_literal(a->value, p.cs, 3, true, p.bytes);
+    } else if (relative) {
+        // CSS Color 5 §4.2: an omitted alpha is the origin's, not opaque.
+        out.alpha_none = origin.alpha_none;
+        out.alpha = origin.alpha_none ? 0.0 : clamp_literal(origin.alpha, p.cs, 3, true, p.bytes);
     }
     if (p.bytes) {
         for (double & v : out.c) { v /= 255.0; }
@@ -1882,32 +1998,42 @@ struct channel_answer {
         if (!w || w->none) { return std::nullopt; }
         weights.emplace_back(std::min(1.0, std::max(0.0, w->value)));
     }
-    if (colors.size() == 1) {
-        resolved out = colors.front();
-        out.legacy = false;
-        if (weights.front()) { out.alpha *= *weights.front(); }
-        return out;
+    // CSS Values 5's normalisation of mix percentages, forced: the omitted
+    // weights share what the written ones left, the total is scaled to one
+    // when it is not nought, and what is short of one comes off the alpha.
+    double specified = 0.0;
+    std::size_t omitted = 0;
+    for (const std::optional<double> & w : weights) {
+        if (w) {
+            specified += *w;
+        } else {
+            ++omitted;
+        }
     }
-    double p1 = weights[0].value_or(-1.0);
-    double p2 = weights[1].value_or(-1.0);
-    if (p1 < 0 && p2 < 0) {
-        p1 = p2 = 0.5;
-    } else if (p1 < 0) {
-        p1 = 1.0 - p2;
-    } else if (p2 < 0) {
-        p2 = 1.0 - p1;
+    specified = std::min(1.0, specified);
+    double total = 0.0;
+    for (std::optional<double> & w : weights) {
+        if (!w) { w = (1.0 - specified) / static_cast<double>(omitted); }
+        total += *w;
     }
-    double alpha_multiplier = 1.0;
-    const double sum = p1 + p2;
-    if (sum == 0.0) {
-        p1 = p2 = 0.5;
-        alpha_multiplier = 0.0;
-    } else if (sum != 1.0) {
-        if (sum < 1.0) { alpha_multiplier = sum; }
-        p1 /= sum;
-        p2 /= sum;
+    const double alpha_multiplier = total < 1.0 ? total : 1.0;
+    if (total > 0.0) {
+        for (std::optional<double> & w : weights) { *w /= total; }
     }
-    return interpolate(colors[0], colors[1], p.mix_space, p.hue_method, p1, p2, alpha_multiplier);
+    // CSS Color 5 §3.3: the items mixed pairwise in order, each result
+    // carrying the combined weight, so a polar space's "shorter" is decided
+    // one step at a time.
+    resolved out = colors.front();
+    double weight = *weights.front();
+    for (std::size_t i = 1; i < colors.size(); ++i) {
+        const double combined = weight + *weights[i];
+        const double progress = combined > 0.0 ? *weights[i] / combined : 0.5;
+        out = interpolate(out, colors[i], p.mix_space, p.hue_method, 1.0 - progress, progress, 1.0);
+        weight = combined;
+    }
+    out.legacy = false;
+    if (!out.alpha_none) { out.alpha *= alpha_multiplier; }
+    return out;
 }
 
 std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, int depth) {
@@ -1931,6 +2057,7 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
             return resolve(*current, without, depth + 1);
         }
         const named * hit = find_named(named_colors, p.keyword);
+        if (hit == nullptr && ctx.dark) { hit = find_named(dark_system_colors, p.keyword); }
         if (hit == nullptr) { hit = find_named(system_colors, p.keyword); }
         if (hit == nullptr) { return std::nullopt; }
         out.c = {((hit->rgb >> 16) & 0xFF) / 255.0, ((hit->rgb >> 8) & 0xFF) / 255.0,
@@ -1941,7 +2068,7 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
     case parsed::kind::absolute:
     case parsed::kind::relative: return resolve_absolute(p, ctx, depth);
     case parsed::kind::mix: return resolve_mix(p, ctx, depth);
-    case parsed::kind::light_dark: return resolve(*p.items[0].color, ctx, depth + 1);
+    case parsed::kind::light_dark: return resolve(*p.items[ctx.dark ? 1 : 0].color, ctx, depth + 1);
     case parsed::kind::alpha_fn: {
         std::optional<resolved> origin = resolve(*p.origin, ctx, depth + 1);
         if (!origin) { return std::nullopt; }
@@ -1984,7 +2111,10 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
             out += "none";
             continue;
         }
-        out += channel_text(r.c[i]);
+        // A hue a hair under 360 prints as 360, which re-parses as 0: print 0.
+        std::string text = channel_text(r.c[i]);
+        if (static_cast<int>(i) == hue_slot(r.cs) && text == "360") { text = "0"; }
+        out += text;
         // A computed hsl()/hwb() writes its percentages as percentages.
         if ((r.cs == space::hsl || r.cs == space::hwb) && i != 0) { out += '%'; }
     }
@@ -2043,7 +2173,7 @@ std::string serialize_color(std::string_view text) {
 std::string computed_color(std::string_view specified, const color_context & ctx) {
     const std::unique_ptr<parsed> tree = parse_text(trim(specified, html_whitespace));
     if (!tree) { return {}; }
-    const resolve_context rc{ctx.current_color, ctx.lengths};
+    const resolve_context rc{ctx.current_color, ctx.lengths, ctx.dark};
     const std::optional<resolved> r = resolve(*tree, rc, 0);
     if (!r) { return {}; }
     return serialize_computed(*r);
@@ -2052,7 +2182,7 @@ std::string computed_color(std::string_view specified, const color_context & ctx
 std::optional<srgb_color> resolve_color(std::string_view specified, const color_context & ctx) {
     const std::unique_ptr<parsed> tree = parse_text(trim(specified, html_whitespace));
     if (!tree) { return std::nullopt; }
-    const resolve_context rc{ctx.current_color, ctx.lengths};
+    const resolve_context rc{ctx.current_color, ctx.lengths, ctx.dark};
     const std::optional<resolved> r = resolve(*tree, rc, 0);
     if (!r) { return std::nullopt; }
     const resolved srgb = convert(*r, space::srgb);
@@ -2060,6 +2190,68 @@ std::optional<srgb_color> resolve_color(std::string_view specified, const color_
                       static_cast<float>(srgb.none[1] ? 0.0 : srgb.c[1]),
                       static_cast<float>(srgb.none[2] ? 0.0 : srgb.c[2]),
                       static_cast<float>(srgb.alpha_none ? 0.0 : srgb.alpha)};
+}
+
+std::optional<space_color> color_in_space(std::string_view specified, std::string_view space_name,
+                                          const color_context & ctx) {
+    const std::optional<space> target = interpolation_space(space_name);
+    if (!target) { return std::nullopt; }
+    const std::unique_ptr<parsed> tree = parse_text(trim(specified, html_whitespace));
+    if (!tree) { return std::nullopt; }
+    const resolve_context rc{ctx.current_color, ctx.lengths, ctx.dark};
+    const std::optional<resolved> r = resolve(*tree, rc, 0);
+    if (!r) { return std::nullopt; }
+    const resolved in = convert(*r, *target);
+    return space_color{in.c, in.none, in.alpha, in.alpha_none};
+}
+
+std::string color_from_space(const space_color & c, std::string_view space_name) {
+    const std::optional<space> s = interpolation_space(space_name);
+    if (!s) { return {}; }
+    resolved r;
+    r.cs = *s;
+    r.c = c.c;
+    r.none = c.none;
+    r.alpha = c.alpha;
+    r.alpha_none = c.alpha_none;
+    return serialize_computed(r);
+}
+
+std::string sanitize_color(std::string_view value, bool display_p3, bool alpha) {
+    // "Parsing value": a CSS <color> with no context, so `currentcolor` and
+    // `inherit` are failures and opaque black. A missing component is nought.
+    resolved c;
+    c.legacy = false;
+    if (const std::unique_ptr<parsed> tree = parse_text(trim(value, html_whitespace))) {
+        if (const std::optional<resolved> r = resolve(*tree, resolve_context{}, 0)) { c = *r; }
+    }
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (c.none[i]) { c.c[i] = 0.0; }
+    }
+    if (c.alpha_none) { c.alpha = 0.0; }
+    if (!alpha) { c.alpha = 1.0; }
+    c.none = {};
+    c.alpha_none = false;
+    if (display_p3) { return modern_text(convert(c, space::display_p3)); }
+    // Limited sRGB: eight bits per component, the alpha included.
+    resolved srgb = convert(c, space::srgb);
+    const auto byte = [](double v) {
+        return static_cast<int>(
+            std::floor(std::round(std::min(255.0, std::max(0.0, v)) * 1e6) / 1e6 + 0.5));
+    };
+    std::array<int, 4> bytes{byte(srgb.c[0] * 255.0), byte(srgb.c[1] * 255.0),
+                             byte(srgb.c[2] * 255.0), byte(srgb.alpha * 255.0)};
+    if (!alpha) {
+        std::string out = "#";
+        for (std::size_t i = 0; i < 3; ++i) {
+            out += "0123456789abcdef"[bytes[i] >> 4];
+            out += "0123456789abcdef"[bytes[i] & 15];
+        }
+        return out;
+    }
+    for (std::size_t i = 0; i < 3; ++i) { srgb.c[i] = bytes[i] / 255.0; }
+    srgb.alpha = bytes[3] / 255.0;
+    return modern_text(srgb);
 }
 
 } // namespace ctbrowser::style::css

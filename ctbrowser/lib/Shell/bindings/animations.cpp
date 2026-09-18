@@ -339,32 +339,118 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 }
             }
         }
+        // What `currentcolor` means on this element, for every property but
+        // `color` itself (whose currentcolor is the parent's).
+        const std::string current_color{trim(underlying("color"), html_whitespace)};
         for (const std::string & property : properties) {
             struct point {
                 double offset;
                 std::string text;
                 std::string easing;
+                std::string composite;
             };
             std::vector<point> points;
+            const auto * known = style::css::find_property(property);
+            std::optional<std::string> inherited;
+            const auto resolved_color = [&](std::string_view value) {
+                return property == "color" || current_color.empty()
+                           ? std::string{value}
+                           : style::with_currentcolor(value, current_color);
+            };
             for (const animation_keyframe & k : e.keyframes) {
                 for (const auto & [name, text] : k.values) {
-                    if (name == property) { points.push_back(point{k.offset, text, k.easing}); }
+                    if (name != property) { continue; }
+                    // A CSS-wide keyword in a keyframe is its computed value
+                    // (CSS Animations 1 §3): `initial` is the table's, as is
+                    // `unset` for a property that does not inherit.
+                    std::string_view value = text;
+                    if (ascii_iequals(value, "inherit") ||
+                        (ascii_iequals(value, "unset") && known != nullptr && known->inherited)) {
+                        if (!inherited) {
+                            inherited = known != nullptr ? std::string{known->initial} : "";
+                            // Inherit from the flat-tree parent's computed value,
+                            // including its animations, not our underlying value.
+                            node_id up = assigned_slot_of(id);
+                            if (!up) { up = doc_->read().parent(id); }
+                            if (const auto * shadow = doc_->shadow_tree_of(up)) {
+                                up = shadow->host;
+                            }
+                            if (styles_ != nullptr && up) {
+                                const auto parent = styles_->find(style::engine::key_of(up));
+                                if (parent != styles_->end() && parent->second) {
+                                    const auto parent_value = [&](std::string_view name) {
+                                        return parent->second->get(atoms_->intern(name));
+                                    };
+                                    std::string physical = style::css::physical_property_of(
+                                        property, underlying("writing-mode"),
+                                        underlying("direction"));
+                                    if (physical.empty()) { physical = property; }
+                                    if (const auto held = parent_value(physical); !held.empty()) {
+                                        inherited = std::string{held};
+                                    }
+                                    const float parent_font = style::css::length_text_to_px(
+                                                                  parent_value("font-size"), ctx)
+                                                                  .value_or(font_size);
+                                    for (const auto & [name, text] :
+                                         animated_values(up, parent_font, parent_value)) {
+                                        std::string mapped = style::css::physical_property_of(
+                                            name, parent_value("writing-mode"),
+                                            parent_value("direction"));
+                                        if ((mapped.empty() ? name : mapped) == physical) {
+                                            inherited = text;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        value = *inherited;
+                    } else if (known != nullptr &&
+                               (ascii_iequals(value, "initial") ||
+                                (ascii_iequals(value, "unset") && !known->inherited))) {
+                        value = known->initial;
+                    }
+                    points.push_back(point{k.offset, resolved_color(value), k.easing, k.composite});
                 }
             }
-            // A NEUTRAL KEYFRAME AT EACH MISSING END: the underlying value,
-            // which is the cascade's text or the property's initial value.
-            if (points.front().offset != 0 || points.back().offset != 1) {
-                std::string base{trim(underlying(property), html_whitespace)};
-                if (base.empty()) {
-                    if (const auto * known = style::css::find_property(property)) {
-                        base = std::string{known->initial};
+            // THE UNDERLYING VALUE (§5.4.3): what the animations before this
+            // one in composite order left, else the cascade's text, else the
+            // property's initial value. It is the neutral keyframe at each
+            // missing end, and what a keyframe that adds or accumulates
+            // composites onto.
+            const auto seen = std::ranges::find_if(
+                out, [&property](const auto & entry) { return entry.first == property; });
+            std::string base = seen != out.end()
+                                   ? seen->second
+                                   : resolved_color(trim(underlying(property), html_whitespace));
+            if (base.empty() && known != nullptr) { base = std::string{known->initial}; }
+            if (points.front().offset != 0) {
+                // The neutral keyframe's easing is linear (§5.4.3) - unless
+                // the effect carries a valueless keyframe at 0, which is how
+                // a CSS animation hands over the element's timing function
+                // for the interval it synthesises (bindings/animations/css.cpp).
+                std::string easing = "linear";
+                for (const animation_keyframe & k : e.keyframes) {
+                    if (k.offset == 0 && k.values.empty()) {
+                        easing = k.easing;
+                        break;
                     }
                 }
-                if (points.front().offset != 0) {
-                    points.insert(points.begin(), point{0, base, "linear"});
-                }
-                if (points.back().offset != 1) { points.push_back(point{1, base, "linear"}); }
+                points.insert(points.begin(), point{0, base, std::move(easing), "replace"});
             }
+            if (points.back().offset != 1) {
+                points.push_back(point{1, base, "linear", "replace"});
+            }
+            // §4.5.1: a keyframe's composite operation - its own, or the
+            // effect's when `auto` - applies to its value against the
+            // underlying value BEFORE the interpolation.
+            const auto composited = [&](const point & pt) {
+                const std::string & op = pt.composite == "auto" ? e.composite : pt.composite;
+                return style::composite_text(property, base, pt.text,
+                                             op == "add"          ? style::composite_op::add
+                                             : op == "accumulate" ? style::composite_op::accumulate
+                                                                  : style::composite_op::replace,
+                                             ctx);
+            };
             std::size_t start = 0;
             std::size_t stop = 0;
             bool single = false;
@@ -401,17 +487,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             }
             std::string text;
             if (single) {
-                text = points[start].text;
+                text = composited(points[start]);
             } else {
                 const double span = points[stop].offset - points[start].offset;
                 const double distance = (progress - points[start].offset) / span;
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
-                text = interpolate_value(property, points[start].text, points[stop].text,
-                                         keyframe_easing(distance, false), ctx);
+                text =
+                    interpolate_value(property, composited(points[start]), composited(points[stop]),
+                                      keyframe_easing(distance, false), ctx);
             }
-            const auto seen = std::ranges::find_if(
-                out, [&property](const auto & entry) { return entry.first == property; });
             if (seen == out.end()) {
                 out.emplace_back(property, std::move(text));
             } else {
@@ -530,7 +615,29 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
             frame.values.emplace_back(property, std::move(text));
             return;
         }
-        if (style::css::find_property(property) == nullptr) { return; }
+        const style::css::property_syntax * known = style::css::find_property(property);
+        if (known == nullptr) { return; }
+        // A SHORTHAND IS ITS LONGHANDS (§5.4.5 "process a keyframe-like
+        // object"), as a `@keyframes` block already stores it: `borderWidth:
+        // '20px 40px'` animates border-top-width and the rest.
+        if (known->shorthand) {
+            style::css::declaration_block expanded;
+            (void)style::css::set_declaration(expanded, property, text, false);
+            if (expanded.size() == 1 && expanded[0].name == property) {
+                expanded.clear();
+                for (const auto & [name, value] :
+                     style::css::expand_cascaded_shorthand(property, text)) {
+                    const auto checked = style::css::check_declaration(name, value);
+                    if (checked.valid) {
+                        expanded.push_back({std::string{name}, checked.serialized, false});
+                    }
+                }
+            }
+            for (const style::css::declaration & d : expanded) {
+                frame.values.emplace_back(d.name, d.value);
+            }
+            return;
+        }
         const style::css::value_check checked = style::css::check_declaration(property, text);
         if (!checked.valid) { return; }
         frame.values.emplace_back(property, checked.serialized);

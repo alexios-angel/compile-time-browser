@@ -14,6 +14,106 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## CSS recovery — 2026-09-18
+
+**1,591 of 2,926 runnable CSS files PASS (54.4%), 70,223 subtests PASS**
+at `73833c09`: **+56 files and +1,282 subtests** against `b722aa41`,
+with **zero passing files or subtests lost**. This is a fresh full `css/`
+measurement, not a replay of the other wide directories or all test262.
+Same WPT `3f6b09ae`, devbox, four workers, 4 GB address-space cap and
+`CTBROWSER_GL_DRIVER=deterministic`.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `b722aa41` | 1,535 | 1,175 | 25 | 0 | 191 | 1,488 | 68,941 / 34,147 |
+| `73833c09` | 1,591 | 1,119 | 25 | 0 | 191 | 1,488 | 70,223 / 32,865 |
+
+Cascade rollback now uses substituted, expanded physical declarations.
+CSS and Web Animation keyframes use the CSSOM shorthand grammar, retaining
+the old expansion for shorthands CSSOM still stores whole. Inherited
+keyframes read the flat-tree parent's computed value, including animations.
+This restores 21 of the 23 files lost in round seven. The remaining two
+are `columns-interpolation` (positive count clamping and slash syntax) and
+`viewport-relative-lengths-scaled-viewport` (scaled bounding rectangles).
+
+The first combined replay exposed 26 lost subtests in ellipse shorthand
+expansion and inherited columns. Those were fixed before this final replay;
+no expectations were changed. The browser CTest gate passed **233/233**
+(70.77 seconds), and formatting passed. Evidence:
+`/tmp/ctbrowser-resume/corrected/{gate.log,browser-resume-corrected-css.json,comparison.json,source-sha256.json}`.
+Module deltas are in `css-conformance.md`. The separate focused BigInt
+measurement gained 11 test262 files; see `test262.md`.
+
+## Wide baseline — 2026-09-18: round seven recovered
+
+**2,860 of 5,155 runnable files PASS (55.5%), 249,277 subtests PASS** at
+`b722aa41`, compared with 2,696 files and 239,070 subtests at `9f8da347`:
+**187 files gained, 23 lost; net +164 files and +10,207 passing subtests**.
+This completes session 19's interrupted reporting. The eight baseline
+JSON files in `/tmp/w-b722aa41/` finished before the extra `encoding/`
+sweep, which was stopped without a result. Encoding has no previous wide
+baseline and is excluded from both sides of this comparison.
+
+Same pinned WPT corpus, devbox, four workers, 4 GB address-space cap and
+`CTBROWSER_GL_DRIVER=deterministic`. The engine's recorded gate is 233/233;
+no new engine build was needed to recover these completed measurements.
+
+| directory | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css` | 1,535 | 1,175 | 25 | 0 | 191 | 1,488 | 68,941 / 34,147 |
+| `html` | 706 | 336 | 75 | 1 | 31 | 535 | 73,566 / 1,492 |
+| `dom` | 386 | 94 | 15 | 4 | 5 | 150 | 51,826 / 4,909 |
+| `shadow-dom` | 66 | 101 | 12 | 0 | 3 | 163 | 8,545 / 291 |
+| `custom-elements` | 70 | 106 | 1 | 0 | 3 | 13 | 3,471 / 702 |
+| `domparsing` | 17 | 42 | 0 | 0 | 10 | 3 | 327 / 1,285 |
+| `selection` | 41 | 46 | 3 | 0 | 6 | 87 | 33,332 / 723 |
+| `url` | 39 | 7 | 1 | 0 | 2 | 0 | 9,269 / 665 |
+
+All 23 files lost at this revision are CSS: 16 `all-prop-revert[-layer]-noop` variants,
+four logical margin/padding interpolation files, `columns-interpolation`,
+`outline-width-interpolation`, and the previously documented scaled
+viewport test. The revert variants read zero logical margins where the UA
+stylesheet supplies paragraph/heading margins. The later recovery is
+recorded above; expectations were not changed to accept these failures.
+The full CSS module table is in `css-conformance.md`.
+
+## The baseline — 2026-09-18: round seven merged (five suites + test262)
+
+**816 of the 1,102 that ran (74.0%) in the five suites; 84,108 subtests
+PASS** - from 805 / 84,024 at `9f8da347` (round six): **+12 files, one
+lost, zero subtests lost**. Engine at `b722aa41` on `ctbrowser-wpt`: round
+seven's four agents on `92f5d7c7` - K CSS Color 4/5 (`274c693e`), A3 the
+value-type interpolation and composition (`46b5f01f`), L2 logical
+properties and the font/white-space/animation shorthands (`274c6b49`), J2
+the runtime tail: RegExp `\p{..}` over a generated UCD table, the `v` flag,
+async-generator `return()`, `import defer`, module re-exports
+(`b722aa41`, ctjs `d2664e9`) - plus session 17's root work on frames,
+forms, events, ranges, MediaQueryList. Gated 233/233 on the merged tree.
+The one file lost, `css/css-values/viewport-relative-lengths-scaled-
+viewport.html`, is NOT a regression: at `9f8da347` the iframe was a 0-wide
+box (`ed460525` gave it the default object size afterwards), so `50vw *
+0.01` expected 0 and got 0; the real gap - `getBoundingClientRect` ignores
+`transform: scale()` (`shell/bindings/element/views.cpp` applies only the
+translation) - was always there and is measured now. The recovered wide corpus row
+for `b722aa41` is above (results in `/tmp/w-b722aa41/`). test262 at the
+same engine: **40,832 of 48,624 (84.0%)**, rows in `docs/test262.md`.
+Same instrument: devbox, 4 jobs, `CTBROWSER_GL_DRIVER=deterministic`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/css-values` | **175** (+4) | 90 | 2 | 0 | 4 | 237 | 508 | 7,676 / 2,650 |
+| `css/cssom` | **161** (+5) | 30 | 0 | 0 | 1 | 29 | 221 | 3,178 / 381 |
+| `dom/events` | **78** (+0) | 8 | 4 | 0 | 1 | 85 | 176 | 660 / 28 |
+| `dom/nodes` | **249** (+2) | 45 | 14 | 0 | 1 | 53 | 362 | 12,066 / 731 |
+| `html/dom` | **153** (+0) | 70 | 13 | 0 | 3 | 137 | 376 | 60,528 / 161 |
+| **total** | **816** | 243 | 33 | 0 | 10 | 541 | 1643 | 84,108 / 3,951 |
+
+Gained: css-values `calc-in-color-001`, `calc-in-media-queries-with-mixed-
+units`, `ric-invalidation`, `rlh-invalidation`, `viewport-units-extreme-
+scale`; cssom `caretPositionFromPoint-in-flex-container`, `computed-style-
+002/003/004`, `inline-style-001`; dom/nodes `moveBefore/child-style-
+preserve`, `moveBefore/live-range-updates`.
+
 ## The baseline — 2026-09-17, midday: round six merged
 
 **805 of the 1,102 that ran (73.0%) in the five suites; wide corpus 2,696 of
