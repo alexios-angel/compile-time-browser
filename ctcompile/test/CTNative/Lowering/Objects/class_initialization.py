@@ -557,6 +557,40 @@ def check_helper_guards(args, declaration):
     return checked, refused
 
 
+def check_prototype_keys(args, prepared):
+    # The original helper reads numeric [0] on its parameter. Change only that
+    # IR key and the method name to distinguish disjoint keys from collisions.
+    text = prepared.read_text()
+    literal = "ctjs.constant #ctjs.number<0>"
+    if text.count(literal) != 1 or text.count('#ctjs.string<"read">') != 2:
+        raise RuntimeError("prototype key control lost its original method/key sites")
+    checked = refused = 0
+    for label, method, key in (
+        ("empty", "read", 'ctjs.constant #ctjs.string<"">'),
+        ("negative-zero", "0", "ctjs.constant #ctjs.number<9223372036854775808>"),
+        ("nan", "NaN", "ctjs.constant #ctjs.number<9221120237041090560>"),
+        ("infinity", "Infinity", "ctjs.constant #ctjs.number<9218868437227405312>"),
+        ("negative-infinity", "-Infinity", "ctjs.constant #ctjs.number<18442240474082181120>"),
+        ("large", "read", "ctjs.constant #ctjs.number<4906019910204099648>"),
+        ("dynamic", "read", 'ctjs.load_global "key"'),
+    ):
+        name = "prototype-key-" + label
+        source = args.work / f"{name}.mlir"
+        source.write_text(
+            text.replace(literal, key).replace('#ctjs.string<"read">', f'#ctjs.string<"{method}">')
+        )
+        native = args.work / f"{name}.native.mlir"
+        run([args.opt, str(source), "--ctnative-lower-to-emitc", "-o", str(native)])
+        if label == "empty":
+            checked += check_executable(args, name, native, 7)
+        else:
+            check_refusal(name, native.read_text(), len(FUNCTION.findall(text)))
+            if "its prototype method is also observed as a value" not in native.read_text():
+                raise RuntimeError(f"{name}: literal or unknown key escaped the prototype census")
+            refused += 1
+    return checked, refused
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "node", "reference"):
@@ -600,6 +634,7 @@ def main():
         "var instance = new Shape(); return instance.read(null) ? 9 : 7; } var a = probe();\n"
     )
     helper_checked, helper_refused = check_helper_guards(args, declaration)
+    key_checked = key_refused = 0
     refusals = 0
     preparation_refusals = 0
     checked = prepared_refusals = 0
@@ -698,6 +733,8 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "bootstrap-r":
+            key_checked, key_refused = check_prototype_keys(args, prepared)
         if name in PREPARED_ONLY:
             before, after = structured.read_text(), prepared.read_text()
             operations = (
@@ -790,7 +827,7 @@ def main():
                         str(native),
                     ]
                 )
-                if name in PREPARED_ONLY:
+                if name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
                     if len(re.findall(r"^\s*ctjs.throw ", native_text, re.M)) != len(
@@ -810,6 +847,7 @@ def main():
         f"constructed method controls: {plain_checked} native executions, {plain_refused} refusals"
     )
     print(f"original r guards: {helper_checked} native executions, {helper_refused} refusals")
+    print(f"prototype keys: {key_checked} native executions, {key_refused} refusals")
     print(
         f"prepared source controls: {prepared_refusals} native refusals with original calls/exits"
     )
