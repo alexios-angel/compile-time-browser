@@ -1,5 +1,47 @@
 # What native Bootstrap needs next
 
+## Explicit class entries and canonical String division, 2026-09-18 UTC
+
+Continued clean **18cc8b1b**, resuming the explicit-entry boundary after the
+**11:14:38 AGENT-SYNC journal** closed the previous interruption.
+**1ed820cb** admits class preparation for an explicit imported entry with
+an inert declaration wrapper and unused parameters. Callee/receiver/new.target
+identity and every original body/effect remain checked. Wrapper/publication and
+constructed instances remain for later representation proofs. **No new DOM or
+native execution admission.** The recovered source test measures two preparations,
+four Node/interpreter observations and 26 refusals, including observed parameters,
+callee identity, non-inert/missing wrappers, effects, prototype mutation and DOM.
+
+**33732dbd** adds canonical String operands to the existing bounded signed
+Div/Mod proof. All eight original oracle bodies remain intact; saved snapshots,
+CFG/SCF transport and exact signed results retain source identity. Fractional
+quotients, zero divisors, noncanonical strings and changing/repeated producers refuse.
+
+Focused checks: arrays **1/1 (0.98s total), 589/670/309 rows**; signed-division
+**1/1 (0.13s), 26 sites / zero violations / 13 of 15 precision**; class-entry
+**1/1 (0.76s), 2 preparations / 4 observations / 26 refusals**.
+Class-initialization **1/1 (193.47s), 146 source / 364 native / 292 unprepared /
+176 preparation refusals**, plus the constructed-method/r/key controls and
+11 prepared native refusals. Original Config r/M/F/H/W still measures **a=7**
+in Node/interpreter with preparation refusal.
+Six explicit build targets took **8 actions**. HANDOFF records exact targets,
+fixture-only corrections and eight source/test hashes matched to the devbox.
+Pinned formatting retains **26 existing diagnostics in nine unchanged files**;
+changed pinned formatting, Black, syntax and diff checks pass. Full CTest/compiler
+lit, DOM lit, broad corpus/native matrices, WPT and test262 were skipped. No browser
+source/runtime change or push. Evidence: `/tmp/ctcompile-class-entry/`.
+
+**Next:** join complete class/DOM effect proofs and normalize constructor/method
+receivers before `prepareDOMEntry`. Reuse the constructor lifter's existing
+new.target/prototype/receiver proof, then handle its explicit-receiver direct calls:
+DOM helper expansion currently requires live closure calls and maps their receiver
+to the entry receiver. Every original unused method/getter still needs its effect
+proof before erasure. The class provider remains closed-source-only and observed
+entry parameters still refuse. Remaining Config, inheritance, full H Unicode,
+retained callbacks, the application driver and String bitwise/shift/power
+conversions remain open. Historical Bootstrap measurements were not replayed.
+
+
 ## Shared DOM preparation and canonical String products, 2026-09-18 UTC
 
 Continued clean **a4a35dcc**, whose previous interruption was closed by the

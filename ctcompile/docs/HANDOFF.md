@@ -15,6 +15,79 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Explicit class entries and canonical String division, 2026-09-18 UTC
+
+Continued clean **18cc8b1b** after the **11:14:38 AGENT-SYNC journal** closed
+its predecessor. Resumed the explicit class-entry boundary recorded in HANDOFF;
+September 7 WIP was absent. Independent agents implemented the escape slice,
+reviewed the proof, and drafted native tests. Root recovered the test draft after
+its agent reached a service limit and narrowed it to the implemented boundary.
+
+**1ed820cb** allows class preparation to select an explicit imported entry
+under `closed-source-v1`. The existing inert-declaration proof checks its script
+wrapper. Explicit parameters must be unused; callee identity can only create
+local closures, and receiver/new.target checks remain. Every original body still
+receives the complete effect/prototype census. The script entry keeps its old
+argument restriction. Wrapper, publication, constructors and method bodies remain
+for subsequent representation proofs. **No new DOM provider or native execution
+admission is claimed.** Two entries prepare; source and adversarial checks retain
+the used-parameter, callee, wrapper, prototype, unknown-call and DOM refusals.
+
+**33732dbd** reuses the existing canonical decimal parser for either String
+operand of bounded division/remainder. Exact quotient/nonzero divisor and signed
+magnitude rules are unchanged; saved values retain their original identities
+through CFG/SCF transport. Noncanonical strings, fractional quotients, zero
+divisors and changing/repeated producers remain unproved. All eight original
+source-oracle bodies remain intact.
+
+Focused devbox validation only; evidence: `/tmp/ctcompile-class-entry/`.
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`,
+  `ctcompile-test-type-oracle`: **8 build actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.97s; total 0.98s)**.
+  Dense/induction/structured rows: **589 / 670 / 309**; budget cutoffs:
+  **23,271 / 45,318 / 22,645**.
+- Exact `Analysis/Escape/escape-claims/signed-division.test`: **1/1 (0.13s)**,
+  **26 observed sites / 13 sound / zero violations / 13 of 15 precision**.
+- Exact `CTNative/Lowering/Objects/class-entry.mlir`: **1/1 (0.76s)**,
+  **2 preparations / 4 Node/interpreter observations / 26 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (193.47s)**;
+  **146 source observations / 364 native executions / 292 unprepared refusals /
+  176 preparation refusals**, plus **16 constructed-method executions / 20 refusals**,
+  **8 original r executions / 4 refusals**, **4 key executions / 6 refusals**, and
+  **11 prepared native refusals**. Global-chain first complete budget: **418**.
+
+Eight selected source/test hashes match locally and on the devbox. The class
+regression checks both optimization settings, explicit/deduced C++ and GCC/Clang;
+emitted C++ contains no ctbrowser dependency or prototype/home metadata. Its
+original Config r/M/F/H/W specimen still measures **a=7** in Node/interpreter
+and refuses preparation.
+
+The new entry fixture initially omitted required closed-source manifest fields,
+then counted retained metadata/unused constants as live class operations, and
+named an ambient-call control so it called itself. Those fixture defects were
+corrected; the production implementation needed no post-build correction.
+Required pinned `tools/format.sh --check` retains **26 existing diagnostics in
+nine HEAD-identical files**. Changed-file pinned formatting, Black, Python syntax
+and diff checks pass. Full CTest/compiler lit, DOM lit, broad corpus/native
+matrices, WPT and test262 were skipped. No browser source/runtime changes or push.
+
+**Exact next:** join class and DOM effects, then normalize constructor/method
+receivers before `prepareDOMEntry`. The existing constructor lifter already proves
+new.target, primitive returns, prototype immutability and closed receiver uses.
+Its direct calls carry an explicit object receiver and undefined callee;
+`DOMSource` currently expands live closure calls and maps the receiver to the
+entry receiver. It needs a proved receiver-aware normalization before those
+representations compose. All original method/getter bodies must keep their effect
+obligations, including unused bodies; a residual-only proof after erasing them
+or a union of intrinsic lists is insufficient. The present class provider remains
+closed-source-only and observed entry parameters still refuse. Remaining Config,
+inheritance, full H Unicode, retained callbacks, the application driver and further
+String bitwise/shift/power conversions remain open. Whole-Bootstrap/Button/Data
+measurements remain historical.
+
+
 ## Shared DOM preparation and canonical String products, 2026-09-18 UTC
 
 Started at clean **a4a35dcc**. The **10:57:53 AGENT-SYNC journal** explicitly

@@ -52,6 +52,11 @@ bindings, and no realm receiver declaration. Existing roots/observations remain
 declarations; a global callable holder requested by either cannot be removed.
 This pass grants no publication or ownership proof.
 The manifest may additionally declare `Error` for a local throwing static getter.
+It may select an explicit imported function when the script is its proved inert
+declaration wrapper. Every explicit parameter must be unused; the receiver,
+new.target and callee identity remain unobserved except for creating local
+closures. The wrapper and publication remain intact. This permits class
+preparation for a library entry, but adds no DOM provider or parameter authority.
 
 ```sh
 ctjs-opt prepared.mlir \
