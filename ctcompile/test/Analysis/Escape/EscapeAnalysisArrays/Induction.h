@@ -1364,10 +1364,51 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("signed division and remainder require a nonzero divisor",
                replace(source, ", " + std::string(divisor) + " {storage_test_id",
                        ", %zero {storage_test_id"));
-        reject("signed division and remainder cannot borrow coercible Strings",
-               replace(source, makeResult,
-                       "  %divisor = ctjs.constant #ctjs.string<\"1\">\n" +
-                           replace(makeResult, ", " + std::string(divisor), ", %divisor")));
+        const auto originalString =
+            replace(source, makeResult,
+                    "  %divisor = ctjs.constant #ctjs.string<\"1\">\n" +
+                        replace(makeResult, ", " + std::string(divisor), ", %divisor"));
+        if (operation == "div") {
+            run({.what = "the original canonical String divisor retains its returned child",
+                 .body = originalString,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("a canonical String divisor cannot turn a zero remainder into progress",
+                   originalString);
+        }
+        const std::string text = operation == "div" ? "1" : "2";
+        const auto stringRight =
+            replace(originalString, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">");
+        const auto stringLeft =
+            replace(replace(source, makeResult,
+                            "  %text = ctjs.constant #ctjs.string<\"1\">\n" +
+                                replace(makeResult, "%minus,", "%text,")),
+                    "binary sub %i, %signedResult", "binary add %i, %signedResult");
+        for (const auto & body : {stringRight, stringLeft}) {
+            run({.what = "canonical String division and remainder retain the exact CFG child",
+                 .body = body,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "canonical String division and remainder release unreturned children",
+                 .body = replace(body, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+        }
+        for (const std::string invalid :
+             {"0", "01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
+            reject("String divisors need canonical bounded nonzero decimal evidence",
+                   replace(stringRight, "#ctjs.string<\"" + text + "\">",
+                           "#ctjs.string<\"" + invalid + "\">"));
+        }
+        reject(
+            "a repeated String division or remainder cannot borrow its earlier result",
+            replace(replace(stringRight, "  %signedResult =", "  %unused ="), "  %step =",
+                    replace(makeResult, ", " + std::string(divisor), ", %divisor") + "  %step ="));
         reject("signed division and remainder cannot borrow an unknown operand",
                replace(source, ", " + std::string(divisor) + " {storage_test_id",
                        ", %p {storage_test_id"),
@@ -1380,6 +1421,8 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                  .exit = "x -> {x}"});
             reject("signed division needs an integral quotient",
                    replace(source, "div %minus, %one", "div %minus, %two"));
+            reject("canonical String division still needs an integral quotient",
+                   replace(stringRight, "#ctjs.string<\"1\">", "#ctjs.string<\"2\">"));
         }
     }
     const std::string power = "  %power = ctjs.binary pow %minus, %one\n";

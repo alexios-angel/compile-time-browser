@@ -655,10 +655,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.number<9221120237041090560>", // NaN
                                       "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
                                       "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
-        run({.what = "division needs an exact integral Number quotient without coercion",
+        run({.what = "division needs an exact integral quotient and an in-bounds index",
              .body = values + one + "  %divisor = ctjs.constant " + literal +
                      "\n  %index = ctjs.binary div %one, %divisor\n" + indexed,
-             .failure = ArrayContentsFailure::UnknownIndex});
+             .failure = literal == "#ctjs.string<\"1\">" ? ArrayContentsFailure::MissingElement
+                                                         : ArrayContentsFailure::UnknownIndex});
     }
     run({.what = "an out-of-range numerator cannot lend Number evidence to a later division",
          .body = values + one +
@@ -732,12 +733,46 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.number<9221120237041090560>", // NaN
                                       "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
                                       "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
-        run({.what = "remainder needs an exact nonzero bounded divisor without coercion",
-             .body = values + "  %divisor = ctjs.constant " + literal +
-                     "\n  %index = ctjs.binary mod %zero, %divisor\n" + indexed,
+        const auto body = values + "  %divisor = ctjs.constant " + literal +
+                          "\n  %index = ctjs.binary mod %zero, %divisor\n" + indexed;
+        if (literal == "#ctjs.string<\"1\">") {
+            run({.what = "the original canonical String remainder supplies exact index zero",
+                 .body = body,
+                 .arrays = "a:[zero]",
+                 .exit = "a -> {a}"});
+            continue;
+        }
+        run({.what = "remainder needs an exact nonzero bounded divisor",
+             .body = body,
              .failure = ArrayContentsFailure::UnknownIndex});
     }
     for (const std::string operation : {"div", "mod"}) {
+        run({.what = "String arithmetic preserves saved bytes after replacement and transport",
+             .body = values +
+                     "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n"
+                     "  %inputs = ctjs.create_array [%text] {storage_test_id = \"inputs\"}\n"
+                     "  %saved = ctjs.get_property %inputs[%zero]\n"
+                     "  ctjs.set_property %inputs[%zero], %x\n"
+                     "  cf.br ^next(%saved : !ctjs.value)\n"
+                     "^next(%divisor: !ctjs.value):\n"
+                     "  %index = ctjs.binary " +
+                     operation +
+                     " %zero, %divisor\n  ctjs.set_property %a[%index], %zero\n"
+                     "  ctjs.return %divisor\n",
+             .arrays = "a:[zero]; inputs:[x]",
+             .reads = "inputs[0]=text",
+             .exit = "text -> {}"});
+        run({.what = "String zero keeps its original arithmetic result with a negative divisor",
+             .body = values +
+                     "  %text = ctjs.constant #ctjs.string<\"0\">\n"
+                     "  %negative = ctjs.constant #ctjs.number<13830554455654793216>\n"
+                     "  %index = ctjs.binary " +
+                     operation +
+                     " %text, %negative {storage_test_id = \"index\"}\n"
+                     "  ctjs.set_property %a[%index], %zero\n"
+                     "  ctjs.return %index\n",
+             .arrays = "a:[zero]",
+             .exit = "index -> {}"});
         run({.what = "zero with a negative divisor keeps its original result and exact index",
              .body = values +
                      "  %divisor = ctjs.constant #ctjs.number<13830554455654793216>\n"

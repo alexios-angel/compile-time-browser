@@ -1773,6 +1773,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     binary.getKind() == ctjs::BinaryKind::Mod) {
                     auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    if (!a && left.string()) { a = ownArrayIndex(lhs); }
+                    if (!b && right.string()) { b = ownArrayIndex(rhs); }
                     const bool remainder = binary.getKind() == ctjs::BinaryKind::Mod;
                     const bool negative = remainder ? !a : a.has_value() != b.has_value();
                     if (!a) {
@@ -1783,9 +1785,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         b = right.negativeIntegerNumber ? right.negativeIntegerNumber
                                                         : boundedNumber(rhs, true);
                     }
-                    // Bounded integral operands give an exact remainder; division
-                    // also needs zero remainder. Mod keeps the dividend's sign,
-                    // regardless of divisor sign. Keep the original signed zero.
+                    // Canonical Strings share Sub's exact conversion. Bounded
+                    // operands give an exact remainder; division also needs zero
+                    // remainder. Mod keeps the dividend's sign, regardless of
+                    // divisor sign. Keep the original signed zero.
                     if (a && b && *b != 0 && (remainder || *a % *b == 0)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         const auto magnitude = remainder ? *a % *b : *a / *b;

@@ -955,6 +955,40 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("repeated structured division, remainder and power need independent invariance",
                replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step ="));
     }
+    for (const std::string operation : {"div", "mod"}) {
+        const std::string literal = "  %text = ctjs.constant #ctjs.string<\"" +
+                                    std::string(operation == "div" ? "1" : "2") + "\">\n";
+        const std::string makeResult = "  %negative = ctjs.unary neg %one\n" + literal +
+                                       "  %unit = ctjs.binary " + operation + " %negative, %text\n";
+        const auto stringRight =
+            replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n", makeResult);
+        const auto stringLeft = replace(
+            replace(replace(stringRight, literal, "  %text = ctjs.constant #ctjs.string<\"1\">\n"),
+                    "%negative, %text", operation == "div" ? "%text, %one" : "%text, %magnitude"),
+            "binary sub %i, %d", "binary add %i, %d");
+        for (const auto & body : {stringRight, stringLeft}) {
+            rows.push_back({.what = "String division and remainder survive structured transport",
+                            .body = body,
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+            rows.push_back({.what = "structured String arithmetic releases unreturned children",
+                            .body = replace(body, "ctjs.return %result", "ctjs.return %zero"),
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "zero -> {}"});
+            reject("a String arithmetic snapshot cannot change on the structured backedge",
+                   replace(body, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+        }
+        reject("String arithmetic cannot borrow a canonical value from another predecessor",
+               replace(stringRight, literal,
+                       "  %text = scf.if %flag -> (!ctjs.value) {\n" +
+                           replace(literal, "%text =", "%good =") +
+                           "    scf.yield %good : !ctjs.value\n"
+                           "  } else {\n"
+                           "    %bad = ctjs.constant #ctjs.string<\"01\">\n"
+                           "    scf.yield %bad : !ctjs.value\n  }\n"));
+    }
     const std::string makePower = "  %exponent = ctjs.unary neg %magnitude\n"
                                   "  %unit = ctjs.binary pow %one, %exponent\n";
     const auto carriedPower =
