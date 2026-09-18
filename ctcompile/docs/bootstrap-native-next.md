@@ -1,5 +1,30 @@
 # What native Bootstrap needs next
 
+## Local helper boundary measured, 2026-09-18 UTC
+
+**`27cb4729`** adds bounded exact parameterized-helper proof to class preparation,
+including closed hoisted globals, structured bodies, unused arrow receivers and
+literal Number keys. Scalar/branch/argument-order cases execute natively; mutable
+object arguments and original `r` property reads remain explicit native refusals.
+The complete W-only Config fixture still refuses `r`; a new source-pinned original
+`r` + W fixture reaches **`H`**, with **a=7** in Node/interpreter for both.
+
+Exact class lit: **1/1 (148.54s), 119 source / 280 native executions**, plus
+**16 ordinary executions**, **14 prepared native refusals**, and the remaining
+unprepared/preparation controls recorded in HANDOFF. New helper proof budget:
+**419**. Independent **`725713cf`** adds bounded exponent-zero/one snapshots:
+array CTest **1/1 (0.89s)**, two escape lit cases **2/2 (0.22s)**, new oracle
+**26 sites / zero violations / 11 of 15 precision**. Final three-target rebuild
+had no work; workflow **0**, **1,081 selected input hashes** verified. HANDOFF /
+Current native work record intermediate failures, exact targets and formatting.
+Full suites and broad matrices were skipped; no browser source changed.
+
+**Next:** prove original `r` object argument shapes and compose original H's DOM
+host contract with Config; then Object.entries/destructuring, RegExp/TypeError,
+inheritance and DOM/default composition. Native throws, H Unicode keys, retained
+callbacks and the application driver remain unfinished. Historical whole-Bootstrap
+counts were not remeasured. Evidence: `/tmp/ctcompile-config-helpers/`.
+
 ## Unused getter chains closed, 2026-09-18 UTC
 
 After **`5927fdb6`** recovered declared-Error getter preparation, **`a427abbe`**

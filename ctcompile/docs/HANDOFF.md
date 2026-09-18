@@ -15,6 +15,71 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local helper proofs and power identities, 2026-09-18 UTC
+
+Started from clean `a0f1b0f7`: its interrupted Error/getter work was already
+closed in the latest commits and AGENT-SYNC's **04:00** entry. Continued the
+recorded **`r` / `_mergeConfigObj`** boundary, without reopening that recovery.
+
+**`27cb4729`** proves exact parameterized local helpers during class preparation.
+Cross-function globals reuse the closed hoisting-declaration proof, charged once
+per binding. Structured helper bodies retain the complete effect census; unused
+arrow `this` captures and literal Number keys are admitted. Replacement, observed
+receivers, dynamic keys and ambient effects in uncalled helpers still refuse.
+Scalar, branching and argument-order cases compile to ordinary C++ calls.
+
+The original **W-only Config** fixture remains unchanged: Node/interpreter return
+**a=7**, and preparation names missing global **`r`**. A separate fixture adds
+Bootstrap's original `r` declaration verbatim; it also returns **a=7**, and now
+names missing global **`H`**. The original `r` method probe passes preparation but
+still refuses native property reads without a closed object shape. The mutable
+object-argument helper likewise prepares but lacks native parameter typing.
+Both source bodies remain as explicit native refusal regressions.
+
+Final exact `CTNative/Lowering/Objects/class-initialization.mlir` lit passes
+**1/1 (148.54s): 119 source observations / 280 native executions / 238 unprepared /
+148 preparation refusals**, plus **16 ordinary executions / 20 refusals** and
+**14 prepared native refusals**. Both optimization policies, explicit/deduced C++,
+GCC and Clang run. Successful native output has no ctbrowser/prototype metadata.
+The new branching helper first completes at **419** proof steps.
+
+**`725713cf`** preserves bounded signed Number power identities for exponents
+zero and one, including original result identity, saved lengths and CFG/SCF
+transport. General powers, unknown/coercible operands and out-of-domain Numbers
+remain unproved. Exact `ctcompile_escape_analysis_arrays` CTest passes **1/1
+(0.89s)**; `power-identities` / `signed-right-shifts` lit passes **2/2 (0.22s)**.
+New oracle: **26 sites / 11 sound / zero violations / 11 of 15 precision**.
+Arrays: **582 dense / 489 induction / 255 structured rows**, with **22,660 /
+33,091 / 17,498** budget cutoffs.
+
+Explicit devbox targets: `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays`,
+`ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`. The combined retry
+built **six actions**; the two subsequent three-target class rebuilds each built
+**three actions**; the final three-target rebuild had **no work**. The first
+combined build caught a test-only replacement-helper typo, corrected to the
+adjacent `std::string::replace` pattern. Intermediate class runs stopped at the
+mutable-object refusal (**7.71s**), missing Number-key proof (**11.77s**), and
+original `r` native shape refusal (**11.92s**); sources were preserved. Final
+workflow exits **0** and verifies **1,081 selected input hashes** locally/remotely.
+Evidence: `/tmp/ctcompile-config-helpers/`, especially `class-final-gate.log` and
+`gate-retry.log`.
+
+Required pinned formatting retains **26 diagnostics in nine HEAD-identical
+files**. Stable formatting passes **916 C++ / 109 Python / 105 web files**;
+changed-file pinned formatting, Black, Python syntax and `git diff --check` pass.
+Full CTest/compiler lit, broad corpus/native matrices, WPT and test262 were
+skipped. No browser source or runtime semantics changed. Three parallel agents
+were launched; service rate limits stopped them after the helper-source finding
+and a 20-line escape draft, which root finished, gated and committed separately.
+
+**Exact next:** prove the object argument/shape flow needed by original `r`, and
+compose original **H** with Config through the existing DOM host contract.
+Object.entries/destructuring, RegExp/TypeError exits, inheritance and DOM/default
+composition follow. Full H Unicode keys, native throws, retained callbacks and
+the application driver remain open. Whole-Bootstrap/Button/Data counts remain
+historical; no broad measurement was repeated.
+
 ## Getter cleanup and signed right shifts, 2026-09-18 UTC
 
 The interrupted Error/getter thread is complete in **`5927fdb6`**, with its
