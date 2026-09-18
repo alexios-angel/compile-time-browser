@@ -30,6 +30,7 @@ enum class shape : std::uint8_t {
     grid_lines,  // grid-row / grid-column / grid-area: `/`-separated grid lines
     slash_pair,  // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
     bar,         // `a || b || c`: each part goes to the longhand that takes it
+    columns,     // width/count in either order, followed by optional `/ column-height`
     flex,        // Flexbox 1 §7.1.1's own defaults
     font,        // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
     border,      // `bar` over width/style/color, applied to four sides, plus
@@ -135,7 +136,7 @@ constexpr shorthand_syntax table[] = {
      ""},
     {"overscroll-behavior", shape::pair, "overscroll-behavior-x overscroll-behavior-y", ""},
     {"grid-gap", shape::pair, "row-gap column-gap", ""},
-    {"columns", shape::bar, "column-width column-count", "auto"},
+    {"columns", shape::columns, "column-width column-count column-height", "auto"},
     {"column-rule", shape::bar, "column-rule-width column-rule-style column-rule-color", "medium"},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
@@ -661,6 +662,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
         return split_grid_lines(e.syntax->name, value, out) ? split::ok : split::invalid;
     case shape::slash_pair: return split_slash_pair(e, value, out);
     case shape::bar: return split_bar(e, parts, out);
+    case shape::columns: return split_columns(value, out) ? split::ok : split::invalid;
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);
     case shape::border_axis: return split_border_axis(e, parts, out);
@@ -810,6 +812,11 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::slash_pair:
         return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
     case shape::bar: return fold_bar(e, v);
+    case shape::columns: {
+        std::string text = fold_bar(e, v.first(2));
+        if (!ascii_iequals(v[2], "auto")) { text += " / " + v[2]; }
+        return text;
+    }
     case shape::flex: return join(v);
     case shape::font: return fold_font(v);
     case shape::white_space: return fold_white_space(v);
@@ -953,6 +960,47 @@ bool put(declaration_block & block, std::string_view name, std::string_view text
 }
 
 } // namespace
+
+// CSS Multicol 2: auto does not choose width or count until the other
+// component is known; the slash introduces a separate, optional height.
+bool detail::split_columns(std::string_view value, std::vector<std::string> & out) {
+    const token_stream ts = tokenize(value);
+    std::size_t slash = std::string_view::npos;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            if (slash != std::string_view::npos) { return false; }
+            slash = token.text;
+        }
+    }
+    const auto parts = split_top_level(value.substr(0, slash), html_whitespace);
+    if (parts.empty() || parts.size() > 2) { return false; }
+    out.assign(3, "auto");
+    const auto names = longhands_of("columns");
+    for (const std::string_view part : parts) {
+        if (ascii_iequals(part, "auto")) { continue; }
+        bool assigned = false;
+        for (std::size_t i = 0; i < 2; ++i) {
+            if (out[i] != "auto") { continue; }
+            const value_check checked = check_declaration(names[i], part, false);
+            if (!checked.valid || is_wide_keyword(checked.serialized)) { continue; }
+            out[i] = checked.serialized;
+            assigned = true;
+            break;
+        }
+        if (!assigned) { return false; }
+    }
+    if (slash != std::string_view::npos) {
+        const value_check height = check_declaration(names[2], value.substr(slash + 1), false);
+        if (!height.valid || is_wide_keyword(height.serialized)) { return false; }
+        out[2] = height.serialized;
+    }
+    return true;
+}
 
 std::span<const std::string_view> longhands_of(std::string_view shorthand) {
     const expansion * e = expansion_of(shorthand);

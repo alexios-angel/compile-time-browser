@@ -391,6 +391,11 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    if (ascii_iequals(property, "columns")) {
+        std::vector<std::string> parts;
+        return split_columns(simplified, parts) ? yes(simplified) : value_check{};
+    }
+
     // A `<filter-value-list>` (filter.cpp): `blur()` fills in its argument,
     // `grayscale(300%)` is `grayscale(100%)`, `blur(-1px)` is refused.
     if (p->kind == k::freeform && ascii_iequals_any(property, {"filter", "backdrop-filter"})) {

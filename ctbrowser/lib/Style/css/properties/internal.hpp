@@ -128,6 +128,8 @@ struct scan {
 [[nodiscard]] bool split_grid_lines(std::string_view shorthand, std::string_view value,
                                     std::vector<std::string> & out);
 [[nodiscard]] std::string fold_grid_lines(std::span<const std::string> lines);
+// CSS Multicol 2 columns grammar, shared by validation and CSSOM expansion.
+[[nodiscard]] bool split_columns(std::string_view value, std::vector<std::string> & out);
 // The keyword-combination grammars (text-decoration-line, text-transform,
 // contain, font-synthesis, font-variant-*, ...) and the will-change,
 // counter-* and scroll-snap-* lists. False for a property not modelled
