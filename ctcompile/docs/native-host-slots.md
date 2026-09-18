@@ -122,6 +122,18 @@ needed. Normal native admission must still prove each direct function; this
 preparation supplies neither ownership nor DOM effect authority. Class/DOM
 provider composition remains separate work.
 
+`HostContract/prepareDOMEntry` now owns the existing DOM preparation transaction:
+URI completion, source helper expansion, element guards, iteration, wrapper and
+optional-force normalization, then complete source reproof. It publishes the
+normalized module and refreshed contract together; refusal preserves both.
+`LowerToEmitC` calls that shared seam. It grants no class or ownership authority.
+Class/DOM composition still needs a proved constructor/prototype normalization
+inside an explicit element entry: the class pass currently requires script entry
+index 0, while DOM entry proof cannot carry ordinary constructed class instances.
+Host manifests also bypass the ordinary closure/constructor lifter. Those body,
+receiver and representation obligations must be joined before invoking the DOM
+transaction; adding class intrinsics to a DOM manifest does not establish them.
+
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
 constant proved getter reads and inert roots; writes and identity escape still

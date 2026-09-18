@@ -1,5 +1,45 @@
 # What native Bootstrap needs next
 
+## Shared DOM preparation and canonical String products, 2026-09-18 UTC
+
+Continued clean **a4a35dcc**, whose previous interruption was closed by the
+**10:57:53 AGENT-SYNC journal**. **2c4eb46a** moves the existing complete DOM
+preparation transaction into `HostContract/prepareDOMEntry`: URI, helpers,
+element guards, iteration, wrapper/force normalization and final source reproof.
+Source and refreshed host contract publish together; two successful provider checks
+and six refusal controls protect that contract. **No new class/DOM admission.**
+
+**9336d642** independently proves canonical String operands of bounded signed
+multiplication, retaining saved values and CFG/SCF transport. All eight original
+oracle bodies remain unchanged; noncanonical/range/BigInt and changing-backedge
+controls remain refused.
+
+Focused gates: arrays **1/1 (0.94s total), 585/639/295 rows**; signed-product
+**1/1 (0.11s), 33 sites / zero violations / 17 of 19 precision**; exception
+recovery **1/1 (3.45s total)**. Four existing holder/F/H fixtures and three
+URI/guarded-dataset fixtures pass **41 Node/interpreter observations / 16 combined
+native executions**, both providers, optimization settings and C++ layouts;
+explicit force semantics add **8 ordinary-provider native executions**.
+Existing holder provenance/refusal checks pass **24 / 88**; generated and linked
+output remains Script/AOT-free. Initial escape build **5 actions**, final eight
+targets **10 actions**, wrappers **0**, ten selected input hashes match the devbox.
+HANDOFF records exact targets and the corrected original `"0" * 0` expectation.
+Pinned formatting retains **26 existing diagnostics in nine unchanged files**;
+stable **918/109/105**, changed pinned formatting and diff checks pass.
+Full suites, class/complete DOM lit, broad matrices and WPT/test262 were skipped.
+No browser source or runtime semantics changed. Evidence: `/tmp/ctcompile-class-dom/`.
+
+**Next:** prove class construction/prototype normalization in a DOM element
+entry before `prepareDOMEntry`. Class preparation currently requires script
+entry index 0 and constructed instances; DOM expansion/entry proof cannot carry
+those instances, and host manifests bypass ordinary constructor lifting.
+Preserve every original body/effect and receiver obligation when joining them;
+combining intrinsic declarations alone is insufficient. Original Config r/M/F/H/W
+remains at its preceding **a=7 Node/interpreter + preparation refusal** measurement,
+not rerun here. Remaining Config, inheritance, full H Unicode, retained callbacks,
+the application driver and further escape String conversions remain open.
+Whole-Bootstrap/Button/Data measurements remain historical.
+
 ## Native global helpers and canonical String unary snapshots, 2026-09-18 UTC
 
 Continued clean **c32fee6a**; the prior interruption was explicitly closed by

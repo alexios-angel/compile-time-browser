@@ -15,6 +15,81 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared DOM preparation and canonical String products, 2026-09-18 UTC
+
+Started at clean **a4a35dcc**. The **10:57:53 AGENT-SYNC journal** explicitly
+closed the previous interruption; September 7 WIP was absent. Resumed its
+recorded class/DOM composition boundary. Three agents investigated native tests,
+proof composition and escape analysis; the two native agents reached service
+limits without edits. Root completed the native work and gated the escape draft.
+
+**2c4eb46a** extracts the existing DOM preparation transaction from
+`LowerToEmitC` into `HostContract/prepareDOMEntry`, declared in `Preparation.h`.
+The caller now reuses one URI/helper/element-guard/iteration sequence, including
+wrapper removal, callback visibility, undefined/force normalization and final
+source reproof. Source IR and the refreshed host contract publish together only on
+success. The existing URI source checks two successful providers and six
+stale-manifest/missing-intrinsic/zero-budget refusals, preserving both inputs.
+This is a prerequisite refactor; it admits no new class/DOM programs.
+
+**9336d642** reuses the canonical decimal String parser for either operand of
+bounded multiplication, then applies the existing signed-magnitude and overflow
+proof. Saved String values, zero and negative Number results retain their source
+identities through CFG/SCF transport. Noncanonical/range/BigInt inputs, repeated
+producers and changing backedges remain refused. All eight original oracle
+function bodies remain intact; two former String refusals are now proved.
+
+Focused devbox validation only; evidence: `/tmp/ctcompile-class-dom/`.
+
+- Explicit targets: `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`, `ctjs-translate`,
+  `ctjs-opt`, `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`
+  and `ctcompile-tool`. Initial four-target escape build: **5 actions**;
+  final eight-target build: **10 actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.93s; CTest total 0.94s)**.
+  Dense/induction/structured rows **585 / 639 / 295**; budget cutoffs
+  **23,096 / 43,185 / 21,327**.
+- Exact `Analysis/Escape/escape-claims/signed-product.test`: **1/1 (0.11s)**,
+  **33 observed sites / 17 sound / zero violations / 17 of 19 precision**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.44s; CTest total 3.45s)**,
+  including the new complete DOM preparation transaction checks.
+- Selected existing DOM String fixtures `helper_object_method`,
+  `helper_object_extracted`, `helper_object_multiple`, `helper_regex_original_h`:
+  **16 Node/interpreter observations / 8 combined GCC/Clang executions /
+  24 provenance checks / 88 refusals**.
+- Selected `nullable_uri_original`, `nullable_uri_helper` and
+  `dataset_guarded_values`: **20 URI + 5 dataset Node/interpreter observations /
+  8 combined GCC/Clang executions**, including returned String lifetime and
+  HTML/SVG dataset checks. These and the four holder fixtures cover both DOM
+  providers, optimization settings and explicit/deduced C++.
+- Existing `EXPLICIT_FORCES` source: **8 native executions**, ordinary DOM
+  provider, both optimization settings/layouts and GCC/Clang. All emitted and
+  linked native checks exclude Script/AOT dependencies. These selections do not
+  constitute complete DOM lit cases or a broad native matrix.
+
+Both final gate wrappers exit **0**; ten selected input hashes match the devbox.
+The initial array check failed **0.97s total** on six assertions for the original
+`"0" * 0` shrink. Its source stayed intact; the expectation now records the
+proved empty array. Required pinned `tools/format.sh --check` retains **26
+existing diagnostics in nine HEAD-identical files**. Stable formatting passes
+**918 C++ / 109 Python / 105 web files**; changed-file pinned formatting and
+diff checks pass. Full CTest/compiler lit, class lit, complete DOM lit cases,
+broad corpus/native matrices, WPT and test262 were skipped. No browser source,
+runtime semantics or historical Bootstrap measurements changed; no push.
+
+**Exact next:** prove class construction/prototype normalization inside an
+explicit DOM element entry before calling `prepareDOMEntry`. The audit found
+three concrete gaps: class preparation requires script entry index 0; it requires
+constructed instances and leaves their `ConstructOp`/method bodies; DOM helper
+expansion/entry proof has no ordinary class-instance representation, and the
+host-manifest path skips the ordinary closure/constructor lifter. Preserve the
+complete original body/effect and receiver proof while joining those paths.
+An intrinsic-list union cannot supply those obligations. The original Config
+r/M/F/H/W defaults specimen's last measurement remains **a=7** in Node/interpreter
+with preparation refusal; it was not rerun here. Remaining Config, inheritance,
+full H Unicode, retained callbacks and the application driver remain open.
+Escape String Div/Mod and additional unary/shift conversions are still unproved.
+
 ## Native global helpers and canonical String unary snapshots, 2026-09-18 UTC
 
 Started at clean **c32fee6a**. The **10:33:17 AGENT-SYNC journal** closed the
