@@ -806,6 +806,71 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(carriedSub, "ctjs.binary add %one, %one",
                            "ctjs.constant #ctjs.number<4751297606873776128>"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    const std::string difference =
+        "  %other = ctjs.unary neg %two\n"
+        "  %difference = ctjs.binary sub %minus, %one {storage_test_id = \"difference\"}\n";
+    const auto negativeLeft = replace(replace(replace(savedSub, "[%one, %x]", "[%one, %one, %x]"),
+                                              "  cf.br ^header", difference + "  cf.br ^header"),
+                                      "binary sub %i, %minus", "binary sub %i, %difference");
+    for (const std::string operands : {"%minus, %one", "%minus, %other", "%other, %minus"}) {
+        const auto source = replace(replace(negativeLeft, "sub %minus, %one", "sub " + operands),
+                                    "binary sub %i, %difference",
+                                    operands == "%minus, %other" ? "binary add %i, %difference"
+                                                                 : "binary sub %i, %difference");
+        const char * reads =
+            operands == "%minus, %one" ? "a[0]=one; a[2]=x" : "a[0]=one; a[1]=one; a[2]=x";
+        run({.what = "negative-left Sub retains signed snapshots after source shrink",
+             .body = source,
+             .arrays = "a:[one,one,x]; seed:[]",
+             .reads = reads,
+             .exit = "x -> {x}"});
+        run({.what = "negative-left Sub releases only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,one,x]; seed:[]",
+             .reads = reads,
+             .exit = "zero -> {}"},
+            "x");
+    }
+    const auto cancelledSub = replace(negativeLeft, "sub %minus, %one", "sub %minus, %minus");
+    run({.what = "negative Sub cancellation supplies zero without losing result identity",
+         .body = replace(replace(replace(cancelledSub, "^header(%a, %zero, %zero",
+                                         "^header(%a, %difference, %zero"),
+                                 "binary sub %i, %difference", "binary_static add %i, %one"),
+                         "ctjs.return %result", "ctjs.return %difference"),
+         .arrays = "a:[one,one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=one; a[2]=x",
+         .exit = "difference -> {}"},
+        "x");
+    reject("negative Sub cancellation cannot certify progress", cancelledSub);
+    reject("negative-left Sub cannot supply an own index",
+           replace(negativeLeft, "%base[%i]", "%base[%difference]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("repeated negative-left Sub still needs independent invariance",
+           replace(replace(negativeLeft, difference, ""), "  %step =", difference + "  %step ="));
+    for (const std::string constant :
+         {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<4751297606875873280>"}) {
+        reject("negative-left Sub needs bounded exact Number operands",
+               replace(negativeLeft, difference,
+                       "  %operand = ctjs.constant " + constant + "\n" +
+                           replace(difference, "sub %minus, %one", "sub %minus, %operand")));
+    }
+    reject("negative-left Sub cannot borrow an unknown operand",
+           replace(negativeLeft, "sub %minus, %one", "sub %minus, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    const auto maximumSub = replace(replace(negativeLeft, "binary sub %left, %magnitude",
+                                            "constant #ctjs.number<13974669643728551936>"),
+                                    "sub %minus, %one", "sub %minus, %zero");
+    run({.what = "negative-left Sub preserves an exact boundary magnitude and origin",
+         .body = replace(maximumSub, "ctjs.return %result", "ctjs.return %difference"),
+         .arrays = "a:[one,one,x]; seed:[]",
+         .reads = "a[0]=one",
+         .exit = "difference -> {}"},
+        "x");
+    reject("negative-left Sub must bound its final induction update",
+           replace(maximumSub, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    reject("negative-left Sub cannot certify an overflowing magnitude",
+           replace(maximumSub, "sub %minus, %zero", "sub %minus, %one"));
     for (const std::string opcode : {"binary", "binary_static"}) {
         for (const std::string operands : {"%minus, %two", "%two, %minus"}) {
             const std::string cancel = "  %cancelled = ctjs." + opcode + " add " + operands +
