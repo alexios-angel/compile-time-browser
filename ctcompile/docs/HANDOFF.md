@@ -15,6 +15,83 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Closed scalar guards and original Bootstrap helpers, 2026-09-18 UTC
+
+Started at clean **66174a17**. The interrupted declaration-borrow/bounded-power
+thread was already closed in that commit and AGENT-SYNC's **08:54:45** journal;
+no September 7 WIP remained unmerged. Continued the recorded original **r/H**
+boundary, with independent escape implementation and caller-proof review.
+
+**b680e2a0** joins scalar argument facts across the complete callers of private,
+capture-free functions. The symbolic pass reuses its existing primitive folding
+and branch selection, including after closure lifting exposes direct calls.
+Calls and effects remain. Public/script entries, escaping or alternate-dispatch
+callables, observed callee identities and arguments objects remain excluded;
+CFG/SCF arguments stay unknown. Both optimization switches retain their controls.
+
+**24832a56** pins Bootstrap's original **r** body in a closed global declaration
+and a local closure. With **null** input and optimization enabled, both now
+execute natively: **8 executions**, explicit/deduced C++, GCC/Clang, **a=7** in
+Node/interpreter/native, with no ctbrowser or prototype metadata in output.
+The immediate global-call form still lacks closed-caller authority. It remains
+unchanged as a refusal control, alongside both unoptimized forms (**4 refusals**).
+The original class-method r probe also remains a native refusal. A new fixture
+includes original **r + M + F + all four H methods + W** without pruning bodies:
+Node/interpreter return **a=7**, while preparation refuses an unknown call,
+binding or reflective effect before the older named-H boundary.
+
+**3f798821** separately proves exact negative-one base power parity for bounded
+signed integer Number exponents. Saved lengths, original result identity and
+CFG/SCF transport survive; coercion, nonfinite/fractional/out-of-domain exponents,
+changing backedges and general powers remain unproved.
+
+Focused devbox checks only:
+
+- Six explicit targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **6 build actions**.
+  Subsequent three-target native builds performed **9**, then **4** actions;
+  final class rebuilds had no work.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.92s)**. Dense/induction/
+  structured rows: **585 / 528 / 265**; budget cutoffs: **22,816 / 36,412 / 18,508**.
+  `escape-claims/{unit-power,bounded-power,power-identities}.test`: **3/3 (0.22s)**;
+  each reports **26 sites / 11 sound / zero violations / 11 of 15 precision**.
+- `Precomputation/{arguments,precompute,precompute-pdll}.mlir`: **3/3 (0.10s)**;
+  `Optimization/default-optimizations.mlir`: **1/1 (0.08s)**.
+  `Lowering/Objects/primitive-fields.mlir` passed (**152 native / 62 refusals**)
+  in the initial two-case selection, whose class case failed its new H diagnostic
+  assertion (**73.19s** total). Compiler sources did not change afterward.
+- Final exact `Lowering/Objects/class-initialization.mlir`: **1/1 (149.98s)**,
+  **120 source observations / 288 native executions / 240 unprepared / 149
+  preparation refusals**, plus **16 ordinary executions / 20 refusals**, the
+  **8 r executions / 4 refusals**, and **12 prepared native refusals**.
+  The branching-helper preparation budget remains **419**. Final wrapper exit
+  **0**; six native and four escape input hashes match the devbox.
+
+Initial focused runs caught an invalid short-call test operand list and an extra
+analysis round affecting the existing public-only budget check; both were fixed.
+The H diagnostic expectation and reference-runner stderr-statistics assertion were
+corrected without changing source bodies. The immediate r call's public-function
+refusal was retained. SSH access rotated mid-session; authorized `start` and
+`allow-ip` restored it. No browser source or runtime semantics changed.
+
+Required `tools/format.sh --check` still fails with **26 existing diagnostics in
+nine files**: eight files are unchanged, and the flagged lines in the modified
+`Symbolic/Facts.cpp` are unchanged. Stable full formatting passes **916 C++ /
+109 Python / 105 web files**; Black, Python syntax and `git diff --check` pass.
+Full CTest/compiler lit, broad corpus/native matrices, WPT and test262 were
+skipped. Evidence: `/tmp/ctcompile-r-guards/`.
+
+**Exact next:** carry the same caller authority through the original class-method
+r/prototype boundary, then compose Config's class proof with the existing DOM
+proof for H. `ClassInitialization.cpp`, `Contract.cpp` and `DOMSource.cpp` still
+separate closed-source class intrinsics from DOM-provider authority; H's global
+callable holder also needs cross-function identity/order proof. H.getDataAttribute,
+M and F already use public DOM helpers, so no platform copy is needed.
+Object.entries/destructuring, RegExp/TypeError exits, inheritance, full H Unicode
+keys, retained callbacks and the application driver remain open. Whole-Bootstrap,
+Button and Data coverage counts remain historical.
+
 ## Recovered declaration borrows and bounded powers, 2026-09-18 UTC
 
 Resumed the eleven dirty compiler paths at `c675f002`, first recorded in

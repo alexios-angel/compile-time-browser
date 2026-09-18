@@ -1,5 +1,34 @@
 # What native Bootstrap needs next
 
+## Closed scalar guards and original Bootstrap helpers, 2026-09-18 UTC
+
+**b680e2a0** adds complete private-caller scalar facts to the existing guard
+folder, including after closure lifting; implicit/escaping/alternate callers and
+CFG/SCF entries remain excluded. **24832a56** executes the original Bootstrap r
+body with null input through a closed declaration and a local closure: **8 native
+executions**, optimized, both C++ layouts and GCC/Clang, **a=7** throughout.
+The immediate global form and original class-method probe remain refused. The
+new complete original r/M/F/H/W defaults specimen returns **a=7** but still fails
+class preparation's effect census; no body was removed.
+
+Independent **3f798821** proves bounded negative-one Number power parity.
+Exact arrays CTest **1/1 (0.92s)** and three power oracles **3/3 (0.22s)** pass;
+each oracle has **26 sites / zero violations / 11 of 15 precision**. Scalar
+precomputation **3/3**, defaults **1/1**, primitive fields and final class case
+**1/1 (149.98s)** pass. Class counts: **120 source / 288 native**, plus the new
+**8 r executions**, ordinary executions and refusal controls recorded in HANDOFF.
+Ten selected source hashes match the devbox. Required pinned formatting retains
+**26 pre-existing diagnostics**; stable **916/109/105** formatting, Black, syntax
+and diff checks pass. Full suites and broad matrices were skipped; browser source
+and runtime semantics were unchanged. HANDOFF records exact targets, intermediate
+failures and access repair. Evidence: `/tmp/ctcompile-r-guards/`.
+
+**Next:** original r's class/prototype caller proof and Config/H DOM-provider
+composition; then iterator/destructuring and RegExp/TypeError exits, inheritance,
+full H Unicode keys, retained callbacks and the application driver. General Number
+powers remain outside the escape proof. Historical whole-Bootstrap counts were
+not replayed.
+
 ## Recovered declaration borrows and bounded powers, 2026-09-18 UTC
 
 **`fe2f5b7f`** finishes the interrupted hoisted-helper object-borrow draft:
