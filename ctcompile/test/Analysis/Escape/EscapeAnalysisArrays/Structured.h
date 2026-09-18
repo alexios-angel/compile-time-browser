@@ -906,6 +906,33 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    "    scf.yield %negative : !ctjs.value\n"
                    "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
            ArrayContentsFailure::UnsupportedOperation);
+    const auto negativeOnePower = replace(carriedPower, "  %unit = ctjs.binary pow %one, %exponent",
+                                          "  %negativeOne = ctjs.unary neg %one\n"
+                                          "  %unit = ctjs.binary pow %negativeOne, %exponent");
+    for (const auto & source :
+         {negativeOnePower,
+          replace(replace(negativeOnePower, "unary neg %magnitude", "unary neg %one"),
+                  "binary_static add %i, %d", "binary sub %i, %d")}) {
+        rows.push_back({.what = "negative-one powers retain parity through structured transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured negative-one powers release only unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+    }
+    reject("negative-one power snapshots cannot change on a structured backedge",
+           replace(negativeOnePower, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("negative-one powers need an exact exponent on every structured predecessor",
+           replace(negativeOnePower, "  %exponent = ctjs.unary neg %magnitude\n",
+                   "  %exponent = scf.if %flag -> (!ctjs.value) {\n"
+                   "    %negative = ctjs.unary neg %magnitude\n"
+                   "    scf.yield %negative : !ctjs.value\n"
+                   "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+           ArrayContentsFailure::UnsupportedOperation);
     const std::string makeProduct = "  %negative = ctjs.unary neg %magnitude\n"
                                     "  %unit = ctjs.binary mul %negative, %one\n";
     const auto carriedProduct =

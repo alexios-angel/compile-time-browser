@@ -1286,10 +1286,49 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .reads = "a[0]=one; a[1]=x",
          .exit = "zero -> {}"},
         "x");
-    for (const std::string exponent : {"%two", "%minus"}) {
-        reject("general and negative powers need a separate exact Number proof",
-               replace(powerChild, "pow %minus, %one", "pow %minus, " + exponent));
+    reject("an even negative-one power cannot supply a negative stride",
+           replace(powerChild, "pow %minus, %one", "pow %minus, %two"));
+    for (const std::string exponent : {"%minus", "%three", "%magnitude"}) {
+        auto source = replace(powerChild, "pow %minus, %one", "pow %minus, " + exponent);
+        if (exponent == "%magnitude") {
+            source = replace(source, "binary sub %i, %power", "binary_static add %i, %power");
+        }
+        run({.what = "negative-one powers preserve exact parity and the saved length snapshot",
+             .body = source,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "negative-one powers release only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
     }
+    const auto signedUnitPower = replace(powerChild, "pow %minus, %one", "pow %minus, %magnitude");
+    for (const std::string literal :
+         {"#ctjs.number<4751297606873776128>", "#ctjs.number<13974669643728551936>"}) {
+        run({.what = "negative-one powers preserve parity at both signed domain endpoints",
+             .body = replace(signedUnitPower, "  %power = ctjs.binary pow %minus, %magnitude",
+                             "  %endpoint = ctjs.constant " + literal +
+                                 "\n  %power = ctjs.binary pow %minus, %endpoint"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+    }
+    for (const std::string literal :
+         {"#ctjs.string<\"2\">", "#ctjs.bigint<\"2\">", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<18442240474082181120>",
+          "#ctjs.number<9221120237041090560>"}) {
+        reject("negative-one powers require exact bounded integer Number exponents",
+               replace(signedUnitPower, "  %power = ctjs.binary pow %minus, %magnitude",
+                       "  %exponent = ctjs.constant " + literal +
+                           "\n  %power = ctjs.binary pow %minus, %exponent"));
+    }
+    reject("general integer powers still need an independent exact Number proof",
+           replace(replace(powerChild, "pow %minus, %one", "pow %minus, %three"),
+                   "binary sub %left, %magnitude", "unary neg %magnitude"));
     reject("power snapshots cannot borrow an unknown exponent",
            replace(powerChild, "pow %minus, %one", "pow %minus, %p"),
            ArrayContentsFailure::UnsupportedOperation);

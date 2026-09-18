@@ -1796,7 +1796,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     const auto negativeExponent = right.negativeIntegerNumber
                                                       ? right.negativeIntegerNumber
                                                       : boundedNumber(rhs, true);
-                    // ponytail: only exact zero/one identities; general powers
+                    // ponytail: only exact zero/unit identities; general powers
                     // need Number's implementation-approximated result proof.
                     // Keep the result identity, including signed zero's parity.
                     if (exponent && *exponent <= 1 && (positive || negative)) {
@@ -1812,6 +1812,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         // handled above. One still requires a finite Number.
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = positive;
+                    } else if (negative == 1 && (exponent || negativeExponent)) {
+                        // The sign of an integer exponent does not change parity.
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        const auto magnitude = exponent ? *exponent : *negativeExponent;
+                        if (magnitude % 2 == 0) {
+                            result.integerNumber = 1;
+                        } else {
+                            result.negativeIntegerNumber = 1;
+                        }
                     }
                 }
                 state.values[binary.getResult()] = result;
