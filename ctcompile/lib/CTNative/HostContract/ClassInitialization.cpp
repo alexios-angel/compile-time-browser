@@ -26,6 +26,8 @@ struct classInitialization {
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::StringMap<ctjs::StoreGlobalOp> globals;
     llvm::StringMap<bool> closedGlobals;
+    llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> globalHolderReads;
+    llvm::DenseSet<mlir::Operation *> globalHolderLoads;
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
@@ -73,9 +75,13 @@ struct classInitialization {
     ctjs::CreateClosureOp sourceClosure(mlir::Value value) {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
         if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
+            if (auto closure = globalHolderReads.lookup(value)) { return closure; }
             auto object = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
-            if (!object) { return {}; }
-            auto proof = analyzeLocalCallableObject(object, [&] { return step(); });
+            auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
+            auto publication = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
+            if (!object && !publication) { return {}; }
+            auto proof = object ? analyzeLocalCallableObject(object, [&] { return step(); })
+                                : analyzeGlobalCallableObject(publication, [&] { return step(); });
             if (!proof) {
                 llvm::consumeError(proof.takeError());
                 return {};
@@ -106,7 +112,7 @@ struct classInitialization {
                     if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
                     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                     if (!call || use.getOperandNumber() != 0 ||
-                        call.getReceiver() != object.getResult()) {
+                        call.getReceiver() != loaded.getObject()) {
                         return {};
                     }
                 }
@@ -116,6 +122,12 @@ struct classInitialization {
             // census below. This proof only establishes identity and receiver use.
             for (ctjs::SetPropertyOp store : proof->stores) {
                 helpers.insert(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+            }
+            if (publication) {
+                for (auto [loaded, closure] : proof->reads) {
+                    globalHolderReads[loaded.getResult()] = closure;
+                }
+                for (ctjs::LoadGlobalOp loaded : proof->loads) { globalHolderLoads.insert(loaded); }
             }
             return selected;
         }
@@ -712,6 +724,7 @@ struct classInitialization {
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
                 accepted = load.getName() == host_detail::classDefinedIntrinsic ||
+                           globalHolderLoads.contains(load) ||
                            static_cast<bool>(sourceClosure(load.getResult()));
             }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {

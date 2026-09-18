@@ -1551,7 +1551,7 @@ function holderAmbient() {
 }
 var a = holderAmbient();
 
-// Global publication and cross-function initialization order are a later proof.
+// Publish every fixed slot before reaching the holder through closed calls.
 //--- local-holder-global.js
 const H = {read: n => n + 1};
 function holderGlobal() {
@@ -1560,3 +1560,143 @@ function holderGlobal() {
     return H.read(7);
 }
 var a = holderGlobal();
+
+//--- global-holder-methods.js
+const H = {read(n) { return n + 1; }, combine: (left, right) => left * 10 + right};
+function holderGlobalMethods() {
+    class Shape {}
+    var instance = new Shape();
+    return H.combine(H.read(7), H.read(0));
+}
+var a = holderGlobalMethods();
+
+// A function's declaration may precede publication; all calls must follow it.
+//--- global-holder-chain.js
+function readHolder(n) { return H.read(n); }
+function holderGlobalChain() {
+    class Shape {}
+    var instance = new Shape();
+    return readHolder(7);
+}
+const H = {read: n => n + 1};
+var a = holderGlobalChain();
+
+//--- global-holder-order.js
+const H = {read: (left, right) => left * 10 + right};
+function holderGlobalOrder() {
+    class Shape {}
+    var instance = new Shape(), n = 0;
+    return H.read(n = n + 1, n = n + 1) * 10 + n;
+}
+var a = holderGlobalOrder();
+
+//--- global-holder-early.js
+function holderGlobalEarly() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalEarly();
+var H = {read: n => n + 1};
+
+// A direct caller census cannot ignore invocation through an escaped callback.
+//--- global-holder-indirect-early.js
+function holderGlobalIndirectEarly() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+function invoke(callback) { return callback(); }
+var a = invoke(holderGlobalIndirectEarly);
+var H = {read: n => n + 1};
+
+// Even an unrelated pure call ends the initial non-reentrant publication prefix.
+//--- global-holder-prefix-call.js
+function warmup() { return 1; }
+warmup();
+const H = {read: n => n + 1};
+function holderGlobalPrefixCall() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalPrefixCall();
+
+// A slot added after publication stays outside the fixed-object proof even
+// when this particular call happens after the additional store.
+//--- global-holder-late-slot.js
+const H = {};
+H.read = n => n + 1;
+function holderGlobalLateSlot() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalLateSlot();
+
+//--- global-holder-replaced.js
+var H = {read: n => n + 1};
+H = {read: n => n + 2};
+function holderGlobalReplaced() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalReplaced();
+
+//--- global-holder-slot-replaced.js
+const H = {read: n => n + 1};
+H.read = n => n + 2;
+function holderGlobalSlotReplaced() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalSlotReplaced();
+
+//--- global-holder-alias.js
+const H = {read: n => n + 1};
+function holderGlobalAlias() {
+    class Shape {}
+    var instance = new Shape(), alias = H;
+    alias.read = n => n + 2;
+    return H.read(7);
+}
+var a = holderGlobalAlias();
+
+//--- global-holder-detached.js
+const H = {read: n => n + 1};
+function holderGlobalDetached() {
+    class Shape {}
+    var instance = new Shape(), read = H.read;
+    return read(7);
+}
+var a = holderGlobalDetached();
+
+//--- global-holder-identity.js
+const H = {read: n => n + 1};
+function holderGlobalIdentity() {
+    class Shape {}
+    var instance = new Shape();
+    return (H === H) * 1;
+}
+var a = holderGlobalIdentity();
+
+//--- global-holder-receiver.js
+const H = {read(n) { return this ? n + 1 : 0; }};
+function holderGlobalReceiver() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalReceiver();
+
+// The uncalled global slot still requires a complete effect census.
+//--- global-holder-ambient.js
+const H = {read: n => n, unused(n) { return unknown(n); }};
+function holderGlobalAmbient() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobalAmbient();

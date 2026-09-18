@@ -26,6 +26,20 @@ OBSERVATIONS = {
     "local-holder-receiver": (8, 8),
     "local-holder-ambient": (7, 7),
     "local-holder-global": (8, 8),
+    "global-holder-methods": (81, 81),
+    "global-holder-chain": (8, 8),
+    "global-holder-order": (122, 122),
+    "global-holder-early": (None, None),
+    "global-holder-indirect-early": (None, None),
+    "global-holder-prefix-call": (8, 8),
+    "global-holder-late-slot": (8, 8),
+    "global-holder-replaced": (9, 9),
+    "global-holder-slot-replaced": (9, 9),
+    "global-holder-alias": (9, 9),
+    "global-holder-detached": (8, 8),
+    "global-holder-identity": (1, 1),
+    "global-holder-receiver": (8, 8),
+    "global-holder-ambient": (7, 7),
     "local-helper-arguments": (8, 8),
     "local-helper-branches": (82, 82),
     "local-helper-order": (122, 122),
@@ -191,6 +205,10 @@ POSITIVES = {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "local-holder-global",
+    "global-holder-methods",
+    "global-holder-chain",
+    "global-holder-order",
     "bootstrap-r",
     "method-dispatch-throw",
     "method-throw-default",
@@ -655,16 +673,16 @@ def main():
     cutoffs = {}
     for name, (node_expected, reference_expected) in OBSERVATIONS.items():
         source = args.fixtures / f"{name}.js"
-        node = run([args.node, "-e", NODE, str(source)])
-        reference = run([args.reference, str(source)])
-        if node.stdout != f"a={node_expected}\n" or node.stderr:
+        node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
+        reference = run([args.reference, str(source)], success=reference_expected is not None)
+        if node_expected is not None and (node.stdout != f"a={node_expected}\n" or node.stderr):
             raise RuntimeError(f"{name}: Node observation changed\n{node.stdout}{node.stderr}")
         reference_output = f"a={reference_expected}\n"
         if name == "static-global-effect":
             reference_output += "count=3\n"
         if name == "static-error-replaced":
             reference_output = "Error=9\n" + reference_output
-        if reference.stdout != reference_output:
+        if reference_expected is not None and reference.stdout != reference_output:
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
             )
@@ -751,11 +769,36 @@ def main():
             key_checked, key_refused = check_prototype_keys(args, prepared)
         if name in PREPARED_ONLY:
             before, after = structured.read_text(), prepared.read_text()
-            operations = (
-                ("ctjs.call_direct",)
-                if name in ("local-helper-order", "bootstrap-r")
-                else ("cf.switch", "ctjs.throw") if name.startswith("method-") else ("ctjs.throw",)
-            )
+            if name == "local-holder-global" or name.startswith("global-holder-"):
+                # Class preparation proves publication without lifting the global
+                # holder. Retain its binding, cross-function reads and method calls.
+                operations = (
+                    "ctjs.call_direct",
+                    'ctjs.load_global "H"',
+                    'ctjs.store_global "H"',
+                )
+                if after.count("ctjs.call ") != before.count("ctjs.call ") - 1:
+                    raise RuntimeError(f"{name}: preparation changed a holder method call")
+                for text in (before, after):
+                    entry = next(
+                        body
+                        for body in FUNCTION.split(text)
+                        if body.lstrip().startswith("@_script_$0(")
+                    )
+                    holder = re.search(r'ctjs.store_global "H", (%\w+)', entry)
+                    stores = 2 if name == "global-holder-methods" else 1
+                    if not holder or entry.count(f"ctjs.set_property {holder[1]}[") != stores:
+                        raise RuntimeError(f"{name}: preparation lost a holder callable slot")
+            else:
+                operations = (
+                    ("ctjs.call_direct",)
+                    if name in ("local-helper-order", "bootstrap-r")
+                    else (
+                        ("cf.switch", "ctjs.throw")
+                        if name.startswith("method-")
+                        else ("ctjs.throw",)
+                    )
+                )
             for operation in operations:
                 if not before.count(operation) or before.count(operation) != after.count(operation):
                     raise RuntimeError(
@@ -811,6 +854,7 @@ def main():
             "static-throw-chain",
             "local-helper-branches",
             "local-holder-arrow",
+            "global-holder-chain",
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
