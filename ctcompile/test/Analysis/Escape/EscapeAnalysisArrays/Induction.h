@@ -799,12 +799,42 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(complementChild, "bitnot %operand", "bitnot %p"),
            ArrayContentsFailure::UnsupportedOperation);
     for (const std::string constant :
-         {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">", "#ctjs.number<4602678819172646912>",
-          "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
-          "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>"}) {
-        reject("BitNot bounds its original Number rather than relying on conversion",
-               replace(complementChild, "ctjs.unary plus %zero", "ctjs.constant " + constant));
+         {"#ctjs.string<\"0\">", "#ctjs.string<\"00\">", "#ctjs.string<\"-1\">",
+          "#ctjs.string<\"1.0\">", "#ctjs.string<\"4294967295\">", "#ctjs.bigint<\"0\">",
+          "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
+          "#ctjs.number<13974669643730649088>", "#ctjs.number<9218868437227405312>",
+          "#ctjs.number<9221120237041090560>"}) {
+        const auto body =
+            replace(complementChild, "ctjs.unary plus %zero", "ctjs.constant " + constant);
+        if (constant == "#ctjs.string<\"0\">") {
+            run({.what = "the original canonical String BitNot keeps its negative CFG stride",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "canonical String BitNot discharges only unreturned CFG children",
+                 .body = replace(body, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            reject("a repeated String BitNot still needs independent invariance",
+                   replace(replace(body, "  %minus = ctjs.unary bitnot %operand\n", ""),
+                           "  %step =", "  %minus = ctjs.unary bitnot %operand\n  %step ="));
+        } else {
+            reject("BitNot requires bounded Numbers or canonical original Strings", body);
+        }
     }
+    const auto carriedStringComplement =
+        replace(carriedComplement, "ctjs.unary plus %one", "ctjs.constant #ctjs.string<\"1\">");
+    run({.what = "canonical String BitNot survives reordered CFG transport",
+         .body = carriedStringComplement,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    reject("a String BitNot snapshot cannot change across the CFG backedge",
+           replace(carriedStringComplement, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
     // Subtracting the expected signed result must produce index zero. This
     // checks the full magnitude at both ToInt32 boundaries, not just its sign.
     for (const auto & [input, output] :

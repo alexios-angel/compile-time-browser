@@ -804,6 +804,26 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                  "  %index = ctjs.binary mod %zero, %divisor\n" +
                  indexed,
          .failure = ArrayContentsFailure::UnsupportedOperation});
+    for (const auto & [input, expected] :
+         {std::pair{"0", "13830554455654793216"}, std::pair{"2147483647", "13970166044103278592"},
+          std::pair{"2147483648", "4746794007244308480"},
+          std::pair{"4294967294", "4607182418800017408"}}) {
+        run({.what = "canonical String BitNot preserves exact signed ToInt32 boundary results",
+             .body = values + "  %input = ctjs.constant #ctjs.string<\"" + input +
+                     "\"> {storage_test_id = \"input\"}\n"
+                     "  %saved = ctjs.create_array [%input] {storage_test_id = \"saved\"}\n"
+                     "  %original = ctjs.get_property %saved[%zero]\n"
+                     "  ctjs.set_property %saved[%zero], %zero\n"
+                     "  %expected = ctjs.constant #ctjs.number<" +
+                     expected +
+                     ">\n  %bits = ctjs.unary bitnot %original\n"
+                     "  %index = ctjs.binary sub %bits, %expected\n"
+                     "  ctjs.set_property %a[%key], %index\n"
+                     "  ctjs.return %original\n",
+             .arrays = "a:[]; saved:[zero]",
+             .reads = "saved[0]=input",
+             .exit = "input -> {}"});
+    }
     for (const std::string kind : {"ushr", "shr", "shl", "bitand", "bitor", "bitxor"}) {
         const std::string unchanged = kind == "bitand" ? "%one" : "%zero";
         const std::string cleared = kind == "bitand" || kind == "bitor" ? "%zero" : "%length";

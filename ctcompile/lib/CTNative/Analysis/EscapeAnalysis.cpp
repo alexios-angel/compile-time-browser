@@ -1565,14 +1565,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
                     } else {
-                        const auto positive = input.integerNumber ? input.integerNumber
-                                                                  : boundedNumber(input.origin());
+                        auto positive = input.integerNumber ? input.integerNumber
+                                                            : boundedNumber(input.origin());
+                        if (!positive && input.string()) {
+                            positive = ownArrayIndex(input.origin());
+                        }
                         const auto negative = input.negativeIntegerNumber
                                                   ? input.negativeIntegerNumber
                                                   : boundedNumber(input.origin(), true);
                         // Complement the exact ToUint32 bits, then recover the
                         // signed Number magnitude without a signed overflow.
-                        // Coercible primitives supply no bounded Number fact.
+                        // Canonical original Strings use the same exact decimal
+                        // conversion as Plus/Neg; the result keeps its identity.
                         if (positive || negative) {
                             const std::uint32_t bits =
                                 ~(positive ? static_cast<std::uint32_t>(*positive)

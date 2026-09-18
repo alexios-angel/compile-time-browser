@@ -668,12 +668,26 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .exit = "x -> {x}; y -> {y}"});
     reject("a BitNot snapshot cannot change across structured yields",
            replace(carriedComplement, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
-    reject("BitNot cannot borrow a Number from the other structured predecessor",
-           replace(carriedComplement, "  %magnitude = ctjs.unary plus %one\n",
-                   "  %text = ctjs.constant #ctjs.string<\"1\">\n"
-                   "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
-                   "    scf.yield %one : !ctjs.value\n"
-                   "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
+    const auto stringComplement =
+        replace(carriedComplement, "  %magnitude = ctjs.unary plus %one\n",
+                "  %text = ctjs.constant #ctjs.string<\"1\">\n"
+                "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
+                "    scf.yield %one : !ctjs.value\n"
+                "  } else {\n    scf.yield %text : !ctjs.value\n  }\n");
+    rows.push_back({.what = "BitNot preserves original Number and String predecessor snapshots",
+                    .body = stringComplement,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x",
+                    .exit = "x -> {x}; x -> {x}"});
+    rows.push_back({.what = "String BitNot discharges only unreturned structured children",
+                    .body = replace(stringComplement, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x",
+                    .exit = "zero -> {}; zero -> {}"});
+    reject("BitNot cannot borrow a canonical String from another structured predecessor",
+           replace(stringComplement, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+    reject("a String BitNot snapshot cannot change across structured yields",
+           replace(stringComplement, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
     for (const std::string kind : {"bitand", "bitor", "bitxor", "shl", "shr"}) {
         const std::string right = kind == "bitand" ? "%operand" : "%zero";
         const std::string operation =
