@@ -523,12 +523,11 @@ struct gradient_reader {
                         canonical_quantity(*text, quantity::length_percentage, ctx);
                     if (!one) { return false; }
                     // A radial size may not be negative: a literal is a
-                    // syntax error, a computed calc() clamps to nought.
+                    // syntax error when parsing. Computed values may already
+                    // have had their calc() folded by the cascade.
                     if (one->front() == '-') {
-                        if (ctx.lengths == nullptr || t.type != token_type::function) {
-                            return false;
-                        }
-                        *one = "0px";
+                        if (ctx.lengths == nullptr) { return false; }
+                        *one = non_negative(*one);
                     }
                     sizes.push_back(*one);
                     at = end;

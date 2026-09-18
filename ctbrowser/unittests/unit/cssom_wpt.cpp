@@ -21,6 +21,41 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_computed_radial_size_ranges() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="target" style="font-size: 40px"></div><script>
+        const target = document.getElementById('target');
+        for (const property of ['background-image', 'mask-image', 'border-image-source',
+                                'list-style-image']) {
+            const gradient = 'radial-gradient(calc(10px - 0.5em) calc(0.5em + 10px)' +
+                             ' at calc(10px - 1em) 30px, red, blue)';
+            target.style.setProperty(property, gradient);
+            console.log(property + '=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty('--image', gradient);
+            target.style.setProperty(property, 'var(--image)');
+            console.log(property + '-var=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty('--image', 'radial-gradient(-10px 30px, red, blue)');
+            console.log(property + '-invalid=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty('--image', 'radial-gradient(-10px calc(10px + 20%), red, blue)');
+            console.log(property + '-invalid-mixed=' + getComputedStyle(target).getPropertyValue(property));
+            target.style.setProperty(property, 'radial-gradient(calc(10% - 20%) 30px, red, blue)');
+            console.log(property + '-percent=' + getComputedStyle(target).getPropertyValue(property));
+        }
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (const std::string property :
+         {"background-image", "mask-image", "border-image-source", "list-style-image"}) {
+        const std::string gradient =
+            "radial-gradient(0px 30px at -30px 30px, rgb(255, 0, 0), rgb(0, 0, 255))";
+        CHECK_EQ(logged(page, property + "="), property + "=" + gradient);
+        CHECK_EQ(logged(page, property + "-var="), property + "-var=" + gradient);
+        CHECK_EQ(logged(page, property + "-invalid="), property + "-invalid=none");
+        CHECK_EQ(logged(page, property + "-invalid-mixed="), property + "-invalid-mixed=none");
+        CHECK_EQ(logged(page, property + "-percent="),
+                 property + "-percent=radial-gradient(0% 30px, rgb(255, 0, 0), rgb(0, 0, 255))");
+    }
+}
+
 void test_computed_layer_size_ranges() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<style>
@@ -515,6 +550,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_computed_radial_size_ranges();
     test_computed_layer_size_ranges();
     test_nonnegative_computed_widths();
     test_elliptical_radius_cascade();
