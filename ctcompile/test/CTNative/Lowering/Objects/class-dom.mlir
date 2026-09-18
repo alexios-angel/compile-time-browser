@@ -33,3 +33,6 @@
 // Original captured F retains its nested replacement callback until the shared
 // no-match proof checks all direct-call String inputs. Matching/unknown inputs,
 // unused matching methods, callback effects and helper identity escapes refuse.
+// Captured dataset filters preserve the original Bootstrap predicate and each
+// call's callback enclosure. Escapes, implicit arguments and unknown effects
+// refuse; full original H retains its unused-holder-slot boundary.

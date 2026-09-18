@@ -731,6 +731,81 @@ F_REFUSALS = {
 }
 CLASS_CASES.update(F_CASES)
 CLASS_REFUSALS.update(F_REFUSALS)
+FILTER_PREDICATE = 't => t.startsWith("bs") && !t.startsWith("bsConfig")'
+FILTER_CLASS = (
+    """function datasetKeys(t) {
+    return Object.keys(t.dataset).filter("""
+    + FILTER_PREDICATE
+    + """).length;
+  }
+  class Shape {
+    constructor(element) { this.element = element; }
+    read() { return datasetKeys(this.element); }
+  }
+  const shape = new Shape(element);
+  const count = shape.read();
+  return 0 < count && count < 2 && element.getAttribute('x') === null;
+"""
+)
+FILTER_CASES = {
+    "class_filter_captured": (FILTER_CLASS, "1000"),
+    "class_filter_multiple": (
+        FILTER_CLASS.replace("const count =", "shape.read(); const count ="),
+        "1000",
+    ),
+}
+FILTER_REFUSALS = {
+    "class_filter_unknown": FILTER_CLASS.replace('t.startsWith("bs")', "unknown(t)"),
+    "class_filter_capture": FILTER_CLASS.replace('t.startsWith("bs")', "t === element"),
+    "class_filter_index": FILTER_CLASS.replace(FILTER_PREDICATE, "(t, i) => i === 0"),
+    "class_filter_this": FILTER_CLASS.replace(FILTER_PREDICATE, "function(t) { return this; }"),
+    "class_filter_nested": FILTER_CLASS.replace(
+        FILTER_PREDICATE, "t => { function hidden() { return t; } return hidden(); }"
+    ),
+    "class_filter_escape": FILTER_CLASS.replace(
+        "return Object.keys(t.dataset).filter(" + FILTER_PREDICATE + ").length;",
+        "const callback = " + FILTER_PREDICATE + '; t.setAttribute("leak", callback); '
+        "return Object.keys(t.dataset).filter(callback).length;",
+    ),
+    "class_filter_unused_effect": FILTER_CLASS.replace(
+        "    read()",
+        "    unused() { datasetKeys(this.element); this.element.unknown(); }\n    read()",
+    ),
+    "class_filter_later_input": FILTER_CLASS.replace(
+        "const count =", "datasetKeys({}); const count ="
+    ),
+}
+# Complete vendor H stays a refusal until every original holder slot is proved.
+BOOTSTRAP_H = """    const H = {
+        setDataAttribute(t, e, i) {
+            t.setAttribute(`data-bs-${F(e)}`, i)
+        },
+        removeDataAttribute(t, e) {
+            t.removeAttribute(`data-bs-${F(e)}`)
+        },
+        getDataAttributes(t) {
+            if (!t) return {};
+            const e = {},
+                i = Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"));
+            for (const n of i) {
+                let i = n.replace(/^bs/, "");
+                i = i.charAt(0).toLowerCase() + i.slice(1), e[i] = M(t.dataset[n])
+            }
+            return e
+        },
+        getDataAttribute: (t, e) => M(t.getAttribute(`data-bs-${F(e)}`))
+    };
+"""
+FULL_H = BOOTSTRAP_M + strings.BOOTSTRAP_F + BOOTSTRAP_H + """class Shape {
+    constructor(element) { this.element = element; }
+    read() { return H.getDataAttribute(this.element, 'config'); }
+  }
+  return typeof new Shape(element).read() === 'object';
+"""
+FILTER_REFUSALS["class_filter_full_h"] = FULL_H
+FILTER_IDENTITIES = ["Object", "Array", "String"]
+CLASS_CASES.update(FILTER_CASES)
+CLASS_REFUSALS.update(FILTER_REFUSALS)
 CASES = {
     "direct_read": (
         """function directRead(target, key) { return target.getAttribute(key); }
@@ -869,6 +944,7 @@ def check_oracles(args):
             }.get(name, "")
             observations.append(f"""var {variable} = (() => {{
   const element = observationElement({value});
+  {"element.dataset = {bsConfig: 'a', bsConfigExtra: 'b', bsToggle: 'c', other: 'd'};" if name in FILTER_CASES else ""}
   const other = observationElement('different');
   other.setAttribute('other', 'second');
   let toggles = 0;
@@ -1040,7 +1116,9 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 deduced = args.work / f"{label}.mlir"
                 run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
                 native = deduced
-            cpp, symbol = strings.emitted(args, native, label)
+            cpp, symbol = strings.emitted(args, native, label, callbacks=int(name in FILTER_CASES))
+            if name in FILTER_CASES and "ctnative::filter_strings<" not in cpp:
+                raise RuntimeError(f"{label}: native output lost its original filter callback")
             if re.search(r"__ctbrowser_class_defined|__proto__|__home__|invoke_callable", cpp):
                 raise RuntimeError(f"{label}: native entry retained class metadata or dispatch")
             headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
@@ -1081,6 +1159,15 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                     '            assert(doc.set_attribute(other_node, atoms.intern("other"), "second"));\n'
                     "            const auto result =",
                 )
+            if name in FILTER_CASES:
+                check = check.replace(
+                    "        const auto state =",
+                    "\n".join(
+                        f'        assert(doc.set_attribute(node, atoms.intern("data-{key}"), "value"));'
+                        for key in ("bs-config", "bs-config-extra", "bs-toggle", "other")
+                    )
+                    + "\n        const auto state =",
+                )
             checks.append(check)
             expected.extend("true\n" if bit == "1" else "false\n" for bit in cases[name][1])
         path = args.work / f"combined-{optimize}-{layout}.cpp"
@@ -1115,6 +1202,8 @@ def main():
     vendor = args.include.parent / "vendor/bootstrap/bootstrap.bundle.js"
     assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     assert strings.BOOTSTRAP_F in vendor.read_text(), "Bootstrap F source pin changed"
+    assert BOOTSTRAP_H in vendor.read_text(), "Bootstrap H source pin changed"
+    assert FILTER_PREDICATE in BOOTSTRAP_H, "Bootstrap dataset predicate changed"
     observations = check_oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -1178,6 +1267,20 @@ def main():
                 + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
                 + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else []),
             )
+            if name in FILTER_CASES or name in FILTER_REFUSALS:
+                request["initial_intrinsics"] += FILTER_IDENTITIES
+                request["dataset_parameters"] = [0]
+                if name == "class_filter_full_h":
+                    request["initial_intrinsics"] += [
+                        "Number",
+                        "JSON",
+                        "decodeURIComponent",
+                        "__ctbrowser_regexp",
+                        "RegExp",
+                        "__ctbrowser_for_of_open",
+                        "__ctbrowser_iter_next",
+                        "__ctbrowser_iter_close",
+                    ]
             steps = 1000000 if name in M_CASES or name in M_REFUSALS else 100000
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
@@ -1212,7 +1315,10 @@ def main():
             # or Number still lack an identity. Also prove the full mixed request.
             mixed = ["__ctbrowser_class_defined", "Object"]
             missing_identity = (
-                name.startswith("class_error_") or name in NUMBER_CASES or name in F_CASES
+                name.startswith("class_error_")
+                or name in NUMBER_CASES
+                or name in F_CASES
+                or name in FILTER_CASES
             )
             dom.lower(
                 args,
@@ -1226,10 +1332,40 @@ def main():
             dom.lower(
                 args,
                 ir,
-                dict(request, initial_intrinsics=request["initial_intrinsics"] + ["Object"]),
+                dict(
+                    request,
+                    initial_intrinsics=list(
+                        dict.fromkeys(request["initial_intrinsics"] + ["Object"])
+                    ),
+                ),
                 f"{name}-{owned}-complete-mixed-authority",
                 max_steps=steps,
             )
+            if name in FILTER_CASES:
+                for identity in FILTER_IDENTITIES:
+                    dom.lower(
+                        args,
+                        ir,
+                        dict(
+                            request,
+                            initial_intrinsics=[
+                                i for i in request["initial_intrinsics"] if i != identity
+                            ],
+                        ),
+                        f"{name}-{owned}-missing-{identity}",
+                        success=False,
+                        max_steps=steps,
+                    )
+                    refusals += 1
+                dom.lower(
+                    args,
+                    ir,
+                    dict(request, dataset_parameters=[]),
+                    f"{name}-{owned}-missing-dataset",
+                    success=False,
+                    max_steps=steps,
+                )
+                refusals += 1
             if name in NUMBER_CASES:
                 for control, identities in (
                     (

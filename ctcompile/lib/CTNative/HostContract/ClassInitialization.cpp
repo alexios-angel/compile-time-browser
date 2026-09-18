@@ -229,16 +229,22 @@ struct classInitialization {
                     auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
                     auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                      : ctjs::GetPropertyOp{};
-                    if (!call || callbackUse.getOperandNumber() != 3 ||
-                        call.getArgs().size() != 2 || !read ||
-                        read.getObject() != call.getReceiver() ||
-                        ctjs::constantKey(read.getKey()) != "replace") {
-                        return refuse("captured helper callback escapes its replacement call");
+                    const bool replacement = call && read && callbackUse.getOperandNumber() == 3 &&
+                                             call.getArgs().size() == 2 &&
+                                             ctjs::constantKey(read.getKey()) == "replace";
+                    const bool filter = call && read && callbackUse.getOperandNumber() == 2 &&
+                                        call.getArgs().size() == 1 &&
+                                        ctjs::constantKey(read.getKey()) == "filter" &&
+                                        function.getBody().front().getNumArguments() ==
+                                            ctjs::implicit_arguments + 1 &&
+                                        call->getBlock() == callback->getBlock() &&
+                                        callback->isBeforeInBlock(call);
+                    if ((!replacement && !filter) || read.getObject() != call.getReceiver()) {
+                        return refuse("captured helper callback escapes its intrinsic call");
                     }
                 }
-                // Retain the complete callback for the existing DOM no-match
-                // replacement proof. Direct-helper expansion must remove every
-                // nested closure before the helper can be inlined.
+                // Retain the original callback for the shared no-match or typed
+                // Array filter proof, including its complete body and uses.
                 helpers.insert(function);
                 domEntryHelpers.insert(function);
             }

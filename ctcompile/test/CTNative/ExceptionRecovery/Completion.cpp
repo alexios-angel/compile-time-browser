@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 82; ++control) {
+        for (unsigned control = 0; control < 92; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -613,6 +613,36 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     source.insert(source.find("return shape"), "element.unknown(); ");
                 }
             }
+            if (control >= 82) {
+                source = R"js(function guarded(element) {
+                    function datasetKeys(t) {
+                        return Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig")).length;
+                    }
+                    class Shape {
+                        constructor(value) { this.element = value; }
+                        read() { return datasetKeys(this.element); }
+                    }
+                    const count = new Shape(element).read();
+                    return 0 < count && count < 2;
+                })js";
+                const std::string predicate =
+                    "t => t.startsWith(\"bs\") && !t.startsWith(\"bsConfig\")";
+                if (control >= 83 && control <= 87) {
+                    const std::string changed =
+                        control == 83   ? "t => unknown(t)"
+                        : control == 84 ? "t => t === element"
+                        : control == 85 ? "(t, i) => i === 0"
+                        : control == 86
+                            ? "function(t) { return this; }"
+                            : "t => { function hidden() { return t; } return hidden(); }";
+                    source.replace(source.find(predicate), predicate.size(), changed);
+                }
+                if (control == 88) {
+                    source.insert(
+                        source.find("read()"),
+                        "unused() { datasetKeys(this.element); this.element.unknown(); } ");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -635,18 +665,25 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 if (control != 48) { request.initialIntrinsics.push_back("JSON"); }
             }
             if (control >= 70) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
+            if (control >= 82) {
+                request.initialIntrinsics = {"__ctbrowser_class_defined", "Object", "Array"};
+                if (control != 89) { request.initialIntrinsics.push_back("String"); }
+                if (control != 90) { request.datasetParameters = {0}; }
+            }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
-            auto error = ctnative::prepareDOMEntry(
-                *candidate, request,
-                control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ? 0
-                : control == 4 || control == 17 ? 1000
-                : control >= 47                 ? 1000000
-                                                : 100000);
+            auto error =
+                ctnative::prepareDOMEntry(*candidate, request,
+                                          control == 3 || control == 32 || control == 55 ||
+                                                  control == 69 || control == 81 || control == 91
+                                              ? 0
+                                          : control == 4 || control == 17 ? 1000
+                                          : control >= 47                 ? 1000000
+                                                                          : 100000);
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
-                control != 60 && control != 70 && control != 71) {
+                control != 60 && control != 70 && control != 71 && control != 82) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -656,6 +693,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                           request.moduleSha256 == before.moduleSha256 &&
                           request.initialIntrinsics == before.initialIntrinsics &&
                           request.elementParameters == before.elementParameters &&
+                          request.datasetParameters == before.datasetParameters &&
                           request.provider == before.provider && request.entry == before.entry,
                       "class/DOM refusal preserves original source and contract");
             } else {
@@ -663,7 +701,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 const ctnative::DOMEntryAnalysis checked(*candidate, request);
                 check(
                     mlir::succeeded(mlir::verify(*candidate)) && checked.proved() &&
-                        (control >= 70
+                        (control >= 82 ? request.initialIntrinsics ==
+                                             std::vector<std::string>{"Object", "Array", "String"}
+                         : control >= 70
                              ? request.initialIntrinsics ==
                                    std::vector<std::string>{"Number", "decodeURIComponent", "JSON",
                                                             "__ctbrowser_regexp"}

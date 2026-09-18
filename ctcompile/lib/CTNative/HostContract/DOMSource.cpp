@@ -74,9 +74,12 @@ struct DOMSource {
     }
 
     bool confinedFilterCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
-        if (!closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
+        if (!target || !closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
             creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-            target.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1) {
+            target.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1 ||
+            llvm::any_of(
+                target.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
+                [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
             return false;
         }
         bool invoked = false;
@@ -1228,9 +1231,16 @@ struct DOMSource {
                         return refuse("DOM helper branch contains an unproved local identity");
                     }
                 }
-                if (directReceiver && !beforeReplacement &&
-                    llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(operation)) {
-                    return refuse("DOM direct helper contains a closure or capture");
+                if (directReceiver && !beforeReplacement) {
+                    auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+                    auto target =
+                        closure && closure.getFunction() >= 0
+                            ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
+                            : ctjs::FuncOp{};
+                    if (llvm::isa<ctjs::LoadUpvalueOp>(operation) ||
+                        (closure && (!target || !confinedFilterCallback(closure, target)))) {
+                        return refuse("DOM direct helper contains an unproved closure or capture");
+                    }
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
                     if (closure.getFunctionAttr().getInt() < 0 ||
@@ -1316,6 +1326,21 @@ struct DOMSource {
                     mapping.map(operation.getResults(), cloned->getResults());
                 } else {
                     auto * cloned = at.clone(operation, mapping);
+                    if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+                        closure &&
+                        confinedFilterCallback(closure, functions.lookup(static_cast<unsigned>(
+                                                            closure.getFunction())))) {
+                        // The original enclosure and unused implicit arguments
+                        // were proved before cloning. Preserve this callback in
+                        // its source arm with the caller's inert enclosure.
+                        auto callback = llvm::cast<ctjs::CreateClosureOp>(cloned);
+                        callback.getEnclosingClosureMutable().assign(
+                            block.getArgument(ctjs::arg_callee));
+                        if (closure.getEnclosingThis() == body.getArgument(ctjs::arg_receiver)) {
+                            callback.getEnclosingThisMutable().assign(
+                                block.getArgument(ctjs::arg_receiver));
+                        }
+                    }
                     // Regions (a normalized invoke) clone with the
                     // same mapping; charge every nested operation.
                     const auto counted = cloned->walk([&](mlir::Operation * inner) {
@@ -1367,8 +1392,8 @@ struct DOMSource {
         }
         if (!foldNoMatchReplacements(function)) { return false; }
         // Enclosing identities were checked on the original body above. Only
-        // the existing no-match proof may remove a direct helper's callbacks;
-        // every surviving closure/capture still refuses before inlining.
+        // the no-match proof may remove replacement callbacks. Only confined,
+        // capture-free filter callbacks may survive direct helper expansion.
         if (directReceiver && !checkBody(function, entry, true)) { return false; }
         llvm::SmallVector<ctjs::CallDirectOp> directCalls;
         const auto collected = function.walk([&](mlir::Operation * operation) {

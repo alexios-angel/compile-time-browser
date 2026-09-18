@@ -1506,11 +1506,11 @@ HOST_REFUSALS = {
 }
 
 
-def emitted(args, module, name, *, optional_read=True, uri_call=False):
+def emitted(args, module, name, *, optional_read=True, uri_call=False, callbacks=0):
     text = module.read_text()
     entries = dom.NATIVE.findall(text)
-    if len(entries) != 1 or dom.FUNCTION.search(text) or "ctnative.not_native" in text:
-        raise RuntimeError(f"{name}: expected one complete typed DOM entry\n{text}")
+    if len(entries) != 1 + callbacks or dom.FUNCTION.search(text) or "ctnative.not_native" in text:
+        raise RuntimeError(f"{name}: expected a complete typed DOM entry and {callbacks} callbacks\n{text}")
     cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
     if (
         dom.VM.search(cpp)
