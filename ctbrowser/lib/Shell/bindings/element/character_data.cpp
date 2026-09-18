@@ -7,8 +7,6 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-namespace {
-
 // --- UTF-16 CODE UNITS OVER UTF-8 BYTES -------------------------------------
 //
 // EVERY OFFSET IN `CharacterData` IS A UTF-16 CODE UNIT and this engine stores
@@ -27,41 +25,6 @@ namespace {
 // escape decoder writes for "\uDF20", and a pair as the four bytes of the
 // code point it stands for. `CharacterData-surrogates.html` is the whole of
 // this paragraph.
-[[nodiscard]] std::u16string to_units(std::string_view text) {
-    std::u16string units;
-    units.reserve(text.size());
-    for (std::size_t at = 0; at < text.size();) {
-        // A truncated or invalid sequence: the byte stands for itself, which
-        // keeps this total on any bytes at all - the document's text comes
-        // from a tokenizer that does not promise well-formedness.
-        const char32_t cp = decode_utf8(text, at);
-        if (cp >= 0x10000) {
-            units.push_back(static_cast<char16_t>(0xD800 + ((cp - 0x10000) >> 10)));
-            units.push_back(static_cast<char16_t>(0xDC00 + ((cp - 0x10000) & 0x3FF)));
-        } else {
-            units.push_back(static_cast<char16_t>(cp));
-        }
-    }
-    return units;
-}
-
-[[nodiscard]] std::string from_units(std::u16string_view units) {
-    std::string out;
-    out.reserve(units.size());
-    for (std::size_t at = 0; at < units.size(); ++at) {
-        char32_t cp = units[at];
-        if (cp >= 0xD800 && cp <= 0xDBFF && at + 1 < units.size() && units[at + 1] >= 0xDC00 &&
-            units[at + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (units[at + 1] - 0xDC00);
-            ++at;
-        }
-        append_utf8(out, cp);
-    }
-    return out;
-}
-
-} // namespace
-
 // --- CharacterData, AND THE Text THAT IS ONE --------------------------------
 //
 // FOUR NODE TYPES SHARE ONE STRING, and the DOM gives them one interface to
@@ -116,7 +79,7 @@ void dom_bindings::install_character_data(context & cx) {
             kind != node_kind::processing_instruction) {
             return false;
         }
-        text = to_units(txn.text(id));
+        text = wtf8_to_utf16(txn.text(id));
         return true;
     };
 
@@ -148,13 +111,13 @@ void dom_bindings::install_character_data(context & cx) {
         }
         auto count = static_cast<unsigned long long>(to_uint32(count_arg));
         if (count > length - offset) { count = length - offset; }
-        const std::u16string added = to_units(with);
+        const std::u16string added = wtf8_to_utf16(with);
         std::u16string made = text.substr(0, static_cast<std::size_t>(offset));
         made += added;
         made += text.substr(static_cast<std::size_t>(offset + count));
         // Said precisely, for the live ranges: which span, and how long the
         // replacement is (DOM 4.10.2 steps 8-11).
-        (void)self.doc_->set_text(id, from_units(made),
+        (void)self.doc_->set_text(id, utf16_to_wtf8(made),
                                   document::data_edit{static_cast<std::uint32_t>(offset),
                                                       static_cast<std::uint32_t>(count),
                                                       static_cast<std::uint32_t>(added.size())});
@@ -163,7 +126,7 @@ void dom_bindings::install_character_data(context & cx) {
     };
 
     // `length` IS IN CODE UNITS and so is every offset below it. See
-    // to_units: for ASCII it is the byte count and for nothing else.
+    // wtf8_to_utf16: for ASCII it is the byte count and for nothing else.
     proto->define_accessor("length",
                            native(cx, "length",
                                   [data_of](context & c, std::span<value>) {
@@ -202,7 +165,7 @@ void dom_bindings::install_character_data(context & cx) {
                 return value::undefined();
             }
             if (count > length - offset) { count = length - offset; }
-            return c.string(from_units(std::u16string_view{text}.substr(
+            return c.string(utf16_to_wtf8(std::u16string_view{text}.substr(
                 static_cast<std::size_t>(offset), static_cast<std::size_t>(count))));
         },
         script::attr_builtin);
@@ -311,7 +274,7 @@ void dom_bindings::install_character_data(context & cx) {
                 return value::null();
             }
             const auto at = static_cast<std::size_t>(offset);
-            const node_id made = self->doc_->create_text(from_units(text.substr(at)));
+            const node_id made = self->doc_->create_text(utf16_to_wtf8(text.substr(at)));
             node_id parent;
             node_id next;
             double index = 0;
@@ -339,7 +302,7 @@ void dom_bindings::install_character_data(context & cx) {
                 self->mutated();
             }
             self->split_live_ranges(id, made, static_cast<double>(at), parent, index + 1);
-            (void)self->doc_->set_text(id, from_units(text.substr(0, at)),
+            (void)self->doc_->set_text(id, utf16_to_wtf8(text.substr(0, at)),
                                        document::data_edit{static_cast<std::uint32_t>(at),
                                                            static_cast<std::uint32_t>(length - at),
                                                            0});

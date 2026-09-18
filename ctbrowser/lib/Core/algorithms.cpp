@@ -68,6 +68,39 @@ void ascii_upper_in_place(std::string & text) noexcept {
     std::ranges::transform(text, text.begin(), ascii_upper);
 }
 
+std::u16string wtf8_to_utf16(std::string_view text) {
+    std::u16string units;
+    units.reserve(text.size());
+    for (std::size_t at = 0; at < text.size();) {
+        // A truncated or invalid sequence: the byte stands for itself, which
+        // keeps this total on any bytes at all - the document's text comes
+        // from a tokenizer that does not promise well-formedness.
+        const char32_t cp = decode_utf8(text, at);
+        if (cp >= 0x10000) {
+            units.push_back(static_cast<char16_t>(0xD800 + ((cp - 0x10000) >> 10)));
+            units.push_back(static_cast<char16_t>(0xDC00 + ((cp - 0x10000) & 0x3FF)));
+        } else {
+            units.push_back(static_cast<char16_t>(cp));
+        }
+    }
+    return units;
+}
+
+std::string utf16_to_wtf8(std::u16string_view units) {
+    std::string out;
+    out.reserve(units.size());
+    for (std::size_t at = 0; at < units.size(); ++at) {
+        char32_t cp = units[at];
+        if (cp >= 0xD800 && cp <= 0xDBFF && at + 1 < units.size() && units[at + 1] >= 0xDC00 &&
+            units[at + 1] <= 0xDFFF) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (units[at + 1] - 0xDC00);
+            ++at;
+        }
+        append_utf8(out, cp);
+    }
+    return out;
+}
+
 // The value of one base64 alphabet character, or -1 for anything else -
 // padding, whitespace and garbage alike, all of which the lenient path skips.
 [[nodiscard]] constexpr int base64_sextet(char c) noexcept {
