@@ -14,6 +14,43 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Border-image sides, layer repetition and size ranges — 2026-09-18
+
+Full `css/` replay at `c7332149`: **1,633/2,926 runnable files PASS,
+71,066 subtests PASS**. Against `a7d76d12`: **+8 files and +254
+passing subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 204.3 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `c7332149` | 1,633 | 1,077 | 25 | 0 | 191 | 1,488 | 71,066 / 32,024 |
+
+`1119a3c4` expands border-image side lists before animation arithmetic and
+uses CSSOM serialization to compress the results. `0b70c015` repeats layers
+using each list's original length; the growing vector size had made every
+appended item repeat the first layer. `c7332149` marks background and mask
+sizes nonnegative so the existing animation clamp handles lengths and pure
+percentages, while preserving unresolved mixed calculations.
+
+Fresh focused backgrounds runs measured **80 -> 87 files PASS** and
+**5,589 -> 5,815 subtests PASS**, with no losses. Each regression failed
+before its fix. The final browser gate passed **216/216** (66.72 seconds),
+excluding compiler tests with `CTCOMPILE_MLIR=OFF`; formatting passed.
+All four final source/test hashes matched the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser26/` contains `browser26-final-css.json`,
+`final-css-comparison.json`, `measure-final-css.log`, focused JSON/comparisons,
+`red.log`, `repetition-red.log`, `size-red.log`, `final-gate.log`,
+`format-final.log` and `source.sha256`. The first source commit's full replay
+is retained in `browser26-css.json` and `css-comparison.json`.
+No expectations, public interfaces or JS/VM behavior changed. Other WPT
+directories, test262 and compiler suites were not replayed.
+
+Next: static computed background sizes can still retain negative components
+after early math folding; animation ranges are fixed here. Gradient angle
+precision uses the shared number serializer and needs a consistent policy.
+Relative image URLs and container-relative lengths remain open.
+
 ## Animation ranges, addition and repeating gradients — 2026-09-18
 
 Full `css/` replay at `a7d76d12`: **1,625/2,926 runnable files PASS, 70,812 subtests PASS**.

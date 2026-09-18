@@ -1,48 +1,48 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 25 complete.** Previous session 24 was clean
-at `a73dc482`; no interrupted browser drafts remained. Latest browser source
-is `a7d76d12`, with compiler history through `c675f002`. Final browser gate:
-**216/216** (66.47 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
-formatting passed. Full CSS: **1,621 -> 1,625 files PASS** and
-**70,627 -> 70,812 subtests PASS**, zero passing file or subtest losses.
+**Updated 2026-09-18: session 26 complete.** Previous session 25 was clean
+at `f2dd4582`; no interrupted browser drafts remained. Latest browser source
+is `c7332149`, with compiler history through `c675f002`. Final browser gate:
+**216/216** (66.72 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
+formatting passed. Full CSS: **1,625 -> 1,633 files PASS** and
+**70,812 -> 71,066 subtests PASS**, zero passing file or subtest losses.
 
 Landed source commits:
 
-- `0e70832e`: clamp nonnegative pure percentage animation results while
-  preserving unresolved length/percentage mixes.
-- `8bca06f4`: add identical numeric components during list composition.
-- `544e8d31` (merged as `a7d76d12`): recognize repeating gradients in
-  `CSS.supports()`; their parsers already supported the values.
+- `1119a3c4`: expand border-image sides before animation arithmetic and
+  compress the results through CSSOM serialization.
+- `0b70c015`: cycle repeatable layer lists using their original lengths.
+- `c7332149`: mark background and mask sizes nonnegative for animation clamping.
 
-Fresh focused backgrounds measured **77 -> 80 PASS/107** and
-**5,480 -> 5,589 subtests PASS**, with no losses. Each added regression failed
-before its fix; final focused CTests passed **2/2** (0.02 seconds).
-No JS/VM semantics or public interfaces changed; test262 and non-CSS WPT
-directories were not replayed.
+Fresh focused backgrounds measured **80 -> 87 PASS/107** and
+**5,589 -> 5,815 subtests PASS**, with no losses. Each added regression failed
+before its fix. No JS/VM semantics or public interfaces changed; test262 and
+non-CSS WPT directories were not replayed.
 
 **Next clear failures:**
 
-- Border-image outset/slice/width composition each retains 30 failing
-  subtests. List expansion and compression remain missing in the animation
-  path; start at `lib/Style/easing.cpp` and reuse the CSSOM value grammar.
-- Container-relative computed values: `unit_to_px` always uses viewport
-  dimensions. `engine::set_container_size` has no browser caller; styles run
-  before layout, and layout lacks size containment. Correct content-box
-  handoff, axis eligibility, invalidation and nested documents belong in the
-  fix. Do not substitute authored widths or add an arbitrary iteration loop.
-  Detailed diagnosis: `/tmp/ctbrowser25/container-diagnosis.md`; its unmerged
-  regression patch remains beside it for the eventual implementation.
-- Image source computed values still need conic angle precision and relative
-  URL resolution. Broader gaps include multicol pseudo selectors, image
-  zoom/inline placement, 3D/relative transforms, realms and UTF-16 strings.
+- Static computed background sizes still lose their nonnegative range when
+  the cascade folds math before the layer serializer sees it. The measured
+  `background-size-computed` cases include `calc(10px + 0.5em)
+  calc(10px - 0.5em)`, which returns `30px -10px` instead of `30px 0px`.
+  `properties/backgrounds.cpp` already clamps math inside `size_part`; trace
+  the premature folding in `engine.cpp` before adding another clamp.
+- Image source computed values still need relative URL resolution. Gradient
+  angle precision comes from the shared calc number serializer; avoid an
+  isolated conic-angle rounding workaround. The child assigned to investigate
+  this hit a service rate limit before editing; its clean worktree was removed.
+- Container-relative computed values need actual content boxes, axis
+  eligibility, invalidation and size containment. The browser never installs
+  the style engine's container-size callback. Diagnosis remains in
+  `/tmp/ctbrowser25/container-diagnosis.md`; no workaround was added.
+- Broader gaps: multicol pseudo selectors, image zoom/inline placement,
+  3D/relative transforms, realms and UTF-16 strings.
 
-Evidence: `/tmp/ctbrowser25/` holds full CSS JSON/comparison, focused
-before/intermediate/after results, regression/gate/format logs and
-`source.sha256`; all four source/test hashes match devbox and commit.
-The child worktree/branch was removed; no child devbox copy existed.
-Integration status is in AGENT-SYNC. The `d2664e9` ctjs commit remains local;
-do not assume its object is published.
+Evidence: `/tmp/ctbrowser26/` holds both full CSS replays, comparisons,
+focused results, regression/gate/format logs and `source.sha256`.
+All four final source/test hashes match devbox and commit. No child worktree,
+branch or devbox copy remains. Integration status is in AGENT-SYNC.
+The `d2664e9` ctjs commit remains local; do not assume its object is published.
 
 Session 19's eight-directory wide baseline remains in `/tmp/w-b722aa41/`
 against `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result

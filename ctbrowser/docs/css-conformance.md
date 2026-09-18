@@ -11,6 +11,34 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Border-image sides, layer repetition and size ranges — 2026-09-18
+
+Full CSS at `c7332149`: **1,633/2,926 runnable files PASS,
+71,066 subtests PASS**; **+8 files and +254 subtests** since `a7d76d12`,
+with zero passing file or subtest losses. The browser gate passed
+**216/216** (66.72 seconds), excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 80 / 87 | 5,589 / 5,815 |
+| `css/css-masking` | 21 / 22 | 1,292 / 1,320 |
+
+Border-image side lists expand before composition and compress afterward,
+including `fill`. Repeatable layer lists cycle over their original lengths
+when expanded to a common length. Background and mask animation sizes clamp
+negative lengths and pure percentages through their property range metadata.
+Unresolved length/percentage mixes retain both terms.
+
+Fresh focused backgrounds measured **80 -> 87 files PASS** and
+**5,589 -> 5,815 subtests PASS**, with no losses. The border-image composition
+and background-position interpolation files now pass. Each regression failed
+before its fix. Full status and evidence: `wpt.md` and `/tmp/ctbrowser26/`.
+No expectations changed; test262 was not replayed.
+
+Next: static `background-size` calculations can still become negative after
+early math folding. The gradient precision and relative URL failures remain;
+container units still need the layout/style handoff described below.
+
 ## Animation ranges, addition and repeating gradients — 2026-09-18
 
 Full CSS at `a7d76d12`: **1,625/2,926 runnable files PASS, 70,812 subtests PASS**;
