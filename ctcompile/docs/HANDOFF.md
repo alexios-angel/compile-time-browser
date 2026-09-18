@@ -15,6 +15,60 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured local class getters, 2026-09-18 UTC
+
+Resumed clean **1b941768** after the **12:36 AGENT-SYNC failure** explicitly
+abandoned the previous capture work. The **12:34 journal** and this handoff named
+`press$4`'s captured `Button.NAME` as the interrupted thread; no dirty draft
+remained. September 7 WIP was already merged. Parallel agents supplied tests and
+a proof audit. The escape agent hit a service limit before producing a draft.
+
+**84f93391** proves captured reads of a method's own local constructor through
+the existing static-getter proof. Local cells in class setup functions must have
+ordered same-block uses, with every write storing the same SSA value and reads
+or captures after initialization. Fixed aliases retain the constructor/receiver
+use census, including chained aliases. Arbitrary captures, changing writes, early
+reads, identity escapes, unknown effects and cyclic getters remain refused.
+Getter expansion removes only the proved capture/cell plumbing after the complete
+original body census. Shared immutable-capture rules and browser/runtime code
+are unchanged; no owning runtime carrier was added.
+
+Two pure captured NAME/DATA_KEY cases and one DOM getter-key case now execute
+natively. Source refusals and four raw cell controls include a chained-alias
+mutation found during parallel review. All pre-existing source bodies remain.
+The preserved `class_element` now reaches **unknown call, binding or reflective
+effect**, past its original capture refusal.
+
+Focused devbox validation, evidence `/tmp/ctcompile-capture-finish/`:
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference` and
+  `ctcompile-test-exception-recovery`: **4 successful build actions**. The first
+  build found a typed-value conditional mismatch in new code; corrected.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (16.28s)**, including
+  both providers, C++ layouts, optimization settings, GCC/Clang and Script/AOT
+  exclusion. Three preliminary failures (**3.15s / 3.46s / 3.82s**) showed that
+  the new test also requested conditional-cell/entry-flow or Boolean-arithmetic
+  support. The new fixture was narrowed to captured getter selection; the
+  preserved `class_element` specimen was never rewritten.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (198.53s)**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.66s; total 3.67s)**.
+
+All five source/test hashes match the devbox; native and hash wrappers exit **0**.
+Required pinned `tools/format.sh --check` reports **26 existing diagnostics in
+nine HEAD-identical files**; changed C++ formatting, Black, Python syntax and diff
+checks pass. Full CTest/compiler lit, complete DOM suite, escape tests, broad
+corpus/native matrices, WPT and test262 were skipped. Historical Bootstrap
+measurements were not replayed. No browser changes or push.
+
+**Exact next:** prove original `press$4` DOM effects through its constructor-stored
+`this.element`: `classList.toggle` and `getAttribute`, including every unused
+method/getter/helper body before erasure. The existing typed DOM receiver/field
+proof and private preparation transaction are the seam; validating only the
+residual called code would lose unused-body obligations. Public class preparation
+remains closed-source-only. Config, inheritance, full H Unicode, retained
+callbacks, the application driver and broader escape/conversion work remain open.
+Native Bootstrap and the overall plan are unfinished.
+
 ## Original class/DOM composition and String BitNot, 2026-09-18 UTC
 
 Started clean at **4961fffd** after the **12:09:01 AGENT-SYNC session closure**.

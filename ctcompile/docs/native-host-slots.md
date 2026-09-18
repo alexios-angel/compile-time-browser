@@ -65,9 +65,10 @@ ctjs-opt prepared.mlir \
 ```
 
 The bounded census admits local base constructors and fresh prototypes with
-unique ordinary methods. Methods have no captures, identity or lexical-home
-observations; their receivers read/write ordinary fields or call another proved
-method on that same receiver. Method reads must be used only as direct callees;
+unique ordinary methods. Methods may capture their own fixed local constructor
+solely for proved static-getter reads. Other identity and lexical-home observations
+refuse; receivers read/write ordinary fields or call another proved method on
+that same receiver. Method reads must be used only as direct callees;
 passing or returning the receiver and observing a method identity still refuse.
 Every instance method read must feed its own receiver call. Constructors may call
 those immutable methods on the same receiver and must return a primitive constant
@@ -84,7 +85,7 @@ iterator or native completion authority. Outer switch/throw exits remain for
 native lowering to prove. Mutual method calls use the same proof. Constructors,
 class setup and static getter expansion remain linear with one outer block.
 Every call stays within the supplied source; unresolved bindings, dynamic keys,
-reflection, captured functions and other nested regions fail closed.
+reflection, other captured values and unchecked nested regions fail closed.
 
 Parameterized local helpers use the same complete effect census. Every direct
 call rechecks its source closure and target, with unused receiver and new.target.
@@ -163,10 +164,21 @@ only freshly proved lifted closures with inert root uses are removed. Input nati
 reports cannot authorize erasure. Independent direct-receiver, confined-field and
 typed DOM proofs must all succeed before the source and contract are published.
 The original `class_key` and `class_order` now execute with both DOM providers.
-The preserved `class_element` first refuses because `press` captures the local
-class binding used by `Button.NAME`; original captured class/getter identity and
-method DOM effects remain separate proof obligations. The unused DOM-method
-control still refuses the complete original effect census.
+The captured getter-key case also executes with both providers. The preserved
+`class_element` now passes the `Button.NAME` capture proof and refuses at the
+complete original method effect census. Its `classList.toggle` and `getAttribute`
+calls through `this.element`, including unused method bodies, need a DOM effect
+proof before normalization. The unused DOM-method control remains refused.
+
+Local cells in class setup functions may carry a fixed value when every use is
+ordered in the same block and every write stores the same SSA value. Reads and
+captures must follow initialization; repeated identical constructor writes are
+inert. Chained aliases retain the full constructor and receiver-use census.
+Each method capture must resolve to its own exact constructor, with local slot
+metadata and only ordinary static-getter reads. The existing getter dependency
+proof checks those reads and unused bodies. After all source checks, expansion
+removes the proved capture loads, closure slots and cell plumbing. Shared
+immutable-capture rules are unchanged.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
