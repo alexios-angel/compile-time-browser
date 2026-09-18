@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 13; ++control) {
+        for (unsigned control = 0; control < 19; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -415,6 +415,19 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                          "return shape.read(" + std::string(control == 9 ? "{}" : "'x'") +
                          ") === first; }";
             }
+            if (control >= 13) {
+                source = "function guarded(element) { class Shape { "
+                         "constructor(value) { this.element = value; } "
+                         "read(key) { return this.element.getAttribute(key); } "
+                         "forward(key) { return this.read(" +
+                         std::string(control == 14 ? "{}" : "key") +
+                         "); } press(key) { return this.forward(key); } "
+                         "} const shape = new Shape(element); " +
+                         std::string(control == 15 ? "shape.element = {}; " : "") +
+                         std::string(control == 16 ? "const other = new Shape(element); " : "") +
+                         (control == 18 ? "return element.hasAttribute('x'); }"
+                                        : "return shape.press('x') === null; }");
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -429,10 +442,10 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
             auto error = ctnative::prepareDOMEntry(*candidate, request,
-                                                   control == 3   ? 0
-                                                   : control == 4 ? 1000
-                                                                  : 100000);
-            if (control != 0 && control != 5 && control != 8) {
+                                                   control == 3                    ? 0
+                                                   : control == 4 || control == 17 ? 1000
+                                                                                   : 100000);
+            if (control != 0 && control != 5 && control != 8 && control != 13) {
                 check(static_cast<bool>(error), "unproved class/DOM composition refuses");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&

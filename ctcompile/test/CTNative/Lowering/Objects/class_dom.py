@@ -134,15 +134,54 @@ CLASS_CASES = {
         "1000",
     ),
 }
+CLASS_CASES.update(
+    {
+        "method_transitive_only": (
+            CLASS_CASES["class_method_transitive"][0].replace(
+                "button.read(element, 'x')", "button.press('x')"
+            ),
+            "1000",
+        ),
+        "class_method_transitive_order": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    read(target, key) {
+      const saved = target.getAttribute(key);
+      target.setAttribute(key, 'after');
+      return saved;
+    }
+    forward(key) { return this.read(this.element, key); }
+    press(key, target) { this.element = target; return this.forward(key); }
+  }
+  const button = new Button(element);
+  const saved = button.press('x', element);
+  const again = button.press('x', element);
+  const second = button.press('other', other);
+  return saved === null && again === 'after' && second === 'second';
+""",
+            "1000",
+        ),
+        "class_method_transitive_instances": (
+            CLASS_CASES["class_method_instances"][0]
+            .replace("    read(key)", "    press(key) { return this.read(key); }\n    read(key)")
+            .replace("first.read('x')", "first.press('x')")
+            .replace("second.read('other')", "second.press('other')"),
+            "1000",
+        ),
+    }
+)
 TWO_ELEMENT_CLASSES = {
     "class_method_target",
     "class_method_field_order",
     "class_method_instances",
+    "class_method_transitive_order",
+    "class_method_transitive_instances",
     "method_bad_target_after_good",
     "method_missing_target",
     "method_detached_target",
     "method_replaced_element_after_good",
     "method_bad_key_after_field_change",
+    "method_transitive_bad_field_after_good",
 }
 CLASS_REFUSALS = {
     "ambient_entry": CLASS + "  ambient();\n" + READ,
@@ -262,12 +301,31 @@ CLASS_REFUSALS = {
     "method_bad_key_after_field_change": CLASS_CASES["class_method_field_order"][0].replace(
         "button.read('other')", "button.read({})"
     ),
-    "method_transitive_only": CLASS_CASES["class_method_transitive"][0].replace(
-        "button.read(element, 'x')", "button.press('x')"
-    ),
     "method_transitive_bad_target": CLASS_CASES["class_method_transitive"][0].replace(
         "this.read(this.element, key)", "this.read({}, key)"
     ),
+    "method_transitive_only_bad_key": CLASS_CASES["method_transitive_only"][0].replace(
+        "this.read(this.element, key)", "this.read(this.element, {})"
+    ),
+    "method_transitive_only_bad_target": CLASS_CASES["method_transitive_only"][0].replace(
+        "this.read(this.element, key)", "this.read({}, key)"
+    ),
+    "method_transitive_only_unused_parameter": CLASS_CASES["method_transitive_only"][0].replace(
+        "    read(target, key)",
+        "    unused(target) { target.getAttribute('x'); }\n    read(target, key)",
+    ),
+    "method_transitive_only_uncalled_instance": CLASS_CASES["method_transitive_only"][0].replace(
+        "  const saved =", "  const unused = new Button(element);\n  const saved ="
+    ),
+    "method_transitive_only_dead_bad_key": CLASS_CASES["method_transitive_only"][0].replace(
+        "press(key) {", "press(key) { if (false) this.read(this.element, {});"
+    ),
+    "method_transitive_recursive": CLASS_CASES["method_transitive_only"][0].replace(
+        "return target.getAttribute(key);", "target.getAttribute(key); return this.press(key);"
+    ),
+    "method_transitive_bad_field_after_good": CLASS_CASES["class_method_transitive_order"][
+        0
+    ].replace("button.press('other', other)", "button.press('other', {})"),
 }
 CASES = {
     "direct_read": (
@@ -336,9 +394,9 @@ FIELD_CHECKS = {
     "field_unused_effect": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");',
 }
 FIELD_CHECKS["class_order"] = FIELD_CHECKS["field_order"]
-FIELD_CHECKS["class_method_key"] = FIELD_CHECKS["class_method_transitive"] = (
-    'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");'
-)
+FIELD_CHECKS["class_method_key"] = FIELD_CHECKS["class_method_transitive"] = FIELD_CHECKS[
+    "method_transitive_only"
+] = 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");'
 FIELD_CHECKS["class_unused_write"] = (
     'assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");'
     'assert(doc.read().attribute_value(node, atoms.intern("unused-probe")).empty());'
@@ -366,6 +424,7 @@ FIELD_REFUSALS = {
 ORDER_CHECKS = """assert(doc.read().attribute_value(node, state) == "after");
             assert(doc.read().attribute_value(other_node, atoms.intern("other")) == "after");
             assert(doc.read().attribute_value(other_node, state) == "different");"""
+FIELD_CHECKS["class_method_transitive_order"] = ORDER_CHECKS
 FUNCTION = re.compile(r"^  ctjs.func (?:private )?@([^ (]+)\([^\n]*\n.*?^  }\n", re.M | re.S)
 
 
@@ -388,6 +447,8 @@ def check_oracles(args):
                 "class_unused_write": "if (toggles !== 1 || element.getAttribute('unused-probe') !== null) throw new Error('proof method executed');",
                 "class_method_key": "if (element.getAttribute('marker') !== 'done') throw new Error('lost method argument');",
                 "class_method_transitive": "if (element.getAttribute('marker') !== 'done') throw new Error('lost transitive argument');",
+                "method_transitive_only": "if (element.getAttribute('marker') !== 'done') throw new Error('lost transitive argument');",
+                "class_method_transitive_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost transitive writes');",
                 "direct_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost receiver writes');",
                 "field_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost field writes');",
                 "field_element": "if (other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost field receiver');",

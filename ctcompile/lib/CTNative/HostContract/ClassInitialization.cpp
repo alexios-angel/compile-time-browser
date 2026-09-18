@@ -1049,10 +1049,56 @@ struct classInitialization {
             }
             return true;
         };
-        // ponytail: parameterized methods require a direct entry call per
-        // instance. Transitive-only calls need a complete reachability proof.
-        // Their original calls share one proof copy: actual arguments and field
-        // state must stay at the original call sites, not after construction.
+        // Reachability only establishes which original bodies the shared proof
+        // must cover. It grants no authority to their parameters: actual calls
+        // and field state stay in source order in the private DOM proof below.
+        llvm::DenseMap<mlir::Operation *, llvm::SetVector<mlir::Operation *>> originalCalls;
+        const auto calledFromEntry = [&](ctjs::ConstructOp made, ctjs::FuncOp method) {
+            auto [found, fresh] = originalCalls.try_emplace(made);
+            auto & reached = found->second;
+            if (fresh) {
+                llvm::StringMap<ctjs::FuncOp> definitions;
+                for (auto [instance, definition] : methodProbes) {
+                    if (!step()) { return false; }
+                    if (instance == made) {
+                        definitions[ctjs::constantKey(definition.getKey())] =
+                            target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+                    }
+                }
+                const auto record = [&](ctjs::CallOp call, mlir::Value receiver) {
+                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (!read || call.getReceiver() != receiver || read.getObject() != receiver) {
+                        return;
+                    }
+                    if (auto fn = definitions.lookup(ctjs::constantKey(read.getKey()))) {
+                        reached.insert(fn);
+                    }
+                };
+                for (mlir::Operation * user : made.getResult().getUsers()) {
+                    if (!step()) { return false; }
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    if (call && call->getBlock() == made->getBlock() &&
+                        made->isBeforeInBlock(call)) {
+                        record(call, made.getResult());
+                    }
+                }
+                // ponytail: only exact same-this edges; aliases need their own
+                // receiver proof. A visited set bounds recursive source graphs.
+                for (size_t i = 0; i < reached.size(); ++i) {
+                    auto fn = llvm::cast<ctjs::FuncOp>(reached[i]);
+                    auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
+                    auto walked = fn.walk([&](mlir::Operation * op) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                            record(call, receiver);
+                        }
+                        return mlir::WalkResult::advance();
+                    });
+                    if (walked.wasInterrupted()) { return false; }
+                }
+            }
+            return reached.contains(method);
+        };
         bool provedOriginalCalls = false;
         // Probe every method, including callers that overwrite a field before
         // dispatching to a DOM method; direct DOM calls alone are not a census.
@@ -1062,22 +1108,9 @@ struct classInitialization {
             const bool hasParameters =
                 fn.getBody().front().getNumArguments() != ctjs::implicit_arguments;
             if (hasParameters) {
-                bool called = false;
-                for (mlir::Operation * user : made.getResult().getUsers()) {
-                    if (!step()) { return false; }
-                    auto call = llvm::dyn_cast<ctjs::CallOp>(user);
-                    if (!call || call->getBlock() != made->getBlock() ||
-                        !made->isBeforeInBlock(call) || call.getReceiver() != made.getResult()) {
-                        continue;
-                    }
-                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                    called |=
-                        read && read.getObject() == made.getResult() &&
-                        ctjs::constantKey(read.getKey()) == ctjs::constantKey(definition.getKey());
-                }
-                if (!called) {
-                    return refuse("DOM class method parameters require an original entry call "
-                                  "for each instance");
+                if (!calledFromEntry(made, fn)) {
+                    return refuse("DOM class method parameters require original entry-call "
+                                  "reachability for each instance");
                 }
                 if (provedOriginalCalls) { continue; }
             }

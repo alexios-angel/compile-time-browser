@@ -11,5 +11,6 @@
 // Captured local class getter identities can supply a DOM key after the same
 // original constructor closure is proved across all writes to its local cell.
 // Parameterized methods use each original call's actual arguments and field
-// state. Every parameterized method on every instance needs an original entry
-// call; unused parameters, transitive-only calls and later invalid arguments refuse.
+// state. Original two/three-hop method calls prove transitive-only parameters on
+// each instance, preserving argument, field and DOM write order. Unused formals,
+// uncalled instances, invalid/dead calls and recursive dependencies still refuse.
