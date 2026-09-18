@@ -1,5 +1,37 @@
 # What native Bootstrap needs next
 
+## Original Config defaults and void DOM returns, 2026-09-18 UTC
+
+**b871feb2** finishes the native part of the six-file interrupted thread
+recorded by the **14:17:21 AGENT-SYNC loop failure**. Omitted/undefined arguments
+now compose through transitive methods, literal/static-getter defaults and fresh
+empty `DefaultType` objects. The existing lifter already supplies undefined;
+complete typed proof checks both branches before private normalization selects
+one. Null does not trigger defaults, and unknown effects in skipped defaults
+still refuse. Original argument/default/body write order is preserved.
+
+Fixed cell and confined field reads now work in ordered branches. Nullable
+attribute values call the existing ctbrowser API, and entries proved to return
+only undefined emit ordinary C++ `void`. The returned-removeAttribute source
+keeps its no-value-model check and adds a compile-time void assertion. All 85
+prior class fixture bodies remain intact. No browser source changed.
+
+**Next:** complete original **W/r/H** effect composition, preserving unused
+throwing `NAME` and every method body. The current original-source controls
+still refuse W at `r`, W+r at `H`, and W+r+H at an unproved call/binding/effect.
+Compose declared Error/TypeError, Object/RegExp/iterator and helper identities
+through class/DOM proof; then address inheritance. Full H Unicode, retained
+callbacks and the application driver remain open. Complete W is not admitted.
+
+Focused passes: class DOM **1/1 (30.54s), 116 source observations / 8 native
+executions / 678 refusals**; DOM Strings **1/1 (143.35s)**; class initialization
+**1/1 (203.07s)**; exception recovery **1/1 (3.79s)**; host contract
+**1/1 (0.47s; total 0.48s)**; native DOM **1/1 (244.35s), 20 entries /
+41 refusal controls**. Independent bitwise escape work landed as **abdeeec1**. HANDOFF records exact targets, failures and skipped
+coverage. All 21 tested source hashes match. Required formatting retains
+26 existing diagnostics in nine unchanged files; changed checks pass.
+Full/broad suites and whole-Bootstrap replay were skipped; no push.
+
 ## Transitive class-method arguments, 2026-09-18 UTC
 
 **4ab08f61** continues the clean **2ac4ab0d** handoff: parameterized methods now

@@ -143,9 +143,12 @@ This normalization supplies no constructor/prototype or class-provider proof.
 
 After direct receiver expansion, fresh confined objects with initialized ordinary
 constant-key fields forward each read's source-position value. Every object use
-must be a same-block root/read/write; aliases that escape, identity observations,
-self-stores, missing writes, reserved/dynamic keys and conditional field writes
-remain outside this rule. Field operations and the allocation disappear while
+must be an ordered root/read/write. Roots and writes stay in the original block;
+reads may occur inside a later structured branch or loop. Those regions cannot
+write the object, so reads retain the enclosing operation's field snapshot.
+Aliases that escape, identity observations, self-stores, missing writes,
+reserved/dynamic keys and conditional field writes remain outside this rule.
+Field operations and the allocation disappear while
 all value producers remain for complete DOM reproof. This also carries element
 fields as ordinary borrowed DOM operands. Empty String keys remain valid.
 Objects passed to live closures still reach holder classification before their
@@ -168,10 +171,25 @@ on each actual instance. The bounded census follows exact `this.method(...)`
 calls through that instance's own method definitions; synthetic unused-body
 probes cannot establish reachability. One private proof retains all original
 calls, arguments and field state in source order. Unused parameterized methods,
-missing arguments, bad later calls, uncalled second instances, recursion and
+missing host authority, bad later calls, uncalled second instances, recursion and
 invalid calls in dead branches still refuse; no formal receives invented host
-authority. Omitted/defaulted arguments and complete W/r/H composition remain
-the next boundaries for Bootstrap Config's `_getConfig` chain.
+authority. The existing lifter supplies JavaScript undefined for omitted arguments.
+Complete typed DOM proof establishes exact strict-undefined comparisons and
+their truth conversions, while still checking both default branches and all
+argument/default producers. Only then may the private candidate fold a decided
+branch, preserving the selected operations in source order. Null does not trigger
+a default; unknown effects in a skipped default still refuse. Literal and proved
+static-getter defaults, including fresh empty `DefaultType` objects, now compose
+through transitive calls. Complete original W/r/H effects remain the next Config
+boundary.
+
+DOM attribute writes have the proved JavaScript undefined result; consumers
+receive the same typed proof as other values. An entry proved to return only
+undefined emits a C++ `void` signature and return, preserving its write effects
+without a nullable scalar carrier. `setAttribute` also accepts the
+optional String returned by `getAttribute`: a small native conversion passes
+either its String or `"null"` to the existing ctbrowser DOM API. This uses ordinary
+`std::optional<std::string>` ownership and adds no VM or browser implementation.
 
 The existing constructor/method lifter runs under a quadratic IR-size ceiling;
 only freshly proved lifted closures with inert root uses are removed. Input native
@@ -184,14 +202,15 @@ through constructor-stored `this.element` and captured `Button.NAME`. Unread
 method definitions may be omitted from other private probes, then from the
 emitted candidate only after all their original bodies pass typed DOM proof.
 A module-wide key-read census and symbol-use check keep that omission conservative;
-proof-only invocations never enter emitted code. Method parameters and construction
-outside the entry remain unsupported by this composition. The original
-`unused_key_dom_method` control retains its parameter-provenance refusal.
+proof-only invocations never enter emitted code. Uncalled parameterized methods
+and construction outside the entry remain unsupported by this composition.
+The original `unused_key_dom_method` control retains its parameter-provenance refusal.
 
-Local cells in class setup functions may carry a fixed value when every use is
-ordered in the same block and every write stores the same SSA value. Reads and
-captures must follow initialization; repeated identical constructor writes are
-inert. Chained aliases retain the full constructor and receiver-use census.
+Local cells in class setup functions may carry a fixed value when every write
+stores the same SSA value. Writes and captures remain ordered in the original
+block; reads may also occur in a later `scf.if` arm. Reads and captures must
+follow initialization; repeated identical constructor writes are inert.
+Chained aliases retain the full constructor and receiver-use census.
 Each method capture must resolve to its own exact constructor, with local slot
 metadata and only ordinary static-getter reads. The existing getter dependency
 proof checks those reads and unused bodies. After all source checks, expansion

@@ -15,6 +15,112 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Config defaults and primitive bitwise snapshots, 2026-09-18 UTC
+
+Resumed **six dirty files at d7e13751**, abandoned by the **14:17:21 AGENT-SYNC
+loop failure**: omitted/defaulted Config argument tests and the primitive-bitwise
+draft. Both agents' recent commits and unmerged branches were reviewed; September
+7 WIP was already an ancestor. Parallel agents worked on native fixtures, escape
+recovery and a proof audit; root finished their drafts after service limits.
+
+**b871feb2** proves original omitted/defaulted method arguments through the
+shared typed DOM boundary. The existing lifter already supplies undefined for
+omitted arguments. Exact strict-undefined comparisons select a result kind only
+after both arms and their effects pass proof; the private candidate then folds
+the selected arm in source order and receives independent final reproof. Null
+does not trigger defaults. Unknown effects in skipped defaults still refuse.
+Literal/static-getter defaults, fresh empty `DefaultType`, transitive calls and
+argument/default/body write order execute. All 85 previous source bodies and
+expectations, plus the interrupted default-order body, remain intact.
+
+Fixed cell reads may occur in later `scf.if` arms; confined field reads may occur
+in later structured branches/loops. Writes stay in their original blocks, and
+captures/aliases retain the existing census. DOM writes expose their already
+proved undefined result. Nullable `getAttribute` Strings pass through a four-line
+native conversion to the existing ctbrowser attribute API, including `"null"`.
+Entries proved to return only undefined emit ordinary C++ `void` signatures and
+returns. The two old DOM write refusal bodies now execute unchanged. No browser
+source, VM dependency, collector or ownership carrier was added.
+
+**abdeeec1** shares exact primitive Number conversion with Boolean/null bitwise
+and shift snapshots. Both operand orders, signed/unsigned results, saved inputs,
+CFG/SCF transport and original primitive-key refusals are checked. Unknown,
+changing/repeated and out-of-bound results remain unproved. Twenty-four old
+false/null zero-index expectations and two zero-length expectations changed
+without rewriting their source bodies.
+
+Focused devbox evidence: `/tmp/ctcompile-default-complete/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery` and `ctcompile-test-host-contract`:
+  initial complete default gate **7 actions**, final void-return retry
+  **58 actions, pass**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.79s)**,
+  including twelve added default-argument transaction controls.
+- Exact `ctcompile_host_contract`: **1/1 (0.47s; total 0.48s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (30.54s)**;
+  **116 Node/interpreter observations, 8 combined native executions, 678 refusals**.
+- Exact `CTNative/Browser/native-dom-strings.test`: **1/1 (143.35s)**;
+  **787 Node/VM observations, 8 GCC/Clang binaries**, both providers/policies/layouts;
+  **1,052 source, 44 provenance/depth, 24 method, 241 capture,
+  101 replacement, 22 branch and 27 completion refusal checks**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`:
+  **1/1 (203.07s)**; **154 source observations, 380 native executions,
+  308 unprepared refusals, 190 preparation refusals**. Its additional controls
+  report **16 constructed-method executions / 20 refusals, 8 original-r executions /
+  4 refusals, 4 prototype-key executions / 6 refusals, 11 prepared-source refusals**.
+- Exact `CTNative/Browser/native-dom.test`: **1/1 (244.35s)**;
+  **20 entries, 41 refusal controls**, both policies/layouts with GCC/Clang,
+  linking DOM/Core and selector-only Style.
+- Built `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims` and `ctcompile-test-type-oracle`:
+  **3 initial / 2 retry actions, pass**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.05s)**.
+- Exact `Analysis/Escape/escape-claims/{primitive-bitwise,signed-bitwise,
+  primitive-division}.test`: **3/3 (0.32s), zero violations**. Primitive bitwise
+  and division each **24 sites, 9 sound, 9 of 13 precision**; signed bitwise
+  **26 sites, 11 sound, 11 of 15 precision**.
+
+The initial five-action native build passed; class DOM failed **0.14s** because
+116 observations exceeded two-digit lexical ordering. Three-digit names fixed the
+harness. Subsequent class DOM failures **8.76s / 9.13s / 8.99s / 8.92s** exposed
+strict-undefined proof, nested fixed-cell reads, nested confined-field reads and
+used DOM write results respectively. Intermediate native builds ran **64 / 6 / 5
+actions**; exception recovery passed **3.72s / 3.80s / 3.73s**, and host contract
+passed **0.47s / 0.49s** after its target was added. The initial arrays run failed
+**1.03s** with 144 assertions from 24 stale expectations; the original bodies were
+preserved. The initial complete default gate also passed class DOM **31.13s**,
+exception recovery **3.74s (total 3.75s)** and host contract **0.47s**. The subsequent
+native DOM run failed **203.40s** because the unchanged returned-removeAttribute
+source exposed a nullable scalar return carrier. The proof now publishes exact
+undefined-return evidence for ordinary C++ `void` output; its C++ client adds
+a compile-time void-return assertion. A 66-action scheduled rebuild stopped after
+nine attempts on a misplaced proof assignment (undeclared `result`); correcting
+that placement produced the final 58-action build. Only exception recovery,
+host contract, class DOM and native DOM were repeated for this change. Native
+DOM then failed **199.36s** on three unused variables in the new C++ test client,
+after the void/no-carrier checks passed. Existing-style void suppressions fixed
+the client; its unchanged source case moved first, and only native DOM was
+rerun using test-only sync. Final checks above pass; no test was repeated after
+its final pass.
+
+All 21 tested source/test hashes match the devbox. Final DOM, escape retry and
+hash wrappers exit **0**. Required `tools/format.sh --check` retains **26 existing
+diagnostics in nine HEAD-identical files**. Changed pinned formatting, Black, Python/Node
+syntax and diff checks pass. Full CTest/compiler lit, complete DOM, broad
+corpus/native matrices, WPT/test262 and historical whole-Bootstrap replay were
+skipped. No push.
+
+**Exact next:** compose complete original Config **W/r/H** with the existing
+class/DOM proof, including declared Error/TypeError, Object/RegExp/iterator and
+helper identities/effects. Preserve the unused throwing `NAME` getter and every
+method body. Existing original-source controls still refuse W at global `r`,
+W+r at global `H`, and W+r+H at an unproved call/binding/effect. The DOM class
+projection still accepts only the class helper declaration; declared Error
+composition is an explicit next seam. Then address inheritance. Full H Unicode,
+retained callbacks, the application driver and broader primitive escape
+conversions remain open. Native Bootstrap and the overall plan remain unfinished.
+
 ## Transitive method arguments and primitive division, 2026-09-18 UTC
 
 Started clean at **2ac4ab0d**. The **13:43:50 AGENT-SYNC session closure**
