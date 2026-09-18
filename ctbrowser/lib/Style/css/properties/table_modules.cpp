@@ -97,6 +97,7 @@ constexpr property_syntax modules[] = {
     {"column-count", k::integer, "auto", "auto", false, true},
     {"column-width", k::length, "auto", "auto", false, true},
     {"column-height", k::length, "auto", "auto", false, true},
+    {"column-wrap", k::keyword_only, "auto wrap nowrap", "auto", false, false},
     {"column-fill", k::keyword_only, "auto balance balance-all", "balance", false, false},
     {"column-rule", k::freeform, "", "medium none currentcolor", false, false, true},
     {"column-rule-width", k::length, "thin medium thick", "medium", false, true},

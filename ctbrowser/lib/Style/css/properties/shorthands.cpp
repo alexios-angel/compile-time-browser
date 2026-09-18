@@ -30,7 +30,7 @@ enum class shape : std::uint8_t {
     grid_lines,  // grid-row / grid-column / grid-area: `/`-separated grid lines
     slash_pair,  // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
     bar,         // `a || b || c`: each part goes to the longhand that takes it
-    columns,     // width/count in either order, followed by optional `/ column-height`
+    columns,     // width/count and optional `/ column-height`; resets column-wrap
     flex,        // Flexbox 1 §7.1.1's own defaults
     font,        // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
     border,      // `bar` over width/style/color, applied to four sides, plus
@@ -136,7 +136,7 @@ constexpr shorthand_syntax table[] = {
      ""},
     {"overscroll-behavior", shape::pair, "overscroll-behavior-x overscroll-behavior-y", ""},
     {"grid-gap", shape::pair, "row-gap column-gap", ""},
-    {"columns", shape::columns, "column-width column-count column-height", "auto"},
+    {"columns", shape::columns, "column-width column-count column-height column-wrap", "auto"},
     {"column-rule", shape::bar, "column-rule-width column-rule-style column-rule-color", "medium"},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
@@ -813,6 +813,8 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
         return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
     case shape::bar: return fold_bar(e, v);
     case shape::columns: {
+        // column-wrap is reset-only, so its non-initial values cannot be spelled here.
+        if (!ascii_iequals(v[3], "auto")) { return {}; }
         std::string text = fold_bar(e, v.first(2));
         if (!ascii_iequals(v[2], "auto")) { text += " / " + v[2]; }
         return text;
@@ -979,8 +981,8 @@ bool detail::split_columns(std::string_view value, std::vector<std::string> & ou
     }
     const auto parts = split_top_level(value.substr(0, slash), html_whitespace);
     if (parts.empty() || parts.size() > 2) { return false; }
-    out.assign(3, "auto");
     const auto names = longhands_of("columns");
+    out.assign(names.size(), "auto");
     for (const std::string_view part : parts) {
         if (ascii_iequals(part, "auto")) { continue; }
         bool assigned = false;
