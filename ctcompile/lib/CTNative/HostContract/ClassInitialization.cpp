@@ -793,10 +793,13 @@ struct CTNativeSpecializeClassInitializationPass
             }
             closure.erase();
         }
-        // Every source read has its own expanded body. The complete closed
-        // census leaves no caller or observable identity for these definitions.
-        for (ctjs::FuncOp getter : proof.getterOrder) {
-            if (!proof.throwingGetters.contains(getter) || reads[getter].empty()) {
+        // Original getter closures are gone; every new numeric closure has a
+        // matching direct symbol call. Remove callers before their dependencies
+        // so unused throwing chains disappear in one pass.
+        // ponytail: one symbol scan per getter; index uses if large classes need it.
+        for (ctjs::FuncOp getter : llvm::reverse(proof.getterOrder)) {
+            if (!proof.throwingGetters.contains(getter) ||
+                mlir::SymbolTable::symbolKnownUseEmpty(getter, &module.getBodyRegion())) {
                 getter.erase();
             }
         }

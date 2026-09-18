@@ -107,6 +107,7 @@ OBSERVATIONS = {
     "static-arguments": (1, 1),
     "bootstrap-config-defaults": (7, 7),
     "static-throw-unused": (7, 7),
+    "static-throw-unused-chain": (7, 7),
     "static-throw-literal": (7, 7),
     "static-throw-error": (7, 7),
     "static-throw-chain": (7, 7),
@@ -115,6 +116,7 @@ OBSERVATIONS = {
     "static-error-return": (7, 7),
     "static-error-replaced": (7, 7),
     "static-error-coercion": (7, 7),
+    "static-error-method": (7, 7),
     "receiver-defaults": (923, 923),
     "instance-defaults": (72, 72),
     "instance-default-replacement": (1, 1),
@@ -156,6 +158,7 @@ POSITIVES = {
     "instance-defaults",
     "receiver-default-dispatch",
     "static-throw-unused",
+    "static-throw-unused-chain",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
@@ -601,6 +604,7 @@ def main():
             "static-error-return": "declared Error payload escapes its throw",
             "static-error-replaced": "declared intrinsic binding is replaced by source",
             "static-error-coercion": "static getter throw needs a literal or declared Error payload",
+            "static-error-method": "unknown call, binding or reflective effect",
             "instance-default-replacement": "primitive constructor return",
         }.get(name, "")
         prepared = prepare(

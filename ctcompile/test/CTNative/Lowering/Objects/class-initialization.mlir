@@ -1281,6 +1281,19 @@ function static_throw_unused() {
 }
 var a = static_throw_unused();
 
+//--- static-throw-unused-chain.js
+function static_throw_unused_chain() {
+    class Config {
+        static get NAME() { throw new Error("NAME required"); }
+        static get Alias() { return this.NAME; }
+        static get Top() { return this.Alias; }
+    }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_unused_chain();
+
 //--- static-throw-literal.js
 function static_throw_literal() {
     class Config {
@@ -1366,3 +1379,12 @@ function static_error_coercion() {
     return instance.n;
 }
 var a = static_error_coercion();
+
+//--- static-error-method.js
+function static_error_method() {
+    class Config { fail() { throw new Error("NAME required"); } }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_error_method();
