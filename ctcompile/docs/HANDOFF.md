@@ -15,6 +15,59 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local constructor getter reads, 2026-09-18 UTC
+
+**`f5795916`** follows the recovered **`c0b82039` / `55e13932`** drafts below.
+Constant getter reads through `this.constructor` or an exact local instance now
+reuse the existing static-getter proof and expansion. The constructor identity
+may feed only proved local getter reads and inert roots. Every read preserves
+its own fresh allocation, including getter dependencies. Reads in normalized
+method dispatch follow their private clones. No constructor/prototype value or
+Script/VM/GC dependency is emitted.
+
+Instance reads require a primitive constructor return: returning a replacement
+object changes which constructor `new` exposes. The new source regression returns
+**a=1** in Node/interpreter and now refuses preparation with that diagnostic.
+Constructor writes, writes through the constructor, identity escape and inherited
+classes remain refused, including effects in uncalled methods. Constructors and
+getter bodies remain linear; this adds no iterator or throwing-call authority.
+
+Final focused devbox gate: explicit `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference` build passes; exact
+`CTNative/Lowering/Objects/class-initialization.mlir` **1/1 (127.94s)**.
+It measures **94 source observations / 240 native executions / 188 unprepared /
+122 preparation refusals**, plus **16 ordinary executions / 20 refusals**,
+with both optimization policies, explicit/deduced C++, GCC and Clang. Getter
+reads inside dispatch first complete at budget **1,362**. All **1,290 input
+hashes** match locally/remotely; workflow exits **0**. The three-target build
+performed **223 Ninja actions** after restoring the shared devbox source from
+another worktree; this was a dependency rebuild, not a broad test run.
+
+The first getter draft passed the same focused case **1/1 (131.18s)** with
+**93 source observations / 240 native / 186 unprepared / 121 preparation
+refusals**, after three build actions. Review then added the replacement-object
+guard. Its first probe hit an unrelated conditional-wrapper refusal; the linear
+comparison isolated the issue and confirmed that the pre-fix draft incorrectly
+accepted preparation. Only the affected class case was rerun after the guard.
+
+Required pinned formatting retains **26 diagnostics in nine unchanged files**;
+stable formatting passes **912 C++ / 108 Python / 105 web files**, and the final
+changed-C++ pinned check, Black and `git diff --check` pass. Full CTest/lit, broad
+corpus/native matrices, WPT and test262 were skipped. No browser source or runtime
+semantics changed in this task. Evidence: `/tmp/ctcompile-receiver-defaults/`,
+including both gate logs/manifests, the probe and inspected emitted C++.
+
+**Exact next:** the complete original Config (`W`) still returns **a=7** in
+Node/interpreter and refuses complete capture-free source functions:
+`_typeCheckConfig` retains three outer blocks. Its Object.entries/destructuring
+iterator, RegExp/type checking and throw exits, plus throwing `NAME`, need their
+own proof. Inherited receivers and DOM/default composition follow. Full H Unicode
+key normalization, retained callbacks and the application driver remain open.
+The disjoint **`codex-unicode-core` / `ecca5b66`** extraction is being integrated
+by its own session; consult AGENT-SYNC for its status. It does not yet prove
+Unicode casing or normalized dataset keys. Bootstrap **19/574 / 0 of 47 globals**,
+Button **4/86 / 22 observations** and Data **7/7** remain historical measurements.
+
 ## Recovered method counters and signed subtraction, 2026-09-18 UTC
 
 Resumed the seven dirty ctcompile paths at `6d6dcfbf` from the

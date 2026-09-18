@@ -74,6 +74,14 @@ class setup and static getter expansion remain linear. Every call stays within
 the supplied source; unresolved bindings, dynamic keys, reflection, captured
 functions and other nested regions fail closed.
 
+An exact local instance or method/constructor receiver may select these getters
+through its `constructor` property. That intermediate identity may feed only
+constant proved getter reads and inert roots; writes and identity escape still
+refuse. Instance reads require a primitive constructor return, since an object
+return replaces the instance. The getter proof runs after the complete receiver
+census, and recorded reads follow private method clones during dispatch
+normalization. Expansion removes the intermediate constructor reads and roots.
+
 Local static getters may return closed scalar expressions or fresh empty objects,
 and read other proved getters on the same constructor. The dependency graph must
 be acyclic; the work budget charges every transitive clone before any mutation.
@@ -82,7 +90,7 @@ object identity. Getter closures must have one creation site, no captures, no
 setter and no observed callable identity. After expansion, the pass removes the getter definitions only
 when the closure census and a charged symbol-use census leave no references.
 Remaining getter references in module/body attributes and unresolved targets
-refuse before mutation. Inherited/foreign receivers, getter stores and nonempty object literals
+refuse before mutation. Inherited classes, foreign receivers, getter stores and nonempty object literals
 still refuse. Closure metadata keys `name`, `length`, `__home`, `caller` and `arguments`
 remain excluded. The first three have independently measured Node/interpreter
 disagreements; the last two retain the conservative metadata boundary.

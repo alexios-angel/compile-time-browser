@@ -1,5 +1,31 @@
 # What native Bootstrap needs next
 
+## Local constructor getter reads, 2026-09-18 UTC
+
+**`f5795916`** compiles proved local `this.constructor.Default` / `DefaultType`
+reads and equivalent exact-instance reads through existing getter expansion.
+Fresh allocation identity survives each read and getter dependency; reads inside
+normalized dispatch follow their private clones. Replacement constructor returns,
+constructor mutation, identity escape and inherited classes refuse.
+
+Exact class lit passes **1/1 (127.94s): 94 source observations / 240 native
+executions / 188 unprepared / 122 preparation refusals**, plus **16 ordinary
+executions / 20 refusals**. Both policies/layouts and GCC/Clang pass; dispatch
+getter proof first completes at **1,362 steps**. Explicit three-target build
+passes (223 dependency rebuild actions after another worktree's devbox sync),
+with all **1,290 hashes** verified and workflow exit **0**. The initial getter
+gate, replacement-object probe/guard, formatter baseline and exact skipped
+coverage are recorded in HANDOFF. Full suites and broad matrices were not run.
+
+Next: original Config's `_typeCheckConfig` still has three outer blocks and the
+complete class remains an explicit refusal. Object.entries/destructuring,
+RegExp/type checking, throwing NAME and exception exits need proof; inherited
+receivers and DOM/default composition remain. Full H Unicode keys, callbacks and
+the application driver remain open. The disjoint public UTF-16 extraction
+`codex-unicode-core` / `ecca5b66` is tracked in AGENT-SYNC; Unicode casing and
+normalized-key proof are still separate. Whole-Bootstrap counts remain historical.
+Evidence: `/tmp/ctcompile-receiver-defaults/`.
+
 ## Recovered counters and signed subtraction, 2026-09-18 UTC
 
 **`55e13932`** admits method-only static numeric counters; **`c0b82039`**
