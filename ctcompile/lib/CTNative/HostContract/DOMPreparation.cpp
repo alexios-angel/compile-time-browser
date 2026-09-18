@@ -32,6 +32,25 @@ llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     lifter.run();
     for (mlir::Operation * operation : lifter.lifted) {
         auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
+        auto target = lifter.targetOf(closure);
+        for (mlir::OpOperand & use : llvm::make_early_inc_range(closure.getResult().getUses())) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            if (!call || use.getOperandNumber() != 2 || call.getTarget() != target ||
+                !target.getBody().front().getArgument(ctjs::arg_callee).use_empty()) {
+                continue;
+            }
+            // Ordinary closure lifting retains the callee as bookkeeping. Its
+            // proved direct target does not observe it; DOM expansion needs only
+            // the symbol and still proves every argument and original operation.
+            mlir::OpBuilder at(call);
+            use.set(ctjs::ConstantOp::create(at, call.getLoc(),
+                                             ctjs::UndefinedAttr::get(module.getContext())));
+        }
+    }
+    // Check all callee premises before deleting a child closure can make an
+    // enclosing callee argument unused; DenseSet iteration grants no authority.
+    for (mlir::Operation * operation : lifter.lifted) {
+        auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
         if (llvm::any_of(closure->getUsers(),
                          [](mlir::Operation * user) { return !llvm::isa<ctjs::RootOp>(user); })) {
             return refuse("DOM class lifted closure retains an observable use");

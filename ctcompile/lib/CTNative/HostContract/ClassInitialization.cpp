@@ -40,6 +40,7 @@ struct classInitialization {
     bool needsDOMMethodProof = false;
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
+    llvm::DenseSet<mlir::Operation *> domEntryHelpers;
     llvm::DenseSet<mlir::Operation *> getters;
     llvm::DenseSet<mlir::Operation *> throwingGetters;
     llvm::DenseSet<mlir::Operation *> errorOperations;
@@ -838,9 +839,11 @@ struct classInitialization {
                 return mlir::WalkResult::advance();
             }
             auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
+            const bool localCall = domEntry && method && callee == closure.getResult() &&
+                                   undefined(method.getReceiver());
             if (direct ? direct.getTarget() != fn || !undefined(direct.getReceiver()) ||
                              !undefined(direct.getNewTarget())
-                       : !read || method.getReceiver() != read.getObject()) {
+                       : !localCall && (!read || method.getReceiver() != read.getObject())) {
                 return mlir::WalkResult::advance();
             }
             auto & block = fn.getBody().front();
@@ -849,6 +852,14 @@ struct classInitialization {
             }
             helpers.insert(fn);
             helperCalls.insert(op);
+            if (domEntry && op->getParentOfType<ctjs::FuncOp>() == entry &&
+                closure->getParentOfType<ctjs::FuncOp>() == entry &&
+                callee == closure.getResult()) {
+                // This original call survives class rewriting and receives the
+                // complete typed DOM proof. Uncalled holder slots may disappear
+                // during rewriting, so they retain the strict source census.
+                domEntryHelpers.insert(fn);
+            }
             return mlir::WalkResult::advance();
         };
         // Prove holder targets before checking their enclosing direct callers,
@@ -857,6 +868,14 @@ struct classInitialization {
         if (walked.wasInterrupted() || !reason.empty()) { return false; }
         walked = module.walk([&](ctjs::CallDirectOp call) { return recordHelper(call); });
         if (walked.wasInterrupted() || !reason.empty()) { return false; }
+        for (auto & [publication, holder] : globalHolders) {
+            (void)publication;
+            for (ctjs::SetPropertyOp store : holder.stores) {
+                if (!step()) { return false; }
+                domEntryHelpers.erase(
+                    target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+            }
+        }
         // No ambient object, unknown callee, accessor, dynamic key or reflective
         // instruction can replace the fixed helper between entry and any call.
         // Reject the whole module, including suffixes and uncalled bodies.
@@ -914,6 +933,13 @@ struct classInitialization {
                             throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) &&
                            thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
             }
+            if (llvm::isa<ctjs::PushHandlerOp, ctjs::PopHandlerOp, ctjs::CheckOp,
+                          ctjs::CatchLandOp>(op)) {
+                // Keep the original exception CFG for the existing DOM URI/JSON
+                // normalizer; no status edge is removed by class preparation.
+                accepted = domEntryHelpers.contains(op->getParentOfType<ctjs::FuncOp>());
+                needsDOMMethodProof |= accepted;
+            }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
                 const bool receiverUnused = unusedReceiver(fn);
@@ -938,13 +964,14 @@ struct classInitialization {
                            globalHolderLoads.contains(load) ||
                            static_cast<bool>(sourceClosure(load.getResult()));
                 auto fn = op->getParentOfType<ctjs::FuncOp>();
-                if (domEntry && (fn == entry || methods.contains(fn)) &&
+                if (domEntry &&
+                    (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) &&
                     load.getName() != "Error" &&
                     llvm::is_contained(contract.initialIntrinsics, load.getName())) {
                     // Only the complete typed DOM proof can authorize these
                     // identities and their uses, including unused method bodies.
                     accepted = true;
-                    needsDOMMethodProof |= methods.contains(fn);
+                    needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
                 }
             }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
@@ -965,22 +992,23 @@ struct classInitialization {
                            (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
                             llvm::isa<ctjs::NumberAttr>(constant.getValue()));
                 auto fn = op->getParentOfType<ctjs::FuncOp>();
-                if (domEntry && (fn == entry || methods.contains(fn)) &&
+                if (domEntry &&
+                    (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) &&
                     llvm::isa<ctjs::GetPropertyOp>(op) && ctjs::constantKey(key) == "toString") {
                     // The DOM proof requires the actual Number receiver; this
                     // is not permission to invoke an arbitrary coercion hook.
                     accepted = true;
-                    needsDOMMethodProof |= methods.contains(fn);
+                    needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
                 }
             }
             // Method calls defer only to complete private DOM probes below,
-            // including unused/transitive callers. Constructors, getters and
-            // helpers retain their original census before any body is erased.
+            // including unused/transitive callers. Exact entry-called helpers
+            // survive into the final proof; other helpers keep the strict census.
             if (domEntry && llvm::isa<ctjs::CallOp>(op)) {
                 auto fn = op->getParentOfType<ctjs::FuncOp>();
-                if (fn == entry || methods.contains(fn)) {
+                if (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) {
                     accepted = true;
-                    needsDOMMethodProof |= methods.contains(fn);
+                    needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
                 }
             }
             if (accepted) { return mlir::WalkResult::advance(); }

@@ -7,6 +7,7 @@ import re
 import shutil
 
 from CTNative.Browser import native_dom as dom
+from CTNative.Browser.native_dom_json import BOOTSTRAP_M
 from CTNative.Browser import native_dom_strings as strings
 from CTNative.HostContract import contract as host
 from CTNative.harness import find_compilers, run
@@ -547,6 +548,64 @@ NUMBER_REFUSALS = {
         "    read()", "    static get NAME() { return Number('0'); }\n    read()"
     ),
 }
+# Keep the complete original helper, including both exception-producing calls.
+M_CLASS = BOOTSTRAP_M + """
+  class Shape {
+    constructor(element) { this.element = element; }
+    read() { return this.element.getAttribute('x'); }
+  }
+  const shape = new Shape(element);
+"""
+M_CASES = {
+    "class_m": (M_CLASS + "  return typeof M(shape.read()) === 'object';\n", "1100"),
+    "class_m_json": (
+        M_CLASS + "  const text = shape.read() === null ? '%7B%22key%22%3A1%7D' : '%';\n"
+        "  return typeof M(text) === 'object';\n",
+        "1000",
+    ),
+    "class_m_json_fallback": (
+        M_CLASS + "  const text = shape.read() === null ? 'not%20json' : '%7B%7D';\n"
+        "  return typeof M(text) === 'string';\n",
+        "1000",
+    ),
+    "class_m_numeric": (
+        M_CLASS + "  const text = shape.read() === null ? '42' : 'true';\n"
+        "  return typeof M(text) === 'number';\n",
+        "1000",
+    ),
+}
+M_REFUSALS = {
+    "class_m_unknown": M_CASES["class_m"][0].replace("return Number(t);", "return unknown(t);"),
+    "class_m_caught_effect": M_CASES["class_m"][0].replace("return t\n", "return unknown(t)\n"),
+    "class_m_replaced": M_CASES["class_m"][0].replace(
+        "  return typeof", "  JSON = 9; return typeof"
+    ),
+    "class_m_missing_call": M_CASES["class_m"][0].replace("M(shape.read())", "shape.read()"),
+    "class_m_bad_input": M_CASES["class_m"][0].replace("M(shape.read())", "M({})"),
+    "class_m_unused_holder": M_CASES["class_m"][0].replace(
+        "  const shape", "  const holder = { bad() { Number({}); } };\n  const shape"
+    ),
+    "class_m_unused_method": M_CASES["class_m"][0].replace(
+        "    read()", "    unused() { Number({}); }\n    read()"
+    ),
+    "class_m_dead_effect": M_CASES["class_m"][0].replace(
+        "  return typeof", "  if (false) element.unknown(); return typeof"
+    ),
+}
+NUMBER_CASES["class_number_helper"] = (
+    "function numberText(text) { return Number(text).toString(); }\n"
+    + CLASS
+    + "  return numberText(element.getAttribute(shape.read())) === '0';\n",
+    "1100",
+)
+# A nested closure still observes its enclosing callee during preparation.
+# Deleting children in a different order cannot authorize erasing that identity.
+NUMBER_REFUSALS["class_number_nested_helper"] = NUMBER_CASES["class_number_helper"][0].replace(
+    "return Number(text)",
+    "function identity(value) { return value; } return Number(identity(text))",
+)
+NUMBER_CASES.update(M_CASES)
+NUMBER_REFUSALS.update(M_REFUSALS)
 CLASS_CASES.update(NUMBER_CASES)
 CLASS_REFUSALS.update(NUMBER_REFUSALS)
 CASES = {
@@ -930,6 +989,8 @@ def main():
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
+    vendor = args.include.parent / "vendor/bootstrap/bootstrap.bundle.js"
+    assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     observations = check_oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -989,12 +1050,14 @@ def main():
                 provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1",
                 initial_intrinsics=["__ctbrowser_class_defined"]
                 + (["Error"] if name.startswith("class_error_") else [])
-                + (["Number"] if name in NUMBER_CASES or name in NUMBER_REFUSALS else []),
+                + (["Number"] if name in NUMBER_CASES or name in NUMBER_REFUSALS else [])
+                + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else []),
             )
+            steps = 1000000 if name in M_CASES or name in M_REFUSALS else 100000
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
             if name not in CLASS_CASES:
-                dom.lower(args, ir, request, f"{name}-{owned}", success=False)
+                dom.lower(args, ir, request, f"{name}-{owned}", success=False, max_steps=steps)
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))
@@ -1009,6 +1072,7 @@ def main():
                     ),
                 ),
                 f"{name}-{owned}-extra-authority",
+                max_steps=steps,
             )
             if name == "class_error_unused":
                 dom.lower(
@@ -1028,6 +1092,7 @@ def main():
                 ir,
                 dict(request, initial_intrinsics=mixed),
                 f"{name}-{owned}-mixed-dom-authority",
+                max_steps=steps,
                 success=not missing_identity,
             )
             refusals += int(missing_identity)
@@ -1036,6 +1101,7 @@ def main():
                 ir,
                 dict(request, initial_intrinsics=request["initial_intrinsics"] + ["Object"]),
                 f"{name}-{owned}-complete-mixed-authority",
+                max_steps=steps,
             )
             if name in NUMBER_CASES:
                 for control, identities in (
@@ -1051,8 +1117,24 @@ def main():
                         dict(request, initial_intrinsics=identities),
                         f"{name}-{owned}-{control}",
                         success=False,
+                        max_steps=steps,
                     )
                     refusals += 1
+            if name in M_CASES:
+                for identity in ("JSON", "decodeURIComponent"):
+                    for control, identities in (
+                        ("missing", [i for i in request["initial_intrinsics"] if i != identity]),
+                        ("duplicate", request["initial_intrinsics"] + [identity]),
+                    ):
+                        dom.lower(
+                            args,
+                            ir,
+                            dict(request, initial_intrinsics=identities),
+                            f"{name}-{owned}-{control}-{identity}",
+                            success=False,
+                            max_steps=steps,
+                        )
+                        refusals += 1
             for control, changed in (
                 ("missing-entry", dict(request, entry="missing$999")),
                 ("missing-element", dict(request, element_parameters=[])),
@@ -1065,7 +1147,9 @@ def main():
                     ),
                 ),
             ):
-                dom.lower(args, ir, changed, f"{name}-{owned}-{control}", success=False)
+                dom.lower(
+                    args, ir, changed, f"{name}-{owned}-{control}", success=False, max_steps=steps
+                )
                 refusals += 1
             dom.lower(args, ir, request, f"{name}-{owned}-budget", success=False, max_steps=0)
             refusals += 1
@@ -1083,7 +1167,14 @@ def main():
             (
                 name,
                 owned,
-                dom.lower(args, ir, contract, f"{name}-{owned}-{optimize}", optimize=optimize),
+                dom.lower(
+                    args,
+                    ir,
+                    contract,
+                    f"{name}-{owned}-{optimize}",
+                    optimize=optimize,
+                    max_steps=1000000 if name in M_CASES else 100000,
+                ),
             )
             for name, owned, ir, contract in prepared
         ]

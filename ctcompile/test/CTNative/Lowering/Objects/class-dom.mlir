@@ -24,3 +24,6 @@
 // Mixed class/DOM declarations retain their identities through complete method
 // probes and final typed proof. Number conversion reuses the DOM implementation;
 // unused identity escapes, replacements and unknown effects still refuse.
+// Original M stays entry-local and consumes the class method result. Its Number,
+// JSON and URI success/failure paths use the shared DOM proof; unused helpers,
+// unsafe methods and binding replacement still refuse. M retains its source body.
