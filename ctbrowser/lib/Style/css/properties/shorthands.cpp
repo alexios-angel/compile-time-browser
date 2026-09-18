@@ -772,7 +772,11 @@ bool split_background(std::string_view value, std::vector<std::string> & out) {
                 // A layer has one <image>, so use the existing scalar image grammar.
                 const value_check checked = check_declaration(
                     component == 1 ? "border-image-source" : names[component], text, false);
-                if (!checked.valid || is_wide_keyword(checked.serialized)) { continue; }
+                // Do not turn an unsupported image function into a computed image.
+                if (!checked.valid || (component == 1 && checked.uses_unknown_function) ||
+                    is_wide_keyword(checked.serialized)) {
+                    continue;
+                }
                 values[component] = checked.serialized;
                 given[component] = true;
                 at += count;

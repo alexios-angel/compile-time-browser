@@ -1296,6 +1296,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // raw rule may say `margin` or `margin-block`, neither of which would match
     // a rollback of `margin-top`. Keep the rule index for origin/layer tests.
     std::vector<std::pair<std::size_t, declaration>> applied;
+    std::vector<std::pair<atom, std::size_t>> custom_positions;
     // `folding` is the current rule's position, or the size for inline style.
     std::size_t folding = matches_.size();
     const auto rolled_back = [this, &applied](atom property, std::size_t limit, const auto & keep) {
@@ -1305,7 +1306,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
         return applied.size();
     };
-    const auto put = [&out, &parent, &folding, &rolled_back, &applied,
+    const auto put = [&out, &parent, &folding, &rolled_back, &applied, &custom_positions,
                       this](const declaration & d) {
         std::string value = d.value;
         const std::string_view property = atoms_->text(d.property);
@@ -1348,6 +1349,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
         if (folding < matches_.size()) {
             applied.emplace_back(folding, declaration{d.property, value});
+        }
+        if (property.starts_with("--")) {
+            const auto position = std::ranges::find(custom_positions, d.property,
+                                                    &std::pair<atom, std::size_t>::first);
+            if (position == custom_positions.end()) {
+                custom_positions.emplace_back(d.property, at);
+            } else {
+                position->second = at;
+            }
         }
         if (value == "inherit") {
             value = std::string{parent ? parent->get(d.property) : std::string_view{}};
@@ -1551,6 +1561,46 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     conditions.functions = [this](std::string_view name) {
         return function_of(atoms_->intern(name));
     };
+
+    // A custom property's substituted CSS-wide keyword belongs to its own
+    // cascade, before another var() reads it. Resolve dependencies first, but
+    // keep ordinary token streams lazy (including their attr() provenance).
+    std::vector<atom> resolving_keywords, resolved_keywords;
+    const std::function<void(atom)> resolve_keyword = [&](atom name) {
+        if (resolving_keywords.size() >= 20 ||
+            std::ranges::find(resolved_keywords, name) != resolved_keywords.end() ||
+            std::ranges::find(resolving_keywords, name) != resolving_keywords.end()) {
+            return;
+        }
+        resolving_keywords.push_back(name);
+        for (int guard = 0; guard < 20; ++guard) {
+            const auto own = std::ranges::find(out, name, &declaration::property);
+            if (own == out.end() || !css::may_have_var(own->value)) { break; }
+            const std::string value = own->value;
+            css::condition_environment scope = conditions;
+            scope.property = std::string{atoms_->text(name)};
+            scope.on_read = [&](std::string_view dependency) {
+                resolve_keyword(atoms_->intern(dependency));
+            };
+            const auto substituted =
+                css::substitute_var(value, lookup, *atoms_, attributes, &scope);
+            if (!substituted) { break; }
+            const std::string_view word = trim(*substituted, html_whitespace);
+            if (!css::is_wide_keyword(word)) { break; }
+            const auto position =
+                std::ranges::find(custom_positions, name, &std::pair<atom, std::size_t>::first);
+            const std::size_t saved = folding;
+            folding = position == custom_positions.end() ? matches_.size() : position->second;
+            put(declaration{name, ascii_lower_copy(word)});
+            folding = saved;
+        }
+        resolving_keywords.pop_back();
+        resolved_keywords.push_back(name);
+    };
+    // put() may erase an unset property; iterate names, not declarations.
+    std::vector<atom> custom_names;
+    for (const declaration & d : out) { custom_names.push_back(d.property); }
+    for (const atom name : custom_names) { resolve_keyword(name); }
 
     // EVERY SHORTHAND expand_shorthand DOES NOT SPLIT goes through the CSSOM's
     // declaration block, which knows each one's grammar
@@ -1937,15 +1987,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                     }
                 }
             };
-            // Invalid-at-computed-value time applies to every longhand a
-            // shorthand governs. Removing a raw `overflow` declaration
-            // would leave an earlier overflow-x/y active, even though the
-            // later shorthand won the cascade and became `unset`.
-            if (property == "overflow") {
-                erase(atoms_->intern("overflow-x"));
-                erase(atoms_->intern("overflow-y"));
-            } else {
+            // An invalid winning shorthand resets every longhand it governs.
+            const auto longhands = css::longhands_of(property);
+            if (longhands.empty()) {
                 erase(physical(d.property));
+            } else {
+                for (const auto name : longhands) { erase(physical(atoms_->intern(name))); }
             }
         };
         const bool had_var = css::may_have_var(value);

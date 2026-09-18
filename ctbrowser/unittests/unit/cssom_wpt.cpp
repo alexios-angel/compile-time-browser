@@ -47,6 +47,44 @@ void test_background_cascade() {
     CHECK_EQ(logged(page, "reset="), std::string{"reset=repeat|border-box"});
 }
 
+void test_background_substitution_failures() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #invalid { background: red none center / 20px no-repeat;
+                   background: image-set(attr(data-url)); }
+        #missing { background: red none center / 20px no-repeat; background: var(--missing); }
+        #parent { --empty: ; --inherited: blue; }
+        #keywords { --alias: var(--x) green; --empty: ;
+                    --initial: var(--empty) initial; --inherited: var(--empty) inherit;
+                    background: var(--alias); }
+        @layer a { #keywords { --x: ; } }
+        @layer b { #keywords { --x: var(--empty) revert-layer; } }
+        </style><div id="invalid" data-url="https://example.invalid/image.png"></div>
+        <div id="missing"></div><div id="parent"><div id="keywords"></div></div><script>
+        for (const id of ['invalid', 'missing']) {
+            const s = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + s.backgroundImage + '|' + s.backgroundColor + '|' +
+                        s.backgroundSize + '|' + s.backgroundRepeat);
+        }
+        const target = document.getElementById('keywords');
+        console.log('keyword=' + getComputedStyle(target).backgroundColor);
+        target.style.color = 'var(--initial, red)';
+        console.log('initial=' + getComputedStyle(target).color);
+        target.style.color = 'var(--inherited)';
+        console.log('inherit=' + getComputedStyle(target).color);
+        target.style.setProperty('--loop', 'var(--loop, initial)');
+        console.log('cycle=' + getComputedStyle(target).getPropertyValue('--loop'));
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (const std::string id : {"invalid", "missing"}) {
+        CHECK_EQ(logged(page, id + "="), id + "=none|rgba(0, 0, 0, 0)|auto|repeat");
+    }
+    CHECK_EQ(logged(page, "keyword="), std::string{"keyword=rgb(0, 128, 0)"});
+    CHECK_EQ(logged(page, "initial="), std::string{"initial=rgb(255, 0, 0)"});
+    CHECK_EQ(logged(page, "inherit="), std::string{"inherit=rgb(0, 0, 255)"});
+    CHECK_EQ(logged(page, "cycle="), std::string{"cycle="});
+}
+
 void test_image_color_scheme() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<div id="target"></div><script>
@@ -607,6 +645,7 @@ void test_descriptors_refuse_tree_counting() {
 
 int main() {
     test_background_cascade();
+    test_background_substitution_failures();
     test_image_color_scheme();
     test_computed_radial_size_ranges();
     test_computed_layer_size_ranges();
