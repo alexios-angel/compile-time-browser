@@ -55,8 +55,15 @@ namespace ctbrowser::script {
     cx.throw_error("TypeError", "Cannot convert a Symbol value to a string");
     return false;
 }
-// ToString of an argument: a symbol refuses, everything else converts.
+// ToString of an argument: ToPrimitive first, then reject even a Symbol
+// returned by an object. context::to_string also serves ToPropertyKey and
+// deliberately preserves Symbols there.
 [[nodiscard]] inline std::string string_arg(context & cx, value v) {
+    if (v.is_object_like()) {
+        const context::rooted keep{cx, v};
+        const context::reentry_scope guard{cx};
+        if (guard.overflowed() || !cx.to_primitive_hint(v, "string", v)) { return {}; }
+    }
     return stringable_arg(cx, v) ? cx.to_string(v) : std::string{};
 }
 [[nodiscard]] inline std::string str_at(context & cx, std::span<value> args, std::size_t i) {

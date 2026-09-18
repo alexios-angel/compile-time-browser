@@ -451,6 +451,116 @@ int main() {
     })())",
               "true");
 
+    // ToString rejects Symbol after ToPrimitive, including boxed Symbols and callbacks.
+    for (const char * expression :
+         {"String(Object(Symbol()))", "'abc'.indexOf(Object(Symbol()))",
+          "'abc'.indexOf({toString() { return Symbol(); }})",
+          "'abc'.indexOf({[Symbol.toPrimitive]() { return Symbol(); }})",
+          "'a'.replaceAll('a', {toString() { return Symbol(); }})",
+          "'a'.replaceAll('a', function () { return Object(Symbol()); })",
+          "'a'.normalize(Object(Symbol()))", "'a'.split(Object(Symbol()), 0)",
+          "String.raw({raw: [Object(Symbol())]})", "encodeURIComponent(Object(Symbol()))"}) {
+        js_expect(throws(expression), "TypeError");
+    }
+    js_expect("String(Symbol('key'))", "Symbol(key)");
+    js_expect(R"((function () {
+        var sym = Symbol('key'), obj = {}, key = {
+            [Symbol.toPrimitive](hint) { return hint === 'string' ? sym : 'wrong'; }
+        };
+        obj[key] = 17;
+        return obj[sym] === 17 && Reflect.get(obj, key) === 17;
+    })())",
+              "true");
+    js_expect(R"((function () {
+        var a = [1, 2];
+        a.toString = function () { return 'custom'; };
+        return String(a) + ':' + ''.concat(a);
+    })())",
+              "custom:custom");
+    js_expect(R"((function () {
+        var log = '', object = {
+            [Symbol.toPrimitive](hint) { log += hint; return 42; },
+            toString() { throw 'wrong conversion'; }
+        };
+        return ''.concat(object) + ':' + log;
+    })())",
+              "42:string");
+    // An early conversion failure must not execute later user code or replace its error.
+    for (const char * expression :
+         {"'abc'.indexOf(bad, later)", "'abc'.lastIndexOf(bad, later)",
+          "'abc'.includes(bad, later)", "'abc'.startsWith(bad, later)",
+          "'abc'.endsWith(bad, later)", "''.concat(bad, later)",
+          "''.replaceAll.call(bad, later, later)", "''.replaceAll(bad, later)"}) {
+        js_expect("(function () { var count = 0; var bad = {toString() { return Symbol(); }};"
+                  " var later = {toString() { count++; throw 'late'; },"
+                  " valueOf() { count++; throw 'late'; }}; try {" +
+                      std::string{expression} +
+                      "; } catch (e) { return e instanceof TypeError && count === 0; }"
+                      " return false; })()",
+                  "true");
+    }
+    js_expect(R"((function () {
+        var error = {}, count = 0;
+        try {
+            'aa'.replaceAll('a', function () {
+                count++;
+                return {toString() { throw error; }};
+            });
+        } catch (e) { return e === error && count === 1; }
+        return false;
+    })())",
+              "true");
+    // An exception caught inside the conversion is a successful return.
+    js_expect(R"((function () {
+        function text(s) {
+            return {get [Symbol.toPrimitive]() {
+                try { throw 0; } catch (e) {}
+                return function (hint) {
+                    try { throw 0; } catch (e) {}
+                    return s;
+                };
+            }};
+        }
+        return String.prototype.replaceAll.call(text('aba'), text('a'), function () {
+            try { throw 0; } catch (e) {}
+            return text('x');
+        }) + ':' + 'abc'.indexOf(text('b'));
+    })())",
+              "xbx:1");
+
+    js_expect(R"('abc'.replaceAll({
+        [Symbol.match]: true,
+        get flags() {
+            try { throw 0; } catch (e) {}
+            return {toString() {
+                try { throw 0; } catch (e) {}
+                return 'g';
+            }};
+        },
+        [Symbol.replace]() { return 'ok'; }
+    }, 'x'))",
+              "ok");
+    js_expect(throws("'a'.replaceAll({[Symbol.match]: true, flags: Object(Symbol())}, 'x')"),
+              "TypeError");
+    // A callback's temporary result survives its own conversion getters and calls.
+    {
+        using namespace ctbrowser::script;
+        const program prog = compiler::compile(R"(
+            return 'aa'.replaceAll('a', function () {
+                return {text: 'x', get [Symbol.toPrimitive]() {
+                    return function () { return this.text; };
+                }};
+            });
+        )");
+        context cx;
+        install_builtins(cx);
+        cx.set_gc_stress(true);
+        const run_result result = cx.run(prog);
+        CHECK(result.ok);
+        CHECK_EQ(cx.to_string(result.returned), std::string{"xx"});
+        CHECK(cx.collections() > 0);
+    }
+
     // --- the UTF-16 gap: CURRENT BEHAVIOUR, KNOWN WRONG ---------------------
     //
     // Everything in this block disagrees with V8, and every line says what V8
