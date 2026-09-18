@@ -1,47 +1,46 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 28 complete.** Previous session 27 was clean
-at `acacae93`; no interrupted browser drafts remained. Latest browser source
-is `bd840fed`, with compiler history through `c675f002`. Final browser gate:
-**216/216** (70.14 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
-formatting passed. Full CSS: **1,637 -> 1,640 files PASS** and
-**71,104 -> 71,135 subtests PASS**, zero passing file or subtest losses.
+**Updated 2026-09-18: session 29 recovered and complete.** Sources were
+committed through `fd54d8b1`; session 30 recovered the finished CSS run after
+SSH stalled. All source hashes match the gated tree. Compiler history through
+`c675f002` remains included. Browser gate: **216/216** (93.67 seconds),
+excluding compiler tests with `CTCOMPILE_MLIR=OFF`; formatting passed.
+Full CSS: **1,640 -> 1,647 files PASS**, **71,135 -> 71,205 subtests PASS**,
+zero passing file or subtest losses.
 
 Landed source commits:
 
-- `4182a623`: clamp radial radii after math folding; validate substituted images.
-- `9b13ac4c`: light/dark image selection and nested color context; preserve color
-  stops and reuse quoted URL serialization.
-- `54fb7228`: preserve abrupt String static method coercions, merged as `bd840fed`.
+- `b8adba54`: complete background shorthand expansion and typed position grammar.
+- `e76272e6`: catchable RangeError at existing VM/AOT stack limits.
+- `45c943e0` (merged as `2499e5a6`): strict String conversion, abrupt errors,
+  native-call fences and callback roots.
+- `c381c199`: substituted CSS-wide custom-property keywords retain their cascade
+  position; invalid shorthands reset all longhands; reject unsupported images.
+- `fd54d8b1`: serialize guaranteed-invalid custom properties as empty strings.
 
-Fresh backgrounds: **90 -> 91 files PASS**, **5,833 -> 5,837 subtests PASS**.
-Fresh String test262: **1,169 -> 1,174 files PASS**, zero losses. The runtime
-semantics change is journaled: `fromCodePoint` preserves conversion errors;
-`raw` stops after abrupt getters/coercions and rejects direct Symbol conversions.
-No bytecode or public interfaces changed. Broader test262, non-CSS WPT and
-compiler suites were not replayed.
+Fresh backgrounds: **91 -> 94 files PASS**, **5,837 -> 5,892 subtests PASS**.
+Fresh String test262: **1,174 -> 1,181 files PASS**, zero losses. JS/VM
+semantics are journaled; bytecode and public signatures are unchanged.
+Broader test262, non-CSS WPT and compiler suites were not replayed.
 
 **Next clear failures:**
 
-- Background shorthand expansion: `background: none` leaves longhands such as
-  background-attachment and background-clip empty. Background clip's
-  `border-area text` shorthand also computes to `border-box`.
-- Shared strict ToString: String prototype methods still accept Symbols
-  returned by object coercions. Audit the shared conversion helper and its
-  property-key callers before changing it; avoid per-method patches.
-- Relative image URLs, gradient precision and container-relative lengths.
-  Container lengths need actual layout content boxes, axis eligibility,
-  invalidation and size containment. Diagnosis remains in
-  `/tmp/ctbrowser25/container-diagnosis.md`; no workaround was added.
-- Broader gaps: realms, UTF-16/case folding, multicol pseudo selectors,
-  image zoom/inline placement and 3D/relative transforms.
+- Computed three-component background positions and logical axis keywords.
+- Abrupt conversion handling in parseInt and JSON.rawJSON; String.fromCharCode
+  wrapping, UTF-16 and case folding.
+- Relative image URLs and container-relative lengths. Container lengths need
+  actual layout content boxes, axis eligibility, invalidation and containment;
+  diagnosis remains in `/tmp/ctbrowser25/container-diagnosis.md`.
+- Broader gaps: realms, multicol pseudo selectors, image zoom/inline placement,
+  3D/relative transforms, image-set and complete attribute-taint support.
 
-Evidence: `/tmp/ctbrowser28/` holds the full CSS replay and comparison,
-focused backgrounds/String results, regression/gate/format logs and
-`source.sha256`. Final source/test hashes match the devbox and merged tree.
-The child worktree and branch were removed; no child remote copy was created.
-Integration status is in AGENT-SYNC. The `d2664e9` ctjs commit remains local;
-do not assume its object is published.
+Evidence: `/tmp/ctbrowser29/` contains final CSS/String JSON and comparisons,
+regression/gate/format logs and source hashes. `/tmp/ctbrowser30/recovery.log`
+verifies remote completion before the next build; `recovered-css.json` and
+`recovered-css-comparison.json` preserve the final result. The child worktree
+and branch were removed; no child remote copy was created. Integration status
+is in AGENT-SYNC. The `d2664e9` ctjs commit remains local; do not assume its
+object is published.
 
 Session 19's eight-directory wide baseline remains in `/tmp/w-b722aa41/`
 against `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result

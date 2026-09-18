@@ -11,6 +11,44 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Background shorthand and typed position grammar — 2026-09-18
+
+Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,
+71,205 subtests PASS**. Against `bd840fed`: **+7 files and
++70 passing subtests, zero passing files or subtests lost**. Same WPT
+`3f6b09ae`, devbox, four workers, 4 GB cap and deterministic GL driver;
+213.9 seconds.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 91 / 94 | 5,837 / 5,892 |
+| `css/css-variables` | 27 / 31 | 436 / 451 |
+
+Background layers now expand into their longhands in CSSOM and the cascade.
+Omitted values reset, colors occur only in the final layer, and size slashes
+must immediately follow positions. Serialization omits initial components
+and retains clip/origin combinations. Calculated sizes retain their range
+through substitution and inheritance. Position math must fit the position
+grammar; an image or color function cannot stand in for a length.
+Substituted CSS-wide custom-property keywords now use their own cascade
+position, including `revert-layer`, before other properties consume them.
+An invalid shorthand resets every longhand. Expansion refuses unsupported
+image functions; this restores the attr-security case without claiming
+`image-set()` or complete attribute-taint support. Guaranteed-invalid custom
+properties serialize as empty strings instead of exposing an internal sentinel.
+
+Fresh backgrounds measured **91 -> 94 files PASS** and
+**5,837 -> 5,892 subtests PASS**, with no losses. The computed, invalid and
+shorthand-serialization files now pass. Background-valid retains inconsistent
+transparent-color spelling assertions; no special-case spelling was added.
+The browser gate passed **216/216** (93.67 seconds), excluding
+compiler tests; formatting passed. Full statuses and evidence: `wpt.md` and
+`/tmp/ctbrowser29/`. No WPT or test262 expectation files changed.
+
+Next: computed three-component positions, logical axis keywords, relative
+image URLs and container-size layout integration. Runtime measurements are
+recorded separately in `test262.md`.
+
 ## Computed images and String coercion errors — 2026-09-18
 
 Full CSS at `bd840fed`: **1,640/2,926 runnable files PASS,

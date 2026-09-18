@@ -14,6 +14,71 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Background shorthand and strict String conversion — 2026-09-18
+
+Full `css/` replay at `fd54d8b1`: **1,647/2,926 runnable files PASS,
+71,205 subtests PASS**. Against `bd840fed`: **+7 files and
++70 passing subtests, zero passing files or subtests lost**. Same WPT
+`3f6b09ae`, devbox, four workers, 4 GB cap and deterministic GL driver;
+213.9 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `fd54d8b1` | 1,647 | 1,063 | 25 | 0 | 191 | 1,488 | 71,205 / 31,888 |
+
+`b8adba54` expands background layers through the existing longhand grammars,
+resets omitted components and serializes them in canonical order. The cascade
+uses the same owned expansion. Clip/origin combinations, slash adjacency,
+final-layer colors and calculated sizes survive variable substitution and
+inheritance. Position validation now checks the shape of typed math rather
+than accepting arbitrary functions; image components use the scalar image grammar.
+`c381c199` resolves custom-property keywords produced by substitution
+through their own cascade before dependent variables read them. Invalid
+shorthands reset every governed longhand. Unsupported image functions remain
+unsupported during background expansion; `image-set()` still needs its own
+implementation and attribute-taint tracking. The first full replay exposed
+two passing-subtest losses, and the next replay exposed an internal sentinel
+leaking through computed custom properties. `fd54d8b1` returns the
+required empty string. All three losses were corrected before this measurement.
+
+`45c943e0` changes JS/VM semantics: strict String conversion calls
+ToPrimitive before rejecting Symbols, including boxed Symbols and Symbols
+returned by callbacks. String methods stop after failed conversions and
+preserve internally caught exceptions. The VM's pending-exception query also
+recognizes an exception at a native-call fence, preventing later coercions
+from replacing it through `Function.call`. Symbol property keys and explicit
+`String(Symbol())` remain supported. `e76272e6` also makes existing VM and AOT call-stack limits raise catchable
+`RangeError`s. No limit, bytecode or public signature changed.
+
+Fresh backgrounds measured **91 -> 94 files PASS** and
+**5,837 -> 5,892 subtests PASS**, with no losses. Fresh String test262 measured
+**1,174 -> 1,181 files PASS**, zero losses.
+The CSS unit fixture now correctly rejects a non-final layer color and keeps
+a valid layered control. Final focused CTests passed **11/11** (0.26 seconds), and
+the browser gate passed **216/216** (93.67 seconds), excluding
+compiler tests with `CTCOMPILE_MLIR=OFF`. Formatting passed; all 18
+source/test hashes matched the devbox and merged tree. Regressions failed
+before their fixes; the runtime controls include forced GC during conversion.
+
+Evidence: `/tmp/ctbrowser29/` contains `browser29-css.json`,
+`css-comparison.json`, `measure-css-final.log`, focused backgrounds/String JSON,
+`root-comparison.json`, `string-comparison.json`, `root-red.log`,
+`root-check.log`, `string-red.log`, `final-gate.log`, `substitution-green.log`,
+`final-gate-sentinel-complete.log`, `format-sentinel.log` and `source.sha256`.
+No WPT or test262 expectation files changed. Other WPT directories, the rest of test262 and
+compiler suites were not replayed.
+
+The final run completed remotely before the SSH interruption. Recovery in
+`/tmp/ctbrowser30/recovery.log` verified all source hashes and the output's
+completion time before the next devbox build; `recovered-css.json` and
+`recovered-css-comparison.json` preserve that result and comparison.
+
+Next: computed background positions, container-relative lengths and relative
+image URLs. The background-valid file still demands both `transparent` and
+`rgba(0, 0, 0, 0)` for omitted color; these inconsistent assertions remain
+visible. Runtime follow-ups include abrupt conversion handling in parseInt
+and JSON.rawJSON, String.fromCharCode wrapping and UTF-16/case folding.
+
 ## Computed images and String coercion errors — 2026-09-18
 
 Full `css/` replay at `bd840fed`: **1,640/2,926 runnable files PASS,
