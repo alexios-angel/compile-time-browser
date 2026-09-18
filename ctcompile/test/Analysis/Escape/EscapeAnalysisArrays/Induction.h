@@ -754,6 +754,54 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                            "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
                            "  %magnitude = ctjs.unary plus %maximum"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    for (const std::string literal :
+         {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const std::string kind : {"plus", "neg", "bitnot"}) {
+            const bool truth = literal == "#ctjs.boolean<true>";
+            const std::string expected =
+                kind == "bitnot" ? (truth ? "13835058055282163712" : "13830554455654793216")
+                : !truth         ? "0"
+                : kind == "plus" ? "4607182418800017408"
+                                 : "13830554455654793216";
+            run({.what = "original Boolean/null unary results keep their exact Number magnitude",
+                 .body = prefix + "  %input = ctjs.constant " + literal +
+                         "\n  %snapshot = ctjs.unary " + kind +
+                         " %input\n  %expected = ctjs.constant #ctjs.number<" + expected +
+                         ">\n  %index = ctjs.binary sub %snapshot, %expected\n"
+                         "  %read = ctjs.get_property %a[%index]\n  ctjs.return %read\n",
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one",
+                 .exit = "one -> {}"});
+        }
+    }
+    for (const auto & [literal, kind] :
+         {std::pair{"#ctjs.boolean<true>", "plus"}, std::pair{"#ctjs.boolean<true>", "neg"},
+          std::pair{"#ctjs.boolean<false>", "bitnot"}, std::pair{"#ctjs.null", "bitnot"}}) {
+        const std::string operation = "  %minus = ctjs.unary " + std::string{kind} + " %input\n";
+        const auto source =
+            replace(negativeChild, makeNegativeUnit,
+                    "  %input = ctjs.constant " + std::string{literal} + "\n" + operation);
+        const auto body = std::string{kind} == "plus"
+                              ? replace(source, "binary sub %i, %minus", "binary add %i, %minus")
+                              : source;
+        run({.what = "original Boolean/null unary strides retain the final CFG child",
+             .body = body,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "Boolean/null unary strides discharge only unreturned children",
+             .body = replace(body, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        reject("a repeated primitive unary producer still needs independent invariance",
+               replace(replace(body, operation, ""), "  %step =", operation + "  %step ="));
+        reject("a converted primitive does not turn its original Boolean/null into an index",
+               replace(body, "%base[%i]", "%base[%input]"), ArrayContentsFailure::UnknownIndex);
+        reject("Undefined unary conversion supplies no bounded Number fact",
+               replace(body, literal, "#ctjs.undefined"));
+    }
     const std::string makeComplement = "  %operand = ctjs.unary plus %zero\n"
                                        "  %minus = ctjs.unary bitnot %operand\n";
     const auto complementChild = replace(negativeChild, makeNegativeUnit, makeComplement);

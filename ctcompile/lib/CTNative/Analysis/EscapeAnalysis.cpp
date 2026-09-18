@@ -1544,20 +1544,29 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // rejects publication, calls and handlers, so that early
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
+                    auto positive =
+                        input.integerNumber ? input.integerNumber : boundedNumber(input.origin());
+                    if (!positive && input.string()) { positive = ownArrayIndex(input.origin()); }
+                    const auto negative = input.negativeIntegerNumber
+                                              ? input.negativeIntegerNumber
+                                              : boundedNumber(input.origin(), true);
+                    if (auto literal = input.origin().getDefiningOp<ctjs::ConstantOp>(); literal) {
+                        // Original Boolean/null primitives convert without hooks
+                        // (context::to_number). Only the unary result is a Number;
+                        // their original identities never become numeric keys.
+                        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
+                            positive = boolean.getValue() ? 1 : 0;
+                        } else if (llvm::isa<ctjs::NullAttr>(literal.getValue())) {
+                            positive = 0;
+                        }
+                    }
                     if (unary.getKind() != ctjs::UnaryKind::BitNot) {
                         // Preserve held signed Numbers through Plus/Neg, keeping
                         // negative magnitudes separate from own-index facts.
                         // Canonical original Strings share the exact decimal
                         // conversion used by Sub; zero stays nonnegative.
-                        integerNumber = input.integerNumber ? input.integerNumber
-                                                            : boundedNumber(input.origin());
-                        if (!integerNumber && input.string()) {
-                            integerNumber = ownArrayIndex(input.origin());
-                        }
-                        negativeIntegerNumber = input.negativeIntegerNumber;
-                        if (!integerNumber && !negativeIntegerNumber) {
-                            negativeIntegerNumber = boundedNumber(input.origin(), true);
-                        }
+                        integerNumber = positive;
+                        negativeIntegerNumber = positive ? std::nullopt : negative;
                         if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
                             std::swap(integerNumber, negativeIntegerNumber);
                         }
@@ -1565,14 +1574,6 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
                     } else {
-                        auto positive = input.integerNumber ? input.integerNumber
-                                                            : boundedNumber(input.origin());
-                        if (!positive && input.string()) {
-                            positive = ownArrayIndex(input.origin());
-                        }
-                        const auto negative = input.negativeIntegerNumber
-                                                  ? input.negativeIntegerNumber
-                                                  : boundedNumber(input.origin(), true);
                         // Complement the exact ToUint32 bits, then recover the
                         // signed Number magnitude without a signed overflow.
                         // Canonical original Strings use the same exact decimal

@@ -688,6 +688,30 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(stringComplement, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
     reject("a String BitNot snapshot cannot change across structured yields",
            replace(stringComplement, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    const auto primitiveComplement =
+        replace(carriedComplement, "  %magnitude = ctjs.unary plus %one\n",
+                "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
+                "    %boolean = ctjs.constant #ctjs.boolean<true>\n"
+                "    scf.yield %boolean : !ctjs.value\n"
+                "  } else {\n"
+                "    %null = ctjs.constant #ctjs.null\n"
+                "    scf.yield %null : !ctjs.value\n  }\n");
+    rows.push_back({.what = "Boolean/null unary results retain separate structured snapshots",
+                    .body = primitiveComplement,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x; a[1]=y",
+                    .exit = "x -> {x}; y -> {y}"});
+    rows.push_back(
+        {.what = "primitive unary snapshots release only unreturned structured children",
+         .body = replace(primitiveComplement, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[0]=x; a[1]=y",
+         .exit = "zero -> {}; zero -> {}"});
+    reject(
+        "a primitive unary result cannot change across structured yields",
+        replace(primitiveComplement, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("an Undefined predecessor cannot borrow the Boolean/null Number proof",
+           replace(primitiveComplement, "#ctjs.null", "#ctjs.undefined"));
     for (const std::string kind : {"bitand", "bitor", "bitxor", "shl", "shr"}) {
         const std::string right = kind == "bitand" ? "%operand" : "%zero";
         const std::string operation =

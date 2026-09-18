@@ -1614,6 +1614,14 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                      .exit = "a -> {a}"});
                 continue;
             }
+            if ((literal == "#ctjs.boolean<false>" || literal == "#ctjs.null") &&
+                (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input")) {
+                run({.what = "Boolean/null unary conversion supplies an exact empty length",
+                     .body = body,
+                     .arrays = "a:[]",
+                     .exit = "a -> {a}"});
+                continue;
+            }
             run({.what = "a computed shrink needs exact Number operands without coercion",
                  .body = body,
                  .failure = ArrayContentsFailure::UnknownIndex});
