@@ -977,11 +977,17 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
               "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">", "#ctjs.boolean<false>", "#ctjs.null",
               "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
-                run({.what = "each bitwise operand needs an exact bounded Number",
+                const bool signedZero =
+                    literal == "#ctjs.number<13830554455654793216>" &&
+                    (kind == "bitand" || (kind == "shl" && operands == "%zero, %input"));
+                run({.what = "only independently bounded bitwise inputs supply an exact index",
                      .body = values + "  %input = ctjs.constant " + literal +
                              "\n  %index = ctjs.binary_static " + kind + " " + operands + "\n" +
                              indexed,
-                     .failure = ArrayContentsFailure::UnknownIndex});
+                     .failure = signedZero ? ArrayContentsFailure::None
+                                           : ArrayContentsFailure::UnknownIndex,
+                     .arrays = signedZero ? "a:[zero]" : "",
+                     .exit = signedZero ? "a -> {a}" : ""});
             }
         }
         for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
@@ -1881,10 +1887,13 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
         // A negative Sub offset, including saved Add, proves growth, never holes or release.
         // A nonzero negative divisor keeps these zero results exact.
+        // A signed mask or shift count also keeps the original zero result.
         inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub
                     ? ArrayContentsFailure::MissingElement
-                : binary && (binary.getKind() == ctjs::BinaryKind::Div ||
-                             binary.getKind() == ctjs::BinaryKind::Mod)
+                : (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
+                              binary.getKind() == ctjs::BinaryKind::Mod)) ||
+                        (shift && (shiftKind.getValue() == ctjs::BinaryKind::Shl ||
+                                   shiftKind.getValue() == ctjs::BinaryKind::BitAnd))
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
