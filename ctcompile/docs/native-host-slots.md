@@ -64,15 +64,17 @@ those immutable methods on the same receiver and must return a primitive constan
 when methods exist. Method writes and replacement return objects remain excluded.
 Methods may contain structured `if`, `for` and `while` regions, including lifted
 break/continue/return dispatch and static numeric increment/decrement counters.
-Native admission independently requires Number counter operands. Every arm and
-body retains the complete effect
-and receiver-use census. After those checks, a budgeted private method clone
-normalizes switches and unused/all-poison results using the existing exception
-recovery machinery. Failure leaves the source untouched; this grants no throwing
-call or iterator authority. Mutual method calls use the same proof. Every function still requires one outer block. Constructors,
-class setup and static getter expansion remain linear. Every call stays within
-the supplied source; unresolved bindings, dynamic keys, reflection, captured
-functions and other nested regions fail closed.
+Native admission independently requires Number counter operands. Ordinary methods
+may also retain outer CFG exits and literal primitive throws; object and parameter
+throws refuse. Every arm and body retains the complete effect and receiver-use
+census. After those checks, a budgeted private method clone normalizes structured
+switches and unused/all-poison results using the existing exception recovery
+machinery. Failure leaves the source untouched; this grants no throwing-call,
+iterator or native completion authority. Outer switch/throw exits remain for
+native lowering to prove. Mutual method calls use the same proof. Constructors,
+class setup and static getter expansion remain linear with one outer block.
+Every call stays within the supplied source; unresolved bindings, dynamic keys,
+reflection, captured functions and other nested regions fail closed.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only

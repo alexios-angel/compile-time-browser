@@ -1,5 +1,32 @@
 # What native Bootstrap needs next
 
+## Recovered literal-method throws, 2026-09-18 UTC
+
+**`552db1c7`** preserves outer CFG exits and literal primitive throws in proved
+local methods during class preparation. Every body retains the full effect and
+receiver checks; object/parameter throws and ambient effects refuse. Native
+lowering still refuses these exceptional paths. **`3d0af951`** separately
+preserves bounded signed Number BitNot snapshots for array retention.
+
+Exact class lit passes **1/1 (135.10s): 98 source observations / 240 native
+executions / 196 unprepared / 128 preparation refusals**, plus **16 ordinary
+executions / 20 refusals** and **four prepared throw refusals**. The first class
+run exposed a test assertion confusing unused key literals with property reads;
+only that assertion changed before the passing rerun. Escape array CTest **1/1
+(0.88s)** and selected `signed-bitnot` / `signed-subtraction` / `signed-unary`
+lit **3/3 (0.32s)** pass. The BitNot oracle reports **26 sites / 11 sound /
+zero violations / 11 of 15 precision**. Exact build, formatter baseline, hashes
+and skipped broad suites are recorded in HANDOFF; no browser source changed.
+
+**Next:** complete original Config still returns **a=7** in Node/interpreter,
+but preparation now refuses its `NAME` getter's `new Error(...)` as **static
+getter body is not a closed expression**. Prove Error identity/effects and
+throwing getter expansion separately; original Object.entries/destructuring,
+RegExp/type checking and TypeError exits still follow. Literal-method throw
+completion, inheritance, DOM/default composition, H Unicode keys, callbacks and
+the application driver remain open. Whole-Bootstrap counts remain historical.
+Evidence: `/tmp/ctcompile-throw-finalize/`.
+
 ## Local constructor getter reads, 2026-09-18 UTC
 
 **`f5795916`** compiles proved local `this.constructor.Default` / `DefaultType`

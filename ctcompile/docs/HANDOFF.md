@@ -15,6 +15,69 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered literal throws and signed BitNot, 2026-09-18 UTC
+
+Resumed the seven dirty ctcompile paths at `b71d8034` from the **02:14:59 /
+02:21:33 AGENT-SYNC drafts**, abandoned at **02:18:10 / 02:23:31**. Finished
+both before taking new implementation work. September 7 WIP is already an
+ancestor. The ctjs checkout matches the merged `d2664e9` gitlink.
+
+**`552db1c7`** lets proved local methods retain outer CFG exits and literal
+primitive throws during class setup preparation. The complete effect and
+receiver census still checks every body; object/parameter throws and ambient
+calls in uncalled arms refuse. Constructors, setup and getters stay linear.
+Both throw fixtures preserve their original switch/throw exits; the getter
+fixture removes its exact `this.constructor.Default` reads. Native completion
+lowering still refuses these methods: preparation supplies no throwing-call,
+iterator or exception-payload authority.
+
+**`3d0af951`** preserves exact signed Number BitNot snapshots through unsigned
+ToInt32 wrap, read-time length snapshots and CFG/SCF transport. Negative
+magnitudes never become own-index facts. Coercible inputs, out-of-domain
+Numbers, repeated producers and changing latches remain unproved.
+
+Focused devbox validation: explicit `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays`,
+`ctcompile-test-escape-claims` and `ctcompile-test-type-oracle` build passed in
+**231 dependency actions** after the browser merge. Exact
+`ctcompile_escape_analysis_arrays` CTest **1/1 (0.88s)** and escape lit
+`signed-bitnot`, `signed-subtraction`, `signed-unary` **3/3 (0.32s)** pass.
+The BitNot oracle measures **26 sites / 11 sound / zero violations / 11 of 15
+precision**. Arrays cover **569 dense / 384 induction / 222 structured rows**,
+with **22,159 / 27,521 / 14,271** respective budget cutoffs.
+
+The corrected exact `CTNative/Lowering/Objects/class-initialization.mlir` case
+passes **1/1 (135.10s): 98 source observations / 240 native executions /
+196 unprepared / 128 preparation refusals**, plus **16 ordinary executions /
+20 refusals** and **four prepared throwing-method native refusals**. Both
+optimization policies, explicit/deduced C++, GCC and Clang run. Literal throw
+preparation first completes at budget **652**. Its explicit three-target rebuild
+had no work. The final class workflow exits **0** and verifies all **1,289 input
+hashes** locally/remotely before documentation edits.
+
+The first class run failed **1/1 (36.59s)** because the interrupted test confused
+an unused `"constructor"` key literal with a property read. Inspection confirmed
+both getter reads were removed. The corrected assertion checks those operations;
+the original JavaScript is unchanged. Only the class case was rerun afterward.
+
+Required `tools/format.sh --check` retains **26 diagnostics in nine unchanged
+files**; stable formatting passes **916 C++ / 109 Python / 105 web files**.
+Changed-file pinned formatting, Black and `git diff --check` pass. Full CTest,
+full compiler lit, broad corpus/native matrices, WPT and test262 were skipped.
+No browser source or runtime semantics changed. Evidence:
+`/tmp/ctcompile-throw-finalize/`.
+
+**Exact next:** the complete original Config (`W`) still returns **a=7** in
+Node/interpreter. Its preparation refusal now reaches **static getter body is
+not a closed expression**: `NAME` constructs and throws `Error`. The current
+class manifest declares only the class helper, so Error identity/effects and
+throwing getter expansion need a separate proof. Original Object.entries /
+destructuring, RegExp/type checking and TypeError exits, then inheritance and
+DOM/default composition remain. Standalone literal-method throw completion also
+remains unlowered. Full H Unicode keys, retained callbacks and the application
+driver are unfinished. The separately owned Unicode extraction remains tracked
+in AGENT-SYNC. Whole-Bootstrap/Button/Data counts remain historical.
+
 ## Local constructor getter reads, 2026-09-18 UTC
 
 **`f5795916`** follows the recovered **`c0b82039` / `55e13932`** drafts below.
