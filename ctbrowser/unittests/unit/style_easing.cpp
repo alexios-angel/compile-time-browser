@@ -183,6 +183,24 @@ void test_interpolation() {
 
 void test_composition() {
     ctbrowser::style::css::length_context context;
+    // Border-image side lists expand before addition and fold after interpolation.
+    for (const auto property :
+         {"border-image-outset", "border-image-width", "border-image-slice"}) {
+        const auto from =
+            composite_text(property, "100 200 300 400", "100", composite_op::add, context);
+        const auto to = composite_text(property, "100 200 300 400", "200 300 500",
+                                       composite_op::accumulate, context);
+        CHECK(from == "200 300 400 500");
+        CHECK(to == "300 500 800 700");
+        CHECK(interpolate_text(property, from, to, 0.5, context) == "250 400 600 600");
+        CHECK(interpolate_text(property, "1 2 3 4", "101 102 103 104", -0.25, context) == "0");
+        CHECK(interpolable_text(property, "1", "2 3 4"));
+    }
+    CHECK(composite_text("border-image-slice", "100 200 300 400 fill", "fill 100",
+                         composite_op::add, context) == "200 300 400 500 fill");
+    CHECK(!interpolable_text("border-image-slice", "10 fill", "20"));
+    CHECK(composite_text("border-image-width", "auto 1", "2 auto", composite_op::add, context) ==
+          "2 auto");
     CHECK(composite_text("width", "50px", "100px", composite_op::add, context) == "150px");
     CHECK(composite_text("width", "10%", "100px", composite_op::accumulate, context) ==
           "calc(10% + 100px)");

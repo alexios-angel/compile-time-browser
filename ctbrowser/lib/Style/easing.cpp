@@ -420,8 +420,27 @@ template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & 
     for (std::size_t i = b.size(); i < n; ++i) { b.push_back(b[i % b.size()]); }
 }
 
+[[nodiscard]] bool image_sides(std::string_view property) {
+    return property == "border-image-outset" || property == "border-image-width" ||
+           property == "border-image-slice";
+}
+
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
                                          const css::length_context & ctx) {
+    if (image_sides(property)) {
+        const css::value_check checked = css::check_declaration(property, text, false);
+        if (!checked.valid) { return std::string{text}; }
+        auto parts = split_top_level(checked.serialized, html_whitespace);
+        const bool fill = !parts.empty() && parts.back() == "fill";
+        if (fill) { parts.pop_back(); }
+        if (parts.empty() || parts.size() > 4) { return std::string{text}; }
+        // CSS Backgrounds 3 §6: omitted sides follow the margin pattern.
+        if (parts.size() == 1) { parts.push_back(parts[0]); }
+        if (parts.size() == 2) { parts.push_back(parts[0]); }
+        if (parts.size() == 3) { parts.push_back(parts[1]); }
+        return std::string{parts[0]} + ' ' + std::string{parts[1]} + ' ' + std::string{parts[2]} +
+               ' ' + std::string{parts[3]} + (fill ? " fill" : "");
+    }
     if (repeatable(property)) {
         // Keywords as percentages, a size's second `auto` written, so
         // `left 20px top 20px` and `20px 20px` are one shape.
@@ -489,6 +508,18 @@ template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & 
         if (ascii_iequals(text, "thick")) { return "5px"; }
     }
     return std::string{text};
+}
+
+[[nodiscard]] std::string serialized_shape(std::string_view property, std::string text) {
+    if (image_sides(property)) {
+        const css::value_check checked = css::check_declaration(property, text, false);
+        if (checked.valid) { return checked.serialized; }
+    }
+    if (property.starts_with("border-") && property.ends_with("-radius")) {
+        const auto halves = split_top_level(text, html_whitespace);
+        if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
+    }
+    return text;
 }
 
 // The shadow a shorter list is padded with: transparent, every length zero,
@@ -1264,18 +1295,12 @@ struct rotation {
     // Identical endpoints are that value at every progress - `none` to
     // `none` stays `none` rather than becoming its expanded shape.
     if (trim(from, html_whitespace) == trim(to, html_whitespace)) {
-        return std::string{trim(from, html_whitespace)};
+        return serialized_shape(property, std::string{trim(from, html_whitespace)});
     }
     bool interpolable = true;
     std::string out = interpolate_pair(property, computed_shape(property, from, ctx),
                                        computed_shape(property, to, ctx), p, ctx, interpolable);
-    // A corner radius whose two halves came out equal is written once, as
-    // the computed serialiser writes a declared one.
-    if (property.starts_with("border-") && property.ends_with("-radius")) {
-        const std::vector<std::string_view> halves = split_top_level(out, html_whitespace);
-        if (halves.size() == 2 && halves[0] == halves[1]) { return std::string{halves[0]}; }
-    }
-    return out;
+    return serialized_shape(property, std::move(out));
 }
 
 [[nodiscard]] bool interpolable_text(std::string_view property, std::string_view from,
@@ -1387,7 +1412,7 @@ struct rotation {
         }
         return out;
     }
-    return add_pair(property, base, added, ctx);
+    return serialized_shape(property, add_pair(property, base, added, ctx));
 }
 
 } // namespace ctbrowser::style
