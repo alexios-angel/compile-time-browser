@@ -372,6 +372,99 @@ function method_dynamic() {
 }
 var a = method_dynamic();
 
+// Capturing the local class keeps its original repeated constructor stores.
+// Calls on separate instances must resolve the same fully proved getter.
+//--- method-captured-class-name.js
+function method_captured_class_name() {
+    class Button {
+        static get NAME() { return "button"; }
+        read() { return Button.NAME; }
+    }
+    var first = new Button(), second = new Button();
+    return (first.read() === "button") * 10 + (second.read() === first.read());
+}
+var a = method_captured_class_name();
+
+// Captured getter selection still expands the original acyclic getter body.
+//--- method-captured-class-key.js
+function method_captured_class_key() {
+    class Button {
+        static get NAME() { return "button"; }
+        static get DATA_KEY() { return "bs." + this.NAME; }
+        read() { return Button.DATA_KEY; }
+    }
+    var instance = new Button();
+    return (instance.read() === "bs.button") * 10 + (instance.read() === Button.DATA_KEY);
+}
+var a = method_captured_class_key();
+
+// A later value in the captured cell is observable at invocation time.
+//--- method-captured-class-replaced.js
+function method_captured_class_replaced() {
+    let Button = class {
+        static get NAME() { return 7; }
+        read() { return Button.NAME; }
+    };
+    var instance = new Button();
+    Button = {NAME: 9};
+    return instance.read();
+}
+var a = method_captured_class_replaced();
+
+// Uncalled writers must still enter the complete captured-cell census.
+//--- method-captured-class-writer.js
+function method_captured_class_writer() {
+    class Button {
+        static get NAME() { return 7; }
+        read() { return Button.NAME; }
+    }
+    function replace() { Button = {NAME: 9}; }
+    return new Button().read();
+}
+var a = method_captured_class_writer();
+
+// Captured class identity may select getters, but cannot escape as a value.
+//--- method-captured-class-identity.js
+function method_captured_class_identity() {
+    class Button { read() { return Button; } }
+    return (new Button().read() === Button) * 1;
+}
+var a = method_captured_class_identity();
+
+// A captured ordinary object does not acquire class/getter authority.
+//--- method-captured-object.js
+function method_captured_object() {
+    const value = {NAME: 7};
+    class Button { read() { return value.NAME; } }
+    return new Button().read();
+}
+var a = method_captured_object();
+
+// Both unused methods and their cyclic getter dependencies remain original.
+//--- method-captured-class-cycle.js
+function method_captured_class_cycle() {
+    class Button {
+        static get FIRST() { return this.SECOND; }
+        static get SECOND() { return this.FIRST; }
+        unused() { return Button.FIRST; }
+    }
+    var instance = new Button();
+    return 7;
+}
+var a = method_captured_class_cycle();
+
+// An unused captured method cannot hide an unknown effect behind its getter.
+//--- method-captured-class-ambient.js
+function method_captured_class_ambient() {
+    class Button {
+        static get NAME() { return 7; }
+        read() { return Button.NAME; }
+        unused() { ambient(Button.NAME); }
+    }
+    return new Button().read();
+}
+var a = method_captured_class_ambient();
+
 // A constructor's replacement object never inherits the class's methods.
 //--- method-return-object.js
 function method_return_object() {

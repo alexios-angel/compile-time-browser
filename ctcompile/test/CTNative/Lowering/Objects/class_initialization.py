@@ -102,6 +102,14 @@ OBSERVATIONS = {
     "method-self-replace": (79, 79),
     "method-duplicate": (9, 9),
     "method-captured": (7, 7),
+    "method-captured-class-name": (11, 11),
+    "method-captured-class-key": (11, 11),
+    "method-captured-class-replaced": (9, 9),
+    "method-captured-class-writer": (7, 7),
+    "method-captured-class-identity": (1, 1),
+    "method-captured-object": (7, 7),
+    "method-captured-class-cycle": (7, 7),
+    "method-captured-class-ambient": (7, 7),
     "method-dynamic": (7, 7),
     "method-return-object": (9, 9),
     "helper-override": (0, 1),
@@ -198,6 +206,8 @@ POSITIVES = GLOBAL_HOLDERS | {
     "method-constructor-order",
     "method-constructor-chain",
     "method-constructor-constant",
+    "method-captured-class-name",
+    "method-captured-class-key",
     "static-constant",
     "static-defaults",
     "static-defaults-chain",
@@ -517,6 +527,71 @@ def check_getter_parent(args, source, manifest, prepared):
     return 7
 
 
+def check_class_capture_inputs(args, source, manifest):
+    text = source.read_text()
+    capture = re.search(
+        r"^    %\w+ = ctjs.create_closure %arg2\[\d+\] this %\w+ captures (%\w+)[ \t]*$",
+        text,
+        re.M,
+    )
+    if not capture:
+        raise RuntimeError("captured class control lost its original method capture")
+    cell = capture[1]
+    # SSA names are local to functions: keep cell mutations in the owner only.
+    owner = next(
+        match[0]
+        for match in re.finditer(r"^  ctjs.func\b[^\n]*\n.*?^  }\n", text, re.M | re.S)
+        if capture[0] in match[0]
+    )
+    stores = list(re.finditer(r"^    ctjs.cell_set " + cell + r", (%\w+)[ \t]*$", owner, re.M))
+    if (
+        len(stores) != 2
+        or stores[0][1] != stores[1][1]
+        or not stores[0].end() < owner.index(capture[0]) < stores[1].start()
+    ):
+        raise RuntimeError("captured class control lost its two identical constructor stores")
+    initial = re.search(re.escape(cell) + r" = ctjs.create_cell (%\w+)", owner)
+    if not initial:
+        raise RuntimeError("captured class control lost its local cell initializer")
+    final = stores[1]
+    variants = {
+        "changed-cell": owner[: final.start()]
+        + f"    ctjs.cell_set {cell}, {initial[1]}"
+        + owner[final.end() :],
+        "cyclic-cell": owner[: final.start()]
+        + f"    %capture_cycle = ctjs.cell_get {cell}\n"
+        + f"    ctjs.cell_set {cell}, %capture_cycle"
+        + owner[final.end() :],
+        "early-cell-read": owner[: stores[0].start()]
+        + f"    %capture_early = ctjs.cell_get {cell}\n"
+        + owner[stores[0].start() :],
+        # Keep the original constructor uses while a second cell hides a write.
+        "chained-cell-alias": owner[: final.end()]
+        + f"\n    %capture_alias_value = ctjs.cell_get {cell}\n"
+        + "    %capture_alias_cell = ctjs.create_cell %capture_alias_value\n"
+        + "    %capture_alias = ctjs.cell_get %capture_alias_cell\n"
+        + '    %capture_prototype = ctjs.constant #ctjs.string<"prototype">\n'
+        + f"    ctjs.set_property %capture_alias[%capture_prototype], {initial[1]}"
+        + owner[final.end() :],
+    }
+    for label, changed in variants.items():
+        altered = args.work / f"capture-{label}.mlir"
+        altered.write_text(text.replace(owner, changed, 1))
+        prepare(
+            args,
+            f"capture-{label}",
+            altered,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, altered)),
+            success=False,
+            diagnostic=(
+                "class constructor has an observable use outside its setup"
+                if label == "chained-cell-alias"
+                else ""
+            ),
+        )
+    return len(variants)
+
+
 def check_executable(args, name, native, expected):
     text = native.read_text()
     if any(token in text for token in ("ctjs.func", "ctnative.not_native", "ctjs.skipped")):
@@ -748,6 +823,7 @@ def main():
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
+            "method-captured-class-ambient": "unknown call, binding or reflective effect",
             "method-throw-ambient": "unknown call, binding or reflective effect",
             "method-throw-object": "unknown call, binding or reflective effect",
             "method-throw-parameter": "unknown call, binding or reflective effect",
@@ -840,6 +916,8 @@ def main():
             preparation_refusals += 1
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
+        if name == "method-captured-class-name":
+            preparation_refusals += check_class_capture_inputs(args, structured, manifest)
         if name == "empty":
             check_overflow_input(args, structured)
             for label, control, options in (
@@ -859,6 +937,7 @@ def main():
             "method-dispatch-throw",
             "receiver-default-dispatch",
             "method-constructor-order",
+            "method-captured-class-name",
             "static-chain",
             "static-repeated",
             "static-forward-chain",

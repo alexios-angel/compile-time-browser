@@ -43,6 +43,16 @@ CLASS_CASES = {
         "1000",
     ),
     "class_element": (ELEMENT_CLASS, "1000"),
+    "class_captured_key": (
+        """class Button {
+    static get NAME() { return 'x'; }
+    read() { return Button.NAME; }
+  }
+  const button = new Button();
+  return element.getAttribute(button.read()) === null;
+""",
+        "1000",
+    ),
 }
 CLASS_REFUSALS = {
     "ambient_entry": CLASS + "  ambient();\n" + READ,
@@ -495,8 +505,12 @@ def main():
             )
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
-            if name not in ("class_key", "class_order"):
-                dom.lower(args, ir, request, f"{name}-{owned}", success=False)
+            if name not in ("class_key", "class_order", "class_captured_key"):
+                diagnostic = dom.lower(args, ir, request, f"{name}-{owned}", success=False)
+                if name == "class_element" and (
+                    "unknown call, binding or reflective effect" not in diagnostic
+                ):
+                    raise RuntimeError("original class method lost its DOM effect boundary")
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))

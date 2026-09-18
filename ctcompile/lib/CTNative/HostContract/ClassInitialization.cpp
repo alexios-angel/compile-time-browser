@@ -45,6 +45,11 @@ struct classInitialization {
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
     llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
+    llvm::MapVector<mlir::Value, mlir::Value> cells;
+    llvm::DenseSet<mlir::Operation *> cellOperations;
+    llvm::SmallVector<ctjs::CellGetOp> cellReads;
+    llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
+    llvm::SmallVector<ctjs::CreateClosureOp> capturedMethods;
     llvm::SetVector<mlir::Operation *> dispatchMethods;
     llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
 
@@ -73,6 +78,134 @@ struct classInitialization {
             return {};
         }
         return functions.lookup(static_cast<unsigned>(closure.getFunction()));
+    }
+    bool proveCells(ctjs::FuncOp entry) {
+        // The importer boxes entry locals when one is captured. Only fixed,
+        // ordered bindings are transport; their original producers stay live.
+        for (ctjs::CreateCellOp cell : entry.getBody().front().getOps<ctjs::CreateCellOp>()) {
+            if (!step()) { return false; }
+            if (cells.count(cell.getResult())) { continue; }
+            ctjs::CellSetOp first;
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                if (!step()) { return false; }
+                auto * op = use.getOwner();
+                if (op->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(op)) {
+                    return refuse("class local cell has a nonlocal or unordered use");
+                }
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
+                    if (use.getOperandNumber() != 0 ||
+                        (first && first.getValue() != write.getValue())) {
+                        return refuse("class local cell has changing writes");
+                    }
+                    if (!first || write->isBeforeInBlock(first)) { first = write; }
+                }
+            }
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                if (!step()) { return false; }
+                auto * op = use.getOwner();
+                if (llvm::isa<ctjs::RootOp, ctjs::CellSetOp>(op)) {
+                    cellOperations.insert(op);
+                    continue;
+                }
+                if (first && !first->isBeforeInBlock(op)) {
+                    return refuse("class local cell is observed before initialization");
+                }
+                if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op);
+                    read && use.getOperandNumber() == 0) {
+                    cellReads.push_back(read);
+                    cellOperations.insert(op);
+                    continue;
+                }
+                auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                if (!first || !closure || use.getOperandNumber() < 2) {
+                    return refuse("class local cell escapes its fixed reads and captures");
+                }
+                // The exact class method and every captured read are checked
+                // below. No general immutable-capture rule is widened here.
+            }
+            cells[cell.getResult()] = first ? first.getValue() : cell.getInitial();
+            cellOperations.insert(cell);
+        }
+        for (auto & [cell, value] : cells) {
+            (void)cell;
+            value = sourceValue(value);
+        }
+        return reason.empty();
+    }
+    mlir::Value sourceValue(mlir::Value value) {
+        while (auto read = value.getDefiningOp<ctjs::CellGetOp>()) {
+            if (!step()) { return value; }
+            auto found = cells.find(read.getCell());
+            if (found == cells.end()) { return value; }
+            value = found->second;
+        }
+        return value;
+    }
+    llvm::SmallVector<mlir::OpOperand *> sourceUses(mlir::Value value) {
+        llvm::SmallVector<mlir::OpOperand *> result;
+        llvm::SmallVector<mlir::Value> pending{value};
+        llvm::DenseSet<mlir::Value> seen;
+        while (!pending.empty()) {
+            auto current = pending.pop_back_val();
+            if (!seen.insert(current).second) { continue; }
+            for (mlir::OpOperand & use : current.getUses()) {
+                if (!step()) { return {}; }
+                auto * op = use.getOwner();
+                if (cellOperations.contains(op) &&
+                    llvm::isa<ctjs::CreateCellOp, ctjs::CellSetOp>(op)) {
+                    auto write = llvm::dyn_cast<ctjs::CellSetOp>(op);
+                    mlir::Value cell = write ? mlir::Value(write.getCell()) : op->getResult(0);
+                    for (mlir::OpOperand & cellUse : cell.getUses()) {
+                        if (!step()) { return {}; }
+                        if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(cellUse.getOwner());
+                            read && cells.lookup(cell) == sourceValue(current)) {
+                            pending.push_back(read.getResult());
+                        }
+                    }
+                    continue;
+                }
+                result.push_back(&use);
+            }
+        }
+        return result;
+    }
+    bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
+                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads) {
+        auto fn = target(method);
+        if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
+            (method.getEnclosingIndicesAttr() &&
+             llvm::any_of(method.getEnclosingIndicesAttr().asArrayRef(),
+                          [](int32_t index) { return index >= 0; }))) {
+            return refuse("class method lacks exact local capture slots");
+        }
+        for (mlir::Value capture : method.getUpvalues()) {
+            if (!step() || !cells.count(capture) ||
+                sourceValue(cells.lookup(capture)) != constructor.getResult()) {
+                return refuse("class method capture is not its fixed local constructor");
+            }
+        }
+        for (mlir::OpOperand & use : fn.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+            if (!load || use.getOperandNumber() != 0 || load.getIndex() < 0 ||
+                static_cast<size_t>(load.getIndex()) >= method.getUpvalues().size()) {
+                return refuse("class method observes or changes its captured identity");
+            }
+            for (mlir::OpOperand & selected : load.getResult().getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
+                auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(selected.getOwner());
+                if (!read || selected.getOperandNumber() != 0 ||
+                    !ctjs::ordinaryKey(read.getKey())) {
+                    return refuse("captured class identity escapes its local getter read");
+                }
+                reads.push_back(read);
+            }
+            captureReads.push_back(load);
+        }
+        if (!method.getUpvalues().empty()) { capturedMethods.push_back(method); }
+        return true;
     }
     ctjs::CreateClosureOp sourceClosure(mlir::Value value) {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
@@ -185,7 +318,8 @@ struct classInitialization {
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false) {
-        for (mlir::OpOperand & use : object.getUses()) {
+        for (mlir::OpOperand * sourceUse : sourceUses(object)) {
+            auto & use = *sourceUse;
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
@@ -209,7 +343,8 @@ struct classInitialization {
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && methodsAvailable) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (use.getOperandNumber() == 1 && read && read.getObject() == object &&
+                if (use.getOperandNumber() == 1 && read &&
+                    sourceValue(read.getObject()) == sourceValue(object) &&
                     read.getResult().hasOneUse() &&
                     methodKeys.contains(ctjs::constantKey(read.getKey()))) {
                     methodCalls.insert(call);
@@ -228,12 +363,12 @@ struct classInitialization {
                                 ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
                                 : ctjs::CallOp{};
                 if (!methodsAvailable || !call || call.getCallee() != read.getResult() ||
-                    call.getReceiver() != object) {
+                    sourceValue(call.getReceiver()) != sourceValue(object)) {
                     return refuse("class method is observed or shadowed");
                 }
             }
         }
-        return true;
+        return reason.empty();
     }
 
     bool staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
@@ -407,7 +542,8 @@ struct classInitialization {
         llvm::StringMap<ctjs::DefineAccessorOp> staticDefinitions;
         llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
         llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
-        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+        for (mlir::OpOperand * sourceUse : sourceUses(closure.getResult())) {
+            auto & use = *sourceUse;
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if (op == call && use.getOperandNumber() == 2) { continue; }
@@ -429,8 +565,9 @@ struct classInitialization {
                 continue;
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-                if (use.getOperandNumber() >= 2 || made.getCallee() != closure.getResult() ||
-                    made.getNewTarget() != closure.getResult() ||
+                if (use.getOperandNumber() >= 2 ||
+                    sourceValue(made.getCallee()) != closure.getResult() ||
+                    sourceValue(made.getNewTarget()) != closure.getResult() ||
                     made->getBlock() != call->getBlock() || !call->isBeforeInBlock(made)) {
                     return refuse("class construction escapes or lacks exact local new.target");
                 }
@@ -488,10 +625,10 @@ struct classInitialization {
             auto method = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             auto fn = target(method);
             if (!step() || !fn || method->getBlock() != call->getBlock() ||
-                !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis()) ||
-                !method.getUpvalues().empty()) {
-                return refuse("class method needs a local ordinary capture-free closure");
+                !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis())) {
+                return refuse("class method needs a local ordinary closure");
             }
+            if (!methodCaptures(method, closure, staticReads)) { return false; }
             ctjs::SetPropertyOp methodHome;
             for (mlir::OpOperand & use : method.getResult().getUses()) {
                 if (!step()) { return false; }
@@ -508,8 +645,7 @@ struct classInitialization {
                 methodHome = write;
             }
             auto & block = fn.getBody().front();
-            if (!methodHome || !block.getArgument(ctjs::arg_callee).use_empty() ||
-                !block.getArgument(ctjs::arg_new_target).use_empty() ||
+            if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
                 !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
                 return refuse("class method observes its identity, home or an unproved receiver");
             }
@@ -571,11 +707,10 @@ struct classInitialization {
             if (!step()) { return false; }
             auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
             auto index = fn ? functionIndex(fn) : std::nullopt;
-            if (!fn || !index || fn.getBody().empty() || fn.getUpvalueCount() != 0 ||
+            if (!fn || !index || fn.getBody().empty() ||
                 fn.getBody().front().getNumArguments() < 3 ||
                 !functions.try_emplace(*index, fn).second) {
-                return refuse(
-                    "class initialization requires complete capture-free source functions");
+                return refuse("class initialization requires complete source functions");
             }
         }
         ctjs::FuncOp declaration;
@@ -665,6 +800,7 @@ struct classInitialization {
             if (walked.wasInterrupted()) { return false; }
         }
         for (ctjs::CallOp call : calls) {
+            if (!proveCells(call->getParentOfType<ctjs::FuncOp>())) { return false; }
             if (!examine(call)) { return false; }
         }
         const auto recordHelper = [&](mlir::Operation * op) {
@@ -711,7 +847,8 @@ struct classInitialization {
             }
             if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
                 helperCalls.contains(op) || llvm::is_contained(calls, op) ||
-                llvm::is_contained(constructorReads, op)) {
+                llvm::is_contained(constructorReads, op) || cellOperations.contains(op) ||
+                llvm::is_contained(captureReads, op)) {
                 return mlir::WalkResult::advance();
             }
             if (errorOperations.contains(op) &&
@@ -760,10 +897,13 @@ struct classInitialization {
                      (constructors.contains(fn) || getters.contains(fn) ||
                       (((declaration && fn == entry) || block.getNumArguments() == 3) &&
                        receiverUnused && block.getArgument(ctjs::arg_new_target).use_empty())));
+                accepted &= fn.getUpvalueCount() == 0 || methods.contains(fn);
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
                 auto fn = target(closure);
-                accepted = fn && fn != entry && closure.getUpvalues().empty() &&
+                accepted = fn && fn != entry &&
+                           (closure.getUpvalues().empty() ||
+                            llvm::is_contained(capturedMethods, closure)) &&
                            (undefined(closure.getEnclosingThis()) || helpers.contains(fn));
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
@@ -776,7 +916,7 @@ struct classInitialization {
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
                 accepted = constructors.contains(
-                    target(made.getCallee().getDefiningOp<ctjs::CreateClosureOp>()));
+                    target(sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>()));
             }
             mlir::Value key;
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
@@ -877,6 +1017,12 @@ struct classInitialization {
                 if (!step()) { return false; }
                 if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
                     read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+                }
+            }
+            for (ctjs::LoadUpvalueOp & read : captureReads) {
+                if (!step()) { return false; }
+                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                    read = llvm::cast<ctjs::LoadUpvalueOp>(mapped);
                 }
             }
             for (auto & [publication, holder] : globalHolders) {
@@ -1018,6 +1164,28 @@ struct classInitialization {
                 root->erase(); // Only inert roots remain after getter expansion.
             }
             read.erase();
+        }
+        for (ctjs::LoadUpvalueOp read : captureReads) {
+            for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
+                root->erase(); // Only roots remain after captured getter expansion.
+            }
+            read.erase();
+        }
+        for (ctjs::CreateClosureOp method : capturedMethods) {
+            target(method).setUpvalueCount(0);
+            method.getUpvaluesMutable().clear();
+            method.removeEnclosingIndicesAttr();
+        }
+        for (ctjs::CellGetOp read : cellReads) {
+            read.getResult().replaceAllUsesWith(cells.lookup(read.getCell()));
+            read.erase();
+        }
+        for (auto [value, initial] : cells) {
+            (void)initial;
+            for (mlir::Operation * use : llvm::make_early_inc_range(value.getUsers())) {
+                use->erase(); // Proved identical stores and inert cell roots.
+            }
+            value.getDefiningOp()->erase();
         }
         for (ctjs::CallOp call : calls) { call.erase(); }
         for (mlir::Operation * op : setup) { op->erase(); }
