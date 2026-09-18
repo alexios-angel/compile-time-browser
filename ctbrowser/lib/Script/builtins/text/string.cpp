@@ -38,7 +38,10 @@ using text_body = std::function<value(context &, const std::string &, std::span<
             c.throw_error("TypeError", owner + " called on null or undefined");
             return value::undefined();
         }
-        return body(c, detail::this_string(c), a);
+        const std::string before = c.current_stack();
+        const std::string self = detail::this_string(c);
+        if (detail::threw_since(c, before)) { return value::undefined(); }
+        return body(c, self, a);
     };
 }
 
@@ -209,16 +212,15 @@ namespace {
     bool regexp = false;
     if (!builtins_detail::is_regexp(cx, pattern, regexp)) { return true; }
     if (!regexp) { return false; }
-    const detail::unwind_watch watch{cx};
+    const std::string before = cx.current_stack();
     const value flags = cx.lookup_property(pattern, "flags");
-    if (watch.threw()) { return true; }
+    if (detail::threw_since(cx, before)) { return true; }
     if (flags.is_nullish()) {
         cx.throw_error("TypeError", std::string{method} + " requires flags on its pattern");
         return true;
     }
-    if (!stringable_arg(cx, flags)) { return true; }
-    const std::string text = cx.to_string(flags);
-    if (watch.threw()) { return true; }
+    const std::string text = string_arg(cx, flags);
+    if (detail::threw_since(cx, before)) { return true; }
     if (text.find('g') != std::string::npos) { return false; }
     cx.throw_error("TypeError", std::string{method} + " must be called with a global RegExp");
     return true;
@@ -306,6 +308,7 @@ void install_string(context & cx) {
         method(cx, string_proto, name, arity,
                [owner, symbol, needs_global, body = std::move(body)](context & c,
                                                                      std::span<value> a) -> value {
+                   const std::string before = c.current_stack();
                    if (c.current_this().is_nullish()) {
                        c.throw_error("TypeError", owner + " called on null or undefined");
                        return value::undefined();
@@ -316,8 +319,9 @@ void install_string(context & cx) {
                    if (value dispatched; symbol_dispatch(c, arg_at(a, 0), symbol, a, dispatched)) {
                        return dispatched;
                    }
+                   if (detail::threw_since(c, before)) { return value::undefined(); }
                    const std::string self = detail::this_string(c);
-                   if (c.throw_pending()) { return value::undefined(); }
+                   if (detail::threw_since(c, before)) { return value::undefined(); }
                    return body(c, self, a);
                });
     };
@@ -440,8 +444,9 @@ void install_string(context & cx) {
              return c.string(out);
          });
     text("normalize", 0, [](context & c, const std::string & s, std::span<value> a) -> value {
-        if (has_index(a, 0) && !stringable_arg(c, a[0])) { return value::undefined(); }
-        const std::string form = has_index(a, 0) ? c.to_string(a[0]) : std::string{"NFC"};
+        const std::string before = c.current_stack();
+        const std::string form = has_index(a, 0) ? string_arg(c, a[0]) : std::string{"NFC"};
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         if (form != "NFC" && form != "NFD" && form != "NFKC" && form != "NFKD") {
             c.throw_error("RangeError",
                           "The normalization form should be one of NFC, NFD, NFKC, NFKD");
@@ -482,14 +487,18 @@ void install_string(context & cx) {
     // which cannot run one at all, so `"abc".indexOf("c", {valueOf: () => 1})`
     // read NaN, became 0, and could not be told from `indexOf("c")`.
     text("indexOf", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+        const std::string before = c.current_stack();
         const std::string needle = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
             std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
         const std::size_t found = s.find(needle, from);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     text("lastIndexOf", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+        const std::string before = c.current_stack();
         const std::string needle = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         // The position is the LAST index the match may START at, and it
         // defaults to the end. NaN means the end too - and an absent argument
         // IS NaN, because ToNumber(undefined) is NaN, so the two cases are one
@@ -503,37 +512,46 @@ void install_string(context & cx) {
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
     text("includes", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+        const std::string before = c.current_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.includes must not be a regular "
                           "expression");
             return value::boolean(false);
         }
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const std::string needle = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
             std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
         return value::boolean(s.find(needle, from) != std::string::npos);
     });
     text("startsWith", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+        const std::string before = c.current_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.startsWith must not be a regular "
                           "expression");
             return value::boolean(false);
         }
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const std::string needle = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const auto from = static_cast<std::size_t>(
             std::clamp(integer_arg(c, a, 1), 0.0, static_cast<double>(s.size())));
         return value::boolean(std::string_view{s}.substr(from).starts_with(needle));
     });
     text("endsWith", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+        const std::string before = c.current_stack();
         if (is_regexp_value(c, arg_at(a, 0))) {
             c.throw_error("TypeError",
                           "First argument to String.prototype.endsWith must not be a regular "
                           "expression");
             return value::boolean(false);
         }
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const std::string needle = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         // endsWith takes an END position, not a start: `"abc".endsWith("b", 2)`
         // asks whether the first two characters end in "b".
         const double end = has_index(a, 1) ? integer_arg(c, a, 1) : static_cast<double>(s.size());
@@ -591,6 +609,7 @@ void install_string(context & cx) {
     // form is here.
     text_after_dispatch("split", 2, "@@split", false,
                         [](context & c, const std::string & s, std::span<value> a) -> value {
+                            const std::string before = c.current_stack();
                             value out = c.make_array();
                             const context::rooted keep{c, out};
                             auto * result = static_cast<array_object *>(out.as_heap());
@@ -603,14 +622,13 @@ void install_string(context & cx) {
                             const std::size_t limit =
                                 has_index(a, 1) ? static_cast<std::size_t>(uint32_arg(c, a[1]))
                                                 : std::numeric_limits<std::size_t>::max();
-                            if (c.throw_pending()) { return value::undefined(); }
+                            if (detail::threw_since(c, before)) { return value::undefined(); }
                             // ToString(separator) is step 5 and the `lim = 0` return is step 6, IN
                             // THAT ORDER: a separator with a `toString` is coerced even when the
                             // limit already says the answer is [].
                             const value separator = arg_at(a, 0);
-                            if (!stringable_arg(c, separator)) { return value::undefined(); }
-                            const std::string sep = c.to_string(separator);
-                            if (c.throw_pending()) { return value::undefined(); }
+                            const std::string sep = string_arg(c, separator);
+                            if (detail::threw_since(c, before)) { return value::undefined(); }
                             if (limit == 0) { return out; }
                             if (separator.is_undefined()) {
                                 result->items.push_back(c.string(s));
@@ -647,19 +665,17 @@ void install_string(context & cx) {
     // of the method - acorn builds its keyword tables with exactly that call.
     const auto replace_string = [](context & c, const std::string & self, std::span<value> a,
                                    bool all) -> value {
-        const detail::unwind_watch watch{c};
+        const std::string before = c.current_stack();
         // Steps 3-8: ToString(searchValue), then IsCallable(replaceValue), then
         // ToString(replaceValue) - in that order, each observable.
-        if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
-        const std::string search = c.to_string(arg_at(a, 0));
-        if (watch.threw()) { return value::undefined(); }
+        const std::string search = string_arg(c, arg_at(a, 0));
+        if (detail::threw_since(c, before)) { return value::undefined(); }
         const value replace_value = arg_at(a, 1);
         const bool functional = replace_value.is_callable();
         std::string tpl;
         if (!functional) {
-            if (!stringable_arg(c, replace_value)) { return value::undefined(); }
-            tpl = c.to_string(replace_value);
-            if (watch.threw()) { return value::undefined(); }
+            tpl = string_arg(c, replace_value);
+            if (detail::threw_since(c, before)) { return value::undefined(); }
         }
         std::vector<std::size_t> positions;
         const std::size_t advance = std::max<std::size_t>(1, search.size());
@@ -678,9 +694,9 @@ void install_string(context & cx) {
                 const value args[3] = {c.string(search), value::number(static_cast<double>(at)),
                                        subject};
                 const value produced = c.call(replace_value, args);
-                if (watch.threw() || !stringable_arg(c, produced)) { return value::undefined(); }
-                replacement = c.to_string(produced);
-                if (watch.threw()) { return value::undefined(); }
+                if (detail::threw_since(c, before)) { return value::undefined(); }
+                replacement = string_arg(c, produced);
+                if (detail::threw_since(c, before)) { return value::undefined(); }
             } else if (!get_substitution(c, search, self, at, {}, value::undefined(), tpl,
                                          replacement)) {
                 return value::undefined();
@@ -839,8 +855,12 @@ void install_string(context & cx) {
         return c.string(out);
     });
     text("concat", 1, [](context & c, const std::string & s, std::span<value> a) -> value {
+        const std::string before = c.current_stack();
         std::string out = s;
-        for (std::size_t i = 0; i < a.size(); ++i) { out += string_arg(c, a[i]); }
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            out += string_arg(c, a[i]);
+            if (detail::threw_since(c, before)) { return value::undefined(); }
+        }
         return c.string(out);
     });
     cx.set_prototype(context::proto_kind::string, string_proto);

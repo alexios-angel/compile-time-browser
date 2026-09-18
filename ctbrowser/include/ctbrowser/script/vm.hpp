@@ -921,10 +921,12 @@ public:
         throw_error("TypeError",
                     "Cannot assign to read only property '" + std::string{name} + "' of object");
     }
-    // WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s and is
-    // parked for rethrow at its call site, or the run has failed outright.
-    // Every further `call` would answer undefined without running anything.
-    [[nodiscard]] bool throw_pending() const noexcept { return has_pending_throw_ || failed_; }
+    // WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s, reached
+    // its enclosing C++ fence, or the run has failed outright. A fence leaves
+    // the interpreted caller's stack unchanged until call_fenced consumes it.
+    [[nodiscard]] bool throw_pending() const noexcept {
+        return has_pending_throw_ || fence_hit_ || failed_;
+    }
     // HOW MANY THROWS HAVE UNWOUND, EVER. A throw a native raised itself
     // through throw_error is not parked - it has already landed on a handler
     // by the time the native's next line runs, and throw_pending cannot see
