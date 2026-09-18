@@ -28,6 +28,7 @@ struct classInitialization {
     llvm::StringMap<bool> closedGlobals;
     llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> globalHolderReads;
     llvm::DenseSet<mlir::Operation *> globalHolderLoads;
+    llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
@@ -115,6 +116,15 @@ struct classInitialization {
                         call.getReceiver() != loaded.getObject()) {
                         return {};
                     }
+                    if (publication) {
+                        const auto parameters =
+                            target(closure).getBody().front().getNumArguments() -
+                            ctjs::implicit_arguments;
+                        if (call.getArgs().size() > parameters) { return {}; }
+                        for (auto i = call.getArgs().size(); i < parameters; ++i) {
+                            if (!step()) { return {}; }
+                        }
+                    }
                 }
                 if (loaded == read) { selected = closure; }
             }
@@ -128,6 +138,7 @@ struct classInitialization {
                     globalHolderReads[loaded.getResult()] = closure;
                 }
                 for (ctjs::LoadGlobalOp loaded : proof->loads) { globalHolderLoads.insert(loaded); }
+                globalHolders.try_emplace(publication, std::move(*proof));
             }
             return selected;
         }
@@ -753,6 +764,22 @@ struct classInitialization {
             return mlir::WalkResult::interrupt();
         });
         if (walked.wasInterrupted()) { return false; }
+        for (auto & [publication, holder] : globalHolders) {
+            (void)holder;
+            const auto name = llvm::cast<ctjs::StoreGlobalOp>(publication).getName();
+            for (const auto & root : contract.roots) {
+                if (!step()) { return false; }
+                if (root.binding == name) {
+                    return refuse("global callable holder is requested by the host");
+                }
+            }
+            for (const auto & observation : contract.observations) {
+                if (!step()) { return false; }
+                if (observation == name) {
+                    return refuse("global callable holder is requested by the host");
+                }
+            }
+        }
         // Closure references and calls are covered above. Symbol attributes
         // must not retain a getter definition after all its reads are expanded.
         for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
@@ -812,9 +839,86 @@ struct classInitialization {
                     read = llvm::cast<ctjs::GetPropertyOp>(mapped);
                 }
             }
+            for (auto & [publication, holder] : globalHolders) {
+                (void)publication;
+                for (auto & [read, closure] : holder.reads) {
+                    (void)closure;
+                    if (!step()) { return false; }
+                    if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                        read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+                    }
+                }
+                for (ctjs::LoadGlobalOp & load : holder.loads) {
+                    if (!step()) { return false; }
+                    if (auto * mapped = mapping.lookupOrNull(load.getOperation())) {
+                        load = llvm::cast<ctjs::LoadGlobalOp>(mapped);
+                    }
+                }
+            }
             normalizedMethods.emplace_back(function, std::move(copy));
         }
         return true;
+    }
+
+    void expandGlobalHolders() {
+        // The source proof checked every slot body and all aliases before any
+        // mutation. These helpers observe no implicit argument and capture
+        // nothing, so the holder needs no representation at their direct calls.
+        llvm::SmallVector<ctjs::FuncOp> targets;
+        const auto eraseRooted = [](mlir::Operation * operation) {
+            for (mlir::Operation * root : llvm::make_early_inc_range(operation->getUsers())) {
+                if (!llvm::isa<ctjs::RootOp>(root)) {
+                    llvm::report_fatal_error("proved callable holder retains an observable use");
+                }
+                root->erase();
+            }
+            operation->erase();
+        };
+        for (auto & [publication, holder] : globalHolders) {
+            auto object = llvm::cast<ctjs::StoreGlobalOp>(publication).getValue().getDefiningOp();
+            for (auto [read, closure] : holder.reads) {
+                auto function = target(closure);
+                for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    if (!call) { continue; } // Inert roots are removed below.
+                    mlir::OpBuilder at(call);
+                    auto undefined =
+                        ctjs::ConstantOp::create(at, call.getLoc(), call.getType(),
+                                                 ctjs::UndefinedAttr::get(module.getContext()));
+                    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+                    arguments.resize(function.getBody().front().getNumArguments() -
+                                         ctjs::implicit_arguments,
+                                     undefined);
+                    auto direct = ctjs::CallDirectOp::create(
+                        at, call.getLoc(), call.getType(),
+                        mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()), undefined,
+                        undefined, undefined, arguments, nullptr, nullptr);
+                    call.getResult().replaceAllUsesWith(direct.getResult());
+                    call.erase();
+                }
+                eraseRooted(read);
+            }
+            for (ctjs::SetPropertyOp store : holder.stores) {
+                auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                auto function = target(closure);
+                targets.push_back(function);
+                mlir::SymbolTable::setSymbolVisibility(function,
+                                                       mlir::SymbolTable::Visibility::Private);
+                store.erase();
+                eraseRooted(closure);
+            }
+            for (ctjs::LoadGlobalOp load : holder.loads) { eraseRooted(load); }
+            publication->erase();
+            eraseRooted(object);
+        }
+        // All numeric closures are gone and all holder reads have been rewritten,
+        // including reads in unused bodies. Only now can an uncalled slot go away.
+        for (ctjs::FuncOp function : targets) {
+            if (mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
+                mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
+                function.erase();
+            }
+        }
     }
 };
 
@@ -871,6 +975,7 @@ struct CTNativeSpecializeClassInitializationPass
             (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             function.getBody().takeBody(copy->getBody());
         }
+        proof.expandGlobalHolders();
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
         for (auto [read, target] : proof.getterReads) { reads[target].push_back(read); }
         for (ctjs::FuncOp target : proof.getterOrder) {

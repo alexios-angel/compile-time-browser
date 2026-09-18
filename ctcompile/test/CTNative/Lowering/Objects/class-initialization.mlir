@@ -1590,6 +1590,40 @@ function holderGlobalOrder() {
 }
 var a = holderGlobalOrder();
 
+// Holder reads inside exit-dispatch clones retain targets, including short calls.
+// Unused slots still undergo the complete source-effect census.
+//--- global-holder-dispatch.js
+const H = {
+    read(n) { return n + 1; },
+    empty(n) { return 3; },
+    unused(n) { return n * 2; }
+};
+function holderGlobalDispatch() {
+    class Shape {
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return H.empty(); }
+            }
+            return H.read(7);
+        }
+    }
+    var instance = new Shape();
+    return instance.read(5) * 10 + instance.read(0);
+}
+var a = holderGlobalDispatch();
+
+// Surplus argument frame semantics remain outside this bounded normalization.
+//--- global-holder-surplus.js
+const H = {read: n => n + 1};
+function holderGlobalSurplus() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7, 9);
+}
+var a = holderGlobalSurplus();
+
 //--- global-holder-early.js
 function holderGlobalEarly() {
     class Shape {}

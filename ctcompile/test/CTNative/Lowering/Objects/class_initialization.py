@@ -29,6 +29,8 @@ OBSERVATIONS = {
     "global-holder-methods": (81, 81),
     "global-holder-chain": (8, 8),
     "global-holder-order": (122, 122),
+    "global-holder-dispatch": (38, 38),
+    "global-holder-surplus": (8, 8),
     "global-holder-early": (None, None),
     "global-holder-indirect-early": (None, None),
     "global-holder-prefix-call": (8, 8),
@@ -161,7 +163,14 @@ OBSERVATIONS = {
     "receiver-default-identity": (7, 7),
     "receiver-default-inherited": (7, 7),
 }
-POSITIVES = {
+GLOBAL_HOLDERS = {
+    "local-holder-global",
+    "global-holder-methods",
+    "global-holder-chain",
+    "global-holder-order",
+    "global-holder-dispatch",
+}
+POSITIVES = GLOBAL_HOLDERS | {
     "local-holder-method",
     "local-holder-arrow",
     "local-holder-branches",
@@ -205,10 +214,6 @@ POSITIVES = {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "local-holder-global",
-    "global-holder-methods",
-    "global-holder-chain",
-    "global-holder-order",
     "bootstrap-r",
     "method-dispatch-throw",
     "method-throw-default",
@@ -729,6 +734,7 @@ def main():
             "method-increment-dispatch",
             "method-decrement-dispatch",
             "receiver-default-dispatch",
+            "global-holder-dispatch",
         ):
             for operation in (
                 "scf.index_switch",
@@ -767,28 +773,34 @@ def main():
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
         if name == "bootstrap-r":
             key_checked, key_refused = check_prototype_keys(args, prepared)
-        if name in PREPARED_ONLY:
-            before, after = structured.read_text(), prepared.read_text()
-            if name == "local-holder-global" or name.startswith("global-holder-"):
-                # Class preparation proves publication without lifting the global
-                # holder. Retain its binding, cross-function reads and method calls.
-                operations = (
-                    "ctjs.call_direct",
-                    'ctjs.load_global "H"',
-                    'ctjs.store_global "H"',
+        if name == "global-holder-chain":
+            for label, request in (
+                ("root", {"roots": [{"binding": "H", "properties": ["read"]}]}),
+                ("observation", {"observations": ["a", "H"]}),
+            ):
+                prepare(
+                    args,
+                    f"holder-host-{label}",
+                    structured,
+                    dict(manifest, **request),
+                    success=False,
+                    diagnostic="global callable holder is requested by the host",
                 )
-                if after.count("ctjs.call ") != before.count("ctjs.call ") - 1:
-                    raise RuntimeError(f"{name}: preparation changed a holder method call")
-                for text in (before, after):
-                    entry = next(
-                        body
-                        for body in FUNCTION.split(text)
-                        if body.lstrip().startswith("@_script_$0(")
-                    )
-                    holder = re.search(r'ctjs.store_global "H", (%\w+)', entry)
-                    stores = 2 if name == "global-holder-methods" else 1
-                    if not holder or entry.count(f"ctjs.set_property {holder[1]}[") != stores:
-                        raise RuntimeError(f"{name}: preparation lost a holder callable slot")
+                preparation_refusals += 1
+        if name in PREPARED_ONLY | GLOBAL_HOLDERS:
+            before, after = structured.read_text(), prepared.read_text()
+            if name in GLOBAL_HOLDERS:
+                operations = ()
+                for operation in ('ctjs.load_global "H"', 'ctjs.store_global "H"'):
+                    if operation not in before or operation in after:
+                        raise RuntimeError(f"{name}: preparation did not remove the proved holder")
+                converted = before.count("ctjs.call ") - after.count("ctjs.call ") - 1
+                if (
+                    converted <= 0
+                    or after.count("ctjs.call_direct")
+                    != before.count("ctjs.call_direct") + converted
+                ):
+                    raise RuntimeError(f"{name}: holder calls did not become direct helpers")
             else:
                 operations = (
                     ("ctjs.call_direct",)
