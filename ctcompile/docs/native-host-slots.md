@@ -171,8 +171,14 @@ also defer, whether their original call is ordinary or already resolved. Their
 calls survive class rewriting; all global-holder targets retain the stricter
 census because unused slots can be removed earlier. Original helper exception
 CFGs stay intact for the existing URI/JSON normalization and final typed proof.
-This composes unchanged Bootstrap M with `M(shape.read())` in the entry; a method
-capturing M remains outside the constructor-only capture proof.
+This composes unchanged Bootstrap M with `M(shape.read())` in the entry or with
+a method as M's only caller. DOM class methods may capture an earlier sibling
+helper through a proved fixed local cell. The helper must capture nothing and
+observe none of its implicit arguments; every captured read must feed only an
+ordinary call with undefined receiver. Missing arguments are padded under the
+work budget; surplus arguments refuse. Complete method probes still check every
+unused body before removal. The original calls become direct calls at the same
+source position, and only an unobserved helper closure disappears.
 
 `toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
@@ -237,11 +243,11 @@ stores the same SSA value. Writes and captures remain ordered in the original
 block; reads may also occur in a later `scf.if` arm. Reads and captures must
 follow initialization; repeated identical constructor writes are inert.
 Chained aliases retain the full constructor and receiver-use census.
-Each method capture must resolve to its own exact constructor, with local slot
-metadata and only ordinary static-getter reads. The existing getter dependency
-proof checks those reads and unused bodies. After all source checks, expansion
-removes the proved capture loads, closure slots and cell plumbing. Shared
-immutable-capture rules are unchanged.
+Constructor captures require local slot metadata and only ordinary static-getter
+reads; the existing getter dependency proof checks those reads and unused bodies.
+DOM composition also admits the exact sibling helper calls described above.
+After all source checks, expansion removes the proved capture loads, closure
+slots and cell plumbing. Shared immutable-capture rules are unchanged.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only

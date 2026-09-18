@@ -1,5 +1,27 @@
 # What native Bootstrap needs next
 
+## Captured sibling Bootstrap M, 2026-09-18 UTC
+
+**1b27ab4b** completes the fixtures abandoned at **16:37:28**: a class method can
+be original M's only caller through an immutable sibling capture. Every original
+method and helper still needs the typed DOM/exception proof; changed bindings,
+identity escape, nested callees, unknown effects and exhausted budgets refuse.
+All 137 old fixture entries remain unchanged. Five new positives and six refusals
+pass the exact class-DOM case **1/1 (51.23s)**; transaction **1/1 (3.86s)**,
+contract **1/1 (0.47s)** and class initialization **1/1 (197.96s)** also pass.
+HANDOFF records exact targets, formatting debt and skipped coverage. No browser
+edits or whole-Bootstrap measurement.
+
+**Next:** vendor F at `bootstrap.bundle.js:243` creates a replacement callback,
+so its implicit callee is live and sibling capture still refuses. Reuse
+`DOMSource::foldNoMatchReplacements` for proven lowercase inputs such as `config`,
+keeping original callback validation. Full H separately needs complete holder
+and dataset-filter callback proof; unused slots cannot disappear unchecked.
+Preserve the original W/W+r/W+r+H specimens, including the last specimen's missing
+`s`. W subsequently needs Object.entries, iterator destructuring, original s,
+RegExp/TypeError and spread before inheritance. Full H Unicode, retained callbacks
+and the application driver remain unfinished.
+
 ## Entry-local Bootstrap M and primitive addition, 2026-09-18 UTC
 
 Continued clean **92192514** after the **16:07:54 AGENT-SYNC closure** confirmed

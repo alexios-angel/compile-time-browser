@@ -15,6 +15,70 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured sibling Bootstrap M, 2026-09-18 UTC
+
+**1b27ab4b** finishes the interrupted helper-capture thread at **2d72d9b0**.
+The **16:35:25 AGENT-SYNC entry** and two dirty class-DOM fixture files identified
+the work; the **16:37:28 loop failure** abandoned it before production changes.
+September 7 WIP was verified as an ancestor; both agents' recent commits and
+historical unmerged branches were reviewed. Parallel agents recovered fixtures
+and audited the proof and next boundary. The escape investigation stopped at a
+service limit without edits.
+
+DOM class methods can now be the original Bootstrap **M** helper's only caller.
+The captured cell must have a fixed, ordered sibling closure. Its target captures
+nothing and observes none of its implicit arguments. Captured reads feed only
+ordinary calls with undefined receivers; missing arguments are padded under the
+work budget, and surplus arguments refuse. Rewriting preserves each original
+call's position and arguments. Only an unobserved helper closure disappears.
+All implicit-argument premises are checked before mutation, including closure
+deletion. Method normalization retains the captured target mapping.
+
+Existing complete DOM/URI/JSON analysis still proves every method, including
+unused bodies, before publication. Changing bindings, callable escape, nested
+callee dependencies, unknown effects and exhausted budgets refuse without
+changing the original module or contract. Global-holder slots keep their strict
+census. The public class pass remains closed-source-only. No browser source,
+runtime representation or VM dependency was added.
+
+All **137 pre-session fixture entries** remain unchanged. Five new positive
+fixtures cover captured Number conversion and complete M's Number/null, JSON and
+URI fallback paths; six new negative fixtures cover mutation, escape and effects.
+The transaction test adds twelve controls per DOM provider. Independent local
+checks passed Python/Black, eleven Node syntax checks and twenty new Node
+observations.
+
+Focused devbox evidence: `/tmp/ctcompile-capture-finalize/`.
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`.
+  Initial build: **5 actions**; final build after budget charging: **4 actions**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.86s; total 3.87s)**.
+- Exact `ctcompile_host_contract`: **1/1 (0.47s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (51.23s)**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`:
+  **1/1 (197.96s)**, retaining the original W/W+r/W+r+H refusals.
+
+The initial shell runner's SSH consumed its remaining stdin, so that invocation
+built only and ran no tests. The corrected runner used protected stdin and ran
+all four selections above. All four tested file hashes match the devbox.
+Required `tools/format.sh --check` reports **26 pre-existing diagnostics in nine
+HEAD-identical files**; changed C++ formatting, Black and `git diff --check` pass.
+Full CTest/compiler lit, complete DOM suites, broad corpus/native matrices,
+WPT/test262, whole-Bootstrap replay and unchanged escape tests were skipped.
+No whole-bundle gain or full-suite pass is claimed. No push.
+
+**Exact next:** original **F** creates a nested replacement callback, making its
+implicit callee live before the sibling proof can accept it. Reuse
+`DOMSource::foldNoMatchReplacements` for proved lowercase inputs such as `config`,
+retaining original callback validation; do not relax callee identity generally.
+Then compose full **H**, whose unused holder slots and dataset filter callback
+still require proof. Preserve W/W+r/W+r+H specimens; the last still omits `s`.
+W also needs `Object.entries`, destructuring iteration, original `s`,
+RegExp/TypeError and spread before inheritance. Full H Unicode, retained
+callbacks, broader escape conversions and the application driver remain open.
+Native Bootstrap and the overall plan are unfinished.
+
 ## Entry-local Bootstrap M and primitive addition, 2026-09-18 UTC
 
 Started clean at **92192514**. The **16:07:54 AGENT-SYNC closure** confirmed
