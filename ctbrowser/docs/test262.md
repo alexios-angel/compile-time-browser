@@ -1149,6 +1149,51 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## Strict String conversion and native-call fences — 2026-09-18
+
+Fresh devbox `test/built-ins/String` runs at `d773148e` and `fd54d8b1`,
+same pinned corpus, four workers, 10-second timeout and 2 GB address-space cap.
+The interrupted session's completed runtime measurement was recovered and
+verified against the committed source hashes.
+
+| area | files | PASS before / after | FAIL before / after | SKIP |
+|---|---:|---:|---:|---:|
+| `built-ins/String` | 1,223 | 1,174 / 1,181 | 46 / 39 | 3 |
+
+**Seven files gained, zero lost.** `45c943e0` makes strict ToString perform
+ToPrimitive before rejecting Symbols returned by objects. The shared helper
+respects custom array conversions. String methods stop after failed
+conversions and preserve the first error; internally caught exceptions still
+allow successful conversions. Callback results remain rooted during GC.
+
+The VM's `throw_pending()` also recognizes exceptions at native-call fences,
+so a later conversion through `Function.call` cannot replace the original
+error. Symbol property keys and explicit `String(Symbol())` keep their
+behavior. `e76272e6` makes existing VM and AOT call-stack limits throw
+catchable `RangeError`s. No limits, bytecode or public signatures changed.
+
+Gained files:
+
+- `S15.5.1.1_A1_T8.js`
+- `prototype/indexOf/searchstring-tostring-errors.js`
+- `prototype/replaceAll/replaceValue-call-tostring-abrupt.js`
+- `prototype/replaceAll/replaceValue-tostring-abrupt.js`
+- `prototype/replaceAll/searchValue-tostring-abrupt.js`
+- `prototype/replaceAll/this-tostring-abrupt.js`
+- `prototype/trim/15.5.4.20-2-51.js`
+
+The regression failed before the fix. Final focused CTests passed
+**11/11** (0.26 seconds), and the browser gate passed
+**216/216** (93.67 seconds), excluding compiler tests.
+Formatting passed; source hashes matched the devbox and committed tree.
+
+This focused replay does not update the whole-corpus total below. Remaining
+String failures include fromCharCode wrapping, UTF-16 and case folding.
+Sibling parseInt/JSON.rawJSON paths still need abrupt-conversion review.
+Evidence: `/tmp/ctbrowser29/browser29-string-{before,after}.json`,
+`string-comparison.json`, `string-red.log`, `final-gate-sentinel-complete.log`,
+`format-sentinel.log` and `source.sha256`.
+
 ## String static coercion errors — 2026-09-18
 
 Fresh `test/built-ins/String` devbox runs at `acacae93` and `bd840fed`,
