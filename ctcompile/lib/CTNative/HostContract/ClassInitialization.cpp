@@ -563,8 +563,8 @@ struct classInitialization {
 
     bool prove(const HostContract & contract) {
         auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
-        if (!entry || functionIndex(entry) != 0) {
-            return refuse("class initialization requires the closed script entry");
+        if (!entry || !functionIndex(entry)) {
+            return refuse("class initialization requires a source entry");
         }
         for (mlir::Operation & op : module.getBody()->getOperations()) {
             if (!step()) { return false; }
@@ -575,6 +575,31 @@ struct classInitialization {
                 !functions.try_emplace(*index, fn).second) {
                 return refuse(
                     "class initialization requires complete capture-free source functions");
+            }
+        }
+        ctjs::FuncOp declaration;
+        if (functionIndex(entry) != 0) {
+            declaration = functions.lookup(0);
+            if (!declaration ||
+                !host_detail::isInertEntryDeclaration(declaration, entry, [&] { return step(); })) {
+                return refuse("class initialization requires an inert entry declaration");
+            }
+            // No host value may reenter source code before the fixed class
+            // helper. DOM/scalar parameter effects need their own joint proof.
+            for (mlir::BlockArgument argument :
+                 entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+                if (!step() || !argument.use_empty()) {
+                    return refuse("class initialization requires unused entry parameters");
+                }
+            }
+            for (mlir::OpOperand & use :
+                 entry.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                if (!llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) ||
+                    use.getOperandNumber() != 0) {
+                    return refuse("class initialization entry observes its callee identity");
+                }
             }
         }
         llvm::DenseSet<int64_t> createdFunctions;
@@ -677,6 +702,12 @@ struct classInitialization {
         // Reject the whole module, including suffixes and uncalled bodies.
         walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
+            // This entire declaration was checked above. Retain it for the
+            // entry provider, which separately decides whether it can be erased.
+            if (declaration &&
+                (op == declaration || op->getParentOfType<ctjs::FuncOp>() == declaration)) {
+                return mlir::WalkResult::advance();
+            }
             if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
                 helperCalls.contains(op) || llvm::is_contained(calls, op) ||
                 llvm::is_contained(constructorReads, op)) {
@@ -722,11 +753,12 @@ struct classInitialization {
                 auto & block = fn.getBody().front();
                 const bool receiverUnused = unusedReceiver(fn);
                 if (!reason.empty()) { return mlir::WalkResult::interrupt(); }
-                accepted = methods.contains(fn) || helpers.contains(fn) ||
-                           (llvm::hasSingleElement(fn.getBody()) &&
-                            (constructors.contains(fn) || getters.contains(fn) ||
-                             (block.getNumArguments() == 3 && receiverUnused &&
-                              block.getArgument(ctjs::arg_new_target).use_empty())));
+                accepted =
+                    methods.contains(fn) || helpers.contains(fn) ||
+                    (llvm::hasSingleElement(fn.getBody()) &&
+                     (constructors.contains(fn) || getters.contains(fn) ||
+                      (((declaration && fn == entry) || block.getNumArguments() == 3) &&
+                       receiverUnused && block.getArgument(ctjs::arg_new_target).use_empty())));
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
                 auto fn = target(closure);
