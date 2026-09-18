@@ -188,9 +188,10 @@ The holder then becomes direct calls before ordinary closure lifting, but
 **every slot function stays** for complete invocation and typed DOM
 proof. Even a pure uncalled slot refuses; missing arguments are budgeted and
 surplus arguments refuse. Other object captures, unordered uses, replacement and
-identity escape remain outside this rule. Combined sibling captures and callback
-creation in one slot still need a complete callee-use proof. Global holders keep
-their strict source census and wrapper requirements.
+identity escape remain outside this rule. One slot may combine fixed sibling
+captures and confined callback creation: every original callee use independently
+passes its capture or callback proof. No other use is skipped. Global holders
+keep their strict source census and wrapper requirements.
 
 Entry-local helpers compose unchanged Bootstrap M with `M(shape.read())` or with
 a method as M's only caller. DOM class methods and local holder slots may capture
@@ -213,8 +214,10 @@ work budget; surplus arguments refuse. Complete method probes still check every
 unused body before removal. The original calls become direct calls at the same
 source position, and only an unobserved helper closure disappears.
 This composes original H.getDataAttribute with M/F and class results, including
-repeated calls and JSON/URI fallback. Full H still needs its class-method object
-capture, combined capture/filter-callback census and complete unused-slot proof.
+repeated calls and JSON/URI fallback. A bounded slot can also combine original M
+with the dataset filter predicate, including through a captured H class method.
+Full H still needs its dynamic dataset/output keys and complete unused-slot proof;
+those slots cannot borrow parameter authority from a different source invocation.
 
 `toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
@@ -227,8 +230,8 @@ target and that target does not observe its callee argument. All premises are
 checked before deleting any closure, so child deletion order cannot authorize a
 parent. Nested ordinary helper dependencies remain refused; replacement and
 filter callbacks use the separate original-body proofs above. Full Bootstrap H
-still needs local holder/M/F captures and complete unused-slot proof; no slot
-bypasses the complete census merely because another slot is called.
+still needs its original loop, Unicode normalization and complete unused-slot
+proof; no slot bypasses the census merely because another slot is called.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent

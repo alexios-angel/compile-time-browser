@@ -992,6 +992,71 @@ FILTER_REFUSALS.update(
         ),
     }
 )
+# Bounded composition: original M and predicate share one slot's callee.
+# Complete H's dynamic-key loop and unused slots remain separate proof obligations.
+H_COMBINED_CLASS = (
+    BOOTSTRAP_M
+    + """const H = {
+    read(t, key) {
+      const count = Object.keys(t.dataset).filter("""
+    + FILTER_PREDICATE
+    + """).length;
+      const saved = M(t.getAttribute(key));
+      return 0 < count && count < 2 && typeof saved === 'object';
+    }
+  };
+  """
+    + CLASS
+    + "  return H.read(element, shape.read());\n"
+)
+H_COMBINED_METHOD = H_COMBINED_CLASS.replace(
+    CLASS,
+    """class Shape { read(target, key) { return H.read(target, key); } }
+  const shape = new Shape();
+""",
+).replace("H.read(element, shape.read())", "shape.read(element, 'x')")
+H_COMBINED_CASES = {
+    "class_h_combined": (H_COMBINED_CLASS, "1100"),
+    "class_h_combined_method": (H_COMBINED_METHOD, "1100"),
+    "class_h_combined_order": (
+        H_COMBINED_METHOD.replace(
+            "  return shape.read(element, 'x');",
+            """  const saved = shape.read(element, 'x');
+  element.setAttribute('x', '%7B%7D');
+  const after = shape.read(element, 'x');
+  return saved && after;""",
+        ),
+        "1100",
+    ),
+}
+H_COMBINED_REFUSALS = {
+    "class_h_combined_effect": H_COMBINED_CLASS.replace('t.startsWith("bs")', "unknown(t)"),
+    "class_h_combined_capture": H_COMBINED_CLASS.replace('t.startsWith("bs")', "t === element"),
+    "class_h_combined_this": H_COMBINED_CLASS.replace(
+        FILTER_PREDICATE, "function(t) { return this; }"
+    ),
+    "class_h_combined_escape": H_COMBINED_CLASS.replace(
+        "const count = Object.keys(t.dataset).filter(" + FILTER_PREDICATE + ").length;",
+        "const callback = " + FILTER_PREDICATE + "; t.setAttribute('leak', callback); "
+        "const count = Object.keys(t.dataset).filter(callback).length;",
+    ),
+    "class_h_combined_m_escape": H_COMBINED_CLASS.replace(
+        "const saved = M(", "t.setAttribute('leak', M); const saved = M("
+    ),
+    "class_h_combined_m_replaced": H_COMBINED_CLASS.replace(
+        "class Shape", "M = function(t) { return t; }; class Shape"
+    ),
+    "class_h_combined_later_input": H_COMBINED_METHOD.replace(
+        "  return shape.read", "  shape.read({}, 'x');\n  return shape.read"
+    ),
+    "class_h_combined_unused": H_COMBINED_CLASS.replace(
+        "const H = {", "const H = { unused(t) { return M(t); },"
+    ),
+}
+for cases in (FILTER_CASES, M_CASES, NUMBER_CASES):
+    cases.update(H_COMBINED_CASES)
+for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
+    refusals.update(H_COMBINED_REFUSALS)
 FILTER_IDENTITIES = ["Object", "Array", "String"]
 CLASS_CASES.update(FILTER_CASES)
 CLASS_REFUSALS.update(FILTER_REFUSALS)

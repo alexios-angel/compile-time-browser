@@ -46,3 +46,6 @@
 // and branch returns. Fixed local aliases retain the same identity. Changed
 // holders/slots, escapes, invalid later arguments, unused slots, broad JSON
 // result/String comparisons and unknown effects still refuse.
+// A slot can combine an original M capture and retained filter callback.
+// Direct and class-method calls preserve callback execution and DOM write order;
+// callback effects/escapes, changing helpers, invalid inputs and unused slots refuse.

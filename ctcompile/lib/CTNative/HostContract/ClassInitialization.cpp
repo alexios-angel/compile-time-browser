@@ -194,41 +194,44 @@ struct classInitialization {
         }
         return result;
     }
-    bool helperCallbacks(ctjs::FuncOp helper) {
-        auto & body = helper.getBody().front();
-        for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
+    bool helperCallback(mlir::OpOperand & use) {
+        auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+        auto function = target(callback);
+        if (!callback || use.getOperandNumber() != 0 || !function ||
+            !callback.getUpvalues().empty() || function.getUpvalueCount() != 0 ||
+            llvm::any_of(
+                function.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
+                [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+            return refuse("captured helper observes its implicit callee");
+        }
+        for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
             if (!step()) { return false; }
-            auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-            auto function = target(callback);
-            if (!callback || use.getOperandNumber() != 0 || !function ||
-                !callback.getUpvalues().empty() || function.getUpvalueCount() != 0 ||
-                llvm::any_of(
-                    function.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
-                    [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
-                return refuse("captured helper observes its implicit callee");
+            if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            const bool replacement = call && read && callbackUse.getOperandNumber() == 3 &&
+                                     call.getArgs().size() == 2 &&
+                                     ctjs::constantKey(read.getKey()) == "replace";
+            const bool filter =
+                call && read && callbackUse.getOperandNumber() == 2 && call.getArgs().size() == 1 &&
+                ctjs::constantKey(read.getKey()) == "filter" &&
+                function.getBody().front().getNumArguments() == ctjs::implicit_arguments + 1 &&
+                call->getBlock() == callback->getBlock() && callback->isBeforeInBlock(call);
+            if ((!replacement && !filter) || read.getObject() != call.getReceiver()) {
+                return refuse("captured helper callback escapes its intrinsic call");
             }
-            for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
-                if (!step()) { return false; }
-                if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
-                auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
-                auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                                 : ctjs::GetPropertyOp{};
-                const bool replacement = call && read && callbackUse.getOperandNumber() == 3 &&
-                                         call.getArgs().size() == 2 &&
-                                         ctjs::constantKey(read.getKey()) == "replace";
-                const bool filter =
-                    call && read && callbackUse.getOperandNumber() == 2 &&
-                    call.getArgs().size() == 1 && ctjs::constantKey(read.getKey()) == "filter" &&
-                    function.getBody().front().getNumArguments() == ctjs::implicit_arguments + 1 &&
-                    call->getBlock() == callback->getBlock() && callback->isBeforeInBlock(call);
-                if ((!replacement && !filter) || read.getObject() != call.getReceiver()) {
-                    return refuse("captured helper callback escapes its intrinsic call");
-                }
-            }
-            // Retain the original callback for the shared no-match or typed
-            // Array filter proof, including its complete body and uses.
-            helpers.insert(function);
-            domEntryHelpers.insert(function);
+        }
+        // Retain the original callback for the shared no-match or typed
+        // Array filter proof, including its complete body and uses.
+        helpers.insert(function);
+        domEntryHelpers.insert(function);
+        return true;
+    }
+    bool helperCallbacks(ctjs::FuncOp helper) {
+        for (mlir::OpOperand & use :
+             helper.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+            if (!step() || !helperCallback(use)) { return false; }
         }
         return true;
     }
@@ -286,6 +289,14 @@ struct classInitialization {
         for (mlir::OpOperand & use : fn.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
             if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (domEntry && llvm::isa<ctjs::CreateClosureOp>(use.getOwner())) {
+                // Captures and callback enclosures share this original callee.
+                // Prove each use separately; retain the callback's body and
+                // identity for the complete typed DOM proof after rewriting.
+                if (!helperCallback(use)) { return false; }
+                needsDOMMethodProof = true;
+                continue;
+            }
             auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
             if (!load || use.getOperandNumber() != 0 || load.getIndex() < 0 ||
                 static_cast<size_t>(load.getIndex()) >= method.getUpvalues().size()) {
