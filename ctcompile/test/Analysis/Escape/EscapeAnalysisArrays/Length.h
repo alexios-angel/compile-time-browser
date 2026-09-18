@@ -658,8 +658,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         run({.what = "division needs an exact integral quotient and an in-bounds index",
              .body = values + one + "  %divisor = ctjs.constant " + literal +
                      "\n  %index = ctjs.binary div %one, %divisor\n" + indexed,
-             .failure = literal == "#ctjs.string<\"1\">" ? ArrayContentsFailure::MissingElement
-                                                         : ArrayContentsFailure::UnknownIndex});
+             .failure = literal == "#ctjs.string<\"1\">" || literal == "#ctjs.boolean<true>"
+                            ? ArrayContentsFailure::MissingElement
+                            : ArrayContentsFailure::UnknownIndex});
     }
     run({.what = "an out-of-range numerator cannot lend Number evidence to a later division",
          .body = values + one +
@@ -735,8 +736,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                       "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
         const auto body = values + "  %divisor = ctjs.constant " + literal +
                           "\n  %index = ctjs.binary mod %zero, %divisor\n" + indexed;
-        if (literal == "#ctjs.string<\"1\">") {
-            run({.what = "the original canonical String remainder supplies exact index zero",
+        if (literal == "#ctjs.string<\"1\">" || literal == "#ctjs.boolean<true>") {
+            run({.what = "the original primitive remainder supplies exact index zero",
                  .body = body,
                  .arrays = "a:[zero]",
                  .exit = "a -> {a}"});

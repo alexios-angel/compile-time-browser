@@ -1427,6 +1427,38 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("bounded negative Add operands cannot certify an out-of-domain sum",
            replace(maximumNegativeAdd, "add %minus, %zero", "add %minus, %minus"));
     for (const std::string operation : {"div", "mod"}) {
+        for (const std::string literal :
+             {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+            for (const bool negative : {false, true}) {
+                for (const bool commuted : {false, true}) {
+                    const std::string expected =
+                        literal != "#ctjs.boolean<true>" || operation == "mod" ? "0"
+                        : negative ? "13830554455654793216"
+                                   : "4607182418800017408";
+                    const auto body = prefix + "  %input = ctjs.constant " + literal +
+                                      "\n  %factor = ctjs.unary " + (negative ? "neg" : "plus") +
+                                      " %one\n  %snapshot = ctjs.binary " + operation + " " +
+                                      (commuted ? "%factor, %input" : "%input, %factor") +
+                                      " {storage_test_id = \"snapshot\"}\n"
+                                      "  %expected = ctjs.constant #ctjs.number<" +
+                                      expected +
+                                      ">\n  %index = ctjs.binary sub %snapshot, %expected\n"
+                                      "  %read = ctjs.get_property %a[%index]\n"
+                                      "  ctjs.return %snapshot\n";
+                    if (commuted && literal != "#ctjs.boolean<true>") {
+                        reject("Boolean/null zero divisors cannot supply finite Number snapshots",
+                               body, ArrayContentsFailure::UnknownIndex);
+                    } else {
+                        run({.what =
+                                 "primitive division and remainder retain signed result origins",
+                             .body = body,
+                             .arrays = "a:[one,two,three]",
+                             .reads = "a[0]=one",
+                             .exit = "snapshot -> {}"});
+                    }
+                }
+            }
+        }
         const auto divisor = operation == "div" ? "%one" : "%two";
         const std::string makeResult = "  %signedResult = ctjs.binary " + operation + " %minus, " +
                                        divisor + " {storage_test_id = \"signedResult\"}\n";
@@ -1496,6 +1528,46 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                  .reads = "a[0]=one; a[1]=x",
                  .exit = "zero -> {}"},
                 "x");
+        }
+        const auto primitive =
+            operation == "div"
+                ? replace(originalString, "#ctjs.string<\"1\">", "#ctjs.boolean<true>")
+                : replace(stringLeft, "#ctjs.string<\"1\">", "#ctjs.boolean<true>");
+        run({.what = "Boolean division and remainder keep CFG snapshots and returned children",
+             .body = primitive,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "Boolean division and remainder release only unreturned CFG children",
+             .body = replace(primitive, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        const std::string operand = operation == "div" ? "%divisor" : "%text";
+        const auto savedPrimitive =
+            replace(primitive, "  %signedResult =",
+                    "  %holder = ctjs.create_array [" + operand +
+                        "] {storage_test_id = \"holder\"}\n"
+                        "  %savedOperand = ctjs.get_property %holder[%zero]\n"
+                        "  ctjs.set_property %holder[%zero], %x\n  %signedResult =");
+        run({.what = "a saved Boolean dividend or divisor survives source replacement",
+             .body = replace(savedPrimitive, operation == "div" ? ", %divisor {" : "%text,",
+                             operation == "div" ? ", %savedOperand {" : "%savedOperand,"),
+             .arrays = "a:[one,x]; seed:[]; holder:[x]",
+             .reads = "holder[0]=ctjs.constant; a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        reject("division cannot turn an original primitive into an own array key",
+               replace(primitive, "%base[%i]", "%base[" + operand + "]"),
+               ArrayContentsFailure::UnknownIndex);
+        const auto repeated = replace(makeResult, operation == "div" ? ", %one" : "%minus,",
+                                      operation == "div" ? ", %divisor" : "%text,");
+        reject("repeated primitive division needs independent invariance",
+               replace(replace(primitive, repeated, ""), "  %step =", repeated + "  %step ="));
+        for (const std::string invalid : {"#ctjs.undefined", "#ctjs.number<9218868437227405312>",
+                                          "#ctjs.number<9221120237041090560>"}) {
+            reject("nonfinite primitive division cannot borrow exact Boolean evidence",
+                   replace(primitive, "#ctjs.boolean<true>", invalid));
         }
         for (const std::string invalid :
              {"0", "01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {

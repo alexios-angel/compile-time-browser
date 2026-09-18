@@ -1042,6 +1042,55 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                            "    %bad = ctjs.constant #ctjs.string<\"01\">\n"
                            "    scf.yield %bad : !ctjs.value\n  }\n"));
     }
+    for (const std::string operation : {"div", "mod"}) {
+        const std::string makeResult =
+            "  %unit = ctjs.binary " + operation +
+            (operation == "div" ? " %negative, %operand\n" : " %operand, %magnitude\n");
+        auto source = replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                              "  %negative = ctjs.unary neg %one\n"
+                              "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                              "    %truth = ctjs.constant #ctjs.boolean<true>\n"
+                              "    scf.yield %truth : !ctjs.value\n"
+                              "  } else {\n    scf.yield %one : !ctjs.value\n  }\n" +
+                                  makeResult);
+        if (operation == "mod") {
+            source = replace(source, "binary sub %i, %d", "binary add %i, %d");
+        }
+        rows.push_back({.what = "primitive division proves each structured predecessor snapshot",
+                        .body = source,
+                        .arrays = "a:[x,y] | a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                        .exit = "y -> {y}; y -> {y}"});
+        rows.push_back({.what = "primitive division releases only unreturned structured children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y] | a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                        .exit = "zero -> {}; zero -> {}"});
+        reject("primitive division snapshots cannot change on structured backedges",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+        reject("primitive division cannot borrow another predecessor's exact operand",
+               replace(source, "scf.yield %one :", "scf.yield %p :"),
+               ArrayContentsFailure::UnsupportedOperation);
+        reject(
+            "repeated structured primitive division still needs independent invariance",
+            replace(replace(source, "    %step =",
+                            replace(makeResult, "%unit =", "%repeated =") + "    %step ="),
+                    operation == "div" ? "binary sub %i, %d" : "binary add %i, %d",
+                    operation == "div" ? "binary sub %i, %repeated" : "binary add %i, %repeated"));
+        const auto zero = replace(
+            replace(replace(replace(source, "#ctjs.boolean<true>", "#ctjs.boolean<false>"),
+                            "scf.yield %one :",
+                            "%nil = ctjs.constant #ctjs.null\n    scf.yield %nil :"),
+                    makeResult, "  %unit = ctjs.binary " + operation + " %operand, %negative\n"),
+            "%index = %zero", "%index = %unit");
+        rows.push_back(
+            {.what = "false and null division preserve zero starts across structured joins",
+             .body = replace(zero, operation == "div" ? "binary sub %i, %d" : "binary add %i, %d",
+                             "binary add %i, %one"),
+             .arrays = "a:[x,y] | a:[x,y]",
+             .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+             .exit = "y -> {y}; y -> {y}"});
+    }
     const std::string makePower = "  %exponent = ctjs.unary neg %magnitude\n"
                                   "  %unit = ctjs.binary pow %one, %exponent\n";
     const auto carriedPower =
