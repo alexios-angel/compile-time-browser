@@ -2045,11 +2045,11 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             // at computed-value time (attr-all-types). A value that is
             // still a function - `min(10px, 5%)` - is valid as it stands.
             if (had_var && !css::may_have_math(value)) {
-                // Image components are clamped separately below. Validate their
+                // Image and layer sizes are clamped separately below. Validate their
                 // substituted math syntax, not a negative intermediate result.
-                const bool image_components =
-                    ascii_iequals_any(property, {"border-image", "border-image-width",
-                                                 "border-image-outset", "border-image-slice"});
+                const bool image_components = ascii_iequals_any(
+                    property, {"border-image", "border-image-width", "border-image-outset",
+                               "border-image-slice", "background-size", "mask-size"});
                 const css::value_check checked =
                     css::check_declaration(property, image_components ? unfolded : value);
                 if (!checked.valid) {
@@ -2082,6 +2082,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // and still answers `96px` for `1in`.
         const auto folded = [&](std::string text, atom longhand) {
             const std::string_view name = atoms_->text(longhand);
+            if (name == "background-size" || name == "mask-size") {
+                // Each layer resolves and clamps before inheritance. Keep the
+                // shared math fold above for random ordinals and finite bounds.
+                const css::color_context ctx{{}, &lengths_for(longhand)};
+                if (std::string computed = css::computed_background_list(name, text, ctx);
+                    !computed.empty()) {
+                    return computed;
+                }
+            }
             const css::property_syntax * known = css::find_property(name);
             const auto component = [&](std::string_view part) {
                 std::string value = css::canonical_dimension_text(part, lengths_for(longhand))

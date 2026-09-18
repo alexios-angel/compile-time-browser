@@ -21,6 +21,49 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_computed_layer_size_ranges() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #parent { font-size: 40px;
+                  background-size: calc(10px + 0.5em) calc(10px - 0.5em), 1em auto;
+                  mask-size: calc(10px - 0.5em) calc(10px + 0.5em); }
+        #child { font-size: 10px; background-size: inherit; mask-size: inherit; }
+        </style><div id="parent"><div id="child"></div></div><script>
+        const p = document.getElementById('parent');
+        for (const id of ['parent', 'child']) {
+            const cs = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + cs.backgroundSize + '|' + cs.maskSize);
+        }
+        for (const property of ['background-size', 'mask-size']) {
+            p.style.setProperty(property, 'calc(10px - 0.5em) calc(10px + 0.5em)');
+            console.log(property + '-inline=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty('--size', 'calc(10px + 0.5em) calc(10px - 0.5em)');
+            p.style.setProperty(property, 'var(--size)');
+            console.log(property + '-variable=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty('--size', '-10px calc(10px + 0.5em)');
+            console.log(property + '-invalid=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty(property, 'calc(10% - 20%) calc(10px - 20%)');
+            console.log(property + '-percent=' + getComputedStyle(p).getPropertyValue(property));
+        }
+        p.style.backgroundSize = 'random(1px, 1000px) random(1px, 1000px)';
+        const sizes = getComputedStyle(p).backgroundSize.split(' ');
+        console.log('random=' + (sizes[0] !== sizes[1]));
+        p.style.backgroundSize = 'calc(infinity * 1px) auto';
+        console.log('infinity=' + getComputedStyle(p).backgroundSize);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=30px 0px, 40px auto|0px 30px"});
+    CHECK_EQ(logged(page, "child="), std::string{"child=30px 0px, 40px auto|0px 30px"});
+    for (const std::string property : {"background-size", "mask-size"}) {
+        CHECK_EQ(logged(page, property + "-inline="), property + "-inline=0px 30px");
+        CHECK_EQ(logged(page, property + "-variable="), property + "-variable=30px 0px");
+        CHECK_EQ(logged(page, property + "-invalid="), property + "-invalid=auto");
+        CHECK_EQ(logged(page, property + "-percent="), property + "-percent=0% calc(-20% + 10px)");
+    }
+    CHECK_EQ(logged(page, "random="), std::string{"random=true"});
+    CHECK_EQ(logged(page, "infinity="), std::string{"infinity=33554432px auto"});
+}
+
 void test_nonnegative_computed_widths() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<style>
@@ -469,6 +512,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_computed_layer_size_ranges();
     test_nonnegative_computed_widths();
     test_elliptical_radius_cascade();
     test_resolved_colours();

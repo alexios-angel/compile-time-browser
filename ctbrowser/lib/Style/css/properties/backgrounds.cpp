@@ -81,25 +81,30 @@ struct layer_context {
 
 // One `<length-percentage>` or `auto`, canonical, folded when computing.
 [[nodiscard]] std::optional<std::string> size_part(std::string_view text, const layer_context & ctx,
-                                                   bool non_negative) {
+                                                   bool nonnegative) {
     const token_stream ts = tokenize(text);
     if (ts.tokens.size() == 2) {
         const css_token & t = ts.tokens.front();
         if (t.type == token_type::ident && ascii_iequals(text, "auto")) { return "auto"; }
         if (t.type == token_type::number && t.number == 0) { return "0px"; }
         if (t.type == token_type::percentage) {
-            if (non_negative && t.number < 0) { return std::nullopt; }
+            if (nonnegative && t.number < 0) {
+                return ctx.lengths != nullptr ? std::optional<std::string>{"0%"} : std::nullopt;
+            }
             return serialize_number(t.number) + "%";
         }
         if (t.type == token_type::dimension) {
-            if (non_negative && t.number < 0) { return std::nullopt; }
+            if (nonnegative && t.number < 0 && ctx.lengths == nullptr) { return std::nullopt; }
             const length_context none;
             const math_answer typed =
                 evaluate_math(text, ctx.lengths != nullptr ? *ctx.lengths : none);
             if (typed.outcome == math_outcome::invalid) { return std::nullopt; }
             if (typed.outcome == math_outcome::resolved) {
                 if (typed.value.type != numeric_type::length) { return std::nullopt; }
-                if (ctx.lengths != nullptr) { return serialize_calc(typed.value); }
+                if (ctx.lengths != nullptr) {
+                    const std::string computed = serialize_calc(typed.value);
+                    return nonnegative ? non_negative(computed) : computed;
+                }
             }
             return serialize_number(t.number) + ascii_lower_copy(ts.unit_of(t));
         }
@@ -117,9 +122,8 @@ struct layer_context {
             return std::nullopt;
         }
         if (ctx.lengths != nullptr) {
-            calc_result v = answer.value;
-            if (non_negative && !v.has_percent && v.px < 0) { v.px = 0; }
-            return serialize_calc(v);
+            const std::string computed = serialize_calc(answer.value);
+            return nonnegative ? non_negative(computed) : computed;
         }
     }
     return simplify_math(text);
