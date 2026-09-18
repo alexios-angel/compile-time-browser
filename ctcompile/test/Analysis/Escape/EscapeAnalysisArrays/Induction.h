@@ -822,7 +822,7 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .reads = "a[0]=one",
              .exit = "actual -> {}"});
     }
-    for (const std::string kind : {"bitand", "bitor", "bitxor", "shl"}) {
+    for (const std::string kind : {"bitand", "bitor", "bitxor", "shl", "shr"}) {
         const std::string right = kind == "bitand" ? "%operand" : "%zero";
         const std::string operation =
             "  %minus = ctjs.binary_static " + kind + " %operand, " + right + "\n";
@@ -898,8 +898,24 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
           bitwise_case{"shl", "13970166044103278592", "4607182418800017408", "0"},
           bitwise_case{"shl", "13974669643728551936", "13852790978814935040",
                        "4611686018427387904"}, // -UINT32_MAX << -31 = 2
-          bitwise_case{"shl", "4751297606873776128", "4607182418800017408",
-                       "13835058055282163712"}}) {
+          bitwise_case{"shl", "4751297606873776128", "4607182418800017408", "13835058055282163712"},
+          bitwise_case{"shr", "13830554455654793216", "13830554455654793216",
+                       "13830554455654793216"}, // -1 >> -1 = -1
+          bitwise_case{"shr", "13837309855095848960", "4607182418800017408",
+                       "13835058055282163712"}, // -3 >> 1 = -2
+          bitwise_case{"shr", "4746794007248502784", "4629700416936869888",
+                       "13970166044103278592"}, // 2^31 >> 32 = -2^31
+          bitwise_case{"shr", "4751297606873776128", "0", "13830554455654793216"},
+          bitwise_case{"shr", "13974669643728551936", "13853072453791645696",
+                       "4607182418800017408"}, // -UINT32_MAX >> -32 = 1
+          bitwise_case{"shr", "9223372036854775808", "13830554455654793216", "0"},
+          bitwise_case{"ushr", "13830554455654793216", "0", "4751297606873776128"},
+          bitwise_case{"ushr", "13830554455654793216", "13830554455654793216",
+                       "4607182418800017408"}, // -1 >>> -1 = 1
+          bitwise_case{"ushr", "13970166044103278592", "13853072453791645696",
+                       "4746794007248502784"}, // -2^31 >>> -32 = 2^31
+          bitwise_case{"ushr", "13974669643728551936", "13852790978814935040", "0"},
+          bitwise_case{"ushr", "9223372036854775808", "13830554455654793216", "0"}}) {
         run({.what = "signed bitwise snapshots retain exact ToInt32 bits and result identity",
              .body = prefix + "  %left = ctjs.constant #ctjs.number<" + left +
                      ">\n  %right = ctjs.constant #ctjs.number<" + right +
@@ -912,6 +928,32 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .reads = "a[0]=one",
              .exit = "actual -> {}"});
     }
+    const std::string unsignedOperation = "  %count = ctjs.unary neg %one\n"
+                                          "  %unit = ctjs.binary_static ushr %operand, %count\n";
+    const auto unsignedCarried =
+        replace(carriedUnit, makeUnit, "  %operand = ctjs.unary neg %one\n" + unsignedOperation);
+    run({.what = "unsigned shifts preserve negative operands and counts through CFG transport",
+         .body = unsignedCarried,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const auto unsignedSaved =
+        replace(replace(savedUnit, "  %unit = ctjs.get_property %seed[%name]\n",
+                        "  %magnitude = ctjs.get_property %seed[%name]\n"
+                        "  %operand = ctjs.unary neg %magnitude\n" +
+                            unsignedOperation),
+                "ctjs.append %one to %seed", "ctjs.set_property %seed[%name], %zero");
+    run({.what = "unsigned shifts retain signed read-time Numbers after source shrink",
+         .body = unsignedSaved,
+         .arrays = "a:[one,two,three]; seed:[]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    reject("an unsigned shift snapshot cannot change on a CFG backedge",
+           replace(unsignedCarried, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %two"));
+    reject("an unsigned shift cannot borrow an unknown count",
+           replace(unsignedCarried, "ushr %operand, %count", "ushr %operand, %p"),
+           ArrayContentsFailure::UnknownValue);
     const std::string makeSubUnit = "  %left = ctjs.unary plus %one\n"
                                     "  %magnitude = ctjs.unary plus %two\n"
                                     "  %minus = ctjs.binary sub %left, %magnitude\n";
