@@ -6,6 +6,7 @@
 // while unused value producers retain effects and escaping holders still refuse.
 // Original class_key/class_order sources compose unchanged class proofs with
 // typed DOM entries; the public class pass remains closed-source-only. Original
-// class method DOM effects and every unused source body still require proof.
+// class methods call the DOM through their constructor-stored element fields;
+// every original unused source body still requires proof before erasure.
 // Captured local class getter identities can supply a DOM key after the same
 // original constructor closure is proved across all writes to its local cell.

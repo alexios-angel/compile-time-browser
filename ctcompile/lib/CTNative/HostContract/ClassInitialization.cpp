@@ -36,6 +36,8 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> constructors;
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
+    llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> methodProbes;
+    bool needsDOMMethodProof = false;
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
     llvm::DenseSet<mlir::Operation *> getters;
@@ -662,6 +664,10 @@ struct classInitialization {
         }
         for (ctjs::ConstructOp made : instances) {
             if (!fieldsOnly(made.getResult(), methodKeys, staticReads, true)) { return false; }
+            for (ctjs::SetPropertyOp definition : definitions) {
+                if (!step()) { return false; }
+                methodProbes.emplace_back(made, definition);
+            }
         }
         if (!definitions.empty() || constructorReads.size() != firstConstructorRead) {
             for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
@@ -929,12 +935,15 @@ struct classInitialization {
                            (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
                             llvm::isa<ctjs::NumberAttr>(constant.getValue()));
             }
-            // Only the selected entry may defer unknown calls. Every original
-            // constructor, method, getter and helper still faces this census,
-            // including unused bodies that later normalization could remove.
-            if (domEntry && llvm::isa<ctjs::CallOp>(op) &&
-                op->getParentOfType<ctjs::FuncOp>() == entry) {
-                accepted = true;
+            // Method calls defer only to complete private DOM probes below,
+            // including unused/transitive callers. Constructors, getters and
+            // helpers retain their original census before any body is erased.
+            if (domEntry && llvm::isa<ctjs::CallOp>(op)) {
+                auto fn = op->getParentOfType<ctjs::FuncOp>();
+                if (fn == entry || methods.contains(fn)) {
+                    accepted = true;
+                    needsDOMMethodProof |= methods.contains(fn);
+                }
             }
             if (accepted) { return mlir::WalkResult::advance(); }
             auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
@@ -977,7 +986,113 @@ struct classInitialization {
                 }
             }
         }
+        // Reject before normalization can replace a method's body and
+        // invalidate a nested construction or definition recorded above.
+        if (domEntry && needsDOMMethodProof) {
+            for (auto [made, definition] : methodProbes) {
+                if (!step()) { return false; }
+                auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+                if (!fn || fn.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
+                    made->getParentOfType<ctjs::FuncOp>() != entry) {
+                    return refuse("DOM class methods require parameter-free entry-local instances");
+                }
+            }
+        }
         return true;
+    }
+
+    bool proveDOMMethods(const HostContract & contract) {
+        if (!needsDOMMethodProof) { return true; }
+        llvm::SetVector<mlir::Operation *> unused;
+        for (auto [made, definition] : methodProbes) {
+            (void)made;
+            if (!step()) { return false; }
+            bool readKey = false;
+            const auto key = ctjs::constantKey(definition.getKey());
+            const auto scanned = module.walk([&](ctjs::GetPropertyOp read) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                const auto selected = ctjs::constantKey(read.getKey());
+                readKey |= selected.empty() || selected == key;
+                return mlir::WalkResult::advance();
+            });
+            if (scanned.wasInterrupted()) { return false; }
+            if (!readKey) { unused.insert(definition); }
+        }
+        const auto omitUnused = [&](mlir::ModuleOp candidate, mlir::IRMapping * mapping,
+                                    ctjs::SetPropertyOp keep) {
+            for (mlir::Operation * operation : unused) {
+                if (!step()) { return false; }
+                if (operation == keep) { continue; }
+                auto definition = llvm::cast<ctjs::SetPropertyOp>(
+                    mapping ? mapping->lookup(operation) : operation);
+                auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                auto original = target(llvm::cast<ctjs::SetPropertyOp>(operation)
+                                           .getValue()
+                                           .getDefiningOp<ctjs::CreateClosureOp>());
+                auto fn = candidate.lookupSymbol<ctjs::FuncOp>(original.getSymName());
+                if (!mlir::SymbolTable::symbolKnownUseEmpty(fn, candidate.getOperation()) ||
+                    !mlir::SymbolTable::symbolKnownUseEmpty(fn, &candidate.getBodyRegion())) {
+                    return refuse("unused DOM method retains a symbol reference");
+                }
+                definition.erase();
+                for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
+                    if (!step() || !llvm::isa<ctjs::RootOp>(root)) {
+                        return refuse("unused DOM method retains a callable use");
+                    }
+                    root->erase();
+                }
+                closure.erase();
+                fn.erase();
+            }
+            return true;
+        };
+        // ponytail: one private source clone per method/instance pair. Explicit
+        // method parameters and non-entry construction need provenance first.
+        // Probe every method, including callers that overwrite a field before
+        // dispatching to a DOM method; direct DOM calls alone are not a census.
+        for (auto [made, definition] : methodProbes) {
+            if (!step()) { return false; }
+            // Reserve the clone's operation/operand walk before allocating it.
+            auto counted = module.walk([&](mlir::Operation * op) {
+                const uint64_t cost = uint64_t(1) + op->getNumOperands();
+                if (cost > remaining) {
+                    refuse("class initialization work budget exhausted");
+                    return mlir::WalkResult::interrupt();
+                }
+                remaining -= static_cast<unsigned>(cost);
+                return mlir::WalkResult::advance();
+            });
+            if (counted.wasInterrupted()) { return false; }
+            mlir::IRMapping mapping;
+            mlir::OwningOpRef<mlir::ModuleOp> probe(
+                llvm::cast<mlir::ModuleOp>(module->clone(mapping)));
+            // Other uncalled methods have their own independent probes. Omit
+            // them only from this proof copy so the existing lift sees exactly
+            // the method under test and all original reachable method calls.
+            if (!omitUnused(*probe, &mapping, definition)) { return false; }
+            auto instance = llvm::cast<ctjs::ConstructOp>(mapping.lookup(made.getOperation()));
+            mlir::OpBuilder at(instance);
+            at.setInsertionPointAfter(instance);
+            auto read = ctjs::GetPropertyOp::create(at, instance.getLoc(), instance.getType(),
+                                                    instance.getResult(),
+                                                    mapping.lookup(definition.getKey()));
+            ctjs::CallOp::create(at, instance.getLoc(), instance.getType(), read.getResult(),
+                                 instance.getResult(), mlir::ValueRange{});
+            if (auto error = liftDOMClasses(*probe, remaining)) {
+                return refuse(llvm::toString(std::move(error)));
+            }
+            HostContract checked = contract;
+            checked.moduleSha256 = hostContractFingerprint(*probe);
+            // No class intrinsic remains, so this reuses normal DOM preparation
+            // without recursing into class normalization. These calls exist only
+            // in discarded proof copies; the emitted candidate is checked again.
+            if (auto error = prepareDOMEntry(*probe, checked, remaining)) {
+                return refuse("DOM class method body: " + llvm::toString(std::move(error)));
+            }
+        }
+        // Only now have all unused bodies passed the same typed source proof.
+        // The original no-read census makes removing their definitions inert.
+        return omitUnused(module, nullptr, {});
     }
 
     bool normalizeMethods() {
@@ -1292,6 +1407,7 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     if (!proof.normalizeMethods()) { return refuse(proof.reason); }
     proof.rewrite();
     contract.initialIntrinsics.clear();
+    if (!proof.proveDOMMethods(contract)) { return refuse(proof.reason); }
     return llvm::Error::success();
 }
 

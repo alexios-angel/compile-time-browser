@@ -43,6 +43,21 @@ CLASS_CASES = {
         "1000",
     ),
     "class_element": (ELEMENT_CLASS, "1000"),
+    "class_unused_element": (
+        ELEMENT_CLASS.replace(
+            "    press() {", "    unused() { this.element.getAttribute('x'); }\n    press() {"
+        ),
+        "1000",
+    ),
+    "class_unused_write": (
+        ELEMENT_CLASS.replace(
+            "    press() {",
+            "    unused() { this.element.getAttribute('x'); }\n"
+            "    writeUnused() { this.element.setAttribute('unused-probe', 'bad'); }\n"
+            "    press() {",
+        ),
+        "1000",
+    ),
     "class_captured_key": (
         """class Button {
     static get NAME() { return 'x'; }
@@ -73,6 +88,48 @@ CLASS_REFUSALS = {
     "unused_unknown_receiver": ELEMENT_CLASS.replace(
         "    press() {",
         "    unused() { const other = {}; other.getAttribute('x'); }\n    press() {",
+    ),
+    "unused_dom_then_ambient": ELEMENT_CLASS.replace(
+        "    press() {",
+        "    unused() { this.element.getAttribute('x'); ambient(); }\n    press() {",
+    ),
+    "unused_replaced_element": ELEMENT_CLASS.replace(
+        "    press() {",
+        "    unused() { this.element = {}; return this.element.getAttribute('x'); }\n    press() {",
+    ),
+    "unused_transitive_replaced_element": ELEMENT_CLASS.replace(
+        "    press() {",
+        "    unused() { this.element = {}; return this.press(); }\n    press() {",
+    ),
+    "unused_dead_dom": ELEMENT_CLASS.replace(
+        "    press() {",
+        "    unused() { if (false) this.element.unknown(); }\n    press() {",
+    ),
+    "second_fake_instance": ELEMENT_CLASS.replace(
+        "  return new Button(element).press();",
+        "  const first = new Button(element); const other = new Button({}); return first.press();",
+    ),
+    "nested_class_instance": ELEMENT_CLASS.replace(
+        "      this.element.classList",
+        "      class Nested { constructor(value) { this.element = value; } "
+        "read() { return this.element.getAttribute('x'); } }\n"
+        "      switch (1) { case 1: new Nested(this.element).read(); break; }\n"
+        "      this.element.classList",
+    ),
+    "unused_bad_dom_argument": ELEMENT_CLASS.replace(
+        "    press() {", "    unused() { this.element.getAttribute({}); }\n    press() {"
+    ),
+    "unused_detached_element_method": ELEMENT_CLASS.replace(
+        "    press() {",
+        "    unused() { const read = this.element.getAttribute; return read('x'); }\n    press() {",
+    ),
+    "fake_stored_element": ELEMENT_CLASS.replace("this.element = element", "this.element = {}"),
+    "late_replaced_element": ELEMENT_CLASS.replace(
+        "      this.element.classList", "      this.element = {};\n      this.element.classList"
+    ),
+    "detached_element_method": ELEMENT_CLASS.replace(
+        "return this.element.getAttribute('x') === null;",
+        "const read = this.element.getAttribute; return read('x') === null;",
     ),
     "unused_ambient_getter": ELEMENT_CLASS.replace(
         "    press() {", "    static get UNUSED() { ambient(); return true; }\n    press() {"
@@ -164,6 +221,13 @@ FIELD_CHECKS = {
     "field_unused_effect": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");',
 }
 FIELD_CHECKS["class_order"] = FIELD_CHECKS["field_order"]
+FIELD_CHECKS["class_unused_write"] = (
+    'assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");'
+    'assert(doc.read().attribute_value(node, atoms.intern("unused-probe")).empty());'
+)
+FIELD_CHECKS["class_element"] = FIELD_CHECKS["class_unused_element"] = (
+    'assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");'
+)
 FIELD_REFUSALS = {
     "missing_field": "const holder = {}; return element.getAttribute(holder.key) === null;",
     "read_before_write": "const holder = {}; const key = holder.key; holder.key = 'x'; return element.getAttribute(key) === null;",
@@ -202,6 +266,8 @@ def check_oracles(args):
             effects = {
                 "class_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost class writes');",
                 "class_element": "if (toggles !== 1) throw new Error('lost class toggle');",
+                "class_unused_element": "if (toggles !== 1) throw new Error('lost class toggle');",
+                "class_unused_write": "if (toggles !== 1 || element.getAttribute('unused-probe') !== null) throw new Error('proof method executed');",
                 "direct_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost receiver writes');",
                 "field_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost field writes');",
                 "field_element": "if (other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost field receiver');",
@@ -403,6 +469,12 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                     ORDER_CHECKS if name == "direct_order" else FIELD_CHECKS.get(name, ""),
                 )
             )
+            if name in ("class_element", "class_unused_element", "class_unused_write"):
+                check = check.replace(
+                    "            const auto result =",
+                    '            assert(doc.remove_attribute(node, atoms.intern("class")));\n'
+                    "            const auto result =",
+                )
             if name not in CLASS_CASES:
                 check = check.replace(
                     "        const auto state =",
@@ -505,12 +577,8 @@ def main():
             )
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
-            if name not in ("class_key", "class_order", "class_captured_key"):
-                diagnostic = dom.lower(args, ir, request, f"{name}-{owned}", success=False)
-                if name == "class_element" and (
-                    "unknown call, binding or reflective effect" not in diagnostic
-                ):
-                    raise RuntimeError("original class method lost its DOM effect boundary")
+            if name not in CLASS_CASES:
+                dom.lower(args, ir, request, f"{name}-{owned}", success=False)
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))
@@ -544,7 +612,7 @@ def main():
         check_native(args, modules, optimize, compilers, includes, libraries)
     print(
         f"DOM classes, receivers and fields: {observations} Node/interpreter observations, "
-        f"8 combined native executions, {refusals} refusals; class method DOM effects remain refused"
+        f"8 combined native executions, {refusals} refusals"
     )
 
 

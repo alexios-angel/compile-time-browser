@@ -8,6 +8,41 @@
 
 namespace ctcompile::ctnative {
 
+llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
+    const auto refuse = [](const llvm::Twine & reason) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+    };
+    // ponytail: quadratic input-size ceiling around the existing finite
+    // lift; thread a step budget through its censuses before widening it.
+    uint64_t operations = 0, size = 0;
+    auto counted = module.walk([&](mlir::Operation * op) {
+        ++operations;
+        size += uint64_t(1) + op->getNumOperands();
+        for (mlir::Region & region : op->getRegions()) {
+            for (mlir::Block & block : region) { size += block.getNumArguments(); }
+        }
+        return operations * size > maxSteps ? mlir::WalkResult::interrupt()
+                                            : mlir::WalkResult::advance();
+    });
+    if (counted.wasInterrupted()) { return refuse("DOM class lifting work budget exhausted"); }
+    lowering_detail::closureLifter lifter{module};
+    lifter.discardNativeSourceFacts();
+    lifter.run();
+    for (mlir::Operation * operation : lifter.lifted) {
+        auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
+        if (llvm::any_of(closure->getUsers(),
+                         [](mlir::Operation * user) { return !llvm::isa<ctjs::RootOp>(user); })) {
+            return refuse("DOM class lifted closure retains an observable use");
+        }
+        for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
+            root->erase();
+        }
+        closure.erase();
+    }
+    module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+    return llvm::Error::success();
+}
+
 llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
     const auto refuse = [](const llvm::Twine & reason) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
@@ -22,35 +57,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         if (auto error = normalizeDOMClasses(*composed, transformed, maxSteps)) {
             return refuse("native DOM class: " + llvm::toString(std::move(error)));
         }
-        // ponytail: quadratic input-size ceiling around the existing finite
-        // lift; thread a step budget through its censuses before widening it.
-        uint64_t operations = 0, size = 0;
-        auto counted = composed->walk([&](mlir::Operation * op) {
-            ++operations;
-            size += uint64_t(1) + op->getNumOperands();
-            for (mlir::Region & region : op->getRegions()) {
-                for (mlir::Block & block : region) { size += block.getNumArguments(); }
-            }
-            return operations * size > maxSteps ? mlir::WalkResult::interrupt()
-                                                : mlir::WalkResult::advance();
-        });
-        if (counted.wasInterrupted()) { return refuse("DOM class lifting work budget exhausted"); }
-        lowering_detail::closureLifter lifter{*composed};
-        lifter.discardNativeSourceFacts();
-        lifter.run();
-        for (mlir::Operation * operation : lifter.lifted) {
-            auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
-            if (llvm::any_of(closure->getUsers(), [](mlir::Operation * user) {
-                    return !llvm::isa<ctjs::RootOp>(user);
-                })) {
-                return refuse("DOM class lifted closure retains an observable use");
-            }
-            for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
-                root->erase();
-            }
-            closure.erase();
-        }
-        composed->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        if (auto error = liftDOMClasses(*composed, maxSteps)) { return error; }
         transformed.moduleSha256 = hostContractFingerprint(*composed);
     }
     // A handler in the entry is normalized in place. A handler

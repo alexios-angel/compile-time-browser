@@ -385,12 +385,23 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 5; ++control) {
+        for (unsigned control = 0; control < 8; ++control) {
             const std::string source =
-                "function guarded(element) { class Shape { constructor() { this.key = 'x'; } "
-                "read() { return this.key; } } const shape = new Shape(); " +
-                std::string(control == 1 ? "element.unknown(); " : "") +
-                "return element.getAttribute(shape.read()) === null; }";
+                control >= 5
+                    ? "function guarded(element) { class Shape { "
+                      "constructor(value) { this.element = value; } "
+                      "read() { return this.element.getAttribute('x') === null; } " +
+                          std::string(
+                              control == 6
+                                  ? "unused() { this.element = {}; return this.read(); } "
+                                  : "unused() { return this.element.hasAttribute('x'); } ") +
+                          "} const shape = new Shape(element); " +
+                          std::string(control == 7 ? "const other = new Shape({}); " : "") +
+                          "return shape.read(); }"
+                    : "function guarded(element) { class Shape { constructor() { this.key = 'x'; } "
+                      "read() { return this.key; } } const shape = new Shape(); " +
+                          std::string(control == 1 ? "element.unknown(); " : "") +
+                          "return element.getAttribute(shape.read()) === null; }";
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -408,7 +419,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                                    control == 3   ? 0
                                                    : control == 4 ? 1000
                                                                   : 100000);
-            if (control) {
+            if (control != 0 && control != 5) {
                 check(static_cast<bool>(error), "unproved class/DOM composition refuses");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&
