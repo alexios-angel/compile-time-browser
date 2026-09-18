@@ -670,6 +670,34 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                    "binary sub %zero, %magnitude"),
                            "binary add %one, %one", "constant #ctjs.number<4751297606873776128>"),
                    "%index = %zero", "%index = %one"));
+    const std::string signedDifference = "  %negative = ctjs.unary neg %magnitude\n"
+                                         "  %other = ctjs.unary neg %one\n"
+                                         "  %unit = ctjs.binary sub %negative, %other\n";
+    const auto negativeLeft =
+        replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n", signedDifference);
+    for (const auto & source : {negativeLeft, replace(replace(negativeLeft, "sub %negative, %other",
+                                                              "sub %other, %negative"),
+                                                      "binary sub %i, %d", "binary add %i, %d")}) {
+        rows.push_back({.what = "negative-left Sub survives reordered structured transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured negative-left Sub releases unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+    }
+    reject("negative-left Sub snapshots cannot change across structured yields",
+           replace(negativeLeft, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("negative-left Sub needs exact Numbers on every structured predecessor",
+           replace(negativeLeft, "  %negative = ctjs.unary neg %magnitude\n",
+                   "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                   "    %n = ctjs.unary neg %magnitude\n"
+                   "    scf.yield %n : !ctjs.value\n"
+                   "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+           ArrayContentsFailure::UnsupportedOperation);
     for (const std::string opcode : {"binary", "binary_static"}) {
         const std::string cancellation = "  %negative = ctjs.binary sub %zero, %one\n"
                                          "  %positive = ctjs.binary add %one, %one\n"

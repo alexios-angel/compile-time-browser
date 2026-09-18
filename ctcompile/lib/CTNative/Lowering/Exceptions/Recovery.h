@@ -15,6 +15,11 @@ struct HostContract;
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// Normalize lifted switch dispatch and unused/all-poison if results on a
+// disposable function clone. Failure can leave that clone partly rewritten;
+// the caller must withhold it. This grants no exception or effect authority.
+llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining);
+
 // Only on the fingerprinted private DOM candidate. Preserve the original
 // function on refusal; success still requires complete fresh DOM identity,
 // String ownership and invocation proof before publication or native lowering.

@@ -22,6 +22,13 @@ OBSERVATIONS = {
     "method-arguments": (3737, 3737),
     "method-branches": (3434, 3434),
     "method-loop": (5555, 5555),
+    "method-dispatch": (11131321, 11131321),
+    "method-increment-dispatch": (11131321, 11131321),
+    "method-decrement-dispatch": (11090921, 11090921),
+    "method-counter-ambient": (7, 7),
+    "method-dispatch-ambient": (7, 7),
+    "method-dispatch-shadow": (7, 7),
+    "method-dispatch-throw": (7, 7),
     "method-branch-ambient": (7, 7),
     "method-branch-shadow": (7, 7),
     "constructor-branch": (7, 7),
@@ -94,6 +101,15 @@ OBSERVATIONS = {
     "static-home": (1, 0),
     "static-caller": (1, 1),
     "static-arguments": (1, 1),
+    "bootstrap-config-defaults": (7, 7),
+    "receiver-defaults": (923, 923),
+    "instance-defaults": (72, 72),
+    "instance-default-replacement": (1, 1),
+    "receiver-default-dispatch": (11131321, 11131321),
+    "receiver-default-shadow": (7, 7),
+    "receiver-default-write": (7, 7),
+    "receiver-default-identity": (7, 7),
+    "receiver-default-inherited": (7, 7),
 }
 POSITIVES = {
     "empty",
@@ -102,6 +118,9 @@ POSITIVES = {
     "method-arguments",
     "method-branches",
     "method-loop",
+    "method-dispatch",
+    "method-increment-dispatch",
+    "method-decrement-dispatch",
     "method-empty",
     "method-chain",
     "method-chain-empty",
@@ -120,6 +139,9 @@ POSITIVES = {
     "static-repeated",
     "static-forward-chain",
     "static-order",
+    "receiver-defaults",
+    "instance-defaults",
+    "receiver-default-dispatch",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 
@@ -465,6 +487,16 @@ def main():
         body = f"        static get {name}() {{\n            return {{}}\n        }}"
         if body not in bootstrap or body not in defaults:
             raise RuntimeError(f"Bootstrap Config {name} getter source pin changed")
+    # Keep every original Config method, even though this entry only reads Default.
+    # Its iterator/throw exits remain a separate proof boundary from local dispatch.
+    start = bootstrap.index("    class W {")
+    end = bootstrap.index("    class B extends W {", start)
+    (args.fixtures / "bootstrap-config-defaults.js").write_text(
+        "function configDefaults() {\n"
+        + bootstrap[start:end]
+        + "\n    var instance = new W();\n    var result = W.Default;\n"
+        "    result.n = 7;\n    return result.n;\n}\nvar a = configDefaults();\n"
+    )
     refusals = 0
     preparation_refusals = 0
     checked = 0
@@ -504,7 +536,41 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        prepared = prepare(args, name, structured, manifest, success=name in POSITIVES)
+        if name in (
+            "method-increment-dispatch",
+            "method-decrement-dispatch",
+            "method-counter-ambient",
+        ):
+            if (
+                "ctjs.binary_static add" not in text
+                or "ctjs.binary_static add" not in structured.read_text()
+            ):
+                raise RuntimeError(f"{name}: import lost the static counter operation")
+        if name in (
+            "method-dispatch",
+            "method-increment-dispatch",
+            "method-decrement-dispatch",
+            "receiver-default-dispatch",
+        ):
+            for operation in (
+                "scf.index_switch",
+                "arith.index_castui",
+                "arith.trunci",
+                "ub.poison",
+            ):
+                if operation not in structured.read_text():
+                    raise RuntimeError(f"method dispatch no longer exercises {operation}")
+        diagnostic = {
+            "method-counter-ambient": "unknown call, binding or reflective effect",
+            "method-dispatch-ambient": "unknown call, binding or reflective effect",
+            "method-dispatch-shadow": "class method is observed or shadowed",
+            "method-dispatch-throw": "complete capture-free source functions",
+            "bootstrap-config-defaults": "complete capture-free source functions",
+            "instance-default-replacement": "primitive constructor return",
+        }.get(name, "")
+        prepared = prepare(
+            args, name, structured, manifest, success=name in POSITIVES, diagnostic=diagnostic
+        )
         preparation_refusals += name not in POSITIVES
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
@@ -522,6 +588,9 @@ def main():
             "method",
             "method-chain-order",
             "method-loop",
+            "method-dispatch",
+            "method-increment-dispatch",
+            "receiver-default-dispatch",
             "method-constructor-order",
             "static-chain",
             "static-repeated",

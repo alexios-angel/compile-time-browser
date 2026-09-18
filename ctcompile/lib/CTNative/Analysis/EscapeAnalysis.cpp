@@ -1695,6 +1695,24 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                                original && magnitude && *magnitude <= 4294967295ULL - *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original + *magnitude;
+                    } else if (const auto negative = left.negativeIntegerNumber
+                                                         ? left.negativeIntegerNumber
+                                                         : boundedNumber(lhs, true);
+                               negative) {
+                        // Negative left operands require exact Numbers on both
+                        // sides. Cancellation is bounded; adding magnitudes must
+                        // exclude overflow. The result keeps its original zero.
+                        if (number && *number <= 4294967295ULL - *negative) {
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            result.negativeIntegerNumber = *negative + *number;
+                        } else if (magnitude) {
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            if (*magnitude >= *negative) {
+                                result.integerNumber = *magnitude - *negative;
+                            } else {
+                                result.negativeIntegerNumber = *negative - *magnitude;
+                            }
+                        }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {

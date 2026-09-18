@@ -983,3 +983,242 @@ function static_branch() {
     return Shape.Ready;
 }
 var a = static_branch();
+
+// The lift dispatches continue, break, early return and normal completion.
+//--- method-dispatch.js
+function method_dispatch() {
+    class Shape {
+        constructor() { this.n = 1; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return this.n + 20; }
+                this.n = this.n + i;
+            }
+            this.n = this.n + 10;
+            return this.n;
+        }
+    }
+    var zero = new Shape(), continued = new Shape(), broken = new Shape(), early = new Shape();
+    return zero.read(0) * 1000000 + continued.read(3) * 10000 + broken.read(6) * 100 + early.read(5);
+}
+var a = method_dispatch();
+
+// The recursive census includes every switch arm, even uncalled methods.
+//--- method-dispatch-ambient.js
+function method_dispatch_ambient() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return Math.abs(this.n); }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().n;
+}
+var a = method_dispatch_ambient();
+
+//--- method-dispatch-shadow.js
+function method_dispatch_shadow() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { this.read = limit; return this.n; }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().n;
+}
+var a = method_dispatch_shadow();
+
+// A throw/return exit still has multiple outer blocks and needs its own proof.
+//--- method-dispatch-throw.js
+function method_dispatch_throw() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { throw 9; }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().read(0);
+}
+var a = method_dispatch_throw();
+//--- method-increment-dispatch.js
+// Increment and decrement retain the importer's non-reentering static Add.
+function method_increment_dispatch() {
+    class Shape {
+        constructor() { this.n = 1; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return this.n + 20; }
+                this.n = this.n + i;
+            }
+            this.n = this.n + 10;
+            return this.n;
+        }
+    }
+    var zero = new Shape(), continued = new Shape(), broken = new Shape(), early = new Shape();
+    return zero.read(0) * 1000000 + continued.read(3) * 10000 + broken.read(6) * 100 + early.read(5);
+}
+var a = method_increment_dispatch();
+
+//--- method-decrement-dispatch.js
+function method_decrement_dispatch() {
+    class Shape {
+        constructor() { this.n = 1; }
+        read(limit) {
+            for (var i = 0; i > limit; i--) {
+                if (i === -1) { continue; }
+                if (i === -3) { break; }
+                if (limit === -5) { return this.n + 20; }
+                this.n = this.n + i;
+            }
+            this.n = this.n + 10;
+            return this.n;
+        }
+    }
+    var zero = new Shape(), continued = new Shape(), broken = new Shape(), early = new Shape();
+    return zero.read(0) * 1000000 + continued.read(-3) * 10000 + broken.read(-6) * 100 + early.read(-5);
+}
+var a = method_decrement_dispatch();
+
+//--- method-counter-ambient.js
+// Static counter admission cannot hide an ambient call in an uncalled method.
+function method_counter_ambient() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return Math.abs(this.n); }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().n;
+}
+var a = method_counter_ambient();
+
+//--- receiver-defaults.js
+function receiver_defaults() {
+    class Config {
+        static get Default() { return {}; }
+        static get DefaultType() { return this.Default; }
+        read() {
+            var first = this.constructor.Default;
+            first.n = 7;
+            var second = this.constructor.Default, types = this.constructor.DefaultType;
+            second.n = 2;
+            types.n = 3;
+            first.n = 9;
+            return first.n * 100 + second.n * 10 + types.n;
+        }
+    }
+    return new Config().read();
+}
+var a = receiver_defaults();
+
+//--- instance-defaults.js
+function instance_defaults() {
+    class Config { static get Default() { return {}; } }
+    var instance = new Config();
+    var first = instance.constructor.Default, second = instance.constructor.Default;
+    first.n = 7;
+    second.n = 2;
+    return first.n * 10 + second.n;
+}
+var a = instance_defaults();
+
+//--- receiver-default-dispatch.js
+// Getter reads inside copied dispatch bodies must follow their private clones.
+function receiver_default_dispatch() {
+    class Config {
+        static get START() { return 1; }
+        static get EARLY() { return 20; }
+        static get TAIL() { return 10; }
+        constructor() { this.n = this.constructor.START; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return this.n + this.constructor.EARLY; }
+                this.n = this.n + i;
+            }
+            return this.n + this.constructor.TAIL;
+        }
+    }
+    var zero = new Config(), continued = new Config(), broken = new Config(), early = new Config();
+    return zero.read(0) * 1000000 + continued.read(3) * 10000 + broken.read(6) * 100 + early.read(5);
+}
+var a = receiver_default_dispatch();
+
+//--- receiver-default-shadow.js
+// Even an uncalled method cannot change the constructor backedge.
+function receiver_default_shadow() {
+    class Config {
+        static get Default() { return 7; }
+        read() { return this.constructor.Default; }
+        replace() { this.constructor = {}; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_shadow();
+
+//--- receiver-default-write.js
+function receiver_default_write() {
+    class Config {
+        static get Default() { return 7; }
+        read() { return this.constructor.Default; }
+        replace() { this.constructor.Default = 9; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_write();
+
+//--- receiver-default-identity.js
+function receiver_default_identity() {
+    class Config {
+        static get Default() { return 7; }
+        read() { return this.constructor.Default; }
+        identity() { return this.constructor; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_identity();
+
+//--- receiver-default-inherited.js
+function receiver_default_inherited() {
+    class Base { static get Default() { return 7; } }
+    class Config extends Base {
+        read() { return this.constructor.Default; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_inherited();
+
+//--- instance-default-replacement.js
+// A constructor returning an object changes which constructor new exposes.
+function instance_default_replacement() {
+    class Config {
+        constructor() { return {}; }
+        static get Default() { return 7; }
+    }
+    return (typeof new Config().constructor.Default === "undefined") * 1;
+}
+var a = instance_default_replacement();
