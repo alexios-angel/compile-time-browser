@@ -1,5 +1,42 @@
 # What native Bootstrap needs next
 
+## Recovered global holders and String-left subtraction, 2026-09-18 UTC
+
+Resumed five dirty predecessor files at **0d85f2d9**, explicitly abandoned by
+AGENT-SYNC's **10:13:29** journal. **acd89055** proves unique global callable-holder
+publication after an entry prefix incapable of calling source code, with all
+fixed slots initialized before publication and all aliases/uses checked.
+Four global holders now prepare, preserving their original stores/loads/calls;
+**eight native attempts still refuse**. Earlier calls, replacement and effects
+remain refused. **752b0177** independently proves bounded canonical String-left
+subtraction, retaining saved lengths, signed results and CFG/SCF transport.
+
+Focused gates: arrays **1/1 (0.99s), 585/599/283 rows**; signed-subtraction
+**1/1 (0.12s), 48 sites / zero violations / 26 of 28 precision**; class
+**1/1 (174.47s), 144 source / 324 native / 288 unprepared / 173 preparation
+refusals**, plus the ordinary/r/key controls and **19 prepared native refusals**.
+Global-chain first complete budget: **416**. Four existing DOM helper sources
+pass **16 Node/interpreter observations / 8 combined GCC/Clang executions /
+24 provenance / 88 refusal checks**, with Script/AOT exclusion. Seven explicit
+build targets took **37 actions**, then **2** after test-only corrections.
+Eleven input hashes match the devbox; final wrapper **0**. HANDOFF records exact
+targets, initial expectation failures and selected DOM fixtures.
+
+Pinned formatting retains **26 existing diagnostics in nine HEAD-identical
+files**; stable **916/109/105**, changed pinned formatting, Black, syntax and
+diff checks pass. Full suites, broad matrices, WPT/test262 and the full DOM
+String case were skipped. No browser/runtime changes. Evidence:
+`/tmp/ctcompile-global-resume/`.
+
+**Next:** native lowering for the four prepared global holders through the
+shared proof and existing closure machinery, then class/DOM provider composition.
+`usesCloseTheShape` still rejects global storage; global receiver provenance
+needs a consumer. The complete original r/M/F/H/W specimen remains **a=7** in
+Node/interpreter and refuses preparation. Reuse existing public H/M/F DOM
+helpers. Iterator/destructuring, RegExp/TypeError, remaining Config, inheritance,
+full H Unicode, retained callbacks and the application driver remain open.
+Historical whole-Bootstrap measurements were not replayed.
+
 ## Local callable holders and signed String subtraction, 2026-09-18 UTC
 
 **b83da7d5** shares the existing DOM local-holder proof with class preparation.

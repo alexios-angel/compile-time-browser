@@ -97,8 +97,19 @@ keys, one closure storage use and unobserved receiver, new.target and callee.
 Every slot body, including unused slots, keeps the complete effect census.
 Holder calls are proved before their enclosing direct callers, whose lexical
 receiver may be saved by an unused-this arrow. Holder operations stay intact for
-normal closure lowering. Global holder publication/order and class/DOM provider
-composition remain separate proofs.
+normal closure lowering.
+
+Global callable holders additionally require a unique publication from the closed
+script entry, after every fixed callable slot is initialized. Before publication,
+only constants, closure/object creation, ordinary stores to fresh objects, global
+stores and inert frame/root operations are permitted. The provider makes global
+stores ordinary own-data writes; this prefix cannot invoke source code, so reads
+through subsequent calls also follow publication. All binding writes and uses of
+every global load are checked. Earlier calls, even unrelated ones, remain outside
+this bounded proof; widening requires a complete caller-order analysis. The global
+holder operations remain intact, and native lowering still refuses them. This
+preparation supplies neither ownership nor DOM effect authority. Class/DOM
+provider composition remains separate work.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only

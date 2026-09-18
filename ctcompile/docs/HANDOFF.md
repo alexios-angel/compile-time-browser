@@ -15,6 +15,83 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered global holders and String-left subtraction, 2026-09-18 UTC
+
+Resumed **0d85f2d9** with five uncommitted predecessor files. The
+**10:13:29 AGENT-SYNC journal** marked that iteration abandoned; its claims and
+`git diff` identified global-holder tests and the String-left escape draft.
+No September 7 WIP remained unmerged. Independent agents recovered both test
+areas and reviewed the proof; root finished integration after service limits.
+
+**acd89055** extends the shared callable-holder proof to a unique global
+publication in the script entry. All fixed callable slots must precede publication,
+and the entry prefix must be incapable of invoking source code. This establishes
+order for subsequent cross-function reads without trusting resolver annotations.
+Every binding write, holder alias and callable use is checked; receiver, callee
+and new.target observation still refuse. Every slot body, including unused slots,
+keeps the complete effect census. An unrelated earlier call deliberately remains
+outside this bounded proof; widening needs a complete caller-order analysis.
+
+Four global holders now pass class preparation. Their original global stores,
+loads, callable slots and calls remain, and **all eight optimized/unoptimized
+native attempts still refuse**. This adds preparation coverage, not global native
+execution. Early/indirect calls, late slots, replacement, alias writes, detached
+calls, identity/receiver observation and ambient effects remain refusal controls.
+
+**752b0177** reuses the existing canonical decimal parser for the left String
+operand of subtraction. Saved Number lengths, either/both String operands,
+negative snapshots, exact cancellation and CFG/SCF transport keep their original
+result identity. Noncanonical strings and changing backedges remain unproved.
+Two historical length expectations were corrected with their original source
+bodies retained; a noncanonical stale-solver mutation remains a refusal.
+
+Focused devbox validation only; final wrapper exit **0**, eleven selected input
+hashes match locally and remotely:
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-tool`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`.
+  Initial build: **37 actions**; expectation-only retry: **2 actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.99s)**.
+  Dense/induction/structured rows: **585 / 599 / 283**; budget cutoffs:
+  **22,931 / 40,266 / 20,317**.
+- Exact `Analysis/Escape/escape-claims/signed-subtraction.test`: **1/1 (0.12s)**;
+  **48 sites / 26 sound / zero violations / 26 of 28 precision**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (174.47s)**;
+  **144 source / 324 native / 288 unprepared / 173 preparation refusals**,
+  plus **16 ordinary executions / 20 refusals**, **8 original r executions /
+  4 refusals**, **4 key executions / 6 refusals**, and **19 prepared native
+  refusals**. Global-holder-chain first complete proof budget: **416**.
+- Existing DOM String fixtures `helper_object_method`, `helper_object_extracted`,
+  `helper_object_multiple`, `helper_regex_original_h`: **16 Node/interpreter
+  observations / 8 combined GCC/Clang executions / 24 provenance / 88 refusal
+  checks**, both providers, optimization settings and C++ layouts. Generated
+  output and linked symbols pass Script/AOT exclusion. This selects existing
+  helpers; it is not the full DOM String lit case.
+
+The first array run failed **0.92s** on thirteen assertions from those two old
+expectations. The first class run failed **18.96s** because its new slot-count
+assertion mixed identical SSA names from different functions; the check now
+examines the script entry. Both corrections changed tests only.
+Required pinned `tools/format.sh --check` retains **26 diagnostics in nine
+HEAD-identical files**. The stable formatter workflow passes **916 C++ / 109
+Python / 105 web files**; changed-file pinned formatting, Black, Python/shell
+syntax and diff checks pass. Full CTest/compiler lit, full DOM String case,
+broad corpus/native matrices, WPT and test262 were skipped. No browser source
+or runtime semantics changed. Evidence: `/tmp/ctcompile-global-resume/`.
+
+**Exact next:** give the four global holders a native lowering using the shared
+proof and existing closure machinery. `ClosureLifting/Methods.cpp` still rejects
+`StoreGlobalOp` in `usesCloseTheShape`; global receiver provenance also needs a
+consumer. Promote the existing `PREPARED_ONLY` cases only after native execution.
+Then compose class preparation with the existing DOM provider for original H.
+The complete original r/M/F/H/W defaults specimen still returns **a=7** in
+Node/interpreter and refuses preparation; global identity proof alone supplies
+no DOM effects. Reuse the public H/M/F helpers. Iterator/destructuring,
+RegExp/TypeError exits, remaining Config helpers, inheritance, full H Unicode,
+retained callbacks and the application driver remain open. Whole-Bootstrap,
+Button and Data counts remain historical.
+
 ## Local callable holders and signed String subtraction, 2026-09-18 UTC
 
 Started at clean **46e8ae18**. Its **09:50:04 AGENT-SYNC journal** explicitly
