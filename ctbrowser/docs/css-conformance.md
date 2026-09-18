@@ -11,6 +11,35 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Border-image grammar and computed ranges — 2026-09-18
+
+Full CSS at `22ff781c`: **1,621/2,926 files PASS, 70,627 subtests PASS**;
+**+14 files and +209 subtests** since `47d281a0`, with zero passing file or
+subtest losses. The browser gate passed **216/216** (69.42 seconds), excluding
+compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-align` | 51 / 53 | 1,309 / 1,313 |
+| `css/css-backgrounds` | 66 / 77 | 5,319 / 5,480 |
+| `css/css-box` | 32 / 32 | 877 / 878 |
+| `css/css-flexbox` | 29 / 29 | 952 / 955 |
+| `css/css-fonts` | 53 / 54 | 3,090 / 3,130 |
+
+Border-image now validates its numeric components and single image source,
+expands all longhands, serializes slash groups and resets omitted values.
+Computed border widths clamp after expansion. Image components resolve their
+lengths and clamp independently before inheritance, including values supplied
+through variables. Repeated computed values use the existing CSSOM serializer.
+The shared final clamp also corrects gaps, padding, flex components and font sizes.
+
+Next: `border-image-slice-interpolation` still has 24 failing subtests and
+`border-image-width-interpolation` four, including unclamped negative
+percentages. Image slice/outset computed-value files each retain two failures
+using container-relative units. Additive image composition remains separate.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser24/`.
+No expectations changed; test262 was not replayed.
+
 ## Border-radius grammar and computed values — 2026-09-18
 
 Full CSS at `47d281a0`: **1,607/2,926 files PASS, 70,418 subtests PASS**;

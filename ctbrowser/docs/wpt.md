@@ -14,6 +14,46 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Border-image grammar and computed ranges — 2026-09-18
+
+Full `css/` replay at `22ff781c`: **1,621/2,926 runnable files PASS,
+70,627 subtests PASS**. Against `47d281a0`: **+14 files and +209 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 203.0 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `22ff781c` | 1,621 | 1,089 | 25 | 0 | 191 | 1,488 | 70,627 / 32,463 |
+
+`ca830c3b` validates the border-image components, expands its five longhands,
+serializes the slash groups and preserves omitted-value resets. Its numeric
+range metadata also applies to animation results. `22ff781c` clamps border
+widths after shorthand expansion and computes each image component before
+inheritance. Substituted calculations retain their range semantics; literal
+negative values remain invalid. The same final clamp also fixes gaps,
+padding, flex components and font sizes; the module deltas are in
+`css-conformance.md`.
+
+Fresh focused CSS backgrounds runs measured **66 -> 77 files PASS** and
+**5,319 -> 5,480 subtests PASS**, with no losses. The added browser regression
+failed before the fix, and review exposed a further variable-substitution
+case that also failed before its correction. Final focused CTests passed
+**2/2** (0.06 seconds), the browser gate **216/216** (69.42 seconds), with
+compiler tests excluded and `CTCOMPILE_MLIR=OFF`; formatting passed.
+All seven source/test hashes matched the devbox and committed tree. One
+intermediate sync failed its hash check before testing and was discarded.
+
+Evidence: `/tmp/ctbrowser24/` contains `browser24-css.json`,
+`css-comparison.json`, `measure-css.log`, focused before/after JSON,
+`backgrounds-comparison.json`, `red.log`, `image-variable-red.log`,
+`green-verified.log`, `gate-final.log`, `format-final.log` and `source.sha256`.
+No expectations or JS/VM behavior changed. Other WPT directories, test262
+and compiler suites were not replayed.
+
+Next: negative percentage animation results still escape the range clamp;
+border-image slice and width interpolation retain failing subtests. Additive
+image composition and container-relative units also remain open.
+
 ## Border-radius grammar and computed values — 2026-09-18
 
 Full `css/` replay at `47d281a0`: **1,607/2,926 runnable files PASS,

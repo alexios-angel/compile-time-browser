@@ -1,51 +1,55 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 23 complete.** Previous session 22 was clean
-at `c9495148`; no interrupted browser drafts remained. Latest browser source
-is `47d281a0`, with compiler history through `c675f002`. The browser gate
-passed **216/216** (68.82 seconds), excluding compiler tests with
-`CTCOMPILE_MLIR=OFF`; formatting passed. Full CSS: **1,602 -> 1,607 files
-PASS** and **70,381 -> 70,418 subtests PASS**, zero passing file or subtest
+**Updated 2026-09-18: session 24 complete.** Previous session 23 was clean
+at `eac82d47`; no interrupted browser drafts remained. Latest browser source
+is `22ff781c`, with compiler history through `c675f002`. The final browser gate
+passed **216/216** (69.42 seconds), excluding compiler tests with
+`CTCOMPILE_MLIR=OFF`; formatting passed. Full CSS: **1,607 -> 1,621 files
+PASS** and **70,418 -> 70,627 subtests PASS**, zero passing file or subtest
 losses.
 
 Landed source commits:
 
-- `7de3cd0c` (merged as `7cb3bcbd`): radius grammar, corner expansion,
-  canonical serialization, WebKit aliases and nonnegative range metadata.
-- `47d281a0`: preserve both radius axes in the cascade and compute each
-  component before inheritance. CSS backgrounds **61 -> 66 PASS/107**,
-  **5,282 -> 5,319 subtests PASS**; all other CSS modules are unchanged.
+- `ca830c3b` (merged as `0ed3dda2`): border-image grammar, five-longhand
+  expansion, canonical serialization, resets and nonnegative range metadata.
+- `22ff781c`: clamp border widths after expansion and compute image components
+  before inheritance, preserving valid negative calculations through variable
+  substitution while rejecting literal negative values.
 
-Session 22's column-rule widths and image coordinates remain landed.
-Session 20's BigInt string grammar and loose-equality fixes remain landed;
-`test262.md` holds their measurements. This session changed no JS/VM
-semantics and did not replay test262 or non-CSS WPT directories. The shared
-borrowed shorthand helper now leaves radius expansion to the existing owned
-CSSOM path; public signatures and bytecode are unchanged.
+Fresh focused CSS backgrounds measured **66 -> 77 PASS/107** and
+**5,319 -> 5,480 subtests PASS**, with no losses. Root regression and the
+additional variable-substitution case failed before their fixes; final focused
+CTests passed **2/2** (0.06 seconds). Full CSS module deltas are in
+`css-conformance.md`.
+
+Prior radius, columns, geometry and runtime changes remain landed. This
+session changed no JS/VM semantics or public interfaces and did not replay
+test262 or non-CSS WPT directories.
 
 **Next clear failures:**
 
-- Border-image grammar and shorthand expansion: eleven failing subtests in
-  `border-image-invalid`, twenty-one in `border-image-shorthand.sub`.
-- Negative computed widths: `border-width-computed` expects `0px` for
-  `border-bottom-width: calc(-0.5em + 10px)` but receives `-10px`.
-  Border-image width and outset have further clamping failures.
-- Multicol pseudo selectors, image zoom/inline placement and the existing
-  2D/px transform geometry limit remain. Broader runtime gaps include
-  separate realms and UTF-16 strings.
+- Negative percentage animation clamping: border-image slice interpolation
+  retains 24 failing subtests, width interpolation four. Start at
+  `lib/Style/easing.cpp`'s numeric result range handling.
+- Image slice/outset computed values each have two failures using `cqw`;
+  additive border-image composition remains open.
+- Image source computed values retain three failures: gradient color hints,
+  conic angle precision and relative URL resolution. Broader gaps include
+  multicol pseudo selectors, image zoom/inline placement, 3D/relative transform
+  geometry, separate realms and UTF-16 strings.
 
-Evidence: `/tmp/ctbrowser23/` holds `browser23-css.json`,
-`css-comparison.json`, focused before/after results, gate/format logs and
-`source.sha256`; all ten source/test hashes match the devbox and commit.
-The grammar child worktree and branch were removed; no child devbox copy
-was created. Integration status is in the latest AGENT-SYNC journal.
+Evidence: `/tmp/ctbrowser24/` holds the full CSS JSON/comparison, focused
+before/after results, regression/gate/format logs and `source.sha256`; all
+seven source/test hashes match the devbox and commit. The grammar child
+worktree and branch were removed; no child devbox copy was created.
+An intermediate sync checksum failure stopped before tests; the verified
+rerun supplies the results above. Integration status is in AGENT-SYNC.
 The `d2664e9` ctjs commit remains local; do not assume its object is published.
 
-Session 19's eight-directory wide baseline is in `/tmp/w-b722aa41/` against
-`/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result and is
-excluded. Read `wpt-round8-diagnoses.md` and
-`wt/wpt11-session/round8/diagnoses.json` for the remaining subsystem briefs;
-the abandoned synthesizer produced no result.
+Session 19's eight-directory wide baseline remains in `/tmp/w-b722aa41/`
+against `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result
+and is excluded. Read `wpt-round8-diagnoses.md` and
+`wt/wpt11-session/round8/diagnoses.json` for the remaining subsystem briefs.
 
 **Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
 (`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after
