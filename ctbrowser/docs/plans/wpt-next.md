@@ -1,50 +1,47 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 27 complete.** Previous session 26 was clean
-at `a56f874a`; no interrupted browser drafts remained. Latest browser source
-is `ad6f9147`, with compiler history through `c675f002`. Final browser gate:
-**216/216** (67.07 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
-formatting passed. Full CSS: **1,633 -> 1,637 files PASS** and
-**71,066 -> 71,104 subtests PASS**, zero passing file or subtest losses.
+**Updated 2026-09-18: session 28 complete.** Previous session 27 was clean
+at `acacae93`; no interrupted browser drafts remained. Latest browser source
+is `bd840fed`, with compiler history through `c675f002`. Final browser gate:
+**216/216** (70.14 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
+formatting passed. Full CSS: **1,637 -> 1,640 files PASS** and
+**71,104 -> 71,135 subtests PASS**, zero passing file or subtest losses.
 
 Landed source commits:
 
-- `814baa2c`: compute and clamp background/mask sizes before inheritance.
-- `1ab0f6fb`: reject invalid substituted sizes beside unresolved math.
-- `a6d44a88`: consume complete escapes while scanning unquoted URLs.
-- `b0956d17`: validate cross-fade items, retain nested percentages and handle
-  URL tokens directly; merged as `ad6f9147`.
+- `4182a623`: clamp radial radii after math folding; validate substituted images.
+- `9b13ac4c`: light/dark image selection and nested color context; preserve color
+  stops and reuse quoted URL serialization.
+- `54fb7228`: preserve abrupt String static method coercions, merged as `bd840fed`.
 
-Fresh backgrounds measured **87 -> 90 files PASS** and
-**5,815 -> 5,833 subtests PASS**, with no losses. Added regressions failed
-before their fixes. Review caught and corrected random-ordinal/infinity
-regressions in an early draft and URL rejection in the first child patch.
-No JS/VM semantics or public interfaces changed; test262 and non-CSS WPT
-directories were not replayed.
+Fresh backgrounds: **90 -> 91 files PASS**, **5,833 -> 5,837 subtests PASS**.
+Fresh String test262: **1,169 -> 1,174 files PASS**, zero losses. The runtime
+semantics change is journaled: `fromCodePoint` preserves conversion errors;
+`raw` stops after abrupt getters/coercions and rejects direct Symbol conversions.
+No bytecode or public interfaces changed. Broader test262, non-CSS WPT and
+compiler suites were not replayed.
 
 **Next clear failures:**
 
-- `background-image-computed.sub.html` still has negative computed radial
-  radii: `radial-gradient(circle calc(-0.5em + 10px) ...)` reaches the image
-  parser with a negative literal radius and keeps unresolved color keywords.
-  The direct authored-math regression already passes. Preserve the shared
-  math evaluator's random ordinals and finite bounds when fixing the cascade.
-- Relative image URLs still need resolution against their owning stylesheet
-  or document. Gradient angle precision comes from the shared calc number
-  serializer; avoid isolated conic-angle rounding.
-- Container-relative computed values need actual content boxes, axis
-  eligibility, invalidation and size containment. The browser never installs
-  the style engine's container-size callback. Diagnosis remains in
+- Background shorthand expansion: `background: none` leaves longhands such as
+  background-attachment and background-clip empty. Background clip's
+  `border-area text` shorthand also computes to `border-box`.
+- Shared strict ToString: String prototype methods still accept Symbols
+  returned by object coercions. Audit the shared conversion helper and its
+  property-key callers before changing it; avoid per-method patches.
+- Relative image URLs, gradient precision and container-relative lengths.
+  Container lengths need actual layout content boxes, axis eligibility,
+  invalidation and size containment. Diagnosis remains in
   `/tmp/ctbrowser25/container-diagnosis.md`; no workaround was added.
-- Broader gaps: multicol pseudo selectors, image zoom/inline placement,
-  3D/relative transforms, realms and UTF-16 strings.
+- Broader gaps: realms, UTF-16/case folding, multicol pseudo selectors,
+  image zoom/inline placement and 3D/relative transforms.
 
-Evidence: `/tmp/ctbrowser27/` holds the full CSS replay and comparison,
-focused results, regression/gate/format logs and `source.sha256`.
-Final source/test hashes match the devbox and commit. The child worktree and
-branch were removed; no child remote copy was created. Integration status
-is in AGENT-SYNC. The `d2664e9` ctjs commit remains local; do not assume its
-object is published.
+Evidence: `/tmp/ctbrowser28/` holds the full CSS replay and comparison,
+focused backgrounds/String results, regression/gate/format logs and
+`source.sha256`. Final source/test hashes match the devbox and merged tree.
+The child worktree and branch were removed; no child remote copy was created.
+Integration status is in AGENT-SYNC. The `d2664e9` ctjs commit remains local;
+do not assume its object is published.
 
 Session 19's eight-directory wide baseline remains in `/tmp/w-b722aa41/`
 against `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result

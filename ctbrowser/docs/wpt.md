@@ -14,6 +14,51 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Computed images and String coercion errors — 2026-09-18
+
+Full `css/` replay at `bd840fed`: **1,640/2,926 runnable files PASS,
+71,135 subtests PASS**. Against `ad6f9147`: **+3 files and
++31 passing subtests, zero passing files or subtests lost**. Same WPT
+`3f6b09ae`, devbox, four workers, 4 GB cap and deterministic GL driver;
+201.4 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `bd840fed` | 1,640 | 1,070 | 25 | 0 | 191 | 1,488 | 71,135 / 31,958 |
+
+`4182a623` clamps radial-gradient radii after math folding and validates
+substituted image syntax before calculation results lose their origin.
+`9b13ac4c` selects light/dark images using the element's color scheme,
+represents a selected `none` as a transparent image, and passes the scheme
+to nested colors. Color functions remain gradient stops; quoted URLs use
+the existing URL serializer.
+
+`54fb7228` changes JS/VM semantics: `String.fromCodePoint` preserves numeric
+conversion errors before range checks, and `String.raw` stops after failed
+getters/conversions and rejects direct Symbols at its numeric/string
+conversion sites. Internally caught exceptions still allow coercion to
+succeed. The raw getter result remains rooted during subsequent calls.
+No bytecode or public interfaces changed.
+
+Fresh backgrounds measured **90 -> 91 files PASS** and
+**5,833 -> 5,837 subtests PASS**, with no losses. Fresh String test262
+measured **1,169 -> 1,174 files PASS**, zero losses; details in `test262.md`.
+Added regressions failed before their fixes. Final focused CTests passed
+**4/4** (0.13 seconds), the browser gate **216/216** (70.14 seconds), with
+compiler tests excluded and `CTCOMPILE_MLIR=OFF`; formatting passed.
+All six source/test hashes matched the devbox and merged tree.
+
+Evidence: `/tmp/ctbrowser28/` contains `browser28-css.json`,
+`css-comparison.json`, `measure-css.log`, focused backgrounds and String
+before/after JSON, `focused-comparison.json`, `string-comparison.json`,
+`red.log`, `string-red.log`, `image-red.log`, `final-gate-retry.log`,
+`format-final-retry.log` and `source.sha256`. No expectations changed.
+Other WPT directories, the rest of test262 and compiler suites were not replayed.
+
+Next: background shorthand expansion leaves longhands empty for
+`background: none`. Relative image URLs, container layout, strict ToString
+for object conversions and UTF-16 strings remain open.
+
 ## Computed layer sizes, cross-fade grammar and URL escapes — 2026-09-18
 
 Full `css/` replay at `ad6f9147`: **1,637/2,926 runnable files PASS,

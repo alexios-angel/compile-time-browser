@@ -1149,6 +1149,40 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## String static coercion errors — 2026-09-18
+
+Fresh `test/built-ins/String` devbox runs at `acacae93` and `bd840fed`,
+same pinned corpus, four workers, 10-second timeout and 2 GB address-space
+cap. Each run took 4.2 seconds.
+
+| area | files | PASS before / after | FAIL before / after | SKIP |
+|---|---:|---:|---:|---:|
+| `built-ins/String` | 1,223 | 1,169 / 1,174 | 51 / 46 | 3 |
+
+**Five files gained, zero lost.** `54fb7228` preserves the original error
+from `String.fromCodePoint` numeric coercion before checking the code-point
+range. `String.raw` stops after each abrupt getter/conversion and rejects
+direct Symbols at numeric and string conversion sites. Coercion methods
+that catch their own exceptions still succeed. Its raw getter result is
+rooted across later getters and coercions. Existing runtime guards are
+reused; bytecode and public interfaces are unchanged.
+
+The gained files are `fromCodePoint/argument-is-Symbol.js` and
+`raw/nextkey-is-symbol-throws.js`, `raw/returns-abrupt-from-substitution-symbol.js`,
+`raw/template-length-is-symbol-throws.js`, `raw/template-not-object-throws.js`.
+The regression failed before the fix; the final focused gate passed
+**4/4** (0.13 seconds), the browser gate **216/216** (70.14 seconds), excluding
+compiler tests. Formatting passed and both runtime source/test hashes
+matched the devbox and merged tree.
+
+This focused replay does not update the whole-corpus total below.
+Remaining work includes shared strict ToString handling for Symbols returned
+by object coercions, UTF-16/case-folding gaps and cross-realm support.
+Primitive template boxing in `String.raw` was not measured here.
+Evidence: `/tmp/ctbrowser28/browser28-string-{before,after}.json`,
+`string-comparison.json`, `string-red.log`, `final-gate-retry.log`,
+`format-final-retry.log` and `string-source.sha256`.
+
 ## BigInt string grammar and loose equality — 2026-09-18
 
 Focused devbox measurements recovered from the interrupted session and

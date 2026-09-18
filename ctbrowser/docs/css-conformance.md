@@ -11,6 +11,38 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Computed images and String coercion errors — 2026-09-18
+
+Full CSS at `bd840fed`: **1,640/2,926 runnable files PASS,
+71,135 subtests PASS**; **+3 files and +31 subtests** since
+`ad6f9147`, with zero passing file or subtest losses. The browser gate passed
+**216/216** (70.14 seconds), excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 90 / 91 | 5,833 / 5,837 |
+| `css/css-color` | 46 / 46 | 12,050 / 12,070 |
+| `css/css-lists` | 9 / 9 | 362 / 365 |
+| `css/css-masking` | 23 / 24 | 1,322 / 1,325 |
+| `css/css-values` | 176 / 177 | 7,677 / 7,678 |
+
+Radial radii clamp negative calculated lengths and percentages after the
+shared math fold. Substituted negative literals remain invalid, including
+beside unresolved calculations. Light/dark images use the element's color
+scheme, retain nested color context and compute selected `none` values to
+transparent images. Color functions remain stops when parsing a gradient
+header; quoted URLs use the shared serializer.
+
+Fresh backgrounds measured **90 -> 91 files PASS** and
+**5,833 -> 5,837 subtests PASS**, with no losses. The background-image
+computed-value file now passes. The merged runtime also fixes String static
+coercion errors; its separate measured gain is in `test262.md`.
+Full statuses and evidence: `wpt.md` and `/tmp/ctbrowser28/`.
+No expectations changed.
+
+Next: background shorthand expansion (`background: none` leaves longhands
+empty), relative image URLs and the container-size layout handoff.
+
 ## Computed layer sizes, cross-fade grammar and URL escapes — 2026-09-18
 
 Full CSS at `ad6f9147`: **1,637/2,926 runnable files PASS,
