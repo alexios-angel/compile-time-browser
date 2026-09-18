@@ -1149,6 +1149,30 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## Measured at `b722aa41` — 2026-09-18, round seven (J2: RegExp and the async tail)
+
+**40,832 of 48,624 (84.0%; 85.4% of the 47,791 that ran)**, from 39,731 at
+`9f8da347`: **+1,101 files, PASS->FAIL 0**. Round seven's agent J2: `\p{..}`
+/ `\P{..}` property escapes over a generated UCD table
+(`lib/Script/regex_properties.inc`, `tools/gen/unicode_properties.py`),
+Canonicalize under `iu`, the `v` flag's ClassSetExpression (nested
+classes, `--`, `&&`, `\q{..}`, properties of strings), `new RegExp` judged
+by the literal's early-error scan, async generator `.return(v)` awaiting
+`v` and running `finally`, `yield*` forwarding return/throw, `import defer
+* as ns`, the test262 host resolving re-exports over the whole graph, an
+object rest that leaves out computed keys. Same instrument (devbox, 4
+workers, 10 s, 2 GB); the rows are every area that moved:
+
+| area | tests | pass before | pass now | delta | fail | crash/timeout/host | skip |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `built-ins/RegExp` | 1,879 | 940 | **1,822** | +882 | 45 | 0/0/0 | 12 |
+| `language` | 23,726 | 22107 | **22,300** | +193 | 1,404 | 0/1/0 | 21 |
+| `built-ins/AsyncFromSyncIteratorPrototype` | 38 | 18 | **30** | +12 | 8 | 0/0/0 | 0 |
+| `built-ins/AsyncGeneratorPrototype` | 48 | 40 | **48** | +8 | 0 | 0/0/0 | 0 |
+| `annexB` | 1,086 | 776 | **781** | +5 | 262 | 1/0/0 | 42 |
+| `built-ins/String` | 1,223 | 1168 | **1,169** | +1 | 51 | 0/0/0 | 3 |
+| **total** | **48,624** | 39,731 | **40,832** | +1,101 | 6,956 | 1/2/0 | 833 |
+
 ## Measured at `9f8da347` — 2026-09-17, round six (J: the VM tail)
 
 Round six's agent J worked the VM: an `await` no longer truncates the

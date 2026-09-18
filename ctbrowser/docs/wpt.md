@@ -14,6 +14,44 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## The baseline — 2026-09-18: round seven merged (five suites + test262)
+
+**816 of the 1,102 that ran (74.0%) in the five suites; 84,108 subtests
+PASS** - from 805 / 84,024 at `9f8da347` (round six): **+12 files, one
+lost, zero subtests lost**. Engine at `b722aa41` on `ctbrowser-wpt`: round
+seven's four agents on `92f5d7c7` - K CSS Color 4/5 (`274c693e`), A3 the
+value-type interpolation and composition (`46b5f01f`), L2 logical
+properties and the font/white-space/animation shorthands (`274c6b49`), J2
+the runtime tail: RegExp `\p{..}` over a generated UCD table, the `v` flag,
+async-generator `return()`, `import defer`, module re-exports
+(`b722aa41`, ctjs `d2664e9`) - plus session 17's root work on frames,
+forms, events, ranges, MediaQueryList. Gated 233/233 on the merged tree.
+The one file lost, `css/css-values/viewport-relative-lengths-scaled-
+viewport.html`, is NOT a regression: at `9f8da347` the iframe was a 0-wide
+box (`ed460525` gave it the default object size afterwards), so `50vw *
+0.01` expected 0 and got 0; the real gap - `getBoundingClientRect` ignores
+`transform: scale()` (`shell/bindings/element/views.cpp` applies only the
+translation) - was always there and is measured now. The wide corpus row
+for `b722aa41` was still running when session 19 ended (results land in
+`/tmp/w-b722aa41/` on the WSL box; tally with `wtally.py`). test262 at the
+same engine: **40,832 of 48,624 (84.0%)**, rows in `docs/test262.md`.
+Same instrument: devbox, 4 jobs, `CTBROWSER_GL_DRIVER=deterministic`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/css-values` | **175** (+4) | 90 | 2 | 0 | 4 | 237 | 508 | 7,676 / 2,650 |
+| `css/cssom` | **161** (+5) | 30 | 0 | 0 | 1 | 29 | 221 | 3,178 / 381 |
+| `dom/events` | **78** (+0) | 8 | 4 | 0 | 1 | 85 | 176 | 660 / 28 |
+| `dom/nodes` | **249** (+2) | 45 | 14 | 0 | 1 | 53 | 362 | 12,066 / 731 |
+| `html/dom` | **153** (+0) | 70 | 13 | 0 | 3 | 137 | 376 | 60,528 / 161 |
+| **total** | **816** | 243 | 33 | 0 | 10 | 541 | 1643 | 84,108 / 3,951 |
+
+Gained: css-values `calc-in-color-001`, `calc-in-media-queries-with-mixed-
+units`, `ric-invalidation`, `rlh-invalidation`, `viewport-units-extreme-
+scale`; cssom `caretPositionFromPoint-in-flex-container`, `computed-style-
+002/003/004`, `inline-style-001`; dom/nodes `moveBefore/child-style-
+preserve`, `moveBefore/live-range-updates`.
+
 ## The baseline — 2026-09-17, midday: round six merged
 
 **805 of the 1,102 that ran (73.0%) in the five suites; wide corpus 2,696 of
