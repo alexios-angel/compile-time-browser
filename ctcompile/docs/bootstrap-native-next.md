@@ -1,5 +1,78 @@
 # What native Bootstrap needs next
 
+## Confined DOM fields and canonical String powers, 2026-09-18 UTC
+
+Continued clean **86ebc737** after the **11:56:44 AGENT-SYNC journal** closed
+its interrupted receiver work. Resumed the ordinary instance-field boundary
+recorded in HANDOFF/master00; September 7 WIP was absent from unmerged branches.
+Three agents handled escape analysis, native tests and a read-only composition
+audit. Root recovered the five-file escape draft after service limits and reused
+the existing native driver after its test agent stopped before creating files.
+
+**15e2827b** forwards fields of fresh local objects after direct receiver
+expansion. Every object use must be an ordered same-block root or ordinary
+constant-key field read/write, with a preceding write for each read. Reads retain
+the value at that source position across later writes. The confined allocation
+and field operations disappear; all value producers remain for complete DOM
+reproof. Element-valued fields become ordinary borrowed DOM operands. Empty
+String keys work. Escapes, identity observations, self-stores, reserved/dynamic
+keys, conditional writers and missing writes remain outside this rule. Objects
+passed to live closures still reach holder classification before expansion.
+No class-provider or original constructor proof was added.
+
+**c57a40a4** reuses the existing canonical decimal parser for both operands of
+bounded power identities. Existing zero/unit/parity arithmetic, signed Number
+snapshots and source identities remain unchanged. Noncanonical/signed Strings,
+out-of-range values, general powers and changing/repeated producers remain
+unproved. All eight original bounded-power oracle bodies remain byte-identical.
+
+Focused devbox checks only; evidence: `/tmp/ctcompile-dom-fields/`.
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`,
+  `ctcompile-test-type-oracle`: **7 build actions**, no build failures.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.96s; total 0.97s)**.
+  Dense/induction/structured rows **652 / 697 / 319**; budget cutoffs
+  **25,082 / 47,124 / 23,548**.
+- Exact `Analysis/Escape/escape-claims/bounded-power.test`: **1/1 (0.11s)**,
+  **26 observed sites / 13 sound / zero violations / 13 of 15 precision**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (13.89s)**,
+  **44 Node/interpreter observations / 8 combined native executions /
+  134 refusals**. Six new field sources execute alongside the two direct-receiver
+  sources. Three original class sources and fourteen adversarial class bodies
+  remain unchanged and retain preparation refusals. The initial run passed
+  **14.10s / 128 refusals**; the final run adds three adversarial sources only.
+- Selected existing `helper_object_method`, `helper_object_extracted`,
+  `helper_object_multiple`, `helper_regex_original_h` sources: **16 Node/VM
+  observations / 8 combined GCC/Clang executions / 24 provenance checks /
+  88 refusals**. Both providers, optimization settings and explicit/deduced C++
+  pass with emitted/linked Script/AOT exclusion. This is a selected DOM gate.
+
+All eight changed source/test hashes match the devbox; both gate wrappers exit
+**0**. Required pinned `tools/format.sh --check` retains **26 existing diagnostics
+in nine HEAD-identical files**. Changed-file pinned formatting, Black, Python
+syntax and diff checks pass. Full CTest/compiler lit, exception recovery,
+class-initialization and complete DOM suites, broad corpus/native matrices,
+WPT and test262 were skipped. No browser source/runtime changes or push;
+historical Bootstrap measurements were not replayed.
+
+**Exact next:** compose the existing original class proof with DOM preparation
+transactionally for preserved `class_key` and `class_order`. Keep the public class
+pass closed-source-only. Reuse its proof/rewrite body on `prepareDOMEntry`'s private
+candidate; initially require exactly the class helper intrinsic. Only entry
+parameter uses and otherwise-unknown entry calls may defer to the final typed DOM
+proof. Every original constructor/method/getter/helper, including unused bodies,
+must retain the unchanged complete class effect census. Check the helper binding
+with the existing closed-source binding proof before consuming its declaration.
+Reuse `lowering_detail::closureLifter` under a bounded budget; remove only freshly
+proved lifted closures whose remaining uses are inert roots, clear supplied
+native reports, then independently recheck direct receivers and local fields.
+Preserve entry effect producers through normalization and publish source/contract
+only after full DOM reproof. Do not union intrinsic lists or trust residual code
+alone. `class_element` still needs original method DOM-effect proof. Remaining
+Config, inheritance, full H Unicode, retained callbacks, application driver and
+broader Number/String conversions remain open. Native Bootstrap is incomplete.
+
 ## Direct DOM receivers and canonical String bitwise snapshots, 2026-09-18 UTC
 
 Recovered dirty **43860a33**, resuming the receiver-normalization thread named

@@ -140,16 +140,27 @@ observations, nested closures/captures, recursion and unvisited source functions
 still refuse. Existing live closure and lexical receiver rules remain unchanged.
 This normalization supplies no constructor/prototype or class-provider proof.
 
-Class/DOM composition still needs the complete original class effect census and
-ordinary instance-field normalization. Explicit class entries now allow an inert
-declaration wrapper, but their parameters must be unused and the provider remains
-closed-source-only. DOM helper expansion classifies field-reading objects as
-callable holders, while DOM entry proof permits JSON aggregates but has no ordinary
-instance-field reads or element-valued fields. Host manifests also bypass the
-ordinary closure/constructor lifter. Join those body, receiver and representation
-obligations before DOM admission; adding class intrinsics to a DOM manifest does
-not establish them. The class/DOM regression preserves three original specimens
-as source observations and preparation refusals.
+After direct receiver expansion, fresh confined objects with initialized ordinary
+constant-key fields forward each read's source-position value. Every object use
+must be a same-block root/read/write; aliases that escape, identity observations,
+self-stores, missing writes, reserved/dynamic keys and conditional field writes
+remain outside this rule. Field operations and the allocation disappear while
+all value producers remain for complete DOM reproof. This also carries element
+fields as ordinary borrowed DOM operands. Empty String keys remain valid.
+Objects passed to live closures still reach holder classification before their
+calls expand; JSON aggregate behavior is unchanged.
+
+Class/DOM composition still needs the complete original class effect census.
+Explicit class entries allow an inert declaration wrapper, but their parameters
+must be unused and the public preparation provider remains closed-source-only.
+Host manifests also bypass the ordinary closure/constructor lifter. The next
+bounded composition is private transactional preparation of `class_key` and
+`class_order`, preserving all original method/getter/helper body checks and all
+entry effect producers before final DOM reproof. Consume the class-helper
+identity only after its binding proof and retire only freshly proved lifted
+closures. `class_element` still needs a separate original method DOM-effect proof.
+Adding class intrinsics to a DOM manifest alone supplies none of these proofs.
+All three original specimens retain source observations and preparation refusals.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
