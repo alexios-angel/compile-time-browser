@@ -1,5 +1,45 @@
 # WPT — the next round, as briefs
 
+**Updated 2026-09-18, session 19 (HANDOFF - read this first).** Round SEVEN
+is MERGED: K `274c693e`, A3 `46b5f01f`, L2 `274c6b49`, J2 `b722aa41` (ctjs
+gitlink `d2664e9`, in the worktree submodule and the
+`~/Downloads/claude/compile-time-javascript` object store only). Gated
+233/233 at `b722aa41`; measured (rows in `docs/wpt.md`, `docs/test262.md`):
+five suites 805 -> **816**, test262 39,731 -> **40,832 (84.0%)**, zero
+PASS->FAIL. The WIDE corpus and `docs/css-conformance.md` were NOT
+re-measured before the session ended: `/tmp/wpt18/wide.sh b722aa41` was
+running (results `/tmp/w-b722aa41/` on the WSL box; the round-six wide
+baseline is `/tmp/w-9f8da347/`; tally with
+`~/Downloads/claude/wt/wpt11-session/wtally.py <dir> <before-dir>`). If
+`/tmp` is gone, re-run `/tmp/wpt18/{gate,measure,wide}.sh <sha>` - they are
+the round-seven versions of session 11's scripts (gate = engine-only build +
+ctest of the pinned `wt/ctbrowser-wpt-measure` worktree in
+`projects/ctbrowser-wpt`; measure = five suites + test262; wide = the
+corpus with `--update-expectations`).
+
+**What is in flight.** A Workflow `wpt-diagnose-plan` (run
+`wf_8916c675-fe8`): ten read-only diagnosers over the `9f8da347` baseline
+(one slice each: dom-nodes, dom-events, html-dom, html-parsing, css-om,
+css-layout, css-visual, shadow-ce, t262-builtins, t262-language), one
+synthesizer, a critic loop (<= 3 rounds). Its result - the diagnoses and a
+PLAN of file-disjoint implementation items in waves of <= 4 - is in that
+run's `journal.jsonl` under the session's `subagents/workflows/` directory
+(the `result` records). The NEXT STEP is the implementation workflow: one
+worktree agent per plan item (`isolation: worktree`, `model: fable`), each
+told to `git reset --hard ctbrowser-wpt` first, to read
+`~/Downloads/claude/wt/wpt11-session/round8/COMMON.md` (the standing rules:
+tip, ctjs SHA, devbox lock, measuring) and its item brief, and to REUSE a
+devbox dir from `projects/ctbrowser-agent{A3,K,L2,J,CE,V}` (deleting them
+was denied by auto mode). Then: merge each branch under the git lock, gate
+the merged tree, measure, write the rows, journal (JS SEMANTICS lines for
+anything under lib/Script), and integrate into `ctcompile-v1` from the main
+checkout with `--no-ff` only when it is clean.
+
+**Known, unplanned, measured this session:** `getBoundingClientRect`
+ignores `transform: scale()` (`shell/bindings/element/views.cpp` applies
+the translation only) - `css/css-values/viewport-relative-lengths-scaled-
+viewport.html`.
+
 **Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
 (`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after
 the `/mnt/c` outage cut session 16 off with the three branches committed
