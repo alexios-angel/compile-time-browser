@@ -167,7 +167,8 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return std::move(failure);
         }
         for (const auto & name : result.initialIntrinsics) {
-            if (name != "Map" && name != "Array" && name != host_detail::classDefinedIntrinsic) {
+            if (name != "Map" && name != "Array" && name != "Error" &&
+                name != host_detail::classDefinedIntrinsic) {
                 return error("unsupported initial intrinsic identity");
             }
             if (llvm::is_contained(result.absentBindings, name) ||
@@ -381,7 +382,8 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
         return "invalid initial realm globalThis declaration";
     }
     for (const auto & name : contract.initialIntrinsics) {
-        if ((name != "Map" && name != "Array" && name != classDefinedIntrinsic) ||
+        if ((name != "Map" && name != "Array" && name != "Error" &&
+             name != classDefinedIntrinsic) ||
             llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
@@ -427,6 +429,17 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                 if (construct && use.getOperandNumber() < 2 &&
                     construct.getCallee() == load.getResult() &&
                     construct.getNewTarget() == load.getResult() && construct.getArgs().empty()) {
+                    continue;
+                }
+            } else if (load.getName() == "Error") {
+                auto construct = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
+                auto message = construct && construct.getArgs().size() == 1
+                                   ? construct.getArgs().front().getDefiningOp<ctjs::ConstantOp>()
+                                   : ctjs::ConstantOp{};
+                if (construct && use.getOperandNumber() < 2 &&
+                    construct.getCallee() == load.getResult() &&
+                    construct.getNewTarget() == load.getResult() && message &&
+                    llvm::isa<ctjs::StringAttr>(message.getValue())) {
                     continue;
                 }
             } else if (load.getName() == classDefinedIntrinsic) {
