@@ -1,5 +1,77 @@
 # What native Bootstrap needs next
 
+## Original class/DOM composition and String BitNot, 2026-09-18 UTC
+
+Started clean at **4961fffd** after the **12:09:01 AGENT-SYNC session closure**.
+No interrupted edits remained and September 7 WIP was absent. Resumed the recorded
+`class_key`/`class_order` composition boundary. Independent agents supplied focused
+native tests, String BitNot and a read-only proof audit; root completed integration
+after the audit agent hit a service limit.
+
+**9c16dffd** reuses the original class proof and rewrite inside `prepareDOMEntry`'s
+private candidate. DOM requests may supply exactly `__ctbrowser_class_defined`,
+which the existing binding proof checks before consumption. Mixed intrinsic sets
+remain refused. Only selected-entry parameter uses and unknown entry calls defer
+to the final typed DOM proof. Every original constructor/method/getter/helper,
+including unused bodies, retains the existing complete census. The public class
+pass stays closed-source-only; its extracted rewrite body is unchanged.
+
+The existing closure lifter normalizes constructors/methods under a quadratic
+IR-size ceiling (operation count times operations, operands and block arguments).
+This bounds input size; the lifter does not yet expose a per-scan step budget.
+Only closures proved lifted by this invocation and retaining solely inert roots
+are removed. Supplied native reports are discarded, then direct receivers,
+confined fields and all DOM effects are independently reproved before publishing
+module and contract together. No browser/runtime code or ownership carrier changed.
+
+**c23423ff** completes canonical decimal String handling for unary BitNot using
+the existing bounded parser and exact signed complement calculation. Original
+String identities and CFG/SCF snapshots survive. Noncanonical/signed Strings,
+out-of-range values and changing/repeated producers remain unproved. All eight
+original signed-bitnot oracle bodies are preserved.
+
+Focused devbox validation only; evidence: `/tmp/ctcompile-dom-class-compose/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`,
+  `ctcompile-test-type-oracle`, `ctcompile-test-exception-recovery`.
+  Initial build found a missing include in new DOM preparation; corrected.
+  Successful rebuilds took **8, 4 and 4 actions**, with explicit affected targets.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.98s)**.
+- Exact `Analysis/Escape/escape-claims/signed-bitnot.test`: **1/1 (0.18s)**.
+- Exact `ctcompile_exception_recovery`: final **1/1 (3.43s; total 3.44s)**,
+  initial **1/1 (3.45s)**. Includes ten class/DOM transaction cases across both
+  providers, checking successful publication and rollback after refusal.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: final **1/1 (15.55s)**,
+  **44 Node/interpreter observations / 8 combined native executions / 208 refusals**.
+  Preserved `class_key` and `class_order` now execute in the existing GCC/Clang,
+  explicit/deduced, optimized/unoptimized, both-provider gate with Script/AOT
+  exclusion. All 40 previous source bodies/signatures remain intact. Four new
+  unused-body adversaries and mixed-authority controls remain refused.
+  Initial run failed **3.35s** at the DOM manifest parser; corrected before the
+  **15.59s** pass. Final run also covers stricter lifting-size accounting.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (191.53s)**.
+
+All twelve changed source/test hashes match the devbox. Final build/native/evidence
+wrappers exit **0**. Required pinned `tools/format.sh --check` retains **26 existing
+diagnostics in nine HEAD-identical files**; changed-file pinned formatting, Black,
+Python syntax and diff checks pass. Full CTest/compiler lit, complete DOM suite,
+broad corpus/native matrices, WPT and test262 were skipped. Historical Bootstrap
+measurements were not replayed. No push or browser source changes.
+
+**Exact next:** the preserved `class_element` first refuses with **complete
+capture-free source functions**. Its `press$4` has one upvalue: the local `Button`
+binding used by `Button.NAME`. The entry stores the same constructor closure into
+that cell twice, with method closure creation between the writes. Prove that
+captured class/getter identity from original source before widening class
+preparation; then prove original method DOM effects, including unused bodies.
+A separate `unused_key_dom_method` probe still refuses at the complete original
+unknown-call/effect census. Keep the original specimen and all bodies intact,
+reuse existing capture/getter/receiver proofs, and retain transactional typed DOM
+reproof. Config, inheritance, full H Unicode, retained callbacks, application
+driver and broader Number/String conversions remain open. Native Bootstrap and
+the overall plan are unfinished.
+
 ## Confined DOM fields and canonical String powers, 2026-09-18 UTC
 
 Continued clean **86ebc737** after the **11:56:44 AGENT-SYNC journal** closed

@@ -124,14 +124,14 @@ Only then are the holder's slots, global publication, loads and closures removed
 Unused helper definitions are removed after all holders have been expanded and
 both module and body symbol scans find no references. No global object carrier is
 needed. Normal native admission must still prove each direct function; this
-preparation supplies neither ownership nor DOM effect authority. Class/DOM
-provider composition remains separate work.
+preparation supplies neither ownership nor DOM effect authority. DOM composition
+uses the separate transaction described below.
 
-`HostContract/prepareDOMEntry` now owns the existing DOM preparation transaction:
-URI completion, source helper expansion, element guards, iteration, wrapper and
+`HostContract/prepareDOMEntry` owns the DOM preparation transaction: class
+initialization, URI completion, source helper expansion, element guards, iteration, wrapper and
 optional-force normalization, then complete source reproof. It publishes the
 normalized module and refreshed contract together; refusal preserves both.
-`LowerToEmitC` calls that shared seam. It grants no class or ownership authority.
+`LowerToEmitC` calls that shared seam. It grants no ownership authority.
 DOM helper expansion also accepts already normalized direct calls to exact private
 capture-free targets with no live closure creation, exact arity and undefined
 callee/new.target. It binds the actual receiver separately at each call. Receiver
@@ -150,17 +150,23 @@ fields as ordinary borrowed DOM operands. Empty String keys remain valid.
 Objects passed to live closures still reach holder classification before their
 calls expand; JSON aggregate behavior is unchanged.
 
-Class/DOM composition still needs the complete original class effect census.
-Explicit class entries allow an inert declaration wrapper, but their parameters
-must be unused and the public preparation provider remains closed-source-only.
-Host manifests also bypass the ordinary closure/constructor lifter. The next
-bounded composition is private transactional preparation of `class_key` and
-`class_order`, preserving all original method/getter/helper body checks and all
-entry effect producers before final DOM reproof. Consume the class-helper
-identity only after its binding proof and retire only freshly proved lifted
-closures. `class_element` still needs a separate original method DOM-effect proof.
-Adding class intrinsics to a DOM manifest alone supplies none of these proofs.
-All three original specimens retain source observations and preparation refusals.
+Class/DOM composition now reuses the complete original class proof in that private
+transaction. The public class pass remains closed-source-only with unused entry
+parameters. A DOM request may instead supply exactly `__ctbrowser_class_defined`;
+its binding is proved before consumption, and mixed intrinsic declarations refuse.
+Only selected-entry parameter uses and unknown entry calls defer to the final DOM
+proof. Original constructor/method/getter/helper bodies, including unused ones,
+retain the unchanged complete census before metadata or functions can disappear.
+
+The existing constructor/method lifter runs under a quadratic IR-size ceiling;
+only freshly proved lifted closures with inert root uses are removed. Input native
+reports cannot authorize erasure. Independent direct-receiver, confined-field and
+typed DOM proofs must all succeed before the source and contract are published.
+The original `class_key` and `class_order` now execute with both DOM providers.
+The preserved `class_element` first refuses because `press` captures the local
+class binding used by `Button.NAME`; original captured class/getter identity and
+method DOM effects remain separate proof obligations. The unused DOM-method
+control still refuses the complete original effect census.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
