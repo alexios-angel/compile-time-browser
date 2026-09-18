@@ -130,6 +130,9 @@ struct scan {
 [[nodiscard]] std::string fold_grid_lines(std::span<const std::string> lines);
 // Border radius shorthand and corner longhands; defined in shorthands.cpp.
 [[nodiscard]] bool match_border_radius(std::string_view value, bool shorthand, std::string & out);
+// Border image shorthand and its numeric/image longhands; defined in shorthands.cpp.
+[[nodiscard]] bool match_border_image(std::string_view property, std::string_view value,
+                                      std::string & out);
 // CSS Multicol 2 columns grammar, shared by validation and CSSOM expansion.
 [[nodiscard]] bool split_columns(std::string_view value, std::vector<std::string> & out);
 // The keyword-combination grammars (text-decoration-line, text-transform,

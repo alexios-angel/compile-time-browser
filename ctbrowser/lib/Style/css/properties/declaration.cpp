@@ -310,13 +310,20 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    if (ascii_iequals(property, "border-image") ||
+        ascii_iequals_any(property, {"border-image-source", "border-image-slice",
+                                     "border-image-width", "border-image-outset"})) {
+        std::string serialized;
+        if (!match_border_image(p->name, simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
     // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
     // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
     // method and `radial-gradient(at bottom right, ...)` writes `at right
     // bottom`; a list with no gradient in it keeps the author's bytes.
     if (p->kind == k::freeform &&
-        ascii_iequals_any(property, {"background-image", "mask-image", "border-image-source",
-                                     "list-style-image"})) {
+        ascii_iequals_any(property, {"background-image", "mask-image", "list-style-image"})) {
         std::string serialized;
         if (match_image_list(ts, found, serialized)) {
             if (serialized.empty()) { return {}; }
