@@ -409,65 +409,14 @@ struct DOMSource {
     }
 
     bool resolveMethods(ctjs::CreateObjectOp object, llvm::DenseSet<mlir::Operation *> & methods) {
-        llvm::DenseMap<mlir::Attribute, ctjs::SetPropertyOp> slots;
-        llvm::SmallVector<ctjs::GetPropertyOp> reads;
-        const auto key = [](mlir::Value value) {
-            auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-            return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                            : ctjs::StringAttr{};
-        };
-        // The isolated DOM provider starts with standard Object.prototype.
-        // Every remaining source effect must still pass the complete DOM
-        // proof: no prototype mutation, unknown calls or script reentry.
-        // Only __proto__ has an inherited setter in that initial object.
-        for (mlir::OpOperand & use : object.getResult().getUses()) {
-            if (!step()) { return false; }
-            auto * operation = use.getOwner();
-            if (operation->getBlock() != object->getBlock() ||
-                !object->isBeforeInBlock(operation)) {
-                return refuse("DOM helper object has nonlocal or unordered uses");
-            }
-            if (llvm::isa<ctjs::RootOp>(operation)) { continue; }
-            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                auto name = key(store.getKey());
-                auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-                if (use.getOperandNumber() != 0 || !name || name.getValue() == "__proto__" ||
-                    !closure || closure->getBlock() != object->getBlock() ||
-                    !closure->isBeforeInBlock(store) || !slots.try_emplace(name, store).second) {
-                    return refuse("DOM helper object requires unique own callable slots");
-                }
-            } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                       read && use.getOperandNumber() == 0) {
-                reads.push_back(read);
-            } else {
-                auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-                mlir::Value callee;
-                if (call && use.getOperandNumber() == 1) { callee = call.getCallee(); }
-                if (direct && use.getOperandNumber() == 0) { callee = direct.getCalleeValue(); }
-                auto methodRead =
-                    callee ? callee.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-                if (!methodRead || methodRead.getObject() != object.getResult() ||
-                    methodRead->getBlock() != object->getBlock() ||
-                    !methodRead->isBeforeInBlock(operation)) {
-                    return refuse("DOM helper object escapes or observes its identity");
-                }
-                methods.insert(operation);
-            }
-        }
-        if (slots.empty()) { return refuse("DOM helper object has no callable slots"); }
-        for (ctjs::GetPropertyOp read : reads) {
-            if (!step()) { return false; }
-            auto name = key(read.getKey());
-            auto store = name ? slots.lookup(name) : ctjs::SetPropertyOp{};
-            if (!store || !store->isBeforeInBlock(read)) {
-                return refuse("DOM helper object read lacks a preceding own callable slot");
-            }
-            read.getResult().replaceAllUsesWith(store.getValue());
+        auto proof = analyzeLocalCallableObject(object, [&] { return step(); });
+        if (!proof) { return refuse(llvm::toString(proof.takeError())); }
+        methods.insert(proof->calls.begin(), proof->calls.end());
+        for (auto [read, closure] : proof->reads) {
+            read.getResult().replaceAllUsesWith(closure.getResult());
             read.erase();
         }
-        for (auto [name, store] : slots) {
-            (void)name;
+        for (ctjs::SetPropertyOp store : proof->stores) {
             if (!step()) { return false; }
             store.erase();
         }

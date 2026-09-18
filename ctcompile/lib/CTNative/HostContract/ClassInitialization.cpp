@@ -72,6 +72,53 @@ struct classInitialization {
     }
     ctjs::CreateClosureOp sourceClosure(mlir::Value value) {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
+        if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
+            auto object = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+            if (!object) { return {}; }
+            auto proof = analyzeLocalCallableObject(object, [&] { return step(); });
+            if (!proof) {
+                llvm::consumeError(proof.takeError());
+                return {};
+            }
+            for (ctjs::SetPropertyOp store : proof->stores) {
+                if (!step() || !ctjs::ordinaryKey(store.getKey())) { return {}; }
+                auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                auto fn = target(closure);
+                if (!fn || !closure.getUpvalues().empty()) { return {}; }
+                auto & block = fn.getBody().front();
+                if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
+                    !block.getArgument(ctjs::arg_new_target).use_empty() ||
+                    !block.getArgument(ctjs::arg_callee).use_empty()) {
+                    return {};
+                }
+                for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                    if (!step()) { return {}; }
+                    if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                        !(use.getOwner() == store && use.getOperandNumber() == 2)) {
+                        return {};
+                    }
+                }
+            }
+            ctjs::CreateClosureOp selected;
+            for (auto [loaded, closure] : proof->reads) {
+                for (mlir::OpOperand & use : loaded.getResult().getUses()) {
+                    if (!step()) { return {}; }
+                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                    if (!call || use.getOperandNumber() != 0 ||
+                        call.getReceiver() != object.getResult()) {
+                        return {};
+                    }
+                }
+                if (loaded == read) { selected = closure; }
+            }
+            // All bodies, including unused slots, still face the complete effect
+            // census below. This proof only establishes identity and receiver use.
+            for (ctjs::SetPropertyOp store : proof->stores) {
+                helpers.insert(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+            }
+            return selected;
+        }
         auto load = value.getDefiningOp<ctjs::LoadGlobalOp>();
         auto store = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
         if (!store) { return {}; }
@@ -98,6 +145,18 @@ struct classInitialization {
             cached->second = !walked.wasInterrupted() && closedDeclaration(store, fn, module);
         }
         return cached->second ? closure : ctjs::CreateClosureOp{};
+    }
+    bool unusedReceiver(ctjs::FuncOp fn) {
+        for (mlir::OpOperand & use :
+             fn.getBody().front().getArgument(ctjs::arg_receiver).getUses()) {
+            if (!step()) { return false; }
+            auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+            // Saving lexical this is inert when the exact helper never reads it.
+            if (!closure || use.getOperandNumber() != 1 || !helpers.contains(target(closure))) {
+                return false;
+            }
+        }
+        return true;
     }
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
@@ -559,24 +618,36 @@ struct classInitialization {
         for (ctjs::CallOp call : calls) {
             if (!examine(call)) { return false; }
         }
-        walked = module.walk([&](ctjs::CallDirectOp call) {
+        const auto recordHelper = [&](mlir::Operation * op) {
+            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+            auto method = llvm::dyn_cast<ctjs::CallOp>(op);
+            if (!direct && !method) { return mlir::WalkResult::advance(); }
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            auto closure = sourceClosure(call.getCalleeValue());
+            auto callee = direct ? direct.getCalleeValue() : method.getCallee();
+            auto closure = sourceClosure(callee);
             auto fn = target(closure);
-            if (!fn || call.getTarget() != fn || constructors.contains(fn) ||
-                methods.contains(fn) || getters.contains(fn) || !undefined(call.getReceiver()) ||
-                !undefined(call.getNewTarget())) {
+            if (!fn || constructors.contains(fn) || methods.contains(fn) || getters.contains(fn)) {
+                return mlir::WalkResult::advance();
+            }
+            auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
+            if (direct ? direct.getTarget() != fn || !undefined(direct.getReceiver()) ||
+                             !undefined(direct.getNewTarget())
+                       : !read || method.getReceiver() != read.getObject()) {
                 return mlir::WalkResult::advance();
             }
             auto & block = fn.getBody().front();
-            if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
-                !block.getArgument(ctjs::arg_new_target).use_empty()) {
+            if (!unusedReceiver(fn) || !block.getArgument(ctjs::arg_new_target).use_empty()) {
                 return mlir::WalkResult::advance();
             }
             helpers.insert(fn);
-            helperCalls.insert(call);
+            helperCalls.insert(op);
             return mlir::WalkResult::advance();
-        });
+        };
+        // Prove holder targets before checking their enclosing direct callers,
+        // whose receiver may only be saved by one of these unused-this arrows.
+        walked = module.walk([&](ctjs::CallOp call) { return recordHelper(call); });
+        if (walked.wasInterrupted() || !reason.empty()) { return false; }
+        walked = module.walk([&](ctjs::CallDirectOp call) { return recordHelper(call); });
         if (walked.wasInterrupted() || !reason.empty()) { return false; }
         // No ambient object, unknown callee, accessor, dynamic key or reflective
         // instruction can replace the fixed helper between entry and any call.
@@ -584,7 +655,8 @@ struct classInitialization {
         walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
-                llvm::is_contained(calls, op) || llvm::is_contained(constructorReads, op)) {
+                helperCalls.contains(op) || llvm::is_contained(calls, op) ||
+                llvm::is_contained(constructorReads, op)) {
                 return mlir::WalkResult::advance();
             }
             if (errorOperations.contains(op) &&
@@ -625,19 +697,12 @@ struct classInitialization {
             }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
-                bool unusedReceiver = true;
-                for (mlir::OpOperand & use : block.getArgument(ctjs::arg_receiver).getUses()) {
-                    if (!step()) { return mlir::WalkResult::interrupt(); }
-                    auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-                    // An arrow may save this without ever observing it. Its
-                    // exact helper body was checked before accepting the call.
-                    unusedReceiver &=
-                        closure && use.getOperandNumber() == 1 && helpers.contains(target(closure));
-                }
+                const bool receiverUnused = unusedReceiver(fn);
+                if (!reason.empty()) { return mlir::WalkResult::interrupt(); }
                 accepted = methods.contains(fn) || helpers.contains(fn) ||
                            (llvm::hasSingleElement(fn.getBody()) &&
                             (constructors.contains(fn) || getters.contains(fn) ||
-                             (block.getNumArguments() == 3 && unusedReceiver &&
+                             (block.getNumArguments() == 3 && receiverUnused &&
                               block.getArgument(ctjs::arg_new_target).use_empty())));
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {

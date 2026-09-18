@@ -1464,3 +1464,99 @@ function helperDynamicKey() {
     return 7;
 }
 var a = helperDynamicKey();
+
+// Fresh callable holders share the DOM source proof. Class preparation leaves
+// their source operations intact for the existing native closure lifter.
+//--- local-holder-method.js
+function holderMethod() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read(n) { return n + 1; }};
+    return H.read(7);
+}
+var a = holderMethod();
+
+//--- local-holder-arrow.js
+function holderArrow() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read: n => n + 1};
+    return H.read(7);
+}
+var a = holderArrow();
+
+//--- local-holder-branches.js
+function holderBranches() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read(n) { if (n > 0) { return n + 1; } return 2; }};
+    return H.read(7) * 10 + H.read(0);
+}
+var a = holderBranches();
+
+//--- local-holder-order.js
+function holderOrder() {
+    class Shape {}
+    var instance = new Shape(), n = 0;
+    const H = {read: (left, right) => left * 10 + right};
+    return H.read(n = n + 1, n = n + 1);
+}
+var a = holderOrder();
+
+//--- local-holder-replaced.js
+function holderReplaced() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read: n => n + 1};
+    H.read = n => n + 2;
+    return H.read(7);
+}
+var a = holderReplaced();
+
+//--- local-holder-alias.js
+function holderAlias() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read: n => n + 1}, alias = H;
+    alias.read = n => n + 2;
+    return H.read(7);
+}
+var a = holderAlias();
+
+//--- local-holder-detached.js
+function holderDetached() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read: n => n + 1}, read = H.read;
+    return read(7);
+}
+var a = holderDetached();
+
+//--- local-holder-receiver.js
+function holderReceiver() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read(n) { return this.other(n); }, other(n) { return n + 1; }};
+    return H.read(7);
+}
+var a = holderReceiver();
+
+// The uncalled slot still has its complete body checked.
+//--- local-holder-ambient.js
+function holderAmbient() {
+    class Shape {}
+    var instance = new Shape();
+    const H = {read: n => n, unused(n) { return unknown(n); }};
+    return H.read(7);
+}
+var a = holderAmbient();
+
+// Global publication and cross-function initialization order are a later proof.
+//--- local-holder-global.js
+const H = {read: n => n + 1};
+function holderGlobal() {
+    class Shape {}
+    var instance = new Shape();
+    return H.read(7);
+}
+var a = holderGlobal();

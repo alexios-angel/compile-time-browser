@@ -16,6 +16,16 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "local-holder-method": (8, 8),
+    "local-holder-arrow": (8, 8),
+    "local-holder-branches": (82, 82),
+    "local-holder-order": (12, 12),
+    "local-holder-replaced": (9, 9),
+    "local-holder-alias": (9, 9),
+    "local-holder-detached": (8, 8),
+    "local-holder-receiver": (8, 8),
+    "local-holder-ambient": (7, 7),
+    "local-holder-global": (8, 8),
     "local-helper-arguments": (8, 8),
     "local-helper-branches": (82, 82),
     "local-helper-order": (122, 122),
@@ -138,6 +148,10 @@ OBSERVATIONS = {
     "receiver-default-inherited": (7, 7),
 }
 POSITIVES = {
+    "local-holder-method",
+    "local-holder-arrow",
+    "local-holder-branches",
+    "local-holder-order",
     "local-helper-arguments",
     "local-helper-branches",
     "local-helper-values",
@@ -796,6 +810,7 @@ def main():
             "static-defaults-chain",
             "static-throw-chain",
             "local-helper-branches",
+            "local-holder-arrow",
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4

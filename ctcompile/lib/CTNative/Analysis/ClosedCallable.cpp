@@ -3,6 +3,72 @@
 
 namespace ctcompile::ctnative {
 
+llvm::Expected<LocalCallableObject> analyzeLocalCallableObject(ctjs::CreateObjectOp object,
+                                                               llvm::function_ref<bool()> spend) {
+    const auto error = [](llvm::StringRef message) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
+    };
+    LocalCallableObject result;
+    llvm::DenseMap<mlir::Attribute, ctjs::SetPropertyOp> slots;
+    llvm::SmallVector<ctjs::GetPropertyOp> reads;
+    const auto key = [](mlir::Value value) {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                        : ctjs::StringAttr{};
+    };
+    // Callers prove standard Object.prototype and exclude prototype mutation,
+    // unknown calls and script reentry. Only __proto__ has an inherited setter.
+    for (mlir::OpOperand & use : object.getResult().getUses()) {
+        if (!spend()) { return error("DOM helper work budget exhausted"); }
+        auto * operation = use.getOwner();
+        if (operation->getBlock() != object->getBlock() || !object->isBeforeInBlock(operation)) {
+            return error("DOM helper object has nonlocal or unordered uses");
+        }
+        if (llvm::isa<ctjs::RootOp>(operation)) { continue; }
+        if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+            auto name = key(store.getKey());
+            auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            if (use.getOperandNumber() != 0 || !name || name.getValue() == "__proto__" ||
+                !closure || closure->getBlock() != object->getBlock() ||
+                !closure->isBeforeInBlock(store) || !slots.try_emplace(name, store).second) {
+                return error("DOM helper object requires unique own callable slots");
+            }
+        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                   read && use.getOperandNumber() == 0) {
+            reads.push_back(read);
+        } else {
+            auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+            mlir::Value callee;
+            if (call && use.getOperandNumber() == 1) { callee = call.getCallee(); }
+            if (direct && use.getOperandNumber() == 0) { callee = direct.getCalleeValue(); }
+            auto methodRead =
+                callee ? callee.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+            if (!methodRead || methodRead.getObject() != object.getResult() ||
+                methodRead->getBlock() != object->getBlock() ||
+                !methodRead->isBeforeInBlock(operation)) {
+                return error("DOM helper object escapes or observes its identity");
+            }
+            result.calls.push_back(operation);
+        }
+    }
+    if (slots.empty()) { return error("DOM helper object has no callable slots"); }
+    for (ctjs::GetPropertyOp read : reads) {
+        if (!spend()) { return error("DOM helper work budget exhausted"); }
+        auto name = key(read.getKey());
+        auto store = name ? slots.lookup(name) : ctjs::SetPropertyOp{};
+        if (!store || !store->isBeforeInBlock(read)) {
+            return error("DOM helper object read lacks a preceding own callable slot");
+        }
+        result.reads.emplace_back(read, store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+    }
+    for (auto [name, store] : slots) {
+        (void)name;
+        result.stores.push_back(store);
+    }
+    return result;
+}
+
 bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
     if (!direct || use.getOperandNumber() != 2) { return false; }
