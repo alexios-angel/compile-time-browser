@@ -14,6 +14,46 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Computed layer sizes, cross-fade grammar and URL escapes — 2026-09-18
+
+Full `css/` replay at `ad6f9147`: **1,637/2,926 runnable files PASS,
+71,104 subtests PASS**. Against `c7332149`: **+4 files and +38
+passing subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 200.7 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `ad6f9147` | 1,637 | 1,073 | 25 | 0 | 191 | 1,488 | 71,104 / 31,989 |
+
+`814baa2c` computes and clamps background/mask size components before
+inheritance while retaining the shared math evaluator's random ordinals and
+finite bounds. `1ab0f6fb` validates substituted sizes even when mixed
+length/percentage math remains unresolved; literal negative components stay
+invalid. `b0956d17` validates cross-fade items without rejecting percentages
+inside nested images, and handles URL tokens as images. `a6d44a88` consumes
+complete URL escapes, including a hexadecimal escape's terminating space.
+
+Fresh focused backgrounds measured **87 -> 90 files PASS** and
+**5,815 -> 5,833 subtests PASS**, with no losses. The added regressions
+failed before their fixes. Final focused CTests and the browser gate passed;
+the browser gate was **216/216** (67.07 seconds), excluding compiler
+tests with `CTCOMPILE_MLIR=OFF`. Formatting passed, and source/test hashes
+matched the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser27/` contains `browser27-css.json`,
+`css-comparison.json`, `measure-css.log`, focused before/after JSON and
+comparisons, `red.log`, `context-red.log`, `mixed-variable-red.log`,
+`image-red.log`, `url-red.log`, `gate-complete.log`, `format-complete.log`
+and `source.sha256`. No expectations, public interfaces or JS/VM behavior
+changed. Other WPT directories, test262 and compiler suites were not replayed.
+
+The `css-values/ch-empty-pseudo-recalc-on-font-load` file also changed
+three subtests from TIMEOUT to FAIL; its passing count did not change.
+
+Next: computed radial-gradient sizes still lose their nonnegative range after
+math folding. Relative image URL resolution, gradient number precision and
+container-relative lengths remain open.
+
 ## Border-image sides, layer repetition and size ranges — 2026-09-18
 
 Full `css/` replay at `c7332149`: **1,633/2,926 runnable files PASS,

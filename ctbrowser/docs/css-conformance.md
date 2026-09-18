@@ -11,6 +11,43 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Computed layer sizes, cross-fade grammar and URL escapes — 2026-09-18
+
+Full CSS at `ad6f9147`: **1,637/2,926 runnable files PASS,
+71,104 subtests PASS**; **+4 files and +38 subtests** since `c7332149`,
+with zero passing file or subtest losses. The browser gate passed
+**216/216** (67.07 seconds), excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 87 / 90 | 5,815 / 5,833 |
+| `css/css-lists` | 9 / 9 | 344 / 362 |
+| `css/css-masking` | 22 / 23 | 1,320 / 1,322 |
+| `css/css-values` | 176 / 176 | 7,677 / 7,677 |
+
+Background and mask sizes resolve each layer before inheritance and clamp
+negative calculated lengths and pure percentages. Substituted negative
+literals remain invalid beside unresolved math. Random ordinals, finite
+bounds and unresolved length/percentage mixes are preserved.
+
+Cross-fade accepts percentages inside nested images and rejects malformed
+items. Unquoted URL tokens remain images, including color-like URL bodies
+and escaped characters. The URL scanner consumes complete hexadecimal
+escapes with their optional terminating whitespace.
+
+Fresh backgrounds measured **87 -> 90 files PASS** and
+**5,815 -> 5,833 subtests PASS**, with no losses. Background-image valid and
+invalid parsing files and background-size computed values now pass. Added
+regressions failed before their fixes. Full status and evidence: `wpt.md`
+and `/tmp/ctbrowser27/`. No expectations changed; test262 was not replayed.
+
+The unchanged css-values passing counts hide a status change: three
+`ch-empty-pseudo-recalc-on-font-load` subtests changed from TIMEOUT to FAIL.
+
+Next: radial-gradient calculated radii still reach the image parser as
+negative literals. Relative image URLs, gradient precision and the
+container-size layout handoff remain separate failures.
+
 ## Border-image sides, layer repetition and size ranges — 2026-09-18
 
 Full CSS at `c7332149`: **1,633/2,926 runnable files PASS,
