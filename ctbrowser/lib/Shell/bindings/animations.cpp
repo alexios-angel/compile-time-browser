@@ -351,6 +351,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             };
             std::vector<point> points;
             const auto * known = style::css::find_property(property);
+            std::optional<std::string> inherited;
             const auto resolved_color = [&](std::string_view value) {
                 return property == "color" || current_color.empty()
                            ? std::string{value}
@@ -362,12 +363,50 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                     // A CSS-wide keyword in a keyframe is its computed value
                     // (CSS Animations 1 §3): `initial` is the table's, as is
                     // `unset` for a property that does not inherit.
-                    // ponytail: `inherit` needs the parent's computed text,
-                    // which the underlying callback cannot ask for yet.
                     std::string_view value = text;
-                    if (known != nullptr &&
-                        (ascii_iequals(value, "initial") ||
-                         (ascii_iequals(value, "unset") && !known->inherited))) {
+                    if (ascii_iequals(value, "inherit") ||
+                        (ascii_iequals(value, "unset") && known != nullptr && known->inherited)) {
+                        if (!inherited) {
+                            inherited = known != nullptr ? std::string{known->initial} : "";
+                            // Inherit from the flat-tree parent's computed value,
+                            // including its animations, not our underlying value.
+                            node_id up = assigned_slot_of(id);
+                            if (!up) { up = doc_->read().parent(id); }
+                            if (const auto * shadow = doc_->shadow_tree_of(up)) {
+                                up = shadow->host;
+                            }
+                            if (styles_ != nullptr && up) {
+                                const auto parent = styles_->find(style::engine::key_of(up));
+                                if (parent != styles_->end() && parent->second) {
+                                    const auto parent_value = [&](std::string_view name) {
+                                        return parent->second->get(atoms_->intern(name));
+                                    };
+                                    std::string physical = style::css::physical_property_of(
+                                        property, underlying("writing-mode"),
+                                        underlying("direction"));
+                                    if (physical.empty()) { physical = property; }
+                                    if (const auto held = parent_value(physical); !held.empty()) {
+                                        inherited = std::string{held};
+                                    }
+                                    const float parent_font = style::css::length_text_to_px(
+                                                                  parent_value("font-size"), ctx)
+                                                                  .value_or(font_size);
+                                    for (const auto & [name, text] :
+                                         animated_values(up, parent_font, parent_value)) {
+                                        std::string mapped = style::css::physical_property_of(
+                                            name, parent_value("writing-mode"),
+                                            parent_value("direction"));
+                                        if ((mapped.empty() ? name : mapped) == physical) {
+                                            inherited = text;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        value = *inherited;
+                    } else if (known != nullptr &&
+                               (ascii_iequals(value, "initial") ||
+                                (ascii_iequals(value, "unset") && !known->inherited))) {
                         value = known->initial;
                     }
                     points.push_back(point{k.offset, resolved_color(value), k.easing, k.composite});
@@ -584,6 +623,16 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
         if (known->shorthand) {
             style::css::declaration_block expanded;
             (void)style::css::set_declaration(expanded, property, text, false);
+            if (expanded.size() == 1 && expanded[0].name == property) {
+                expanded.clear();
+                for (const auto & [name, value] :
+                     style::css::expand_cascaded_shorthand(property, text)) {
+                    const auto checked = style::css::check_declaration(name, value);
+                    if (checked.valid) {
+                        expanded.push_back({std::string{name}, checked.serialized, false});
+                    }
+                }
+            }
             for (const style::css::declaration & d : expanded) {
                 frame.values.emplace_back(d.name, d.value);
             }

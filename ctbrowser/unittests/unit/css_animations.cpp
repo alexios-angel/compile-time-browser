@@ -121,6 +121,22 @@ void test_a_css_animation_is_sampled_at_the_flush() {
        " {marginBlock:'20px',columns:'100px 20'}], {duration:100,fill:'both'});"
        "a.pause(); a.currentTime = 50;",
        shorthand_values, "15px|15px|150px|15");
+    is("var a = t.animate([{borderRadius:'20px / 120px'}, {borderRadius:'30px / 130px'}], 100);",
+       "a.effect.getKeyframes().every(k => typeof k.borderTopLeftRadius === 'string')", "true");
+    const std::string inherited_outline =
+        "var c = document.getElementById('c'); c.style.outline = '30px solid';"
+        "t.style.outline = '10px solid';"
+        "var parentAnimation = c.animate([{outlineWidth:'30px'}, {outlineWidth:'50px'}],"
+        " {duration:100,fill:'both'}); parentAnimation.pause(); parentAnimation.currentTime = 50;";
+    is(inherited_outline +
+           "var sheet = document.createElement('style');"
+           "sheet.textContent = '@keyframes inherited { from { outline-width: inherit }"
+           " to { outline-width: 20px } }'; document.head.appendChild(sheet);"
+           "t.style.animation = 'inherited 100s -50s linear';",
+       "getComputedStyle(t).outlineWidth", "30px");
+    is(inherited_outline + "var a = t.animate([{outlineWidth:'inherit'}, {outlineWidth:'20px'}],"
+                           " {duration:100,fill:'both'}); a.pause(); a.currentTime = 50;",
+       "getComputedStyle(t).outlineWidth", "30px");
     is(midway, "getComputedStyle(t).left", "50px");
     is(midway, "t.getAnimations().length", "1");
     is(midway, "t.getAnimations()[0] instanceof CSSAnimation", "true");

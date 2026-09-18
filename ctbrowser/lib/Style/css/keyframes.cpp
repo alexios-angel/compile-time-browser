@@ -75,6 +75,17 @@ void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
                 if (known->shorthand) {
                     css::declaration_block expanded;
                     (void)css::set_declaration(expanded, property, text, false);
+                    // Some CSSOM shorthands still retain their authored text.
+                    if (expanded.size() == 1 && expanded[0].name == property) {
+                        expanded.clear();
+                        for (const auto & [name, value] :
+                             css::expand_cascaded_shorthand(property, text)) {
+                            const css::value_check checked = css::check_declaration(name, value);
+                            if (checked.valid) {
+                                expanded.push_back({std::string{name}, checked.serialized, false});
+                            }
+                        }
+                    }
                     for (const css::declaration & d : expanded) { put(d.name, d.value); }
                     continue;
                 }
