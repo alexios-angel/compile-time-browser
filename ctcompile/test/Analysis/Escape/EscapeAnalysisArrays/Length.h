@@ -302,16 +302,21 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                                     "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
                                     "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
         for (const bool left : {false, true}) {
-            run({.what = "each static Add operand independently needs an exact bounded Number",
+            const bool zero = input == "#ctjs.boolean<false>" || input == "#ctjs.null";
+            run({.what = "each static Add operand needs an exact non-String Number conversion",
                  .body = values + "  %input = ctjs.constant " + input +
                          "\n  %index = ctjs.binary_static add " +
                          (left ? "%input, %zero\n" : "%zero, %input\n") + indexed,
-                 .failure = ArrayContentsFailure::UnknownIndex});
-            run({.what = "original Add also requires two independently bounded Number operands",
+                 .failure = zero ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex,
+                 .arrays = zero ? "a:[zero]" : "",
+                 .exit = zero ? "a -> {a}" : ""});
+            run({.what = "original Add independently excludes String concatenation operands",
                  .body = values + "  %input = ctjs.constant " + input +
                          "\n  %index = ctjs.binary add " +
                          (left ? "%input, %zero\n" : "%zero, %input\n") + indexed,
-                 .failure = ArrayContentsFailure::UnknownIndex});
+                 .failure = zero ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex,
+                 .arrays = zero ? "a:[zero]" : "",
+                 .exit = zero ? "a -> {a}" : ""});
         }
     }
     run({.what = "one exact Add arm cannot authorize an opaque forwarded operand",
@@ -1263,6 +1268,40 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
              {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
             const auto body = values + "  %left = ctjs.constant " + left +
                               "\n  %right = ctjs.constant " + right +
+                              "\n  %index = ctjs.binary add %left, %right "
+                              "{storage_test_id = \"index\"}\n"
+                              "  ctjs.set_property %a[%key], %index\n"
+                              "  %result = ctjs.create_array [%a, %index] "
+                              "{storage_test_id = \"result\"}\n"
+                              "  ctjs.return %result\n";
+            if (left == "#ctjs.boolean<true>" && right == "#ctjs.boolean<true>") {
+                run({.what = "primitive addition cannot introduce holes by growing length",
+                     .body = body,
+                     .failure = ArrayContentsFailure::MissingElement});
+                continue;
+            }
+            const bool retained = left == "#ctjs.boolean<true>" || right == "#ctjs.boolean<true>";
+            run({.what = "primitive addition preserves zero/unit length and result identity",
+                 .body = body,
+                 .arrays = retained ? "a:[x]; result:[a,index]" : "a:[]; result:[a,index]",
+                 .exit = retained ? "result -> {a,result,x}" : "result -> {a,result}"},
+                retained ? "" : "x");
+        }
+    }
+    for (const std::string operands : {"%truth, %bound", "%bound, %truth"}) {
+        run({.what = "primitive addition cannot cancel an out-of-bound sum",
+             .body = values +
+                     "  %bound = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                     "  %truth = ctjs.constant #ctjs.boolean<true>\n"
+                     "  %sum = ctjs.binary add " +
+                     operands + "\n  %index = ctjs.binary sub %sum, %sum\n" + indexed,
+             .failure = ArrayContentsFailure::UnknownIndex});
+    }
+    for (const std::string left : {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const std::string right :
+             {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+            const auto body = values + "  %left = ctjs.constant " + left +
+                              "\n  %right = ctjs.constant " + right +
                               "\n  %index = ctjs.binary sub %left, %right "
                               "{storage_test_id = \"index\"}\n"
                               "  ctjs.set_property %a[%key], %index\n"
@@ -1694,6 +1733,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             }
             if ((literal == "#ctjs.boolean<false>" || literal == "#ctjs.null") &&
                 (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input" ||
+                 producer == "ctjs.binary add %input, %zero" ||
                  producer == "ctjs.binary sub %input, %zero" ||
                  producer == "ctjs.binary mul %input, %zero" ||
                  producer == "ctjs.binary_static ushr %input, %input")) {

@@ -1179,6 +1179,58 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     for (const std::string literal :
          {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
         for (const bool primitiveLeft : {false, true}) {
+            const std::string sum =
+                "  %minus = ctjs.binary add " +
+                std::string(primitiveLeft ? "%saved, %negative" : "%negative, %saved") + "\n";
+            const auto source = replace(
+                negativeChild, makeNegativeUnit,
+                "  %primitive = ctjs.constant " + literal +
+                    " {storage_test_id = \"primitive\"}\n"
+                    "  %inputs = ctjs.create_array [%primitive] {storage_test_id = \"inputs\"}\n"
+                    "  %saved = ctjs.get_property %inputs[%zero]\n"
+                    "  ctjs.set_property %inputs[%zero], %x\n"
+                    "  %negative = ctjs.unary neg " +
+                    (literal == "#ctjs.boolean<true>" ? "%two\n" : "%one\n") + sum);
+            run({.what = "primitive addition retains CFG snapshots after operand replacement",
+                 .body = source,
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=primitive; a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "primitive addition releases only unreturned CFG children",
+                 .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=primitive; a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            reject("addition cannot turn its original Boolean/null into an own key",
+                   replace(source, "%base[%i]", "%base[%primitive]"),
+                   ArrayContentsFailure::UnknownIndex);
+            reject("repeated primitive addition needs independent invariance",
+                   replace(replace(source, sum, ""), "  %step =", sum + "  %step ="));
+            reject("primitive addition cannot borrow an unknown operand",
+                   replace(source, "ctjs.constant " + literal, "ctjs.unary plus %p"),
+                   ArrayContentsFailure::UnsupportedOperation);
+            reject("String concatenation cannot borrow primitive addition evidence",
+                   replace(source, literal, "#ctjs.string<\"0\">"));
+            reject("Undefined cannot borrow primitive addition evidence",
+                   replace(source, literal, "#ctjs.undefined"));
+        }
+    }
+    const auto primitiveCarriedAdd = replace(carriedNegative, makeNegative,
+                                             "  %nil = ctjs.constant #ctjs.null\n"
+                                             "  %negative = ctjs.unary neg %one\n"
+                                             "  %unit = ctjs.binary_static add %nil, %negative\n");
+    run({.what = "primitive addition snapshots survive exact CFG backedge transport",
+         .body = primitiveCarriedAdd,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    reject("primitive addition snapshots cannot change across CFG backedges",
+           replace(primitiveCarriedAdd, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    for (const std::string literal :
+         {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const bool primitiveLeft : {false, true}) {
             const std::string number = literal == "#ctjs.boolean<true>" ? "%two" : "%one";
             const std::string difference =
                 "  %minus = ctjs.binary sub " +

@@ -914,10 +914,13 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input) {
 
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
-    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(left.origin());
-    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(right.origin());
-    // Both original operands must be exact Numbers. Guard before adding so
-    // neither dynamic nor static Add can borrow coercion, rounding or wrap.
+    // Add selects concatenation before Number conversion; even canonical
+    // Strings cannot borrow the numeric proof used by the other operations.
+    if (left.string() || right.string()) { return; }
+    const auto a = boundedConvertedNumber(left);
+    const auto b = boundedConvertedNumber(right);
+    // Both original primitives must convert exactly. Guard before adding so
+    // neither dynamic nor static Add can borrow rounding or wrap.
     const auto negativeA = left.negativeIntegerNumber ? left.negativeIntegerNumber
                                                       : boundedNumber(left.origin(), true);
     const auto negativeB = right.negativeIntegerNumber ? right.negativeIntegerNumber

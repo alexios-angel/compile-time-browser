@@ -832,6 +832,27 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .exit = "zero -> {}"});
     const auto carriedSub =
         replace(carriedNegative, "unary neg %magnitude", "binary sub %one, %magnitude");
+    const std::string primitiveSum = "  %negative = ctjs.unary neg %magnitude\n"
+                                     "  %unit = ctjs.binary add %operand, %negative\n";
+    const auto primitiveAdd = replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                                      "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                                      "    %truth = ctjs.constant #ctjs.boolean<true>\n"
+                                      "    scf.yield %truth : !ctjs.value\n"
+                                      "  } else {\n    %nil = ctjs.constant #ctjs.null\n"
+                                      "    scf.yield %nil : !ctjs.value\n  }\n" +
+                                          primitiveSum);
+    rows.push_back({.what = "primitive addition proves each structured predecessor snapshot",
+                    .body = primitiveAdd,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "y -> {y}; x -> {x}"});
+    reject("primitive addition cannot borrow another predecessor's operand",
+           replace(primitiveAdd, "scf.yield %nil :", "scf.yield %p :"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("primitive addition excludes String concatenation on every predecessor",
+           replace(primitiveAdd, "#ctjs.null", "#ctjs.string<\"0\">"));
+    reject("primitive addition snapshots cannot change on structured backedges",
+           replace(primitiveAdd, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
     const std::string primitiveDifference = "  %unit = ctjs.binary sub %operand, %magnitude\n";
     const auto primitiveSub = replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
                                       "  %operand = scf.if %flag -> (!ctjs.value) {\n"
