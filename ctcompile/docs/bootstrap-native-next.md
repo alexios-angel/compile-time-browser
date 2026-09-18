@@ -1,5 +1,46 @@
 # What native Bootstrap needs next
 
+## Captured H objects and literal unary latches, 2026-09-18 UTC
+
+Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC closure** and its
+unfinished class-method H-object capture thread. The September 7 WIP is already
+an ancestor. **ed69f95a** proves fixed local holder captures and aliases in DOM
+class methods. Shared holder analysis checks every original use and slot; all
+slots precede capture, writes require the original object, and every slot body
+remains for actual-call and typed DOM proof. Capture/cell transport disappears
+before the holder object. Branching methods and repeated calls execute original
+M/F and H.getDataAttribute without Script dependencies. All **205 prior entries across five
+fixture dictionaries** remain unchanged. Unknown effects, changing holders/slots,
+escaping identities, uncalled slots and invalid later inputs still refuse.
+
+**953d776d** proves one original literal Plus/Neg in a loop latch, including
+Boolean and canonical String conversion. CFG/SCF use the same bounded proof;
+returned children still escape. Original keys, zero/noncanonical/unknown strides,
+nonliteral repeated producers and final index bounds retain their checks. Old
+literal-unary source bodies remain unchanged with corrected proof expectations.
+A parallel agent supplied native fixtures and another audited the proof; root
+completed the escape proposal after its agent reached a service limit.
+
+Focused devbox passes: transaction **1/1 (4.19s; total 4.20s)**, host contract
+**1/1 (0.46s; total 0.47s)**, class DOM **1/1 (74.66s): 236 source observations,
+8 native executions, 1,678 refusals**, public class initialization **1/1 (198.85s)**.
+Arrays **1/1 (1.09s; total 1.10s)**; four selected escape oracles **4/4 (0.12s)**,
+zero violations. New unary-latch oracle: **24 sites / 9 sound / 9 of 15 precision**.
+All **ten tested hashes** match the devbox. Required formatting retains **26
+existing diagnostics in nine unchanged files**; changed checks pass. HANDOFF
+records exact targets, preliminary failures and skipped coverage. Evidence:
+`/tmp/ctcompile-h-object/`. No browser edits, whole-Bootstrap replay, bundle gain
+or full-suite claim. No push.
+
+**Exact next:** combine a slot's original M capture and retained filter-callback
+callee uses, then prove every original unused H slot without invented parameter
+authority. Global holders still need wrapper publication. H Unicode normalization
+and W's Object.entries/destructuring/original s/RegExp/TypeError/spread remain
+before inheritance. Preserve W/W+r/W+r+H refusals (last omits s). Direct broad
+JSON-result/String equality now has a retained refusal specimen. Literal BitNot
+latches, broader conversions and part-25's backlog remain. The application driver,
+native Bootstrap and the overall plan are unfinished.
+
 ## Captured local H helpers and Boolean Add latches, 2026-09-18 UTC
 
 Continued clean **9b9ca236** from the **18:35:50 AGENT-SYNC closure**; no predecessor

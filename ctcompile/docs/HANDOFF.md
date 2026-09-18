@@ -15,6 +15,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured H objects and literal unary latches, 2026-09-18 UTC
+
+Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC closure** and its
+unfinished class-method H-object capture thread. The September 7 WIP is already
+an ancestor. **ed69f95a** proves fixed local holder captures and aliases in DOM
+class methods. Shared holder analysis checks every original use and slot; all
+slots precede capture, writes require the original object, and every slot body
+remains for actual-call and typed DOM proof. Capture/cell transport disappears
+before the holder object. Branching methods and repeated calls execute original
+M/F and H.getDataAttribute without Script dependencies. All **205 prior entries across five
+fixture dictionaries** remain unchanged. Unknown effects, changing holders/slots,
+escaping identities, uncalled slots and invalid later inputs still refuse.
+
+**953d776d** proves one original literal Plus/Neg in a loop latch, including
+Boolean and canonical String conversion. CFG/SCF use the same bounded proof;
+returned children still escape. Original keys, zero/noncanonical/unknown strides,
+nonliteral repeated producers and final index bounds retain their checks. Old
+literal-unary source bodies remain unchanged with corrected proof expectations.
+A parallel agent supplied native fixtures and another audited the proof; root
+completed the escape proposal after its agent reached a service limit.
+
+Focused devbox passes: transaction **1/1 (4.19s; total 4.20s)**, host contract
+**1/1 (0.46s; total 0.47s)**, class DOM **1/1 (74.66s): 236 source observations,
+8 native executions, 1,678 refusals**, public class initialization **1/1 (198.85s)**.
+Arrays **1/1 (1.09s; total 1.10s)**; four selected escape oracles **4/4 (0.12s)**,
+zero violations. New unary-latch oracle: **24 sites / 9 sound / 9 of 15 precision**.
+All **ten tested hashes** match the devbox. Required formatting retains **26
+existing diagnostics in nine unchanged files**; changed checks pass. HANDOFF
+records exact targets, preliminary failures and skipped coverage. Evidence:
+`/tmp/ctcompile-h-object/`. No browser edits, whole-Bootstrap replay, bundle gain
+or full-suite claim. No push.
+
+**Exact next:** combine a slot's original M capture and retained filter-callback
+callee uses, then prove every original unused H slot without invented parameter
+authority. Global holders still need wrapper publication. H Unicode normalization
+and W's Object.entries/destructuring/original s/RegExp/TypeError/spread remain
+before inheritance. Preserve W/W+r/W+r+H refusals (last omits s). Direct broad
+JSON-result/String equality now has a retained refusal specimen. Literal BitNot
+latches, broader conversions and part-25's backlog remain. The application driver,
+native Bootstrap and the overall plan are unfinished.
+
+Exact validation and preliminary failures:
+
+- First native build targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`: **36 actions**.
+- Combined build added `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **9 actions**.
+  The escape-only retry used those three plus `ctjs-translate`: **2 actions**.
+- Exact CTests: `ctcompile_exception_recovery`, `ctcompile_host_contract`,
+  `ctcompile_escape_analysis_arrays`. Exact lit cases:
+  `CTNative/Lowering/Objects/class-dom.mlir`, `class-initialization.mlir`, and
+  `Analysis/Escape/escape-claims/{primitive-unary-latch,primitive-add-latch,negative-string-latch,negated-stride}.test`.
+- Initial transaction **1/1 (4.17s)** and contract **1/1 (0.46s)** passed.
+  Initial class DOM failed **12.11s** on a new broad JSON-result/String equality.
+  That source is retained as a refusal; the write-order positive observes
+  supported typeof results. A newly proposed immutable alias refusal became a
+  positive because the same fixed-cell proof establishes its identity.
+- First arrays failed **1.14s (total 1.15s)** with **37 assertions** from old
+  literal-unary refusal expectations. Their source bodies are preserved; the
+  final expectations distinguish proved Plus/Neg from still-unproved BitNot.
+- Read-only audit found one uncharged use-list allocation; its collection now
+  spends the existing budget. Final transaction/contract and public compatibility
+  results above include that correction. Original native fixture syntax/source
+  observations and changed C++/Python formatting pass. The full formatter's nine
+  diagnostic files are HEAD-identical (four browser, five compiler).
+- `server.sh start` confirmed the box running; no network-rule change was needed.
+  Full CTest/compiler lit, complete DOM, broad corpus/native matrices, WPT/test262,
+  whole-Bootstrap and independent dataset lifetime replay were skipped.
+
+Inspected `/tmp/ctcompile-h-object/native-output.cpp`: ordinary strings, optional
+values, RAII JSON values and existing ctbrowser attribute/URI calls; the native
+Script/dispatch gates pass.
+
+The next combined-callee proof can share validation of one confined callback
+between `helperCallbacks` and `methodCaptures`; neither should blindly skip
+unproved callee uses. Existing DOMSource callback transport remains the seam.
+
 ## Captured local H helpers and Boolean Add latches, 2026-09-18 UTC
 
 Continued clean **9b9ca236**, following the **18:35:50 AGENT-SYNC closure** and
