@@ -30,3 +30,6 @@
 // A class method may be the captured sibling helper's only caller. Complete M
 // covers Number, JSON and URI fallback through that capture; changing helper
 // bindings, escaped identities and unused-method effects still refuse.
+// Original captured F retains its nested replacement callback until the shared
+// no-match proof checks all direct-call String inputs. Matching/unknown inputs,
+// unused matching methods, callback effects and helper identity escapes refuse.

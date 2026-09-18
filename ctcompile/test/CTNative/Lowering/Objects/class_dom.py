@@ -676,6 +676,61 @@ NUMBER_CASES.update(M_CASES)
 NUMBER_REFUSALS.update(M_REFUSALS)
 CLASS_CASES.update(NUMBER_CASES)
 CLASS_REFUSALS.update(NUMBER_REFUSALS)
+F_CLASS = strings.BOOTSTRAP_F + """class Shape {
+    read(key) { return F(key); }
+  }
+  const shape = new Shape();
+  return shape.read('config') === 'config' && element.getAttribute('x') === null;
+"""
+F_CASES = {
+    "class_f_captured": (
+        F_CLASS.replace("read(key) { return F(key); }", "read() { return F('config'); }").replace(
+            "shape.read('config')", "shape.read()"
+        ),
+        "1000",
+    ),
+    "class_f_argument": (F_CLASS, "1000"),
+    "class_f_multiple": (
+        F_CLASS.replace(
+            "return shape.read('config')",
+            "return shape.read('toggle') === 'toggle' && shape.read('config') === 'config' "
+            "&& shape.read('config')",
+        ),
+        "1000",
+    ),
+}
+F_REFUSALS = {
+    "class_f_matching": F_CLASS.replace("shape.read('config')", "shape.read('Config')"),
+    "class_f_dynamic": F_CLASS.replace(
+        "shape.read('config')", "shape.read(element.getAttribute('x'))"
+    ),
+    "class_f_matching_later": F_CLASS.replace(
+        "return shape.read('config')",
+        "shape.read('config'); return shape.read('Config')",
+    ),
+    "class_f_matching_first": F_CLASS.replace(
+        "return shape.read('config')",
+        "shape.read('Config'); return shape.read('config')",
+    ),
+    "class_f_unknown_later": F_CLASS.replace(
+        "return shape.read('config')",
+        "shape.read('config'); return shape.read(element.getAttribute('x'))",
+    ),
+    "class_f_unused_matching": F_CLASS.replace(
+        "    read(key)", "    unused() { return F('Config'); }\n    read(key)"
+    ),
+    "class_f_callback_global": F_CLASS.replace("t.toLowerCase()", "unknown(t)"),
+    "class_f_callback_nested": F_CLASS.replace(
+        "t => `-${t.toLowerCase()}`",
+        "t => { function hidden() { return t; } return hidden(); }",
+    ),
+    "class_f_replaced": F_CLASS.replace(
+        "  const shape", "  F = function(t) { return t; };\n  const shape"
+    ),
+    "class_f_escape": F_CLASS.replace("read(key) { return F(key); }", "read(key) { return F; }"),
+}
+CLASS_CASES.update(F_CASES)
+CLASS_REFUSALS.update(F_REFUSALS)
 CASES = {
     "direct_read": (
         """function directRead(target, key) { return target.getAttribute(key); }
@@ -1059,6 +1114,7 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     vendor = args.include.parent / "vendor/bootstrap/bootstrap.bundle.js"
     assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
+    assert strings.BOOTSTRAP_F in vendor.read_text(), "Bootstrap F source pin changed"
     observations = check_oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -1119,7 +1175,8 @@ def main():
                 initial_intrinsics=["__ctbrowser_class_defined"]
                 + (["Error"] if name.startswith("class_error_") else [])
                 + (["Number"] if name in NUMBER_CASES or name in NUMBER_REFUSALS else [])
-                + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else []),
+                + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
+                + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else []),
             )
             steps = 1000000 if name in M_CASES or name in M_REFUSALS else 100000
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
@@ -1154,7 +1211,9 @@ def main():
             # Keep the old mixed request verbatim: only sources requiring Error
             # or Number still lack an identity. Also prove the full mixed request.
             mixed = ["__ctbrowser_class_defined", "Object"]
-            missing_identity = name.startswith("class_error_") or name in NUMBER_CASES
+            missing_identity = (
+                name.startswith("class_error_") or name in NUMBER_CASES or name in F_CASES
+            )
             dom.lower(
                 args,
                 ir,

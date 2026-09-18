@@ -206,12 +206,44 @@ struct classInitialization {
             auto helper = target(closure);
             if (!domEntry || !helper || !closure.getUpvalues().empty() ||
                 helper.getUpvalueCount() != 0 || !undefined(closure.getEnclosingThis()) ||
-                closure->getBlock() != method->getBlock() || !closure->isBeforeInBlock(method) ||
-                llvm::any_of(
-                    helper.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
-                    [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+                closure->getBlock() != method->getBlock() || !closure->isBeforeInBlock(method)) {
                 return refuse(
                     "class method capture is not its constructor or an inert sibling helper");
+            }
+            auto & body = helper.getBody().front();
+            for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
+                if (!step()) { return false; }
+                auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+                auto function = target(callback);
+                if (!callback || use.getOperandNumber() != 0 || !function ||
+                    !callback.getUpvalues().empty() || function.getUpvalueCount() != 0 ||
+                    llvm::any_of(
+                        function.getBody().front().getArguments().take_front(
+                            ctjs::implicit_arguments),
+                        [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+                    return refuse("captured helper observes its implicit callee");
+                }
+                for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
+                    if (!step()) { return false; }
+                    if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
+                    auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                     : ctjs::GetPropertyOp{};
+                    if (!call || callbackUse.getOperandNumber() != 3 ||
+                        call.getArgs().size() != 2 || !read ||
+                        read.getObject() != call.getReceiver() ||
+                        ctjs::constantKey(read.getKey()) != "replace") {
+                        return refuse("captured helper callback escapes its replacement call");
+                    }
+                }
+                // Retain the complete callback for the existing DOM no-match
+                // replacement proof. Direct-helper expansion must remove every
+                // nested closure before the helper can be inlined.
+                helpers.insert(function);
+                domEntryHelpers.insert(function);
+            }
+            if (!unusedReceiver(helper) || !body.getArgument(ctjs::arg_new_target).use_empty()) {
+                return refuse("captured helper observes its implicit receiver or new.target");
             }
             helpers.insert(helper);
             domEntryHelpers.insert(helper);
@@ -971,10 +1003,11 @@ struct classInitialization {
                             throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) &&
                            thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
             }
-            if (llvm::isa<ctjs::PushHandlerOp, ctjs::PopHandlerOp, ctjs::CheckOp,
-                          ctjs::CatchLandOp>(op)) {
+            if (llvm::isa<ctjs::PushHandlerOp, ctjs::PopHandlerOp, ctjs::CheckOp, ctjs::CatchLandOp,
+                          ctjs::CreateCellOp, ctjs::CellGetOp, ctjs::CellSetOp>(op)) {
                 // Keep the original exception CFG for the existing DOM URI/JSON
-                // normalizer; no status edge is removed by class preparation.
+                // normalizer and local cells for the DOM capture proof. Neither
+                // status edges nor local state disappear in this census.
                 accepted = domEntryHelpers.contains(op->getParentOfType<ctjs::FuncOp>());
                 needsDOMMethodProof |= accepted;
             }

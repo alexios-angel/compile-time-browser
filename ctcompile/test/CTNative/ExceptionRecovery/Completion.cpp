@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 70; ++control) {
+        for (unsigned control = 0; control < 82; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -580,6 +580,39 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     }
                 }
             }
+            if (control >= 70) {
+                source = R"js(function guarded(element) {
+                    function F(t) { return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`) }
+                    class Shape { read(key) { return F(key); } }
+                    const shape = new Shape();
+                    return shape.read('config') === 'config' && element.getAttribute('x') === null;
+                })js";
+                if (control == 71) {
+                    source.insert(source.find("return shape"), "shape.read('toggle'); ");
+                }
+                if (control == 72) {
+                    source.replace(source.find("shape.read('config')"), 20, "shape.read('Config')");
+                }
+                if (control == 73 || control == 74) {
+                    source.insert(source.find("return shape"),
+                                  control == 73 ? "shape.read('Config'); "
+                                                : "shape.read(element.getAttribute('x')); ");
+                }
+                if (control == 75) {
+                    source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)");
+                }
+                if (control == 76) {
+                    source.insert(source.find("const shape"), "F = function(t) { return t; }; ");
+                }
+                if (control == 77) {
+                    source.insert(source.find("read(key)"), "unused() { return F('Config'); } ");
+                }
+                if (control == 78) { source.replace(source.find("return F(key)"), 13, "return F"); }
+                if (control == 79) { source += " __ctbrowser_regexp = 9;"; }
+                if (control == 80) {
+                    source.insert(source.find("return shape"), "element.unknown(); ");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -601,18 +634,19 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 request.initialIntrinsics.push_back("decodeURIComponent");
                 if (control != 48) { request.initialIntrinsics.push_back("JSON"); }
             }
+            if (control >= 70) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
             auto error = ctnative::prepareDOMEntry(
                 *candidate, request,
-                control == 3 || control == 32 || control == 55 || control == 69 ? 0
-                : control == 4 || control == 17                                 ? 1000
-                : control >= 47                                                 ? 1000000
-                                                                                : 100000);
+                control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ? 0
+                : control == 4 || control == 17 ? 1000
+                : control >= 47                 ? 1000000
+                                                : 100000);
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
-                control != 60) {
+                control != 60 && control != 70 && control != 71) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -629,7 +663,11 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 const ctnative::DOMEntryAnalysis checked(*candidate, request);
                 check(
                     mlir::succeeded(mlir::verify(*candidate)) && checked.proved() &&
-                        (control == 47 || control == 56 || control >= 58
+                        (control >= 70
+                             ? request.initialIntrinsics ==
+                                   std::vector<std::string>{"Number", "decodeURIComponent", "JSON",
+                                                            "__ctbrowser_regexp"}
+                         : control == 47 || control == 56 || control >= 58
                              ? request.initialIntrinsics ==
                                    std::vector<std::string>{"Number", "decodeURIComponent", "JSON"}
                          : control >= 35

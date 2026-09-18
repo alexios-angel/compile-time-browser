@@ -6,6 +6,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -97,32 +98,69 @@ struct DOMSource {
     }
 
     bool bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
-        if (!closure.getUpvalues().empty() || target.getUpvalueCount() != 0 ||
-            creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1) {
+        if (target.getUpvalueCount() != 0 ||
+            (closure && (!closure.getUpvalues().empty() ||
+                         creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1))) {
             return true;
         }
         auto & body = target.getBody().front();
-        llvm::SmallVector<llvm::SmallVector<ctjs::StringAttr>> inputs(body.getNumArguments());
-        llvm::SmallVector<bool> complete(body.getNumArguments(), true);
-        for (mlir::OpOperand & use : closure.getResult().getUses()) {
-            if (!step()) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-            mlir::ValueRange arguments;
-            if (call && use.getOperandNumber() == 0 && undefined(call.getReceiver())) {
-                arguments = call.getArgs();
-            } else if (direct && use.getOperandNumber() == 2 &&
-                       direct.getCallee() == target.getSymName() &&
-                       undefined(direct.getReceiver()) && undefined(direct.getNewTarget())) {
-                arguments = direct.getArgs();
-            } else {
+        llvm::SmallVector<mlir::ValueRange> invocations;
+        if (closure) {
+            for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                mlir::ValueRange arguments;
+                if (call && use.getOperandNumber() == 0 && undefined(call.getReceiver())) {
+                    arguments = call.getArgs();
+                } else if (direct && use.getOperandNumber() == 2 &&
+                           direct.getCallee() == target.getSymName() &&
+                           undefined(direct.getReceiver()) && undefined(direct.getNewTarget())) {
+                    arguments = direct.getArgs();
+                } else {
+                    return true;
+                }
+                if (!precedesInStructuredBody(closure, use.getOwner()) ||
+                    arguments.size() + ctjs::implicit_arguments != body.getNumArguments()) {
+                    return reason.empty();
+                }
+                invocations.push_back(arguments);
+            }
+        } else {
+            // A private direct target has no remaining numeric closure. Census
+            // every symbol use before specializing, not only the first caller.
+            auto module = target->getParentOfType<mlir::ModuleOp>();
+            if (!target.isPrivate() || creations.lookup(*functionIndex(target)) != 0) {
                 return true;
             }
-            if (!precedesInStructuredBody(closure, use.getOwner()) ||
-                arguments.size() + ctjs::implicit_arguments != body.getNumArguments()) {
-                return reason.empty();
+            if (remaining / 2 < operationCount) {
+                return refuse("DOM helper expansion work budget exhausted");
             }
+            remaining -= 2 * operationCount;
+            for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                                      mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+                if (!uses) { return true; }
+                for (const auto & use : *uses) {
+                    if (!step()) { return false; }
+                    if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                            use.getUser(), use.getSymbolRef()) != target) {
+                        continue;
+                    }
+                    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                    if (!call || call.getTarget() != target || !undefined(call.getCalleeValue()) ||
+                        !undefined(call.getNewTarget()) ||
+                        call.getArgs().size() + ctjs::implicit_arguments !=
+                            body.getNumArguments()) {
+                        return true;
+                    }
+                    invocations.push_back(call.getArgs());
+                }
+            }
+        }
+        llvm::SmallVector<llvm::SmallVector<ctjs::StringAttr>> inputs(body.getNumArguments());
+        llvm::SmallVector<bool> complete(body.getNumArguments(), true);
+        for (mlir::ValueRange arguments : invocations) {
             for (auto [index, argument] : llvm::enumerate(arguments)) {
                 if (!step()) { return false; }
                 auto constant = argument.getDefiningOp<ctjs::ConstantOp>();
@@ -1032,7 +1070,8 @@ struct DOMSource {
         return true;
     }
 
-    bool checkBody(ctjs::FuncOp function, bool entry, bool directReceiver = false) {
+    bool checkBody(ctjs::FuncOp function, bool entry, bool directReceiver = false,
+                   bool beforeReplacement = false) {
         auto & block = function.getBody().front();
         llvm::DenseSet<mlir::Value> values;
         for (mlir::BlockArgument argument : block.getArguments()) {
@@ -1189,7 +1228,7 @@ struct DOMSource {
                         return refuse("DOM helper branch contains an unproved local identity");
                     }
                 }
-                if (directReceiver &&
+                if (directReceiver && !beforeReplacement &&
                     llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(operation)) {
                     return refuse("DOM direct helper contains a closure or capture");
                 }
@@ -1312,7 +1351,7 @@ struct DOMSource {
         if (depth == 64 || !active.insert(function).second) {
             return refuse("DOM helper call tree is recursive or too deep");
         }
-        if (!normalizeCompletion(function) || !checkBody(function, entry, directReceiver)) {
+        if (!normalizeCompletion(function) || !checkBody(function, entry, directReceiver, true)) {
             return false;
         }
         // Parameters with nested source functions may have an otherwise local
@@ -1327,6 +1366,10 @@ struct DOMSource {
             if (!captured && !resolveCell(cell)) { return false; }
         }
         if (!foldNoMatchReplacements(function)) { return false; }
+        // Enclosing identities were checked on the original body above. Only
+        // the existing no-match proof may remove a direct helper's callbacks;
+        // every surviving closure/capture still refuses before inlining.
+        if (directReceiver && !checkBody(function, entry, true)) { return false; }
         llvm::SmallVector<ctjs::CallDirectOp> directCalls;
         const auto collected = function.walk([&](mlir::Operation * operation) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
@@ -1354,7 +1397,7 @@ struct DOMSource {
             // The symbol is already the direct-call contract. This normalization
             // proves no new source dispatch: it binds each actual receiver and
             // retains every operation for the complete DOM entry reproof.
-            if (!expand(target, depth + 1, false, true) ||
+            if (!bindConstantArguments({}, target) || !expand(target, depth + 1, false, true) ||
                 !inlineCall(function, target, call, call.getArgs(), call.getReceiver(),
                             call.getCalleeValue(), {}, depth)) {
                 return false;
