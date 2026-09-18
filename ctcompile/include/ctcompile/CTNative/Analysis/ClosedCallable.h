@@ -14,8 +14,11 @@ struct CallableObject {
 };
 // Prove local slot identity/order without changing IR. Callers must separately
 // prove the initial prototype, every callable use, and the complete source effects.
-llvm::Expected<CallableObject> analyzeLocalCallableObject(ctjs::CreateObjectOp object,
-                                                          llvm::function_ref<bool()> spend);
+// A projected use census must prove all omitted transport and initialization
+// before every alias read/capture. Stores still require the original object.
+llvm::Expected<CallableObject> analyzeLocalCallableObject(
+    ctjs::CreateObjectOp object, llvm::function_ref<bool()> spend,
+    llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> uses = {});
 // A fixed holder published by the entry before any operation can call source code.
 // The same prototype, callable-use and complete-effect obligations apply.
 llvm::Expected<CallableObject> analyzeGlobalCallableObject(ctjs::StoreGlobalOp publication,

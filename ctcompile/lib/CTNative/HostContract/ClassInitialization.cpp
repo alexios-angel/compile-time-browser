@@ -53,6 +53,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> cellOperations;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;
     llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
+    llvm::DenseMap<mlir::Value, mlir::Value> holderCaptures;
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
     llvm::SetVector<mlir::Operation *> capturedHelpers;
     llvm::SmallVector<ctjs::CreateClosureOp> capturedClosures;
@@ -152,6 +153,7 @@ struct classInitialization {
         return reason.empty();
     }
     mlir::Value sourceValue(mlir::Value value) {
+        if (auto holder = holderCaptures.lookup(value)) { return holder; }
         while (auto read = value.getDefiningOp<ctjs::CellGetOp>()) {
             if (!step()) { return value; }
             auto found = cells.find(read.getCell());
@@ -167,6 +169,10 @@ struct classInitialization {
         while (!pending.empty()) {
             auto current = pending.pop_back_val();
             if (!seen.insert(current).second) { continue; }
+            for (auto [read, object] : holderCaptures) {
+                if (!step()) { return {}; }
+                if (object == current) { pending.push_back(read); }
+            }
             for (mlir::OpOperand & use : current.getUses()) {
                 if (!step()) { return {}; }
                 auto * op = use.getOwner();
@@ -242,6 +248,23 @@ struct classInitialization {
             }
             auto value = sourceValue(cells.lookup(capture));
             if (value == constructorValue) { continue; }
+            if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>();
+                domEntry && constructor && object) {
+                if (object->getBlock() != method->getBlock() || !object->isBeforeInBlock(method)) {
+                    return refuse("captured holder lacks ordered local initialization");
+                }
+                // The shared holder census checks every slot and alias below.
+                // All original slots must already exist at closure creation.
+                for (mlir::Operation * use : object->getUsers()) {
+                    if (!step()) { return false; }
+                    if (llvm::isa<ctjs::SetPropertyOp>(use) &&
+                        (use->getBlock() != method->getBlock() || !use->isBeforeInBlock(method))) {
+                        return refuse("captured holder slot changes after capture");
+                    }
+                }
+                needsDOMMethodProof = true;
+                continue;
+            }
             auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
             auto helper = target(closure);
             if (!domEntry || !helper || !closure.getUpvalues().empty() ||
@@ -269,6 +292,11 @@ struct classInitialization {
                 return refuse("class method observes or changes its captured identity");
             }
             auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
+            if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
+                holderCaptures[load.getResult()] = value;
+                captureReads.push_back(load);
+                continue; // Every original use goes through the shared holder census.
+            }
             auto helper = value != constructorValue
                               ? target(value.getDefiningOp<ctjs::CreateClosureOp>())
                               : ctjs::FuncOp{};
@@ -307,17 +335,23 @@ struct classInitialization {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
         if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
             if (auto closure = holderReads.lookup(value)) { return closure; }
-            auto object = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+            const bool localAliases = domEntry || holderCaptures.count(read.getObject());
+            auto object = (localAliases ? sourceValue(read.getObject()) : read.getObject())
+                              .getDefiningOp<ctjs::CreateObjectOp>();
             auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
             auto publication = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
             if (!object && !publication) { return {}; }
-            auto proof = object ? analyzeLocalCallableObject(object, [&] { return step(); })
-                                : analyzeGlobalCallableObject(publication, [&] { return step(); });
+            const bool domLocal = object && localAliases;
+            auto proof = domLocal ? analyzeLocalCallableObject(
+                                        object, [&] { return step(); },
+                                        [&](mlir::Value value) { return sourceUses(value); })
+                         : object
+                             ? analyzeLocalCallableObject(object, [&] { return step(); })
+                             : analyzeGlobalCallableObject(publication, [&] { return step(); });
             if (!proof) {
                 llvm::consumeError(proof.takeError());
                 return {};
             }
-            const bool domLocal = domEntry && object;
             for (ctjs::SetPropertyOp store : proof->stores) {
                 if (!step() || !ctjs::ordinaryKey(store.getKey())) { return {}; }
                 auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -353,6 +387,14 @@ struct classInitialization {
             }
             ctjs::CreateClosureOp selected;
             for (auto [loaded, closure] : proof->reads) {
+                if (auto alias = loaded.getObject().getDefiningOp<ctjs::CellGetOp>()) {
+                    for (ctjs::SetPropertyOp store : proof->stores) {
+                        if (!step() || store->getBlock() != alias->getBlock() ||
+                            !store->isBeforeInBlock(alias)) {
+                            return {};
+                        }
+                    }
+                }
                 for (mlir::OpOperand & use : loaded.getResult().getUses()) {
                     if (!step()) { return {}; }
                     if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
@@ -977,6 +1019,12 @@ struct classInitialization {
         if (walked.wasInterrupted() || !reason.empty()) { return false; }
         walked = module.walk([&](ctjs::CallDirectOp call) { return recordHelper(call); });
         if (walked.wasInterrupted() || !reason.empty()) { return false; }
+        for (auto [read, object] : holderCaptures) {
+            (void)read;
+            if (!step() || !localDOMHolders.contains(object.getDefiningOp())) {
+                return refuse("captured holder lacks a complete local callable proof");
+            }
+        }
         for (auto & [publication, holder] : globalHolders) {
             (void)publication;
             for (ctjs::SetPropertyOp store : holder.stores) {
@@ -1382,6 +1430,10 @@ struct classInitialization {
                         callableCaptures.erase(read);
                         callableCaptures[mapped] = helper;
                     }
+                    if (auto object = holderCaptures.lookup(read.getResult())) {
+                        holderCaptures.erase(read.getResult());
+                        holderCaptures[mapped->getResult(0)] = object;
+                    }
                     read = llvm::cast<ctjs::LoadUpvalueOp>(mapped);
                 }
             }
@@ -1401,25 +1453,35 @@ struct classInitialization {
                     }
                 }
             }
+            for (auto & [object, holder] : localDOMHolders) {
+                (void)object;
+                for (auto & [read, closure] : holder.reads) {
+                    (void)closure;
+                    if (!step()) { return false; }
+                    if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                        read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+                    }
+                }
+            }
             normalizedMethods.emplace_back(function, std::move(copy));
         }
         return true;
     }
 
+    static void eraseRooted(mlir::Operation * operation) {
+        for (mlir::Operation * root : llvm::make_early_inc_range(operation->getUsers())) {
+            if (!llvm::isa<ctjs::RootOp>(root)) {
+                llvm::report_fatal_error("proved callable holder retains an observable use");
+            }
+            root->erase();
+        }
+        operation->erase();
+    }
     void expandHolders() {
         // Every alias and implicit-argument use was checked before mutation.
         // Local DOM slots remain as functions until the complete invocation/type
         // proof; no unused body may disappear merely because its holder does.
         llvm::SmallVector<ctjs::FuncOp> targets;
-        const auto eraseRooted = [](mlir::Operation * operation) {
-            for (mlir::Operation * root : llvm::make_early_inc_range(operation->getUsers())) {
-                if (!llvm::isa<ctjs::RootOp>(root)) {
-                    llvm::report_fatal_error("proved callable holder retains an observable use");
-                }
-                root->erase();
-            }
-            operation->erase();
-        };
         const auto expand = [&](mlir::Operation * owner, CallableObject & holder) {
             auto publication = llvm::dyn_cast<ctjs::StoreGlobalOp>(owner);
             auto * object = publication ? publication.getValue().getDefiningOp() : owner;
@@ -1455,8 +1517,10 @@ struct classInitialization {
                 eraseRooted(closure);
             }
             for (ctjs::LoadGlobalOp load : holder.loads) { eraseRooted(load); }
-            if (publication) { publication.erase(); }
-            eraseRooted(object);
+            if (publication) {
+                publication.erase();
+                eraseRooted(object);
+            }
         };
         for (auto & [publication, holder] : globalHolders) { expand(publication, holder); }
         for (auto & [object, holder] : localDOMHolders) { expand(object, holder); }
@@ -1572,6 +1636,12 @@ struct classInitialization {
                 use->erase(); // Proved identical stores and inert cell roots.
             }
             value.getDefiningOp()->erase();
+        }
+        // Captured holders remain alive until all proved cell/capture transport
+        // is gone. Slot calls and closures were removed by expandHolders.
+        for (auto & [object, holder] : localDOMHolders) {
+            (void)holder;
+            eraseRooted(object);
         }
         // The original capture proof checked every implicit argument before any
         // mutation. Only an unobserved sibling closure can disappear here; a

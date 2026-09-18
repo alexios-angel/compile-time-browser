@@ -848,6 +848,85 @@ H_CAPTURE_REFUSALS = {
         "read() { return this.key; }", "read() { return H.getDataAttribute(this.key, 'config'); }"
     ),
 }
+# The class method is the original H slot's only caller.
+H_OBJECT_CLASS = ATTRIBUTE_HELPERS + """class Shape {
+    constructor(element) { this.element = element; }
+    read(key) { return H.getDataAttribute(this.element, key); }
+  }
+  const shape = new Shape(element);
+  element.setAttribute('data-bs-config',
+    element.getAttribute('x') === null ? '%7B%7D' : '%');
+  return typeof shape.read('config') === 'object';
+"""
+H_OBJECT_CASES = {
+    "class_h_object": (H_OBJECT_CLASS, "1000"),
+    "class_h_object_order": (
+        H_OBJECT_CLASS.replace(
+            "  return typeof shape.read('config') === 'object';",
+            """  const first = shape.read('config');
+  element.setAttribute('data-bs-config', 'not%20json');
+  const second = shape.read('config');
+  element.setAttribute('data-bs-toggle', '%7B%7D');
+  const third = shape.read('toggle');
+  element.setAttribute('data-bs-config', '%');
+  const last = shape.read('config');
+  return typeof first === 'object' && second === 'not%20json' &&
+    typeof third === 'object' && last === '%';""",
+        ),
+        "1000",
+    ),
+    "class_h_object_branch": (
+        H_OBJECT_CLASS.replace(
+            "read(key) { return H.getDataAttribute(this.element, key); }",
+            """read(key) {
+      if (this.element.getAttribute('x') === null)
+        return H.getDataAttribute(this.element, key);
+      return H.getDataAttribute(this.element, 'toggle');
+    }""",
+        ).replace(
+            "  return typeof", "  element.setAttribute('data-bs-toggle', '%');\n  return typeof"
+        ),
+        "1000",
+    ),
+}
+H_OBJECT_REFUSALS = {
+    "class_h_object_rebound": H_OBJECT_CLASS.replace("const H =", "let H =").replace(
+        "  const shape", "  H = { getDataAttribute(t, e) { return null; } };\n  const shape"
+    ),
+    "class_h_object_alias": H_OBJECT_CLASS.replace(
+        "class Shape", "const alias = H; class Shape"
+    ).replace("return H.getDataAttribute", "return alias.getDataAttribute"),
+    "class_h_object_escape": H_OBJECT_CLASS.replace(
+        "read(key) {", "read(key) { this.element.setAttribute('leak', H);"
+    ),
+    "class_h_object_slot_replaced": H_OBJECT_CLASS.replace(
+        "  const shape", "  H.getDataAttribute = function(t, e) { return null; };\n  const shape"
+    ),
+    "class_h_object_unused_replace": H_OBJECT_CLASS.replace(
+        "    read(key)",
+        "    unused() { H.getDataAttribute = function(t, e) { return null; }; }\n    read(key)",
+    ),
+    "class_h_object_later_key": H_OBJECT_CASES["class_h_object_order"][0].replace(
+        "const last = shape.read('config')", "const last = shape.read('Config')"
+    ),
+    "class_h_object_later_target": H_OBJECT_CLASS.replace(
+        "  return typeof", "  shape.read('config'); shape.element = {};\n  return typeof"
+    ),
+    "class_h_object_unused_slot": H_OBJECT_CLASS.replace(
+        "const H = {", "const H = { unused() { return 'safe'; },"
+    ),
+    "class_h_object_caught_effect": H_OBJECT_CLASS.replace("return t\n", "return unknown(t)\n"),
+}
+H_OBJECT_REFUSALS["class_h_object_order_value_compare"] = H_OBJECT_CASES["class_h_object_order"][0]
+H_OBJECT_CASES["class_h_object_order"] = (
+    H_OBJECT_CASES["class_h_object_order"][0]
+    .replace("second === 'not%20json'", "typeof second === 'string'")
+    .replace("last === '%'", "typeof last === 'string'"),
+    "1000",
+)
+H_OBJECT_CASES["class_h_object_alias"] = (H_OBJECT_REFUSALS.pop("class_h_object_alias"), "1000")
+H_CAPTURE_CASES.update(H_OBJECT_CASES)
+H_CAPTURE_REFUSALS.update(H_OBJECT_REFUSALS)
 for cases in (M_CASES, NUMBER_CASES, F_CASES, CLASS_CASES):
     cases.update(H_CAPTURE_CASES)
 for refusals in (M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS, CLASS_REFUSALS):

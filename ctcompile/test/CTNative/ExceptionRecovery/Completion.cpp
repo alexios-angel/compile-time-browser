@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 116; ++control) {
+        for (unsigned control = 0; control < 128; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -724,6 +724,47 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                   "H.getDataAttribute(element, 'Config'); ");
                 }
             }
+            if (control >= 116) {
+                const std::string oldClass = "class Shape { read() { return 'x'; } }";
+                source.replace(source.find(oldClass), oldClass.size(),
+                               "class Shape { read(element, key) { "
+                               "return H.getDataAttribute(element, key); } }");
+                source.replace(source.find("element.getAttribute(shape.read())"), 34,
+                               "element.getAttribute('x')");
+                source.replace(source.find("typeof H.getDataAttribute(element, 'config')"), 44,
+                               "typeof shape.read(element, 'config')");
+                if (control == 117) {
+                    source.insert(source.find("return typeof"), "shape.read(element, 'config'); ");
+                }
+                if (control == 118) {
+                    source.replace(source.find("const H"), 7, "let H");
+                    source.insert(source.find("const shape"), "H = {}; ");
+                }
+                if (control == 119) {
+                    source.insert(source.find("const shape"),
+                                  "H.getDataAttribute = function(t, k) { return null; }; ");
+                }
+                if (control == 120) {
+                    source.insert(source.find("return H.getDataAttribute"),
+                                  "element.setAttribute('leak', H); ");
+                }
+                if (control == 121) {
+                    source.insert(source.find("getDataAttribute:"), "unused() { return 'x'; }, ");
+                }
+                if (control == 122) {
+                    source.insert(source.find("return typeof"), "shape.read(element, 'Config'); ");
+                }
+                if (control == 123) {
+                    source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)");
+                }
+                if (control == 126) {
+                    source.insert(source.find("return typeof"), "shape.read({}, 'config'); ");
+                }
+                if (control == 127) {
+                    source.insert(source.find("const shape"),
+                                  "H.later = function(t) { return null; }; ");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -757,7 +798,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 request.datasetParameters.clear();
                 request.initialIntrinsics = {"__ctbrowser_class_defined", "decodeURIComponent"};
                 if (control != 111) { request.initialIntrinsics.push_back("Number"); }
-                if (control != 112) { request.initialIntrinsics.push_back("JSON"); }
+                if (control != 112 && control != 124) {
+                    request.initialIntrinsics.push_back("JSON");
+                }
                 if (control != 113) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
             }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
@@ -765,7 +808,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             auto error = ctnative::prepareDOMEntry(
                 *candidate, request,
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
-                        control == 91 || control == 103 || control == 115
+                        control == 91 || control == 103 || control == 115 || control == 125
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -774,7 +817,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
-                control != 100 && control != 104 && control != 105) {
+                control != 100 && control != 104 && control != 105 && control != 116 &&
+                control != 117) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }

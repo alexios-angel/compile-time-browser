@@ -3,9 +3,9 @@
 
 namespace ctcompile::ctnative {
 
-static llvm::Expected<CallableObject> analyzeCallableObject(ctjs::CreateObjectOp object,
-                                                            ctjs::StoreGlobalOp publication,
-                                                            llvm::function_ref<bool()> spend) {
+static llvm::Expected<CallableObject> analyzeCallableObject(
+    ctjs::CreateObjectOp object, ctjs::StoreGlobalOp publication, llvm::function_ref<bool()> spend,
+    llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> projectedUses = {}) {
     const auto error = [](llvm::StringRef message) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
     };
@@ -77,8 +77,19 @@ static llvm::Expected<CallableObject> analyzeCallableObject(ctjs::CreateObjectOp
     // unknown calls and script reentry. Only __proto__ has an inherited setter.
     llvm::SmallVector<mlir::Value> aliases{object.getResult()};
     for (ctjs::LoadGlobalOp load : result.loads) { aliases.push_back(load.getResult()); }
-    for (mlir::Value alias : aliases) {
-        for (mlir::OpOperand & use : alias.getUses()) {
+    for (mlir::Value value : aliases) {
+        llvm::SmallVector<mlir::OpOperand *> uses;
+        if (projectedUses) {
+            uses = projectedUses(value);
+        } else {
+            for (mlir::OpOperand & use : value.getUses()) {
+                if (!spend()) { return error("DOM helper work budget exhausted"); }
+                uses.push_back(&use);
+            }
+        }
+        for (mlir::OpOperand * operand : uses) {
+            auto & use = *operand;
+            auto alias = use.get();
             if (!spend()) { return error("DOM helper work budget exhausted"); }
             auto * operation = use.getOwner();
             auto * definition = alias.getDefiningOp();
@@ -137,9 +148,10 @@ static llvm::Expected<CallableObject> analyzeCallableObject(ctjs::CreateObjectOp
     return result;
 }
 
-llvm::Expected<CallableObject> analyzeLocalCallableObject(ctjs::CreateObjectOp object,
-                                                          llvm::function_ref<bool()> spend) {
-    return analyzeCallableObject(object, {}, spend);
+llvm::Expected<CallableObject> analyzeLocalCallableObject(
+    ctjs::CreateObjectOp object, llvm::function_ref<bool()> spend,
+    llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> uses) {
+    return analyzeCallableObject(object, {}, spend, uses);
 }
 
 llvm::Expected<CallableObject> analyzeGlobalCallableObject(ctjs::StoreGlobalOp publication,

@@ -41,5 +41,8 @@
 // Uncalled slots (even pure ones), effects, callback/holder escape, replacement
 // and invalid later inputs refuse. Local slots can call fixed sibling M/F
 // captures after complete original identity, implicit-argument and typed proof;
-// repeated calls preserve JSON/URI fallbacks. Captured holder objects, unused
-// slots, changing helpers, escaping identities and callback effects refuse.
+// repeated calls preserve JSON/URI fallbacks. Class methods can capture the
+// fixed local holder identity, preserving repeated/different keys, DOM writes
+// and branch returns. Fixed local aliases retain the same identity. Changed
+// holders/slots, escapes, invalid later arguments, unused slots, broad JSON
+// result/String comparisons and unknown effects still refuse.
