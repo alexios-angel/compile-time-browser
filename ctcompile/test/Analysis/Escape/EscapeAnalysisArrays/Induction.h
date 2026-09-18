@@ -822,6 +822,96 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .reads = "a[0]=one",
              .exit = "actual -> {}"});
     }
+    for (const std::string kind : {"bitand", "bitor", "bitxor", "shl"}) {
+        const std::string right = kind == "bitand" ? "%operand" : "%zero";
+        const std::string operation =
+            "  %minus = ctjs.binary_static " + kind + " %operand, " + right + "\n";
+        const auto snapshot =
+            replace(negativeChild, makeNegativeUnit,
+                    "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"
+                    "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                    "  %magnitude = ctjs.get_property %seed[%name]\n"
+                    "  %operand = ctjs.unary neg %magnitude\n" +
+                        operation + "  ctjs.set_property %seed[%name], %zero\n");
+        run({.what = "signed bitwise snapshots retain their child after source length shrink",
+             .body = snapshot,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "signed bitwise snapshots discharge only unreturned children",
+             .body = replace(snapshot, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        const auto carried = replace(carriedNegative, makeNegative,
+                                     "  %operand = ctjs.unary neg %two\n" +
+                                         replace(operation, "%minus =", "%unit ="));
+        run({.what = "signed bitwise magnitudes survive exact CFG transport",
+             .body = carried,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[2]=three",
+             .exit = "added -> {}"});
+        reject("signed bitwise snapshots must remain identical on the backedge",
+               replace(carried, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        reject("repeated bitwise producers need independent invariance",
+               replace(replace(snapshot, operation, ""), "  %step =", operation + "  %step ="));
+        reject("negative bitwise facts never become own indices",
+               replace(snapshot, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
+        reject("signed bitwise snapshots cannot borrow an unknown operand",
+               replace(snapshot, kind + " %operand", kind + " %p"),
+               ArrayContentsFailure::UnknownValue);
+        for (const std::string input :
+             {"#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">", "#ctjs.number<4602678819172646912>",
+              "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
+              "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>"}) {
+            reject("signed bitwise inputs require exact bounded Numbers without coercion",
+                   replace(snapshot, "ctjs.unary neg %magnitude", "ctjs.constant " + input));
+        }
+    }
+    struct bitwise_case {
+        const char * kind;
+        const char * left;
+        const char * right;
+        const char * expected;
+    };
+    for (const auto & [kind, left, right, expected] :
+         {bitwise_case{"bitand", "13830554455654793216", "13835058055282163712",
+                       "13835058055282163712"}, // -1 & -2 = -2
+          bitwise_case{"bitand", "13974669643728551936", "13830554455654793216",
+                       "4607182418800017408"}, // -UINT32_MAX & -1 = 1
+          bitwise_case{"bitand", "4746794007248502784", "4751297606873776128",
+                       "13970166044103278592"}, // 2^31 & UINT32_MAX = -2^31
+          bitwise_case{"bitor", "13970166044103278592", "4746794007244308480",
+                       "13830554455654793216"}, // -2^31 | INT32_MAX = -1
+          bitwise_case{"bitor", "13974669643728551936", "0", "4607182418800017408"},
+          bitwise_case{"bitxor", "13830554455654793216", "13835058055282163712",
+                       "4607182418800017408"}, // -1 ^ -2 = 1
+          bitwise_case{"bitxor", "13970166044103278592", "4751297606873776128",
+                       "4746794007244308480"},
+          bitwise_case{"bitxor", "9223372036854775808", "0", "0"},
+          bitwise_case{"shl", "13830554455654793216", "13853072453791645696",
+                       "13830554455654793216"}, // -1 << -32 = -1
+          bitwise_case{"shl", "13830554455654793216", "13830554455654793216",
+                       "13970166044103278592"}, // -1 << -1 = -2^31
+          bitwise_case{"shl", "13970166044103278592", "4607182418800017408", "0"},
+          bitwise_case{"shl", "13974669643728551936", "13852790978814935040",
+                       "4611686018427387904"}, // -UINT32_MAX << -31 = 2
+          bitwise_case{"shl", "4751297606873776128", "4607182418800017408",
+                       "13835058055282163712"}}) {
+        run({.what = "signed bitwise snapshots retain exact ToInt32 bits and result identity",
+             .body = prefix + "  %left = ctjs.constant #ctjs.number<" + left +
+                     ">\n  %right = ctjs.constant #ctjs.number<" + right +
+                     ">\n  %expected = ctjs.constant #ctjs.number<" + expected +
+                     ">\n  %actual = ctjs.binary_static " + kind +
+                     " %left, %right {storage_test_id = \"actual\"}\n"
+                     "  %index = ctjs.binary sub %actual, %expected\n"
+                     "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one",
+             .exit = "actual -> {}"});
+    }
     const std::string makeSubUnit = "  %left = ctjs.unary plus %one\n"
                                     "  %magnitude = ctjs.unary plus %two\n"
                                     "  %minus = ctjs.binary sub %left, %magnitude\n";

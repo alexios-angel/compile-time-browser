@@ -664,6 +664,39 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
                    "    scf.yield %one : !ctjs.value\n"
                    "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
+    for (const std::string kind : {"bitand", "bitor", "bitxor", "shl"}) {
+        const std::string right = kind == "bitand" ? "%operand" : "%zero";
+        const std::string operation =
+            "  %unit = ctjs.binary_static " + kind + " %operand, " + right + "\n";
+        const auto carried = replace(carriedNegative, makeNegative,
+                                     "  %operand = ctjs.unary neg %one\n" + operation);
+        rows.push_back({.what = "signed bitwise snapshots survive reordered structured yields",
+                        .body = carried,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        const auto saved = replace(savedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                                   "  %operand = ctjs.unary neg %magnitude\n" + operation);
+        rows.push_back({.what = "structured bitwise snapshots survive source length shrink",
+                        .body = saved,
+                        .arrays = "a:[x,y]; seed:[]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured bitwise snapshots release only unreturned children",
+                        .body = replace(saved, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]; seed:[]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        reject("signed bitwise snapshots cannot change across structured yields",
+               replace(carried, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("bitwise snapshots cannot borrow Numbers from another structured predecessor",
+               replace(carried, "  %operand = ctjs.unary neg %one\n",
+                       "  %negative = ctjs.unary neg %one\n"
+                       "  %text = ctjs.constant #ctjs.string<\"-1\">\n"
+                       "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                       "    scf.yield %negative : !ctjs.value\n"
+                       "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
+    }
     const auto subSnapshot =
         replace(savedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
     rows.push_back(
