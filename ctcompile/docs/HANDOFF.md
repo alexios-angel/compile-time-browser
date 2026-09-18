@@ -15,6 +15,73 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Combined helper captures and literal BitNot latches, 2026-09-18 UTC
+
+Resumed clean **2c17b381** from the **19:20:02 AGENT-SYNC closure** and
+HANDOFF's combined M/filter-callee thread. Both agents' logs and unmerged branches
+were reviewed; the September 7 WIP is already an ancestor. No predecessor edits
+remained. A parallel agent audited the native proof; root completed fixture
+recommendations and a partial three-file escape draft after two agents reached
+service limits. No browser implementation or runtime semantics changed.
+
+**bb96fa31** shares the existing confined-callback proof between ordinary
+helper and method/slot capture censuses. Each original callee use still passes
+its own exact capture or callback checks. Callback bodies and source positions
+survive for complete typed DOM proof. Bounded compositions of original M and the
+Bootstrap dataset predicate now execute directly and through a class method
+capturing H; repeated calls preserve DOM write order. All **218 prior entries
+across five fixture dictionaries** are unchanged. Unknown effects, callback captures,
+identity escape, changing helpers, invalid inputs and uncalled slots still refuse.
+This is a bounded composition, not execution of full original H.
+
+**7cf800bc** proves one original literal BitNot loop latch through the same
+bounded ToUint32 complement used for ordinary unary snapshots. CFG and SCF
+preserve returned-child escape and result identity. Original property keys,
+zero/noncanonical/unknown strides, repeated nonliteral producers and final bounds
+retain their checks. Existing literal BitNot source bodies remain unchanged with
+updated expectations.
+
+Focused devbox validation: transaction **1/1 (4.27s; total 4.28s)**, host
+contract **1/1 (0.47s; total 0.48s)**, class DOM **1/1 (81.08s): 248
+Node/interpreter observations, 8 native executions, 1,818 refusals**, public
+class initialization **1/1 (199.38s)**. Arrays **1/1 (1.13s; total 1.14s)**; four
+selected escape oracles **4/4 (0.12s)**, zero soundness violations. New BitNot
+oracle: **30 observed sites / 9 sound / 9 of 19 precision**.
+Required formatting retains **26 existing diagnostics in nine HEAD-identical
+files**; changed C++/Python checks pass. Initial formatting caught the unfinished
+escape draft before root formatted it; the final count excludes those corrected
+lines. All eight tested source/test hashes match the devbox.
+Evidence: `/tmp/ctcompile-combined-callee/`.
+
+**Exact next:** complete original H.getDataAttributes needs dynamic dataset/output
+keys (`t.dataset[n]`, `e[i]`), its original loop and Unicode normalization. Prove
+every original unused H slot without inventing authority for its parameters;
+global holders also need wrapper publication. Preserve full H and W/W+r/W+r+H
+refusals (the last omits original s). W's Object.entries/destructuring/original
+s/RegExp/TypeError/spread remain before inheritance. Repeated nonliteral induction,
+broader conversions and part-25's backlog remain. Native Bootstrap, the application
+driver and the overall plan are unfinished.
+
+Exact targets/checks and skipped coverage:
+
+- Native build: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`: **8 actions**.
+- Escape build: `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **5 actions**.
+- Exact CTests: `ctcompile_exception_recovery`, `ctcompile_host_contract`,
+  `ctcompile_escape_analysis_arrays`. Exact lit cases:
+  `CTNative/Lowering/Objects/class-dom.mlir`, `class-initialization.mlir`, and
+  `Analysis/Escape/escape-claims/{bitnot-latch,primitive-unary-latch,signed-bitwise,negative-string}.test`.
+- `server.sh start` confirmed the devbox running; no network-rule change was
+  needed. Local new fixture syntax **11/11** and Node observations **12/12** pass.
+- Full CTest/compiler lit, complete DOM suites, broad corpus/native matrices,
+  WPT/test262, whole Bootstrap and independent dataset lifetime replay were
+  skipped. No bundle admission gain, full-suite pass or push is claimed.
+
+Inspected `native-output.cpp`: ordinary strings, vectors, optionals, RAII JSON
+values and existing ctbrowser attribute/dataset calls. The original predicate is
+a direct function passed to `filter_strings`; Script and dynamic-dispatch gates pass.
+
 ## Captured H objects and literal unary latches, 2026-09-18 UTC
 
 Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC closure** and its

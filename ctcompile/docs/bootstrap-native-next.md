@@ -1,5 +1,29 @@
 # What native Bootstrap needs next
 
+## Combined M/filter callbacks, 2026-09-18 UTC
+
+**bb96fa31** completes the combined callee-use proof from the previous handoff:
+a local slot may capture original M and retain the original dataset predicate,
+including through a class method capturing H. Each capture/callback use is proved;
+complete typed DOM proof still covers callback bodies and actual inputs. Direct,
+method and repeated-call/write-order specimens execute. Full original H remains
+refused. Parallel **7cf800bc** proves bounded literal BitNot latches.
+
+Focused transaction/contract/class-DOM/public-class checks pass; class DOM records
+**248 source observations, 8 native executions and 1,818 refusals**. Escape arrays
+and four selected oracles pass with zero violations; the new oracle has **30
+sites / 9 sound / 9 of 19 precision**. All eight tested hashes match the devbox;
+formatting retains 26 existing diagnostics in nine unchanged files. Exact targets,
+timings and skipped coverage are in [HANDOFF](HANDOFF.md). No full-suite, whole
+Bootstrap or bundle-admission measurement was taken.
+
+**Next:** prove original H.getDataAttributes dynamic dataset/output keys, loop and
+Unicode normalization, then every unused H slot without invented parameter
+authority. Global holders require wrapper publication. W's Object.entries,
+destructuring, original s, RegExp/TypeError and spread remain before inheritance.
+Preserve full-H and W/W+r/W+r+H refusals. Native Bootstrap and the application
+driver are unfinished.
+
 ## Captured H objects and literal unary latches, 2026-09-18 UTC
 
 Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC closure** and its
