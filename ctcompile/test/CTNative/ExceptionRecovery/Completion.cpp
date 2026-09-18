@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 92; ++control) {
+        for (unsigned control = 0; control < 104; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -643,6 +643,45 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                         "unused() { datasetKeys(this.element); this.element.unknown(); } ");
                 }
             }
+            if (control >= 92) {
+                source = R"js(function guarded(element) {
+                    const holder = {
+                        keys(t) { return Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig")).length; },
+                        read(t, key) { return t.getAttribute(key); }
+                    };
+                    class Shape { read() { return 'x'; } }
+                    const shape = new Shape();
+                    const count = holder.keys(element);
+                    const saved = holder.read(element, shape.read());
+                    return 0 < count && count < 2 && saved === null;
+                })js";
+                if (control == 93) {
+                    source.insert(source.find("keys(t)"), "unused() { return 'safe'; }, ");
+                }
+                if (control == 94) {
+                    source.insert(source.find("keys(t)"), "unused(t) { return unknown(t); }, ");
+                }
+                if (control == 95) {
+                    source.insert(source.find("keys(t)"), "unused() { return String({}); }, ");
+                }
+                if (control == 96) {
+                    source.insert(source.find("const count"), "holder.keys({}); ");
+                }
+                if (control == 97) {
+                    source.insert(source.find("const count"),
+                                  "holder.keys = function(t) { return 1; }; ");
+                }
+                if (control == 98) {
+                    source.insert(source.find("const count"),
+                                  "element.setAttribute('leak', holder); ");
+                }
+                if (control == 99) {
+                    source.replace(source.find("t.startsWith(\"bs\")"), 18, "unknown(t)");
+                }
+                if (control == 100) {
+                    source.insert(source.find("const count"), "holder.keys(element); ");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -667,23 +706,26 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control >= 70) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
             if (control >= 82) {
                 request.initialIntrinsics = {"__ctbrowser_class_defined", "Object", "Array"};
-                if (control != 89) { request.initialIntrinsics.push_back("String"); }
-                if (control != 90) { request.datasetParameters = {0}; }
+                if (control != 89 && control != 101) {
+                    request.initialIntrinsics.push_back("String");
+                }
+                if (control != 90 && control != 102) { request.datasetParameters = {0}; }
             }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
-            auto error =
-                ctnative::prepareDOMEntry(*candidate, request,
-                                          control == 3 || control == 32 || control == 55 ||
-                                                  control == 69 || control == 81 || control == 91
-                                              ? 0
-                                          : control == 4 || control == 17 ? 1000
-                                          : control >= 47                 ? 1000000
-                                                                          : 100000);
+            auto error = ctnative::prepareDOMEntry(*candidate, request,
+                                                   control == 3 || control == 32 || control == 55 ||
+                                                           control == 69 || control == 81 ||
+                                                           control == 91 || control == 103
+                                                       ? 0
+                                                   : control == 4 || control == 17 ? 1000
+                                                   : control >= 47                 ? 1000000
+                                                                                   : 100000);
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
-                control != 60 && control != 70 && control != 71 && control != 82) {
+                control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
+                control != 100) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }

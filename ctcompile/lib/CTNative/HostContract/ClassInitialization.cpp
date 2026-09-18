@@ -30,6 +30,7 @@ struct classInitialization {
     llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> globalHolderReads;
     llvm::DenseSet<mlir::Operation *> globalHolderLoads;
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
+    llvm::MapVector<mlir::Operation *, CallableObject> localDOMHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
@@ -187,6 +188,44 @@ struct classInitialization {
         }
         return result;
     }
+    bool helperCallbacks(ctjs::FuncOp helper) {
+        auto & body = helper.getBody().front();
+        for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
+            if (!step()) { return false; }
+            auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+            auto function = target(callback);
+            if (!callback || use.getOperandNumber() != 0 || !function ||
+                !callback.getUpvalues().empty() || function.getUpvalueCount() != 0 ||
+                llvm::any_of(
+                    function.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
+                    [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+                return refuse("captured helper observes its implicit callee");
+            }
+            for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
+                auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                 : ctjs::GetPropertyOp{};
+                const bool replacement = call && read && callbackUse.getOperandNumber() == 3 &&
+                                         call.getArgs().size() == 2 &&
+                                         ctjs::constantKey(read.getKey()) == "replace";
+                const bool filter =
+                    call && read && callbackUse.getOperandNumber() == 2 &&
+                    call.getArgs().size() == 1 && ctjs::constantKey(read.getKey()) == "filter" &&
+                    function.getBody().front().getNumArguments() == ctjs::implicit_arguments + 1 &&
+                    call->getBlock() == callback->getBlock() && callback->isBeforeInBlock(call);
+                if ((!replacement && !filter) || read.getObject() != call.getReceiver()) {
+                    return refuse("captured helper callback escapes its intrinsic call");
+                }
+            }
+            // Retain the original callback for the shared no-match or typed
+            // Array filter proof, including its complete body and uses.
+            helpers.insert(function);
+            domEntryHelpers.insert(function);
+        }
+        return true;
+    }
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
                         llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry) {
         auto fn = target(method);
@@ -211,43 +250,7 @@ struct classInitialization {
                     "class method capture is not its constructor or an inert sibling helper");
             }
             auto & body = helper.getBody().front();
-            for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
-                if (!step()) { return false; }
-                auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-                auto function = target(callback);
-                if (!callback || use.getOperandNumber() != 0 || !function ||
-                    !callback.getUpvalues().empty() || function.getUpvalueCount() != 0 ||
-                    llvm::any_of(
-                        function.getBody().front().getArguments().take_front(
-                            ctjs::implicit_arguments),
-                        [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
-                    return refuse("captured helper observes its implicit callee");
-                }
-                for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
-                    if (!step()) { return false; }
-                    if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
-                    auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
-                    auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                                     : ctjs::GetPropertyOp{};
-                    const bool replacement = call && read && callbackUse.getOperandNumber() == 3 &&
-                                             call.getArgs().size() == 2 &&
-                                             ctjs::constantKey(read.getKey()) == "replace";
-                    const bool filter = call && read && callbackUse.getOperandNumber() == 2 &&
-                                        call.getArgs().size() == 1 &&
-                                        ctjs::constantKey(read.getKey()) == "filter" &&
-                                        function.getBody().front().getNumArguments() ==
-                                            ctjs::implicit_arguments + 1 &&
-                                        call->getBlock() == callback->getBlock() &&
-                                        callback->isBeforeInBlock(call);
-                    if ((!replacement && !filter) || read.getObject() != call.getReceiver()) {
-                        return refuse("captured helper callback escapes its intrinsic call");
-                    }
-                }
-                // Retain the original callback for the shared no-match or typed
-                // Array filter proof, including its complete body and uses.
-                helpers.insert(function);
-                domEntryHelpers.insert(function);
-            }
+            if (!helperCallbacks(helper)) { return false; }
             if (!unusedReceiver(helper) || !body.getArgument(ctjs::arg_new_target).use_empty()) {
                 return refuse("captured helper observes its implicit receiver or new.target");
             }
@@ -299,7 +302,7 @@ struct classInitialization {
         if (!method.getUpvalues().empty()) { capturedMethods.push_back(method); }
         return true;
     }
-    ctjs::CreateClosureOp sourceClosure(mlir::Value value) {
+    ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool domEntry = false) {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
         if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
             if (auto closure = globalHolderReads.lookup(value)) { return closure; }
@@ -313,15 +316,21 @@ struct classInitialization {
                 llvm::consumeError(proof.takeError());
                 return {};
             }
+            const bool domLocal = domEntry && object;
             for (ctjs::SetPropertyOp store : proof->stores) {
                 if (!step() || !ctjs::ordinaryKey(store.getKey())) { return {}; }
                 auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
                 auto fn = target(closure);
                 if (!fn || !closure.getUpvalues().empty()) { return {}; }
                 auto & block = fn.getBody().front();
-                if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
-                    !block.getArgument(ctjs::arg_new_target).use_empty() ||
-                    !block.getArgument(ctjs::arg_callee).use_empty()) {
+                if (domLocal) {
+                    if (!helperCallbacks(fn) || !unusedReceiver(fn) ||
+                        !block.getArgument(ctjs::arg_new_target).use_empty()) {
+                        return {};
+                    }
+                } else if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
+                           !block.getArgument(ctjs::arg_new_target).use_empty() ||
+                           !block.getArgument(ctjs::arg_callee).use_empty()) {
                     return {};
                 }
                 for (mlir::OpOperand & use : closure.getResult().getUses()) {
@@ -342,7 +351,7 @@ struct classInitialization {
                         call.getReceiver() != loaded.getObject()) {
                         return {};
                     }
-                    if (publication) {
+                    if (publication || domLocal) {
                         const auto parameters =
                             target(closure).getBody().front().getNumArguments() -
                             ctjs::implicit_arguments;
@@ -354,10 +363,19 @@ struct classInitialization {
                 }
                 if (loaded == read) { selected = closure; }
             }
-            // All bodies, including unused slots, still face the complete effect
-            // census below. This proof only establishes identity and receiver use.
+            // Identity and receiver proof only. Local DOM slots remain intact
+            // for the invocation/type census; other holders keep the source
+            // effect census below, including every unused slot.
             for (ctjs::SetPropertyOp store : proof->stores) {
-                helpers.insert(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+                auto fn = target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+                helpers.insert(fn);
+                if (domLocal) {
+                    // Keep every original local slot for DOM helper expansion.
+                    // That proof refuses a slot without a source invocation;
+                    // only actual calls can supply its argument authority.
+                    domEntryHelpers.insert(fn);
+                    needsDOMMethodProof = true;
+                }
             }
             if (publication) {
                 for (auto [loaded, closure] : proof->reads) {
@@ -365,6 +383,8 @@ struct classInitialization {
                 }
                 for (ctjs::LoadGlobalOp loaded : proof->loads) { globalHolderLoads.insert(loaded); }
                 globalHolders.try_emplace(publication, std::move(*proof));
+            } else if (domLocal) {
+                localDOMHolders.try_emplace(object, std::move(*proof));
             }
             return selected;
         }
@@ -909,7 +929,8 @@ struct classInitialization {
             if (!direct && !method) { return mlir::WalkResult::advance(); }
             if (!step()) { return mlir::WalkResult::interrupt(); }
             auto callee = direct ? direct.getCalleeValue() : method.getCallee();
-            auto closure = sourceClosure(callee);
+            auto closure =
+                sourceClosure(callee, domEntry && op->getParentOfType<ctjs::FuncOp>() == entry);
             auto fn = target(closure);
             if (!fn || constructors.contains(fn) || methods.contains(fn) || getters.contains(fn)) {
                 return mlir::WalkResult::advance();
@@ -1092,7 +1113,8 @@ struct classInitialization {
             auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
             refuse("class initialization source contains an unknown call, binding or reflective "
                    "effect" +
-                   (load ? " (global \"" + load.getName().str() + "\")" : std::string{}));
+                   (load ? " (global \"" + load.getName().str() + "\")"
+                         : " (op " + op->getName().getStringRef().str() + ")"));
             return mlir::WalkResult::interrupt();
         });
         if (walked.wasInterrupted()) { return false; }
@@ -1369,10 +1391,10 @@ struct classInitialization {
         return true;
     }
 
-    void expandGlobalHolders() {
-        // The source proof checked every slot body and all aliases before any
-        // mutation. These helpers observe no implicit argument and capture
-        // nothing, so the holder needs no representation at their direct calls.
+    void expandHolders() {
+        // Every alias and implicit-argument use was checked before mutation.
+        // Local DOM slots remain as functions until the complete invocation/type
+        // proof; no unused body may disappear merely because its holder does.
         llvm::SmallVector<ctjs::FuncOp> targets;
         const auto eraseRooted = [](mlir::Operation * operation) {
             for (mlir::Operation * root : llvm::make_early_inc_range(operation->getUsers())) {
@@ -1383,8 +1405,9 @@ struct classInitialization {
             }
             operation->erase();
         };
-        for (auto & [publication, holder] : globalHolders) {
-            auto object = llvm::cast<ctjs::StoreGlobalOp>(publication).getValue().getDefiningOp();
+        const auto expand = [&](mlir::Operation * owner, CallableObject & holder) {
+            auto publication = llvm::dyn_cast<ctjs::StoreGlobalOp>(owner);
+            auto * object = publication ? publication.getValue().getDefiningOp() : owner;
             for (auto [read, closure] : holder.reads) {
                 auto function = target(closure);
                 for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
@@ -1417,13 +1440,16 @@ struct classInitialization {
                 eraseRooted(closure);
             }
             for (ctjs::LoadGlobalOp load : holder.loads) { eraseRooted(load); }
-            publication->erase();
+            if (publication) { publication.erase(); }
             eraseRooted(object);
-        }
-        // All numeric closures are gone and all holder reads have been rewritten,
-        // including reads in unused bodies. Only now can an uncalled slot go away.
+        };
+        for (auto & [publication, holder] : globalHolders) { expand(publication, holder); }
+        for (auto & [object, holder] : localDOMHolders) { expand(object, holder); }
+        // Only strict source-census slots may disappear here. DOM slots still
+        // need original calls, including complete argument and effect proof.
         for (ctjs::FuncOp function : targets) {
-            if (mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
+            if (!domEntryHelpers.contains(function) &&
+                mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
                 mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
                 function.erase();
             }
@@ -1438,7 +1464,7 @@ struct classInitialization {
             (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             function.getBody().takeBody(copy->getBody());
         }
-        expandGlobalHolders();
+        expandHolders();
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
         for (auto [read, target] : getterReads) { reads[target].push_back(read); }
         for (ctjs::FuncOp target : getterOrder) {

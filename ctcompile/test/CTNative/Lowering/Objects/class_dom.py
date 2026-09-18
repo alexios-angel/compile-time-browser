@@ -803,6 +803,67 @@ FULL_H = BOOTSTRAP_M + strings.BOOTSTRAP_F + BOOTSTRAP_H + """class Shape {
   return typeof new Shape(element).read() === 'object';
 """
 FILTER_REFUSALS["class_filter_full_h"] = FULL_H
+HOLDER_CLASS = (
+    """const holder = {
+    keys(t) { return Object.keys(t.dataset).filter("""
+    + FILTER_PREDICATE
+    + """).length; },
+    read(t, key) { return t.getAttribute(key); }
+  };
+  """
+    + CLASS
+    + """  const count = holder.keys(element);
+  const saved = holder.read(element, shape.read());
+  return 0 < count && count < 2 && saved === null;
+"""
+)
+FILTER_CASES.update(
+    {
+        "class_holder_filter": (HOLDER_CLASS, "1000"),
+        "class_holder_filter_multiple": (
+            HOLDER_CLASS.replace("const count =", "holder.keys(element); const count ="),
+            "1000",
+        ),
+    }
+)
+FILTER_REFUSALS.update(
+    {
+        "class_holder_conditional_use": HOLDER_CLASS.replace(
+            "  const saved = holder.read(element, shape.read());\n", ""
+        ).replace("saved === null", "holder.read(element, shape.read()) === null"),
+        "class_holder_unused": HOLDER_CLASS.replace(
+            "    keys(t)", "    unused() { return 'safe'; },\n    keys(t)"
+        ),
+        "class_holder_unused_effect": HOLDER_CLASS.replace(
+            "    keys(t)", "    unused(t) { return unknown(t); },\n    keys(t)"
+        ),
+        "class_holder_unused_coercion": HOLDER_CLASS.replace(
+            "    keys(t)", "    unused() { return String({}); },\n    keys(t)"
+        ),
+        "class_holder_unknown": HOLDER_CLASS.replace('t.startsWith("bs")', "unknown(t)"),
+        "class_holder_capture": HOLDER_CLASS.replace('t.startsWith("bs")', "t === element"),
+        "class_holder_index": HOLDER_CLASS.replace(FILTER_PREDICATE, "(t, i) => i === 0"),
+        "class_holder_this": HOLDER_CLASS.replace(FILTER_PREDICATE, "function(t) { return this; }"),
+        "class_holder_escape": HOLDER_CLASS.replace(
+            "const count =", "element.setAttribute('leak', holder); const count ="
+        ),
+        "class_holder_callback_escape": HOLDER_CLASS.replace(
+            "return Object.keys(t.dataset).filter(" + FILTER_PREDICATE + ").length;",
+            "const callback = " + FILTER_PREDICATE + '; t.setAttribute("leak", callback); '
+            "return Object.keys(t.dataset).filter(callback).length;",
+        ),
+        "class_holder_replaced": HOLDER_CLASS.replace(
+            "const count =", "holder.keys = function(t) { return 1; }; const count ="
+        ),
+        "class_holder_later_input": HOLDER_CLASS.replace(
+            "const count =", "holder.keys({}); const count ="
+        ),
+        "class_holder_detached": HOLDER_CLASS.replace(
+            "const count = holder.keys(element);",
+            "const read = holder.keys; const count = read(element);",
+        ),
+    }
+)
 FILTER_IDENTITIES = ["Object", "Array", "String"]
 CLASS_CASES.update(FILTER_CASES)
 CLASS_REFUSALS.update(FILTER_REFUSALS)

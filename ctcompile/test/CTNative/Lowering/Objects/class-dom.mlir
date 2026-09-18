@@ -36,3 +36,7 @@
 // Captured dataset filters preserve the original Bootstrap predicate and each
 // call's callback enclosure. Escapes, implicit arguments and unknown effects
 // refuse; full original H retains its unused-holder-slot boundary.
+// Entry-local callable holders retain all original slot bodies for the shared
+// DOM invocation and typed proof, including original dataset-filter callbacks.
+// Uncalled slots (even pure ones), effects, callback/holder escape, replacement
+// and invalid later inputs refuse; global holders and local captures stay strict.
