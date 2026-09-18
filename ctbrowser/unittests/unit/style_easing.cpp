@@ -97,6 +97,13 @@ void test_interpolation() {
           "calc(75% - 17.5px)");
     CHECK(interpolate_text("opacity", "0", "1", 0.25, context) == "0.25");
     CHECK(interpolate_text("z-index", "-1", "0", 0.5, context) == "0");
+    CHECK(interpolate_text("z-index", "2", "4", -2, context) == "-2");
+    // Positive integer properties clamp after rounding, including extrapolation.
+    for (const auto property : {"column-count", "orphans", "widows"}) {
+        CHECK(interpolate_text(property, "10", "20", -1, context) == "1");
+        CHECK(interpolate_text(property, "10", "20", -2, context) == "1");
+        CHECK(interpolate_text(property, "10", "20", 0.05, context) == "11");
+    }
     CHECK(interpolate_text("width", "0px", "100px", -0.5, context) == "0px");
     CHECK(interpolate_text("font-weight", "100", "900", 2, context) == "1000");
     CHECK(interpolate_text("font-weight", "100", "900", -1, context) == "1");
