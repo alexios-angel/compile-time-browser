@@ -259,6 +259,61 @@ function forwarded() {
 }
 var a = forwarded();
 
+// Hoisted declarations use the same borrow proof across every named caller.
+//--- declared-forwarded.js
+function read(value) { return value.text.length; }
+function forward(value) { return read(value); }
+function declared() {
+    var first = {text: "x"}, second = {text: "three"};
+    return forward(first) * 100 + forward(second) * 10 + read(first);
+}
+var a = declared();
+
+//--- declared-saved.js
+function read(value) {
+    var saved = value.text;
+    value.text = "changed";
+    return saved === "a\0b" ? saved.length * 10 + value.text.length : 0;
+}
+function forward(value) { return read(value); }
+function declared() {
+    var value = {text: "a\0b"};
+    return forward(value) + (value.text === "changed" ? 100 : 0);
+}
+var a = declared();
+
+// A caller in another function contributes its actual argument too.
+//--- declared-mixed-actual.js
+function read(value) { return value.text === void 0 ? 1 : 2; }
+function forward(value) { return read(value); }
+var a = read({text: "owned"}) * 10 + forward(9);
+
+//--- declared-short-call.js
+function read(value) { return value === void 0 ? 1 : value.text.length; }
+function forward(value) { return read(value); }
+var a = forward({text: "owned"}) * 10 + forward();
+
+//--- declared-callable-escape.js
+function read(value) { return value.text.length; }
+var escaped = read;
+var a = read({text: "owned"});
+
+//--- declared-replaced.js
+function read(value) { return value.text.length; }
+read = function(value) { return 9; };
+var a = read({text: "owned"});
+
+//--- declared-alias-delete.js
+function read(value, alias) {
+    delete alias.text;
+    return value.text === void 0 ? 1 : 2;
+}
+function declared() {
+    var value = {text: "owned"};
+    return read(value, value);
+}
+var a = declared();
+
 // The saved String must own its bytes even across a forwarded mutation.
 //--- forwarded-saved.js
 function forwarded() {

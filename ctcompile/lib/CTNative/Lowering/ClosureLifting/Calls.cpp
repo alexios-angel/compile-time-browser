@@ -32,6 +32,10 @@ ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
         return call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
     }
     if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+        if (auto load = direct.getCalleeValue().getDefiningOp<ctjs::LoadGlobalOp>()) {
+            auto made = objectArgumentDeclarations.lookup(load.getName());
+            return made && targetOf(made) == direct.getTarget() ? made : ctjs::CreateClosureOp{};
+        }
         if (auto made = direct.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>()) {
             return targetOf(made) == direct.getTarget() ? made : ctjs::CreateClosureOp{};
         }

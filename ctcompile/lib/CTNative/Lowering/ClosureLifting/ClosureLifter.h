@@ -600,9 +600,9 @@ struct closureLifter {
     //
     // THE CONDITIONS, each a named refusal when it fails:
     //
-    //  1. THE CALLEE IS ONE FUNCTION THIS REWRITE IS ABOUT TO MAKE DIRECT -
-    //     a `ctjs.create_closure` made here whose every use is a call of it.
-    //     Anything else has no call site to put an address at.
+    //  1. THE CALLEE IS ONE CLOSED FUNCTION - a local closure used only as a
+    //     callee, or a unique hoisted declaration with closed direct calls.
+    //     Every symbolic caller participates in the same argument census.
     //  2. EVERY CALL PASSES A CLOSED OBJECT OR ANOTHER PROVED BORROW. One
     //     parameter is one C++ type;
     //     a position that is a literal at one site and a number at another has
@@ -623,6 +623,7 @@ struct closureLifter {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<unsigned, 2>> objectSlotsOf;
     // One immutable symbol census, consumed only before the first lift.
     llvm::StringMap<llvm::SmallVector<mlir::Operation *, 2>> objectArgumentSymbolUsers;
+    llvm::StringMap<ctjs::CreateClosureOp> objectArgumentDeclarations;
     bool completeObjectArgumentSymbols = false;
     llvm::SmallVector<closureCall> objectArgumentCalls(ctjs::CreateClosureOp c);
     bool slotIsACandidate(ctjs::CreateClosureOp c, unsigned j);
