@@ -873,6 +873,60 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                                    "#ctjs.number<4751297606873776128>"),
                            "[%one, %x]", "[%one, %x, %one]"),
                    "^header(%a, %zero, %zero", "^header(%a, %magnitude, %zero"));
+    for (const std::string operation : {"div", "mod"}) {
+        const auto divisor = operation == "div" ? "%one" : "%two";
+        const std::string makeResult = "  %signedResult = ctjs.binary " + operation + " %minus, " +
+                                       divisor + " {storage_test_id = \"signedResult\"}\n";
+        const auto source =
+            replace(replace(savedSub, "  cf.br ^header", makeResult + "  cf.br ^header"),
+                    "sub %i, %minus", "sub %i, %signedResult");
+        for (const auto & body :
+             {source,
+              replace(source, makeResult,
+                      "  %divisor = ctjs.unary neg " + std::string(divisor) + "\n" +
+                          replace(makeResult, ", " + std::string(divisor), ", %divisor"))}) {
+            const auto signedBody = operation == "div" && body != source
+                                        ? replace(body, "binary sub %i, %signedResult",
+                                                  "binary_static add %i, %signedResult")
+                                        : body;
+            run({.what = "signed division and remainder keep the original snapshot and child",
+                 .body = signedBody,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "signed division and remainder release only unreturned children",
+                 .body = replace(signedBody, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+        }
+        reject("negative quotients and remainders cannot supply own indices",
+               replace(source, "%base[%i]", "%base[%signedResult]"),
+               ArrayContentsFailure::UnknownIndex);
+        reject("repeated division and remainder need independent invariance",
+               replace(replace(source, makeResult, ""), "  %step =", makeResult + "  %step ="));
+        reject("signed division and remainder require a nonzero divisor",
+               replace(source, ", " + std::string(divisor) + " {storage_test_id",
+                       ", %zero {storage_test_id"));
+        reject("signed division and remainder cannot borrow coercible Strings",
+               replace(source, makeResult,
+                       "  %divisor = ctjs.constant #ctjs.string<\"1\">\n" +
+                           replace(makeResult, ", " + std::string(divisor), ", %divisor")));
+        reject("signed division and remainder cannot borrow an unknown operand",
+               replace(source, ", " + std::string(divisor) + " {storage_test_id",
+                       ", %p {storage_test_id"),
+               ArrayContentsFailure::UnsupportedOperation);
+        if (operation == "div") {
+            run({.what = "a positive Number divided by a negative snapshot keeps a negative stride",
+                 .body = replace(source, "div %minus, %one", "div %one, %minus"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            reject("signed division needs an integral quotient",
+                   replace(source, "div %minus, %one", "div %minus, %two"));
+        }
+    }
     const std::string factor = "  %factor = ctjs.unary plus %one\n";
     const std::string product = "  %product = ctjs.binary mul %minus, %factor "
                                 "{storage_test_id = \"product\"}\n";

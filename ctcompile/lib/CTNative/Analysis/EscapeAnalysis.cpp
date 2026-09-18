@@ -1709,15 +1709,29 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Div ||
                     binary.getKind() == ctjs::BinaryKind::Mod) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    const bool remainder = binary.getKind() == ctjs::BinaryKind::Mod;
+                    const bool negative = remainder ? !a : a.has_value() != b.has_value();
+                    if (!a) {
+                        a = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                       : boundedNumber(lhs, true);
+                    }
+                    if (!b) {
+                        b = right.negativeIntegerNumber ? right.negativeIntegerNumber
+                                                        : boundedNumber(rhs, true);
+                    }
                     // Bounded integral operands give an exact remainder; division
-                    // also needs zero remainder. Keep the original signed zero.
-                    if (a && b && *b != 0 &&
-                        (binary.getKind() == ctjs::BinaryKind::Mod || *a % *b == 0)) {
+                    // also needs zero remainder. Mod keeps the dividend's sign,
+                    // regardless of divisor sign. Keep the original signed zero.
+                    if (a && b && *b != 0 && (remainder || *a % *b == 0)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber =
-                            binary.getKind() == ctjs::BinaryKind::Mod ? *a % *b : *a / *b;
+                        const auto magnitude = remainder ? *a % *b : *a / *b;
+                        if (negative && magnitude != 0) {
+                            result.negativeIntegerNumber = magnitude;
+                        } else {
+                            result.integerNumber = magnitude;
+                        }
                     }
                 }
                 state.values[binary.getResult()] = result;

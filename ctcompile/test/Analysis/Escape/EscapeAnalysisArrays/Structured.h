@@ -707,6 +707,31 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                opcode == "binary" ? ArrayContentsFailure::UnsupportedOperation
                                   : ArrayContentsFailure::UnknownValue);
     }
+    for (const std::string operation : {"div", "mod"}) {
+        const std::string makeResult =
+            "  %unit = ctjs.binary " + operation +
+            (operation == "div" ? " %negative, %one\n" : " %negative, %two\n");
+        const auto source = replace(replace(savedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                                            "  %negative = ctjs.unary neg %magnitude\n"),
+                                    "  ctjs.set_property %seed[%name], %zero\n",
+                                    "  ctjs.set_property %seed[%name], %zero\n"
+                                    "  %two = ctjs.binary add %one, %one\n" +
+                                        makeResult);
+        rows.push_back(
+            {.what = "structured signed division and remainder retain pre-shrink Numbers",
+             .body = source,
+             .arrays = "a:[x,y]; seed:[]",
+             .reads = "a[0]=x; a[1]=y",
+             .exit = "y -> {y}"});
+        rows.push_back(
+            {.what = "structured signed division and remainder release unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[x,y]; seed:[]",
+             .reads = "a[0]=x; a[1]=y",
+             .exit = "zero -> {}"});
+        reject("repeated structured division and remainder need independent invariance",
+               replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step ="));
+    }
     const std::string makeProduct = "  %negative = ctjs.unary neg %magnitude\n"
                                     "  %unit = ctjs.binary mul %negative, %one\n";
     const auto carriedProduct =

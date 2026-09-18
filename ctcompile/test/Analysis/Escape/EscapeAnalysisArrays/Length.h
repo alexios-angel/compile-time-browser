@@ -725,12 +725,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
              .exit = "a -> {a}"});
     }
     for (const std::string literal : {"#ctjs.number<0>",
-                                      "#ctjs.number<9223372036854775808>",  // -0
-                                      "#ctjs.number<4602678819172646912>",  // 0.5
-                                      "#ctjs.number<13830554455654793216>", // -1
-                                      "#ctjs.number<4751297606875873280>",  // 2^32
-                                      "#ctjs.number<9218868437227405312>",  // infinity
-                                      "#ctjs.number<9221120237041090560>",  // NaN
+                                      "#ctjs.number<9223372036854775808>", // -0
+                                      "#ctjs.number<4602678819172646912>", // 0.5
+                                      "#ctjs.number<4751297606875873280>", // 2^32
+                                      "#ctjs.number<9218868437227405312>", // infinity
+                                      "#ctjs.number<9221120237041090560>", // NaN
                                       "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
                                       "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
         run({.what = "remainder needs an exact nonzero bounded divisor without coercion",
@@ -738,6 +737,23 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                      "\n  %index = ctjs.binary mod %zero, %divisor\n" + indexed,
              .failure = ArrayContentsFailure::UnknownIndex});
     }
+    for (const std::string operation : {"div", "mod"}) {
+        run({.what = "zero with a negative divisor keeps its original result and exact index",
+             .body = values +
+                     "  %divisor = ctjs.constant #ctjs.number<13830554455654793216>\n"
+                     "  %index = ctjs.binary " +
+                     operation + " %zero, %divisor\n" + indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "a remainder keeps the positive dividend sign despite a negative divisor",
+         .body = values + one +
+                 "  %divisor = ctjs.constant #ctjs.number<13835058055282163712>\n"
+                 "  %remainder = ctjs.binary mod %one, %divisor\n"
+                 "  %index = ctjs.binary sub %remainder, %one\n" +
+                 indexed,
+         .arrays = "a:[zero]",
+         .exit = "a -> {a}"});
     run({.what = "an out-of-range numerator cannot lend evidence to a later zero remainder",
          .body = values + one +
                  "  %bound = ctjs.constant #ctjs.number<4751297606875873280>\n"
@@ -1438,12 +1454,15 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                               "\n  %wanted = " + producer +
                               "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n";
             if (literal == "#ctjs.number<13830554455654793216>" &&
-                producer == "ctjs.binary mul %input, %zero") {
-                run({.what = "a negative Number times zero clears length as signed zero",
+                (producer == "ctjs.binary mul %input, %zero" ||
+                 producer == "ctjs.binary div %input, %input" ||
+                 producer == "ctjs.binary mod %input, %input")) {
+                const bool retained = producer == "ctjs.binary div %input, %input";
+                run({.what = "signed Number arithmetic preserves the exact zero or unit length",
                      .body = body,
-                     .arrays = "a:[]",
-                     .exit = "a -> {a}"},
-                    "x");
+                     .arrays = retained ? "a:[x]" : "a:[]",
+                     .exit = retained ? "a -> {a,x}" : "a -> {a}"},
+                    retained ? "" : "x");
                 continue;
             }
             run({.what = "a computed shrink needs exact Number operands without coercion",
@@ -1860,11 +1879,14 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
-        // A direct negative offset now proves growth, which still cannot
-        // authorize holes or discharge the array's retained child.
+        // A negative Sub offset proves growth, never holes or release.
+        // A nonzero negative divisor keeps these zero results exact.
         inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub &&
                         binary.getRhs().getDefiningOp<ctjs::ConstantOp>() == literal
                     ? ArrayContentsFailure::MissingElement
+                : binary && (binary.getKind() == ctjs::BinaryKind::Div ||
+                             binary.getKind() == ctjs::BinaryKind::Mod)
+                    ? ArrayContentsFailure::None
                     : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
