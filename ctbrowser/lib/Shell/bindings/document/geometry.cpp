@@ -203,6 +203,15 @@ value dom_bindings::make_dom_quad(context & cx, const rect & r) {
                      make_dom_point(cx, r.x, r.y + r.height));
 }
 
+value dom_bindings::make_dom_quad(context & cx, const rect & r, const transform & matrix) {
+    const auto corner = [&](float x, float y) {
+        const point p = matrix.apply(x, y);
+        return make_dom_point(cx, p.x, p.y);
+    };
+    return quad_with(cx, corner(r.x, r.y), corner(r.right(), r.y), corner(r.right(), r.bottom()),
+                     corner(r.x, r.bottom()));
+}
+
 void dom_bindings::install_geometry_interfaces(context & cx) {
     // DOMPointReadOnly and DOMPoint: (x, y, z, w) with the defaults (0, 0, 0,
     // 1), `fromPoint`, `matrixTransform` for an identity, `toJSON`.
@@ -348,33 +357,18 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
 // A box of `node` in viewport coordinates - §10's "the box of node" with the
 // four box keywords - or nothing when the node has no box. The Document
 // names the viewport, and a Text node its first fragment.
-std::optional<rect> dom_bindings::box_rect_of(context & cx, value node, std::string_view box) {
-    (void)cx;
+std::optional<dom_bindings::box_geometry> dom_bindings::box_geometry_of(value node,
+                                                                        std::string_view box) {
     if (is_a_document(node)) {
-        return rect{0, 0, static_cast<float>(viewport_width_),
-                    static_cast<float>(viewport_height_)};
+        return box_geometry{
+            rect{0, 0, static_cast<float>(viewport_width_), static_cast<float>(viewport_height_)},
+            transform{}};
     }
     dom_bindings * owner = owner_of(node);
     if (owner == nullptr) { return std::nullopt; }
-    const node_id id = owner->handle_of(node);
     owner->flush_layout();
-    const located at = owner->locate(id, true);
-    if (at.f == nullptr) { return std::nullopt; }
-    rect out = at.abs;
-    const layout::resolved_edges e = layout::edges_of(*at.f);
-    if (box == "margin") {
-        out = rect{out.x - at.f->margin_left, out.y - at.f->margin_top,
-                   out.width + at.f->margin_left + at.f->margin_right,
-                   out.height + at.f->margin_top + at.f->margin_bottom};
-    } else if (box == "padding" || box == "content") {
-        const float left = e.border_left + (box == "content" ? e.pad_left : 0);
-        const float top = e.border_top + (box == "content" ? e.pad_top : 0);
-        const float right = e.border_right + (box == "content" ? e.pad_right : 0);
-        const float bottom = e.border_bottom + (box == "content" ? e.pad_bottom : 0);
-        out = rect{out.x + left, out.y + top, std::max(0.0f, out.width - left - right),
-                   std::max(0.0f, out.height - top - bottom)};
-    }
-    return out;
+    const auto boxes = owner->client_boxes_of(owner->handle_of(node), box);
+    return boxes.empty() ? std::nullopt : std::optional{boxes.front()};
 }
 
 void dom_bindings::install_document_geometry(context & cx, script::object_object & doc) {
@@ -388,7 +382,7 @@ void dom_bindings::install_document_geometry(context & cx, script::object_object
             const value options = args.size() > 2 ? args[2] : value::undefined();
             std::string from_box = dict_string(c, options, "fromBox");
             if (from_box.empty()) { from_box = "border"; }
-            const std::optional<rect> origin = box_rect_of(c, from, from_box);
+            const auto origin = box_geometry_of(from, from_box);
             if (!origin) {
                 throw_dom_exception(c, "NotFoundError",
                                     std::string{name} + ": the node has no box");
@@ -397,23 +391,28 @@ void dom_bindings::install_document_geometry(context & cx, script::object_object
             const value given = args.empty() ? value::undefined() : args[0];
             const std::string_view which = name;
             if (which == "convertPointFromNode") {
-                return make_dom_point(c, number_of(c, given, "x") + origin->x,
-                                      number_of(c, given, "y") + origin->y);
+                const point p =
+                    origin->to_viewport.apply(static_cast<float>(number_of(c, given, "x")),
+                                              static_cast<float>(number_of(c, given, "y")));
+                return make_dom_point(c, p.x, p.y);
             }
             if (which == "convertRectFromNode") {
                 return make_dom_quad(c,
-                                     rect{static_cast<float>(number_of(c, given, "x") + origin->x),
-                                          static_cast<float>(number_of(c, given, "y") + origin->y),
+                                     rect{static_cast<float>(number_of(c, given, "x")),
+                                          static_cast<float>(number_of(c, given, "y")),
                                           static_cast<float>(number_of(c, given, "width")),
-                                          static_cast<float>(number_of(c, given, "height"))});
+                                          static_cast<float>(number_of(c, given, "height"))},
+                                     origin->to_viewport);
             }
             value corners[4];
             std::size_t i = 0;
             for (const char * corner : {"p1", "p2", "p3", "p4"}) {
                 const value p =
                     given.is_object_like() ? c.lookup_property(given, corner) : value::undefined();
-                corners[i++] = make_dom_point(c, number_of(c, p, "x") + origin->x,
-                                              number_of(c, p, "y") + origin->y);
+                const point mapped =
+                    origin->to_viewport.apply(static_cast<float>(number_of(c, p, "x")),
+                                              static_cast<float>(number_of(c, p, "y")));
+                corners[i++] = make_dom_point(c, mapped.x, mapped.y);
             }
             return quad_with(c, corners[0], corners[1], corners[2], corners[3]);
         });

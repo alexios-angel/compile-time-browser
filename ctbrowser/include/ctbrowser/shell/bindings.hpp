@@ -525,6 +525,13 @@ private:
     [[nodiscard]] value make_style_view(context & cx, node_id id);
     // §7's client rects: one per fragment, viewport coordinates, tree order.
     [[nodiscard]] std::vector<rect> client_rects_of(node_id self);
+    struct box_geometry {
+        rect bounds;
+        transform to_viewport;
+        [[nodiscard]] rect bounding_rect() const;
+    };
+    [[nodiscard]] std::vector<box_geometry> client_boxes_of(node_id self,
+                                                            std::string_view box) const;
     void install_window_scrolling(context & cx, script::object_object & window);
     void install_document_geometry(context & cx, script::object_object & doc);
     // §5's hit test over the fragment tree, topmost first: every element
@@ -534,10 +541,12 @@ private:
     // GeometryUtils (§10) and the geometry interfaces it answers in. A box of
     // the node in viewport coordinates - "margin", "border", "padding" or
     // "content" - or nothing when it has none; a Document names the viewport.
-    [[nodiscard]] std::optional<rect> box_rect_of(context & cx, value node, std::string_view box);
+    [[nodiscard]] std::optional<box_geometry> box_geometry_of(value node, std::string_view box);
     [[nodiscard]] static value make_dom_point(context & cx, double x, double y);
     [[nodiscard]] static value make_dom_rect(context & cx, const rect & r);
     [[nodiscard]] static value make_dom_quad(context & cx, const rect & r);
+    [[nodiscard]] static value make_dom_quad(context & cx, const rect & r,
+                                             const transform & matrix);
     void install_geometry_interfaces(context & cx);
     // The computed value of `property` for `id` from the cascade's map, or "".
     [[nodiscard]] std::string_view cascade_value(node_id id, std::string_view property) const;
