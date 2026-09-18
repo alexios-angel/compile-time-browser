@@ -567,6 +567,67 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("a dynamic subtract latch cannot borrow the Add proof",
            replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
+    const std::string makeBoolean =
+        "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n";
+    for (const std::string opcode : {"binary_static", "binary"}) {
+        for (const std::string operands : {"%i, %unit", "%unit, %i"}) {
+            const auto boolean = makeBoolean + replace(savedChild, "binary_static add %i, %one",
+                                                       opcode + " add " + operands);
+            run({.what = "Boolean Add latches retain the original returned child in either order",
+                 .body = boolean,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "Boolean Add latches release only unreturned children",
+                 .body = replace(boolean, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            reject("Boolean latch conversion leaves the original property key unchanged",
+                   replace(boolean, "%base[%i]", "%base[%unit]"),
+                   ArrayContentsFailure::UnknownIndex);
+            for (const std::string constant :
+                 {"#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined", "#ctjs.string<\"1\">"}) {
+                reject("zero, unknown and concatenating latches cannot borrow Boolean progress",
+                       replace(boolean, "#ctjs.boolean<true>", constant));
+            }
+        }
+    }
+    const auto carriedBoolean = replace(replace(carriedUnit, makeUnit, makeBoolean),
+                                        "binary_static add %i, %d", "binary add %d, %i");
+    run({.what = "Boolean strides survive original CFG header and backedge transport",
+         .body = carriedBoolean,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    reject("a Boolean stride cannot change even to the equivalent Number one",
+           replace(carriedBoolean, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    const auto alternateBoolean =
+        replace(replace(alternateUnit, makeUnit, makeBoolean), "binary_static add %i, %chosen",
+                "binary add %i, %chosen");
+    run({.what = "each CFG predecessor independently proves its Boolean or Number stride",
+         .body = alternateBoolean,
+         .arrays = "a:[one,two,three] | a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three; a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}; added -> {}"});
+    reject("an unknown predecessor cannot borrow another predecessor's Boolean stride",
+           replace(alternateBoolean, "^entry(%one :", "^entry(%p :"));
+    const std::string savedBoolean =
+        "  %truth = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"truth\"}\n"
+        "  %seed = ctjs.create_array [%truth] {storage_test_id = \"seed\"}\n"
+        "  %unit = ctjs.get_property %seed[%zero]\n"
+        "  ctjs.set_property %seed[%zero], %zero\n";
+    run({.what = "a saved Boolean stride survives replacement in its source array",
+         .body = replace(carriedBoolean, makeBoolean, savedBoolean),
+         .arrays = "a:[one,two,three]; seed:[zero]",
+         .reads = "seed[0]=truth; a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    reject("a repeated Boolean producer needs its own invariant proof",
+           replace(replace(replace(computedUnit, makeUnit, savedBoolean),
+                           "binary_static add %i, %unit", "binary add %i, %repeated"),
+                   "  %step =", "  %repeated = ctjs.get_property %seed[%zero]\n  %step ="));
     for (const std::string opcode : {"binary_static", "binary"}) {
         const auto commuted =
             replace(savedChild, "binary_static add %i, %one", opcode + " add %one, %i");

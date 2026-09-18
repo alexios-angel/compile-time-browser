@@ -1146,8 +1146,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         if (fromHeader(step->getOperand(indexOperand)) != index) { return unsupported; }
         // A held positive step must survive every backedge unchanged. Read a body
         // formal through its actual header operand before the body has executed.
-        // Add needs a positive Number; Sub converts a bounded negative primitive.
-        // Original String constants are invariant; other producers need a held fact.
+        // Add excludes String concatenation; Sub converts a bounded negative primitive.
+        // Original primitive constants are invariant; other producers need a held fact.
         mlir::Value increment = step->getOperand(1U - indexOperand);
         if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
@@ -1157,10 +1157,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (next != increment && fromHeader(next) != increment) { return unsupported; }
         }
         auto stride = boundedNumber(increment, subtract);
-        if (!stride && subtract) {
-            if (auto literal = increment.getDefiningOp<ctjs::ConstantOp>();
-                literal && llvm::isa<ctjs::StringAttr>(literal.getValue())) {
-                stride = boundedConvertedNumber({increment, ContentsKind::String}, true);
+        if (!stride) {
+            if (auto literal = increment.getDefiningOp<ctjs::ConstantOp>()) {
+                const bool string = llvm::isa<ctjs::StringAttr>(literal.getValue());
+                if (subtract || !string) {
+                    stride = boundedConvertedNumber(
+                        {increment, string ? ContentsKind::String : ContentsKind::Identity},
+                        subtract);
+                }
             }
         }
         if (!stride) {
@@ -1172,8 +1176,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 return unsupported;
             }
             const ContentsValue value = held(increment);
-            stride = subtract ? boundedConvertedNumber(value, true) : value.integerNumber;
-            if (!stride && !subtract) { stride = boundedNumber(value.origin()); }
+            if (subtract || !value.string()) { stride = boundedConvertedNumber(value, subtract); }
         }
         if (!stride || *stride == 0) { return unsupported; }
         // Initialization may be a saved length or an exact arithmetic result.

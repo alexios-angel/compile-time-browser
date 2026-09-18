@@ -510,6 +510,57 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(commuted, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("commuted structured Add still requires its exact induction formal",
            replace(commuted, "add %one, %i", "add %one, %last"));
+    const std::string makeBoolean =
+        "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n";
+    const auto boolean = replace(replace(carriedUnit, makeUnit, makeBoolean),
+                                 "binary_static add %i, %d", "binary add %d, %i");
+    rows.push_back({.what = "Boolean Add preserves reordered structured backedge transport",
+                    .body = boolean,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "Boolean structured latches release only unreturned children",
+                    .body = replace(boolean, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "body-local Boolean literals independently prove Add progress",
+                    .body = replace(original, "    %step = ctjs.binary_static add %i, %one",
+                                    makeBoolean + "    %step = ctjs.binary add %i, %unit"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject("Boolean structured strides cannot change even to Number one",
+           replace(boolean, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    for (const std::string constant :
+         {"#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined", "#ctjs.string<\"1\">"}) {
+        reject("structured Add requires positive nonconcatenating primitive strides",
+               replace(boolean, "#ctjs.boolean<true>", constant));
+    }
+    const auto alternateBoolean =
+        replace(replace(alternateUnit, "ctjs.unary plus %one", "ctjs.constant #ctjs.boolean<true>"),
+                "binary_static add %i, %unit", "binary add %i, %unit");
+    rows.push_back({.what = "structured predecessors retain separate Boolean and Number strides",
+                    .body = alternateBoolean,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; y -> {y}"});
+    reject("a structured unknown predecessor cannot borrow a Boolean stride",
+           replace(alternateBoolean, "scf.yield %one :", "scf.yield %p :"));
+    const std::string savedBoolean =
+        "  %truth = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"truth\"}\n"
+        "  %seed = ctjs.create_array [%truth] {storage_test_id = \"seed\"}\n"
+        "  %unit = ctjs.get_property %seed[%zero]\n"
+        "  ctjs.set_property %seed[%zero], %zero\n";
+    rows.push_back({.what = "structured Boolean latches retain the value before source replacement",
+                    .body = replace(boolean, makeBoolean, savedBoolean),
+                    .arrays = "a:[x,y]; seed:[zero]",
+                    .reads = "seed[0]=truth; a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject("a repeated structured Boolean read needs an independent invariant proof",
+           replace(replace(replace(computedUnit, makeUnit, savedBoolean),
+                           "binary_static add %i, %unit", "binary add %i, %repeated"),
+                   "    %step =", "    %repeated = ctjs.get_property %seed[%zero]\n    %step ="));
     const std::string negativeLiteral = "#ctjs.number<13830554455654793216>";
     const std::string subtract =
         "  %minus = ctjs.constant " + negativeLiteral + "\n" +
