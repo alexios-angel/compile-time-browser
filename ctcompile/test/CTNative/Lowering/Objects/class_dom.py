@@ -592,10 +592,78 @@ M_REFUSALS = {
         "  return typeof", "  if (false) element.unknown(); return typeof"
     ),
 }
+# The method is M's only caller: no entry call primes the helper proof.
+M_CAPTURE_CLASS = M_CLASS.replace(
+    "return this.element.getAttribute('x');", "return M(this.element.getAttribute('x'));"
+)
+M_CASES.update(
+    {
+        "class_m_captured": (
+            M_CAPTURE_CLASS + "  return typeof shape.read() === 'object';\n",
+            "1100",
+        ),
+        "class_m_captured_json": (
+            M_CAPTURE_CLASS.replace(
+                "M(this.element.getAttribute('x'))",
+                "M(this.element.getAttribute('x') === null ? '%7B%22key%22%3A1%7D' : '%')",
+            )
+            + "  return typeof shape.read() === 'object';\n",
+            "1000",
+        ),
+        "class_m_captured_fallback": (
+            M_CAPTURE_CLASS.replace(
+                "M(this.element.getAttribute('x'))",
+                "M(this.element.getAttribute('x') === null ? 'not%20json' : '%7B%7D')",
+            )
+            + "  return typeof shape.read() === 'string';\n",
+            "1000",
+        ),
+        "class_m_captured_numeric": (
+            M_CAPTURE_CLASS.replace(
+                "M(this.element.getAttribute('x'))",
+                "M(this.element.getAttribute('x') === null ? '42' : 'true')",
+            )
+            + "  return typeof shape.read() === 'number';\n",
+            "1000",
+        ),
+    }
+)
+M_REFUSALS.update(
+    {
+        "class_m_capture_replaced": M_CASES["class_m_captured"][0].replace(
+            "  const shape", "  M = function(value) { return value; };\n  const shape"
+        ),
+        "class_m_capture_unused_replace": M_CASES["class_m_captured"][0].replace(
+            "    read()", "    unused() { M = 9; }\n    read()"
+        ),
+        "class_m_capture_escaped": M_CASES["class_m_captured"][0].replace(
+            "    read() {", "    read() { this.element.setAttribute('leak', M);"
+        ),
+        "class_m_capture_unused_escape": M_CASES["class_m_captured"][0].replace(
+            "    read()", "    unused() { this.element.setAttribute('leak', M); }\n    read()"
+        ),
+        "class_m_capture_unused_effect": M_CASES["class_m_captured"][0].replace(
+            "    read()",
+            "    unused() { M(this.element.getAttribute('x')); this.element.unknown(); }\n"
+            "    read()",
+        ),
+        "class_m_capture_caught_effect": M_CASES["class_m_captured"][0].replace(
+            "return t\n", "return unknown(t)\n"
+        ),
+    }
+)
 NUMBER_CASES["class_number_helper"] = (
     "function numberText(text) { return Number(text).toString(); }\n"
     + CLASS
     + "  return numberText(element.getAttribute(shape.read())) === '0';\n",
+    "1100",
+)
+NUMBER_CASES["class_number_captured_helper"] = (
+    "function numberText(text) { return Number(text).toString(); }\n"
+    + NUMBER_CLASS.replace(
+        "Number(this.element.getAttribute('x')).toString()",
+        "numberText(this.element.getAttribute('x'))",
+    ),
     "1100",
 )
 # A nested closure still observes its enclosing callee during preparation.

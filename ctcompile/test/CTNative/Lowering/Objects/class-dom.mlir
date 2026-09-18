@@ -27,3 +27,6 @@
 // Original M stays entry-local and consumes the class method result. Its Number,
 // JSON and URI success/failure paths use the shared DOM proof; unused helpers,
 // unsafe methods and binding replacement still refuse. M retains its source body.
+// A class method may be the captured sibling helper's only caller. Complete M
+// covers Number, JSON and URI fallback through that capture; changing helper
+// bindings, escaped identities and unused-method effects still refuse.

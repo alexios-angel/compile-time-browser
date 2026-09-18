@@ -52,6 +52,8 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> cellOperations;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;
     llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
+    llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
+    llvm::SetVector<mlir::Operation *> capturedHelpers;
     llvm::SmallVector<ctjs::CreateClosureOp> capturedMethods;
     llvm::SetVector<mlir::Operation *> dispatchMethods;
     llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
@@ -186,7 +188,7 @@ struct classInitialization {
         return result;
     }
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
-                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads) {
+                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry) {
         auto fn = target(method);
         if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
             (method.getEnclosingIndicesAttr() &&
@@ -195,10 +197,26 @@ struct classInitialization {
             return refuse("class method lacks exact local capture slots");
         }
         for (mlir::Value capture : method.getUpvalues()) {
-            if (!step() || !cells.count(capture) ||
-                sourceValue(cells.lookup(capture)) != constructor.getResult()) {
-                return refuse("class method capture is not its fixed local constructor");
+            if (!step() || !cells.count(capture)) {
+                return refuse("class method capture lacks a fixed local cell");
             }
+            auto value = sourceValue(cells.lookup(capture));
+            if (value == constructor.getResult()) { continue; }
+            auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
+            auto helper = target(closure);
+            if (!domEntry || !helper || !closure.getUpvalues().empty() ||
+                helper.getUpvalueCount() != 0 || !undefined(closure.getEnclosingThis()) ||
+                closure->getBlock() != method->getBlock() || !closure->isBeforeInBlock(method) ||
+                llvm::any_of(
+                    helper.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
+                    [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+                return refuse(
+                    "class method capture is not its constructor or an inert sibling helper");
+            }
+            helpers.insert(helper);
+            domEntryHelpers.insert(helper);
+            capturedHelpers.insert(closure);
+            needsDOMMethodProof = true;
         }
         for (mlir::OpOperand & use : fn.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
             if (!step()) { return false; }
@@ -208,9 +226,28 @@ struct classInitialization {
                 static_cast<size_t>(load.getIndex()) >= method.getUpvalues().size()) {
                 return refuse("class method observes or changes its captured identity");
             }
+            auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
+            auto helper = value != constructor.getResult()
+                              ? target(value.getDefiningOp<ctjs::CreateClosureOp>())
+                              : ctjs::FuncOp{};
             for (mlir::OpOperand & selected : load.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
+                if (helper) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
+                    if (!call || selected.getOperandNumber() != 0 ||
+                        !undefined(call.getReceiver()) ||
+                        call.getArgs().size() + ctjs::implicit_arguments >
+                            helper.getBody().front().getNumArguments()) {
+                        return refuse("captured helper escapes its ordinary local call");
+                    }
+                    for (auto i = call.getArgs().size() + ctjs::implicit_arguments;
+                         i < helper.getBody().front().getNumArguments(); ++i) {
+                        if (!step()) { return false; }
+                    }
+                    helperCalls.insert(call);
+                    continue;
+                }
                 auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(selected.getOwner());
                 if (!read || selected.getOperandNumber() != 0 ||
                     !ctjs::ordinaryKey(read.getKey())) {
@@ -219,6 +256,7 @@ struct classInitialization {
                 reads.push_back(read);
             }
             captureReads.push_back(load);
+            if (helper) { callableCaptures[load] = helper; }
         }
         if (!method.getUpvalues().empty()) { capturedMethods.push_back(method); }
         return true;
@@ -542,7 +580,7 @@ struct classInitialization {
 
     // ponytail: immutable local base methods/getters; inheritance needs a complete
     // receiver/home proof before widening.
-    bool examine(ctjs::CallOp call) {
+    bool examine(ctjs::CallOp call, bool domEntry) {
         if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
             return refuse("class helper needs one local constructor and an unused result");
@@ -644,7 +682,7 @@ struct classInitialization {
                 !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis())) {
                 return refuse("class method needs a local ordinary closure");
             }
-            if (!methodCaptures(method, closure, staticReads)) { return false; }
+            if (!methodCaptures(method, closure, staticReads, domEntry)) { return false; }
             ctjs::SetPropertyOp methodHome;
             for (mlir::OpOperand & use : method.getResult().getUses()) {
                 if (!step()) { return false; }
@@ -825,7 +863,7 @@ struct classInitialization {
         }
         for (ctjs::CallOp call : calls) {
             if (!proveCells(call->getParentOfType<ctjs::FuncOp>())) { return false; }
-            if (!examine(call)) { return false; }
+            if (!examine(call, domEntry)) { return false; }
         }
         const auto recordHelper = [&](mlir::Operation * op) {
             auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
@@ -1264,6 +1302,10 @@ struct classInitialization {
             for (ctjs::LoadUpvalueOp & read : captureReads) {
                 if (!step()) { return false; }
                 if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                    if (auto helper = callableCaptures.lookup(read)) {
+                        callableCaptures.erase(read);
+                        callableCaptures[mapped] = helper;
+                    }
                     read = llvm::cast<ctjs::LoadUpvalueOp>(mapped);
                 }
             }
@@ -1408,6 +1450,26 @@ struct classInitialization {
             read.erase();
         }
         for (ctjs::LoadUpvalueOp read : captureReads) {
+            if (auto helper = callableCaptures.lookup(read)) {
+                for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    if (!call) { continue; } // Only inert roots remain below.
+                    mlir::OpBuilder at(call);
+                    auto absent =
+                        ctjs::ConstantOp::create(at, call.getLoc(), call.getType(),
+                                                 ctjs::UndefinedAttr::get(module.getContext()));
+                    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+                    arguments.resize(helper.getBody().front().getNumArguments() -
+                                         ctjs::implicit_arguments,
+                                     absent);
+                    auto direct = ctjs::CallDirectOp::create(
+                        at, call.getLoc(), call.getType(),
+                        mlir::FlatSymbolRefAttr::get(helper.getSymNameAttr()), absent, absent,
+                        absent, arguments, nullptr, nullptr);
+                    call.getResult().replaceAllUsesWith(direct.getResult());
+                    call.erase();
+                }
+            }
             for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
                 root->erase(); // Only roots remain after captured getter expansion.
             }
@@ -1428,6 +1490,23 @@ struct classInitialization {
                 use->erase(); // Proved identical stores and inert cell roots.
             }
             value.getDefiningOp()->erase();
+        }
+        // The original capture proof checked every implicit argument before any
+        // mutation. Only an unobserved sibling closure can disappear here; a
+        // remaining entry call still goes through the ordinary closure lift.
+        for (mlir::Operation * operation : capturedHelpers) {
+            auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
+            mlir::SymbolTable::setSymbolVisibility(target(closure),
+                                                   mlir::SymbolTable::Visibility::Private);
+            if (llvm::any_of(closure->getUsers(), [](mlir::Operation * user) {
+                    return !llvm::isa<ctjs::RootOp>(user);
+                })) {
+                continue;
+            }
+            for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
+                root->erase();
+            }
+            closure.erase();
         }
         for (ctjs::CallOp call : calls) { call.erase(); }
         for (mlir::Operation * op : setup) { op->erase(); }
