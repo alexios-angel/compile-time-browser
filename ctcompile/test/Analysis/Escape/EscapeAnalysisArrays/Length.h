@@ -972,6 +972,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
              {"#ctjs.number<4602678819172646912>",  // 0.5
               "#ctjs.number<13830554455654793216>", // -1
               "#ctjs.number<4751297606875873280>",  // 2^32
+              "#ctjs.number<13974669643730649088>", // -2^32
               "#ctjs.number<9218868437227405312>",  // infinity
               "#ctjs.number<9221120237041090560>",  // NaN
               "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">", "#ctjs.boolean<false>", "#ctjs.null",
@@ -979,7 +980,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
                 const bool signedZero =
                     literal == "#ctjs.number<13830554455654793216>" &&
-                    (kind == "bitand" || (kind == "shl" && operands == "%zero, %input"));
+                    (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
+                                          operands == "%zero, %input"));
                 run({.what = "only independently bounded bitwise inputs supply an exact index",
                      .body = values + "  %input = ctjs.constant " + literal +
                              "\n  %index = ctjs.binary_static " + kind + " " + operands + "\n" +
@@ -1462,8 +1464,10 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             if (literal == "#ctjs.number<13830554455654793216>" &&
                 (producer == "ctjs.binary mul %input, %zero" ||
                  producer == "ctjs.binary div %input, %input" ||
-                 producer == "ctjs.binary mod %input, %input")) {
-                const bool retained = producer == "ctjs.binary div %input, %input";
+                 producer == "ctjs.binary mod %input, %input" ||
+                 producer == "ctjs.binary_static ushr %input, %input")) {
+                const bool retained = producer == "ctjs.binary div %input, %input" ||
+                                      producer == "ctjs.binary_static ushr %input, %input";
                 run({.what = "signed Number arithmetic preserves the exact zero or unit length",
                      .body = body,
                      .arrays = retained ? "a:[x]" : "a:[]",
@@ -1893,6 +1897,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                 : (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
                               binary.getKind() == ctjs::BinaryKind::Mod)) ||
                         (shift && (shiftKind.getValue() == ctjs::BinaryKind::Shl ||
+                                   shiftKind.getValue() == ctjs::BinaryKind::Shr ||
+                                   shiftKind.getValue() == ctjs::BinaryKind::UShr ||
                                    shiftKind.getValue() == ctjs::BinaryKind::BitAnd))
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::UnknownIndex);

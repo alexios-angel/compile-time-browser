@@ -1270,3 +1270,121 @@ function instance_default_replacement() {
     return (typeof new Config().constructor.Default === "undefined") * 1;
 }
 var a = instance_default_replacement();
+
+// Throwing getters retain calls and abrupt exits; unused getters may be removed.
+//--- static-throw-unused.js
+function static_throw_unused() {
+    class Config { static get NAME() { throw new Error("NAME required"); } }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_unused();
+
+//--- static-throw-unused-chain.js
+function static_throw_unused_chain() {
+    class Config {
+        static get NAME() { throw new Error("NAME required"); }
+        static get Alias() { return this.NAME; }
+        static get Top() { return this.Alias; }
+    }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_unused_chain();
+
+//--- static-throw-literal.js
+function static_throw_literal() {
+    class Config {
+        static get NAME() { throw 9; }
+        read() { return this.constructor.NAME; }
+    }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_literal();
+
+//--- static-throw-error.js
+function static_throw_error() {
+    class Config {
+        static get NAME() { throw new Error("NAME required"); }
+        read() { return this.constructor.NAME; }
+    }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_error();
+
+//--- static-throw-chain.js
+function static_throw_chain() {
+    class Config {
+        static get NAME() { throw new Error("NAME required"); }
+        static get Alias() { return this.NAME; }
+        static get Top() { return this.Alias; }
+        read() { return this.constructor.Top; }
+    }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_chain();
+
+//--- static-throw-ambient.js
+function static_throw_ambient() {
+    class Config {
+        static get NAME() { Math.abs(0); throw new Error("NAME required"); }
+    }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_ambient();
+
+//--- static-throw-object.js
+function static_throw_object() {
+    class Config { static get NAME() { throw {}; } }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_throw_object();
+
+//--- static-error-return.js
+function static_error_return() {
+    class Config { static get NAME() { return new Error("NAME required"); } }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_error_return();
+
+//--- static-error-replaced.js
+function static_error_replaced() {
+    class Config { static get NAME() { throw new Error("NAME required"); } }
+    var instance = new Config();
+    instance.n = 7;
+    Error = 9;
+    return instance.n;
+}
+var a = static_error_replaced();
+
+//--- static-error-coercion.js
+function static_error_coercion() {
+    class Config { static get NAME() { throw new Error({}); } }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_error_coercion();
+
+//--- static-error-method.js
+function static_error_method() {
+    class Config { fail() { throw new Error("NAME required"); } }
+    var instance = new Config();
+    instance.n = 7;
+    return instance.n;
+}
+var a = static_error_method();

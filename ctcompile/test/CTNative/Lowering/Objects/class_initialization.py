@@ -106,6 +106,17 @@ OBSERVATIONS = {
     "static-caller": (1, 1),
     "static-arguments": (1, 1),
     "bootstrap-config-defaults": (7, 7),
+    "static-throw-unused": (7, 7),
+    "static-throw-unused-chain": (7, 7),
+    "static-throw-literal": (7, 7),
+    "static-throw-error": (7, 7),
+    "static-throw-chain": (7, 7),
+    "static-throw-ambient": (7, 7),
+    "static-throw-object": (7, 7),
+    "static-error-return": (7, 7),
+    "static-error-replaced": (7, 7),
+    "static-error-coercion": (7, 7),
+    "static-error-method": (7, 7),
     "receiver-defaults": (923, 923),
     "instance-defaults": (72, 72),
     "instance-default-replacement": (1, 1),
@@ -146,9 +157,17 @@ POSITIVES = {
     "receiver-defaults",
     "instance-defaults",
     "receiver-default-dispatch",
+    "static-throw-unused",
+    "static-throw-unused-chain",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
-PREPARED_ONLY = {"method-dispatch-throw", "method-throw-default"}
+PREPARED_ONLY = {
+    "method-dispatch-throw",
+    "method-throw-default",
+    "static-throw-literal",
+    "static-throw-error",
+    "static-throw-chain",
+}
 
 
 def check_constructed_methods(args):
@@ -515,6 +534,8 @@ def main():
         reference_output = f"a={reference_expected}\n"
         if name == "static-global-effect":
             reference_output += "count=3\n"
+        if name == "static-error-replaced":
+            reference_output = "Error=9\n" + reference_output
         if reference.stdout != reference_output:
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
@@ -541,6 +562,11 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
+        if (
+            name.startswith(("static-throw-", "static-error-"))
+            or name == "bootstrap-config-defaults"
+        ):
+            manifest["initial_intrinsics"].append("Error")
         if name in (
             "method-increment-dispatch",
             "method-decrement-dispatch",
@@ -572,7 +598,13 @@ def main():
             "method-throw-ambient": "unknown call, binding or reflective effect",
             "method-throw-object": "unknown call, binding or reflective effect",
             "method-throw-parameter": "unknown call, binding or reflective effect",
-            "bootstrap-config-defaults": "static getter body is not a closed expression",
+            "bootstrap-config-defaults": "unknown call, binding or reflective effect",
+            "static-throw-ambient": "static getter body is not a closed expression",
+            "static-throw-object": "static getter throw needs a literal or declared Error payload",
+            "static-error-return": "declared Error payload escapes its throw",
+            "static-error-replaced": "declared intrinsic binding is replaced by source",
+            "static-error-coercion": "static getter throw needs a literal or declared Error payload",
+            "static-error-method": "unknown call, binding or reflective effect",
             "instance-default-replacement": "primitive constructor return",
         }.get(name, "")
         prepared = prepare(
@@ -586,7 +618,10 @@ def main():
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
         if name in PREPARED_ONLY:
             before, after = structured.read_text(), prepared.read_text()
-            for operation in ("cf.switch", "ctjs.throw"):
+            operations = (
+                ("cf.switch", "ctjs.throw") if name.startswith("method-") else ("ctjs.throw",)
+            )
+            for operation in operations:
                 if not before.count(operation) or before.count(operation) != after.count(operation):
                     raise RuntimeError(
                         f"{name}: preparation changed the original {operation} exits"
@@ -596,6 +631,23 @@ def main():
                 before.count("ctjs.get_property") - after.count("ctjs.get_property") != 2
             ):
                 raise RuntimeError("throwing method retained a constructor getter read")
+            if name.startswith("static-throw-"):
+                getters = set(re.findall(r"ctjs.func @(fn\$\d+)\(", before))
+                calls = set(re.findall(r"ctjs.call_direct @(fn\$\d+)\(", after))
+                if not getters or calls != getters or "ctjs.define_accessor" in after:
+                    raise RuntimeError(
+                        f"{name}: throwing getter lost its direct call or retained its accessor"
+                    )
+        if name == "static-throw-error":
+            prepare(
+                args,
+                "undeclared-error",
+                structured,
+                dict(manifest, initial_intrinsics=["__ctbrowser_class_defined"]),
+                success=False,
+                diagnostic="static getter throw needs a literal or declared Error payload",
+            )
+            preparation_refusals += 1
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
         if name == "empty":
@@ -621,6 +673,7 @@ def main():
             "static-repeated",
             "static-forward-chain",
             "static-defaults-chain",
+            "static-throw-chain",
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
@@ -655,7 +708,9 @@ def main():
                 if name in PREPARED_ONLY:
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
-                    if native_text.count("ctjs.throw") != prepared.read_text().count("ctjs.throw"):
+                    if len(re.findall(r"^\s*ctjs.throw ", native_text, re.M)) != len(
+                        re.findall(r"^\s*ctjs.throw ", prepared.read_text(), re.M)
+                    ):
                         raise RuntimeError(f"{name}: native refusal changed the source throw exits")
                     prepared_refusals += 1
                 else:

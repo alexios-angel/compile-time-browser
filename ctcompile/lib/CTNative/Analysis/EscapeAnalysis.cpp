@@ -1853,7 +1853,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (binary.getKind() == ctjs::BinaryKind::BitAnd ||
                     binary.getKind() == ctjs::BinaryKind::BitOr ||
                     binary.getKind() == ctjs::BinaryKind::BitXor ||
-                    binary.getKind() == ctjs::BinaryKind::Shl) {
+                    binary.getKind() == ctjs::BinaryKind::Shl ||
+                    binary.getKind() == ctjs::BinaryKind::Shr ||
+                    binary.getKind() == ctjs::BinaryKind::UShr) {
                     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
                     const auto negativeA = left.negativeIntegerNumber ? left.negativeIntegerNumber
@@ -1861,38 +1863,29 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     const auto negativeB = right.negativeIntegerNumber ? right.negativeIntegerNumber
                                                                        : boundedNumber(rhs, true);
                     // Exact signed Numbers wrap to unsigned bits before the
-                    // operation. Mask left-shift counts and recover the signed
-                    // magnitude without overflow; negative facts are not indices.
+                    // operation. Mask shift counts; C++23 signed right shift
+                    // preserves the sign. Only UShr keeps an unsigned result;
+                    // negative magnitudes never become own-index facts.
                     if ((a || negativeA) && (b || negativeB)) {
                         const auto x = a ? static_cast<std::uint32_t>(*a)
                                          : 0U - static_cast<std::uint32_t>(*negativeA);
                         const auto y = b ? static_cast<std::uint32_t>(*b)
                                          : 0U - static_cast<std::uint32_t>(*negativeB);
-                        const auto bits = binary.getKind() == ctjs::BinaryKind::BitAnd  ? x & y
-                                          : binary.getKind() == ctjs::BinaryKind::BitOr ? x | y
-                                          : binary.getKind() == ctjs::BinaryKind::BitXor
-                                              ? x ^ y
-                                              : static_cast<std::uint32_t>(x << (y & 31U));
-                        if (bits < 2147483648ULL) {
+                        const auto bits = binary.getKind() == ctjs::BinaryKind::BitAnd   ? x & y
+                                          : binary.getKind() == ctjs::BinaryKind::BitOr  ? x | y
+                                          : binary.getKind() == ctjs::BinaryKind::BitXor ? x ^ y
+                                          : binary.getKind() == ctjs::BinaryKind::Shl
+                                              ? static_cast<std::uint32_t>(x << (y & 31U))
+                                          : binary.getKind() == ctjs::BinaryKind::Shr
+                                              ? static_cast<std::uint32_t>(
+                                                    static_cast<std::int32_t>(x) >> (y & 31U))
+                                              : x >> (y & 31U);
+                        if (binary.getKind() == ctjs::BinaryKind::UShr || bits < 2147483648ULL) {
                             result.integerNumber = bits;
                         } else {
                             result.negativeIntegerNumber = 4294967296ULL - bits;
                         }
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
-                }
-                if (binary.getKind() == ctjs::BinaryKind::UShr ||
-                    binary.getKind() == ctjs::BinaryKind::Shr) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
-                    // Bounded Number operands already have exact ToUint32 values;
-                    // Shr additionally needs a nonnegative ToInt32 input. Mask
-                    // the count; keep the original result as its own origin,
-                    // including either shift's conversion of -0 to +0.
-                    if (a && b &&
-                        (binary.getKind() == ctjs::BinaryKind::UShr || *a < 2147483648ULL)) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = static_cast<std::uint32_t>(*a) >> (*b & 31U);
                     }
                 }
                 state.values[binary.getResult()] = result;

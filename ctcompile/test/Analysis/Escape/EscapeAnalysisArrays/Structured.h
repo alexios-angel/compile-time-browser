@@ -664,7 +664,7 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
                    "    scf.yield %one : !ctjs.value\n"
                    "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
-    for (const std::string kind : {"bitand", "bitor", "bitxor", "shl"}) {
+    for (const std::string kind : {"bitand", "bitor", "bitxor", "shl", "shr"}) {
         const std::string right = kind == "bitand" ? "%operand" : "%zero";
         const std::string operation =
             "  %unit = ctjs.binary_static " + kind + " %operand, " + right + "\n";
@@ -697,6 +697,29 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                        "    scf.yield %negative : !ctjs.value\n"
                        "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
     }
+    const std::string unsignedOperation = "  %count = ctjs.unary neg %one\n"
+                                          "  %unit = ctjs.binary_static ushr %operand, %count\n";
+    const auto unsignedCarried =
+        replace(carriedUnit, makeUnit, "  %operand = ctjs.unary neg %one\n" + unsignedOperation);
+    const auto unsignedSaved = replace(savedUnit, "  %unit = ctjs.get_property %seed[%name]\n",
+                                       "  %magnitude = ctjs.get_property %seed[%name]\n"
+                                       "  %operand = ctjs.unary neg %magnitude\n" +
+                                           unsignedOperation);
+    for (const auto & source : {unsignedCarried, unsignedSaved}) {
+        const char * arrays = source == unsignedCarried ? "a:[x,y]" : "a:[x,y]; seed:[]";
+        rows.push_back({.what = "unsigned shifts preserve signed snapshots through structured flow",
+                        .body = source,
+                        .arrays = arrays,
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured unsigned shifts release only unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = arrays,
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+    }
+    reject("an unsigned shift snapshot cannot change across structured yields",
+           replace(unsignedCarried, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
     const auto subSnapshot =
         replace(savedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
     rows.push_back(

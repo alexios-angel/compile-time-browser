@@ -32,6 +32,8 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
     llvm::DenseSet<mlir::Operation *> getters;
+    llvm::DenseSet<mlir::Operation *> throwingGetters;
+    llvm::DenseSet<mlir::Operation *> errorOperations;
     llvm::SmallVector<ctjs::GetPropertyOp> constructorReads;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
@@ -175,13 +177,25 @@ struct classInitialization {
             // exact source assignment in the setup proof before erasing it.
             if (getterHome) { setup.insert(getterHome); }
             auto & entry = fn.getBody().front();
-            if (entry.getNumArguments() != 3 || !entry.getArgument(ctjs::arg_callee).use_empty() ||
+            if (!llvm::hasSingleElement(fn.getBody()) || entry.getNumArguments() != 3 ||
+                !entry.getArgument(ctjs::arg_callee).use_empty() ||
                 !entry.getArgument(ctjs::arg_new_target).use_empty()) {
                 return refuse("static getter observes its callable identity or parameters");
             }
             auto & required = dependencies[fn];
+            if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(entry.getTerminator())) {
+                if (!thrown.getValue().getDefiningOp<ctjs::ConstantOp>() &&
+                    !errorOperations.contains(thrown.getOperation())) {
+                    return refuse("static getter throw needs a literal or declared Error payload");
+                }
+                throwingGetters.insert(fn);
+            }
             for (mlir::Operation & op : entry) {
                 if (!step()) { return false; }
+                if (errorOperations.contains(&op) ||
+                    (llvm::isa<ctjs::ThrowOp>(op) && throwingGetters.contains(fn))) {
+                    continue;
+                }
                 if (!llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp, ctjs::BinaryOp,
                                ctjs::UnaryOp, ctjs::CompareOp, ctjs::TruthyOp, ctjs::FromBoolOp,
                                ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
@@ -220,6 +234,14 @@ struct classInitialization {
                     ready &= completed.contains(callee);
                 }
                 if (!ready) { continue; }
+                // A dependency call uses this function's closure argument.
+                // Keep its callers too, so no such argument is copied into a
+                // different function when expanding a getter chain.
+                if (llvm::any_of(required, [&](mlir::Operation * callee) {
+                        return throwingGetters.contains(callee);
+                    })) {
+                    throwingGetters.insert(fn);
+                }
                 unsigned cost = 0;
                 for (mlir::Operation & op : llvm::cast<ctjs::FuncOp>(fn).getBody().front()) {
                     if (!step()) { return false; }
@@ -232,6 +254,12 @@ struct classInitialization {
                         return refuse("class initialization work budget exhausted");
                     }
                     cost += added;
+                }
+                if (throwingGetters.contains(fn)) {
+                    cost = 3; // Undefined, a fresh capture-free closure, and its direct call.
+                    if (cost > remaining) {
+                        return refuse("class initialization work budget exhausted");
+                    }
                 }
                 expansion[fn] = cost;
                 completed.insert(fn);
@@ -477,6 +505,34 @@ struct classInitialization {
         });
         if (walked.wasInterrupted()) { return false; }
         if (calls.empty()) { return refuse("source has no class initialization calls"); }
+        if (llvm::is_contained(contract.initialIntrinsics, "Error")) {
+            walked = module.walk([&](ctjs::ConstructOp made) -> mlir::WalkResult {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (!load || load.getName() != "Error" || made.getNewTarget() != load.getResult() ||
+                    made.getArgs().size() != 1) {
+                    return mlir::WalkResult::advance();
+                }
+                auto message = made.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
+                if (!message || !llvm::isa<ctjs::StringAttr>(message.getValue())) {
+                    return mlir::WalkResult::advance();
+                }
+                for (mlir::OpOperand & use : made.getResult().getUses()) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                    auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(use.getOwner());
+                    if (!thrown) {
+                        refuse("declared Error payload escapes its throw");
+                        return mlir::WalkResult::interrupt();
+                    }
+                    errorOperations.insert(thrown);
+                }
+                errorOperations.insert(load);
+                errorOperations.insert(made);
+                return mlir::WalkResult::advance();
+            });
+            if (walked.wasInterrupted()) { return false; }
+        }
         for (ctjs::CallOp call : calls) {
             if (!examine(call)) { return false; }
         }
@@ -487,6 +543,10 @@ struct classInitialization {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
                 llvm::is_contained(calls, op) || llvm::is_contained(constructorReads, op)) {
+                return mlir::WalkResult::advance();
+            }
+            if (errorOperations.contains(op) &&
+                throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) {
                 return mlir::WalkResult::advance();
             }
             bool accepted =
@@ -516,7 +576,8 @@ struct classInitialization {
                 // An uncaught object throw can reenter through formatting.
                 // Preserve literal primitive throws; downstream lowering still
                 // has to prove their completion and payload representation.
-                accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>()) &&
+                accepted = (methods.contains(op->getParentOfType<ctjs::FuncOp>()) ||
+                            throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) &&
                            thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
             }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
@@ -644,12 +705,15 @@ struct CTNativeSpecializeClassInitializationPass
             return signalPassFailure();
         }
         if (contract->provider != HostContract::Provider::closedSource ||
-            contract->initialIntrinsics !=
-                std::vector<std::string>{host_detail::classDefinedIntrinsic.str()} ||
+            !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
+            llvm::any_of(contract->initialIntrinsics,
+                         [](const auto & name) {
+                             return name != host_detail::classDefinedIntrinsic && name != "Error";
+                         }) ||
             contract->realmGlobalThis || contract->classicScriptRealm ||
             !contract->absentBindings.empty() || !contract->undefinedBindings.empty()) {
-            module.emitError(
-                "class initialization requires only the declared standard class helper identity");
+            module.emitError("class initialization requires the standard class helper and optional "
+                             "Error identity");
             return signalPassFailure();
         }
         classInitialization proof{module, maxSteps};
@@ -678,6 +742,27 @@ struct CTNativeSpecializeClassInitializationPass
         for (ctjs::FuncOp target : proof.getterOrder) {
             for (ctjs::GetPropertyOp read : reads[target]) {
                 mlir::OpBuilder at(read);
+                if (proof.throwingGetters.contains(target)) {
+                    // Keep the throw in its original function. A direct call
+                    // preserves abrupt completion without cloning a terminator
+                    // into the middle of the reader's block. Native completion
+                    // and Error representation remain separate admission proofs.
+                    auto undefined = ctjs::ConstantOp::create(
+                        at, read.getLoc(), read.getType(), ctjs::UndefinedAttr::get(&getContext()));
+                    auto scope = read->getParentOfType<ctjs::FuncOp>();
+                    auto closure = ctjs::CreateClosureOp::create(
+                        at, read.getLoc(), read.getType(),
+                        scope.getBody().front().getArgument(ctjs::arg_callee), undefined,
+                        at.getI32IntegerAttr(static_cast<int32_t>(*functionIndex(target))),
+                        mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
+                    auto call = ctjs::CallDirectOp::create(
+                        at, read.getLoc(), read.getType(),
+                        mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), undefined, undefined,
+                        closure, mlir::ValueRange{}, nullptr, nullptr);
+                    read.getResult().replaceAllUsesWith(call.getResult());
+                    read.erase();
+                    continue;
+                }
                 mlir::IRMapping mapping;
                 // Dependencies have already been expanded. This closed body
                 // has no remaining implicit-argument or external-value uses.
@@ -708,9 +793,16 @@ struct CTNativeSpecializeClassInitializationPass
             }
             closure.erase();
         }
-        // Every source read has its own expanded body. The complete closed
-        // census leaves no caller or observable identity for these definitions.
-        for (ctjs::FuncOp getter : proof.getterOrder) { getter.erase(); }
+        // Original getter closures are gone; every new numeric closure has a
+        // matching direct symbol call. Remove callers before their dependencies
+        // so unused throwing chains disappear in one pass.
+        // ponytail: one symbol scan per getter; index uses if large classes need it.
+        for (ctjs::FuncOp getter : llvm::reverse(proof.getterOrder)) {
+            if (!proof.throwingGetters.contains(getter) ||
+                mlir::SymbolTable::symbolKnownUseEmpty(getter, &module.getBodyRegion())) {
+                getter.erase();
+            }
+        }
         module.walk([&](ctjs::LoadGlobalOp load) {
             if (load.getName() == host_detail::classDefinedIntrinsic &&
                 load.getResult().use_empty()) {
