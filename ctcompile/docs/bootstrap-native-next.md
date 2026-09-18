@@ -1,5 +1,24 @@
 # What native Bootstrap needs next
 
+## Recovered counters and signed subtraction, 2026-09-18 UTC
+
+**`55e13932`** admits method-only static numeric counters; **`c0b82039`**
+preserves exact negative-left Number subtraction snapshots. Both interrupted
+drafts are now committed. Focused array CTest **1/1 (0.87s)**, escape lit
+`signed-subtraction` / `negative-add` / `sub-snapshot` **3/3 (0.32s)** and class
+lit **1/1 (117.62s)** pass. Class: **86 source observations / 216 native
+executions / 172 unprepared / 113 preparation refusals**, plus **16 ordinary
+executions / 20 refusals**. Subtraction oracle: **26 sites / 11 sound / zero
+violations / 11 of 15 precision**. Explicit six-target build: eight actions;
+all 1,290 input hashes match. Formatter baseline and skipped broad suites are
+recorded in HANDOFF; no browser source changed.
+
+Next: exact local constructor/default getter reads, then original Config's
+iterator/throw exits, throwing NAME, inheritance and DOM/default composition.
+The full original Config still refuses complete capture-free source functions.
+Full H Unicode keys, callbacks and the application driver remain open; historical
+whole-Bootstrap counts were not rerun. Evidence: `/tmp/ctcompile-config-recovery/`.
+
 ## Current boundary: method exit dispatch recovery, 2026-09-18
 
 Recovered **`ab646056` / `63a021c1` / `2167f4d2`**: exact negative Number sums,

@@ -15,6 +15,49 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered method counters and signed subtraction, 2026-09-18 UTC
+
+Resumed the seven dirty ctcompile paths at `6d6dcfbf` from the
+**01:35:20 / 01:38:50 AGENT-SYNC drafts**, abandoned at **01:38:57**. Finished
+both before new implementation. September 7 WIP is already an ancestor.
+
+**`55e13932`** admits static numeric counters in proved ordinary class methods.
+Increment/decrement loops retain break/continue/return dispatch; native admission
+still requires Number operands. The whole-source census still rejects an ambient
+call in an uncalled counter method. **`c0b82039`** preserves exact negative-left
+Number subtraction snapshots, including bounded signed cancellation, source-length
+mutation and CFG/SCF transport. Negative magnitudes never become own-index facts;
+coercion, unknown inputs, overflow and unstable latches remain refused.
+
+Focused devbox validation: explicit `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays`,
+`ctcompile-test-escape-claims` and `ctcompile-test-type-oracle` build passed in
+**eight Ninja actions**. Exact array CTest **1/1 (0.87s)**; exact escape lit
+`signed-subtraction`, `negative-add`, `sub-snapshot` **3/3 (0.32s)**; exact class
+lit **1/1 (117.62s)**. Class: **86 source observations / 216 native executions /
+172 unprepared / 113 preparation refusals**, plus **16 ordinary executions /
+20 refusals**; increment dispatch first complete budget **1,210**. Subtraction
+oracle: **26 sites / 11 sound / zero violations / 11 of 15 precision**. Arrays:
+**569 dense / 359 induction / 216 structured rows**, with **22,159 / 26,292 /
+13,661** budget cutoffs. Gate exit **0**, all **1,290 input hashes** verified
+locally and remotely before documentation edits.
+
+Required pinned formatting retains **26 diagnostics in nine HEAD-identical files**;
+stable formatting passes **912 C++ / 108 Python / 105 web files**, and
+`git diff --check` passes. Full CTest/lit, broad corpus/native matrices, WPT and
+test262 were skipped. No browser source or runtime semantics changed. Review
+agents hit service limits; root completed the reviews locally. Evidence:
+`/tmp/ctcompile-config-recovery/next-gate.log` and `next.sha256`.
+
+**Next:** exact local `this.constructor.Default` / `DefaultType` reads can reuse
+the static-getter proof. Reads inside normalized methods need clone remapping.
+The complete original Config regression still returns **a=7** in Node/interpreter
+and refuses complete capture-free source functions (`_typeCheckConfig` has three
+outer blocks). Iterator/throw proof, throwing `NAME`, inheritance and DOM/default
+composition remain, along with full H Unicode keys, retained callbacks and the
+application driver. Bootstrap **19/574 / 0 of 47 globals**, Button **4/86 /
+22 observations** and Data **7/7** remain historical measurements.
+
 ## Recovered method dispatch continuation, 2026-09-18 UTC
 
 Resumed `2167f4d2`, the sole dirty `class_initialization.py`, and the

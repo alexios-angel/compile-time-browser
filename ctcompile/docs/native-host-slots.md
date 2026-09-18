@@ -63,7 +63,9 @@ Every instance method read must feed its own receiver call. Constructors may cal
 those immutable methods on the same receiver and must return a primitive constant
 when methods exist. Method writes and replacement return objects remain excluded.
 Methods may contain structured `if`, `for` and `while` regions, including lifted
-break/continue/return dispatch. Every arm and body retains the complete effect
+break/continue/return dispatch and static numeric increment/decrement counters.
+Native admission independently requires Number counter operands. Every arm and
+body retains the complete effect
 and receiver-use census. After those checks, a budgeted private method clone
 normalizes switches and unused/all-poison results using the existing exception
 recovery machinery. Failure leaves the source untouched; this grants no throwing
