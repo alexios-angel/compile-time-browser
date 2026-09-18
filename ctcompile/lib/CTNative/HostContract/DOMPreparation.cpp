@@ -1,4 +1,6 @@
+#include "../Lowering/ClosureLifting/ClosureLifter.h"
 #include "../Lowering/Exceptions/Recovery.h"
+#include "Analysis.h"
 #include "Preparation.h"
 
 #include "mlir/IR/IRMapping.h"
@@ -16,6 +18,41 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
     }
     mlir::OwningOpRef<mlir::ModuleOp> composed(module.clone());
     HostContract transformed = contract;
+    if (llvm::is_contained(contract.initialIntrinsics, host_detail::classDefinedIntrinsic)) {
+        if (auto error = normalizeDOMClasses(*composed, transformed, maxSteps)) {
+            return refuse("native DOM class: " + llvm::toString(std::move(error)));
+        }
+        // ponytail: quadratic input-size ceiling around the existing finite
+        // lift; thread a step budget through its censuses before widening it.
+        uint64_t operations = 0, size = 0;
+        auto counted = composed->walk([&](mlir::Operation * op) {
+            ++operations;
+            size += uint64_t(1) + op->getNumOperands();
+            for (mlir::Region & region : op->getRegions()) {
+                for (mlir::Block & block : region) { size += block.getNumArguments(); }
+            }
+            return operations * size > maxSteps ? mlir::WalkResult::interrupt()
+                                                : mlir::WalkResult::advance();
+        });
+        if (counted.wasInterrupted()) { return refuse("DOM class lifting work budget exhausted"); }
+        lowering_detail::closureLifter lifter{*composed};
+        lifter.discardNativeSourceFacts();
+        lifter.run();
+        for (mlir::Operation * operation : lifter.lifted) {
+            auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
+            if (llvm::any_of(closure->getUsers(), [](mlir::Operation * user) {
+                    return !llvm::isa<ctjs::RootOp>(user);
+                })) {
+                return refuse("DOM class lifted closure retains an observable use");
+            }
+            for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
+                root->erase();
+            }
+            closure.erase();
+        }
+        composed->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        transformed.moduleSha256 = hostContractFingerprint(*composed);
+    }
     // A handler in the entry is normalized in place. A handler
     // owned by a local helper is normalized first, under the
     // same fingerprinted proof, so helper expansion then

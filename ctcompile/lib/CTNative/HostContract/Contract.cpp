@@ -140,7 +140,12 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                         names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
                     return std::move(failure);
                 }
-                if (llvm::any_of(result.initialIntrinsics, [](const auto & name) {
+                // Class preparation consumes this sole identity before the
+                // ordinary typed DOM proof; it cannot widen a DOM intrinsic set.
+                const bool classOnly =
+                    result.initialIntrinsics.size() == 1 &&
+                    result.initialIntrinsics.front() == host_detail::classDefinedIntrinsic;
+                if (!classOnly && llvm::any_of(result.initialIntrinsics, [](const auto & name) {
                         return name != "Object" && name != "Number" &&
                                name != "decodeURIComponent" && name != "JSON" && name != "Array" &&
                                name != "String" && name != "RegExp" &&

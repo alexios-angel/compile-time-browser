@@ -1,5 +1,6 @@
 #include "../Lowering/Exceptions/Recovery.h"
 #include "Analysis.h"
+#include "Preparation.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -561,7 +562,7 @@ struct classInitialization {
         return true;
     }
 
-    bool prove(const HostContract & contract) {
+    bool prove(const HostContract & contract, bool domEntry = false) {
         auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
         if (!entry || !functionIndex(entry)) {
             return refuse("class initialization requires a source entry");
@@ -585,10 +586,10 @@ struct classInitialization {
                 return refuse("class initialization requires an inert entry declaration");
             }
             // No host value may reenter source code before the fixed class
-            // helper. DOM/scalar parameter effects need their own joint proof.
+            // helper. DOM preparation defers these uses to its final typed proof.
             for (mlir::BlockArgument argument :
                  entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
-                if (!step() || !argument.use_empty()) {
+                if (!step() || (!domEntry && !argument.use_empty())) {
                     return refuse("class initialization requires unused entry parameters");
                 }
             }
@@ -788,6 +789,13 @@ struct classInitialization {
                            (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
                             llvm::isa<ctjs::NumberAttr>(constant.getValue()));
             }
+            // Only the selected entry may defer unknown calls. Every original
+            // constructor, method, getter and helper still faces this census,
+            // including unused bodies that later normalization could remove.
+            if (domEntry && llvm::isa<ctjs::CallOp>(op) &&
+                op->getParentOfType<ctjs::FuncOp>() == entry) {
+                accepted = true;
+            }
             if (accepted) { return mlir::WalkResult::advance(); }
             auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
             refuse("class initialization source contains an unknown call, binding or reflective "
@@ -952,6 +960,90 @@ struct classInitialization {
             }
         }
     }
+
+    void rewrite() {
+        // All current-IR checks precede the first mutation. Nothing inferred
+        // from report attributes authorizes removal, even on a repeated run.
+        module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        for (auto & [function, copy] : normalizedMethods) {
+            (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+            function.getBody().takeBody(copy->getBody());
+        }
+        expandGlobalHolders();
+        llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
+        for (auto [read, target] : getterReads) { reads[target].push_back(read); }
+        for (ctjs::FuncOp target : getterOrder) {
+            for (ctjs::GetPropertyOp read : reads[target]) {
+                mlir::OpBuilder at(read);
+                if (throwingGetters.contains(target)) {
+                    // Keep the throw in its original function. A direct call
+                    // preserves abrupt completion without cloning a terminator
+                    // into the middle of the reader's block. Native completion
+                    // and Error representation remain separate admission proofs.
+                    auto undefined =
+                        ctjs::ConstantOp::create(at, read.getLoc(), read.getType(),
+                                                 ctjs::UndefinedAttr::get(module.getContext()));
+                    auto scope = read->getParentOfType<ctjs::FuncOp>();
+                    auto closure = ctjs::CreateClosureOp::create(
+                        at, read.getLoc(), read.getType(),
+                        scope.getBody().front().getArgument(ctjs::arg_callee), undefined,
+                        at.getI32IntegerAttr(static_cast<int32_t>(*functionIndex(target))),
+                        mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
+                    auto call = ctjs::CallDirectOp::create(
+                        at, read.getLoc(), read.getType(),
+                        mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), undefined, undefined,
+                        closure, mlir::ValueRange{}, nullptr, nullptr);
+                    read.getResult().replaceAllUsesWith(call.getResult());
+                    read.erase();
+                    continue;
+                }
+                mlir::IRMapping mapping;
+                // Dependencies have already been expanded. This closed body
+                // has no remaining implicit-argument or external-value uses.
+                // Clone at each original read, preserving evaluation order and
+                // fresh object identity, including through getter dependencies.
+                for (mlir::Operation & op : target.getBody().front()) {
+                    if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp>(op)) { continue; }
+                    if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
+                        read.getResult().replaceAllUsesWith(mapping.lookup(returned.getValue()));
+                    } else {
+                        at.clone(op, mapping);
+                    }
+                }
+                read.erase();
+            }
+        }
+        for (ctjs::GetPropertyOp read : constructorReads) {
+            for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
+                root->erase(); // Only inert roots remain after getter expansion.
+            }
+            read.erase();
+        }
+        for (ctjs::CallOp call : calls) { call.erase(); }
+        for (mlir::Operation * op : setup) { op->erase(); }
+        for (ctjs::CreateClosureOp closure : getterClosures) {
+            for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
+                root->erase(); // Only inert roots remain after descriptor removal.
+            }
+            closure.erase();
+        }
+        // Original getter closures are gone; every new numeric closure has a
+        // matching direct symbol call. Remove callers before their dependencies
+        // so unused throwing chains disappear in one pass.
+        // ponytail: one symbol scan per getter; index uses if large classes need it.
+        for (ctjs::FuncOp getter : llvm::reverse(getterOrder)) {
+            if (!throwingGetters.contains(getter) ||
+                mlir::SymbolTable::symbolKnownUseEmpty(getter, &module.getBodyRegion())) {
+                getter.erase();
+            }
+        }
+        module.walk([&](ctjs::LoadGlobalOp load) {
+            if (load.getName() == host_detail::classDefinedIntrinsic &&
+                load.getResult().use_empty()) {
+                load.erase();
+            }
+        });
+    }
 };
 
 struct CTNativeSpecializeClassInitializationPass
@@ -1000,88 +1092,39 @@ struct CTNativeSpecializeClassInitializationPass
             module.emitError() << proof.reason;
             return signalPassFailure();
         }
-        // All current-IR checks precede the first mutation. Nothing inferred
-        // from report attributes authorizes removal, even on a repeated run.
-        module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-        for (auto & [function, copy] : proof.normalizedMethods) {
-            (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-            function.getBody().takeBody(copy->getBody());
-        }
-        proof.expandGlobalHolders();
-        llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
-        for (auto [read, target] : proof.getterReads) { reads[target].push_back(read); }
-        for (ctjs::FuncOp target : proof.getterOrder) {
-            for (ctjs::GetPropertyOp read : reads[target]) {
-                mlir::OpBuilder at(read);
-                if (proof.throwingGetters.contains(target)) {
-                    // Keep the throw in its original function. A direct call
-                    // preserves abrupt completion without cloning a terminator
-                    // into the middle of the reader's block. Native completion
-                    // and Error representation remain separate admission proofs.
-                    auto undefined = ctjs::ConstantOp::create(
-                        at, read.getLoc(), read.getType(), ctjs::UndefinedAttr::get(&getContext()));
-                    auto scope = read->getParentOfType<ctjs::FuncOp>();
-                    auto closure = ctjs::CreateClosureOp::create(
-                        at, read.getLoc(), read.getType(),
-                        scope.getBody().front().getArgument(ctjs::arg_callee), undefined,
-                        at.getI32IntegerAttr(static_cast<int32_t>(*functionIndex(target))),
-                        mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
-                    auto call = ctjs::CallDirectOp::create(
-                        at, read.getLoc(), read.getType(),
-                        mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), undefined, undefined,
-                        closure, mlir::ValueRange{}, nullptr, nullptr);
-                    read.getResult().replaceAllUsesWith(call.getResult());
-                    read.erase();
-                    continue;
-                }
-                mlir::IRMapping mapping;
-                // Dependencies have already been expanded. This closed body
-                // has no remaining implicit-argument or external-value uses.
-                // Clone at each original read, preserving evaluation order and
-                // fresh object identity, including through getter dependencies.
-                for (mlir::Operation & op : target.getBody().front()) {
-                    if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp>(op)) { continue; }
-                    if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
-                        read.getResult().replaceAllUsesWith(mapping.lookup(returned.getValue()));
-                    } else {
-                        at.clone(op, mapping);
-                    }
-                }
-                read.erase();
-            }
-        }
-        for (ctjs::GetPropertyOp read : proof.constructorReads) {
-            for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
-                root->erase(); // Only inert roots remain after getter expansion.
-            }
-            read.erase();
-        }
-        for (ctjs::CallOp call : proof.calls) { call.erase(); }
-        for (mlir::Operation * op : proof.setup) { op->erase(); }
-        for (ctjs::CreateClosureOp closure : proof.getterClosures) {
-            for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
-                root->erase(); // Only inert roots remain after descriptor removal.
-            }
-            closure.erase();
-        }
-        // Original getter closures are gone; every new numeric closure has a
-        // matching direct symbol call. Remove callers before their dependencies
-        // so unused throwing chains disappear in one pass.
-        // ponytail: one symbol scan per getter; index uses if large classes need it.
-        for (ctjs::FuncOp getter : llvm::reverse(proof.getterOrder)) {
-            if (!proof.throwingGetters.contains(getter) ||
-                mlir::SymbolTable::symbolKnownUseEmpty(getter, &module.getBodyRegion())) {
-                getter.erase();
-            }
-        }
-        module.walk([&](ctjs::LoadGlobalOp load) {
-            if (load.getName() == host_detail::classDefinedIntrinsic &&
-                load.getResult().use_empty()) {
-                load.erase();
-            }
-        });
+        proof.rewrite();
     }
 };
 
 } // namespace
+
+llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
+    const auto refuse = [](const llvm::Twine & reason) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+    };
+    if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
+         contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
+        contract.initialIntrinsics.size() != 1 ||
+        contract.initialIntrinsics.front() != host_detail::classDefinedIntrinsic ||
+        contract.realmGlobalThis || contract.classicScriptRealm ||
+        !contract.absentBindings.empty() || !contract.undefinedBindings.empty() ||
+        !contract.realmOwnDataProperties.empty()) {
+        return refuse("DOM class initialization requires exactly the standard class helper");
+    }
+    classInitialization proof{module, maxSteps};
+    if (!proof.prove(contract, true)) { return refuse(proof.reason); }
+    // Reuse the binding proof before consuming its declaration. This projected
+    // contract proves only helper identity; DOM parameters are proved later.
+    HostContract binding = contract;
+    binding.provider = HostContract::Provider::closedSource;
+    binding.elementParameters.clear();
+    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+        return refuse(problem);
+    }
+    if (!proof.normalizeMethods()) { return refuse(proof.reason); }
+    proof.rewrite();
+    contract.initialIntrinsics.clear();
+    return llvm::Error::success();
+}
+
 } // namespace ctcompile::ctnative

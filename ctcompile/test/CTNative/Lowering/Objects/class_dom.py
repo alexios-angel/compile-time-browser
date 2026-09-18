@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove DOM receivers and local fields; retain the class/DOM refusal boundary."""
+"""Compose original class proofs with typed DOM entries and local fields."""
 
 import argparse
 from pathlib import Path
@@ -76,6 +76,16 @@ CLASS_REFUSALS = {
         "      this.element.classList",
         "      this.element.saved = this.element;\n      this.element.classList",
     ),
+    "unused_key_getter": CLASS.replace(
+        "    read() {", "    static get UNUSED() { ambient(); return true; }\n    read() {"
+    )
+    + READ,
+    "unused_key_dom_method": CLASS.replace(
+        "    read() {", "    unused(target) { target.getAttribute('x'); }\n    read() {"
+    )
+    + READ,
+    "unused_ambient_helper": CLASS + "  function unused() { ambient(); }\n" + READ,
+    "unused_dom_helper": CLASS + "  function unused(target) { target.getAttribute('x'); }\n" + READ,
 }
 CASES = {
     "direct_read": (
@@ -143,6 +153,7 @@ FIELD_CHECKS = {
     "field_snapshot": 'assert(doc.read().attribute_value(node, state) == "after");',
     "field_unused_effect": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");',
 }
+FIELD_CHECKS["class_order"] = FIELD_CHECKS["field_order"]
 FIELD_REFUSALS = {
     "missing_field": "const holder = {}; return element.getAttribute(holder.key) === null;",
     "read_before_write": "const holder = {}; const key = holder.key; holder.key = 'x'; return element.getAttribute(key) === null;",
@@ -351,6 +362,7 @@ def check_direct_refusals(args, ir, contract, facts):
 
 
 def check_native(args, modules, optimize, compilers, includes, libraries):
+    cases = CLASS_CASES | CASES
     for layout in ("explicit", "deduced"):
         headers, bodies, checks, expected = set(), [], [], []
         for name, owned, native in modules:
@@ -371,28 +383,30 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 if owned
                 else "atom_table atoms_owner; document doc{atoms_owner};"
             )
-            call = "session.invoke(element, other)" if owned else entry + "(element, other)"
-            checks.append(
+            parameters = "element" if name in CLASS_CASES else "element, other"
+            call = f"session.invoke({parameters})" if owned else f"{entry}({parameters})"
+            check = (
                 strings.BOOLEAN_RUN.replace("@SETUP@", setup)
-                .replace(
-                    "        const auto state =",
-                    """        const auto other_node = doc.create_element(atoms.intern("button"));
-        const element_ref other{&doc, other_node};
-        assert(doc.set_attribute(other_node, atoms.intern("x"), "different"));
-        const auto state =""",
-                )
-                .replace(
-                    "            const auto result =",
-                    '            assert(doc.set_attribute(other_node, atoms.intern("other"), "second"));\n'
-                    "            const auto result =",
-                )
                 .replace("@CALL@", call)
                 .replace(
                     "@CHECKS@",
                     ORDER_CHECKS if name == "direct_order" else FIELD_CHECKS.get(name, ""),
                 )
             )
-            expected.extend("true\n" if bit == "1" else "false\n" for bit in CASES[name][1])
+            if name not in CLASS_CASES:
+                check = check.replace(
+                    "        const auto state =",
+                    """        const auto other_node = doc.create_element(atoms.intern("button"));
+        const element_ref other{&doc, other_node};
+        assert(doc.set_attribute(other_node, atoms.intern("x"), "different"));
+        const auto state =""",
+                ).replace(
+                    "            const auto result =",
+                    '            assert(doc.set_attribute(other_node, atoms.intern("other"), "second"));\n'
+                    "            const auto result =",
+                )
+            checks.append(check)
+            expected.extend("true\n" if bit == "1" else "false\n" for bit in cases[name][1])
         path = args.work / f"combined-{optimize}-{layout}.cpp"
         path.write_text(
             "\n".join(sorted(headers))
@@ -467,16 +481,6 @@ def main():
             )
             dom.lower(args, ir, request, f"{name}-{owned}", success=False)
             refusals += 1
-    for optimize in (False, True):
-        modules = [
-            (
-                name,
-                owned,
-                dom.lower(args, ir, contract, f"{name}-{owned}-{optimize}", optimize=optimize),
-            )
-            for name, owned, ir, contract in prepared
-        ]
-        check_native(args, modules, optimize, compilers, includes, libraries)
     class_sources = {name: body for name, (body, _) in CLASS_CASES.items()} | CLASS_REFUSALS
     for name, body in class_sources.items():
         ir, contract = dom.prepare(args, name, source(name, body), 1, entry_name=name)
@@ -491,9 +495,42 @@ def main():
             )
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
+            if name not in ("class_key", "class_order"):
+                dom.lower(args, ir, request, f"{name}-{owned}", success=False)
+                refusals += 1
+                continue
+            prepared.append((name, owned, ir, request))
+            for control, changed in (
+                ("missing-entry", dict(request, entry="missing$999")),
+                ("missing-element", dict(request, element_parameters=[])),
+                ("stale", dict(request, module_sha256="0" * 64)),
+                ("no-authority", dict(request, initial_intrinsics=[])),
+                (
+                    "mixed-dom-authority",
+                    dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Object"]),
+                ),
+                (
+                    "extra-authority",
+                    dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Error"]),
+                ),
+            ):
+                dom.lower(args, ir, changed, f"{name}-{owned}-{control}", success=False)
+                refusals += 1
+            dom.lower(args, ir, request, f"{name}-{owned}-budget", success=False, max_steps=0)
+            refusals += 1
+    for optimize in (False, True):
+        modules = [
+            (
+                name,
+                owned,
+                dom.lower(args, ir, contract, f"{name}-{owned}-{optimize}", optimize=optimize),
+            )
+            for name, owned, ir, contract in prepared
+        ]
+        check_native(args, modules, optimize, compilers, includes, libraries)
     print(
-        f"DOM receivers and fields: {observations} Node/interpreter observations, "
-        f"8 combined native executions, {refusals} refusals; class/DOM preparation remains refused"
+        f"DOM classes, receivers and fields: {observations} Node/interpreter observations, "
+        f"8 combined native executions, {refusals} refusals; class method DOM effects remain refused"
     )
 
 

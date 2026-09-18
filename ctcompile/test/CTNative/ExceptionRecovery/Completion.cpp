@@ -382,6 +382,52 @@ void checkCompletionTypes(mlir::ModuleOp module, ctjs::FuncOp function, llvm::St
 }
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    // A late typed-DOM refusal must roll back consumed class metadata too.
+    for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
+                                ctnative::HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 5; ++control) {
+            const std::string source =
+                "function guarded(element) { class Shape { constructor() { this.key = 'x'; } "
+                "read() { return this.key; } } const shape = new Shape(); " +
+                std::string(control == 1 ? "element.unknown(); " : "") +
+                "return element.getAttribute(shape.read()) === null; }";
+            auto candidate = import(context, source, true);
+            if (!candidate) { return; }
+            // Input reports cannot bypass any source proof.
+            (*candidate)->setAttr("ctnative.supplied", mlir::UnitAttr::get(&context));
+            const auto original = printed(*candidate);
+            ctnative::HostContract request;
+            request.provider = provider;
+            request.entry = guarded(*candidate).getSymName().str();
+            request.elementParameters = {0};
+            request.initialIntrinsics = {"__ctbrowser_class_defined"};
+            if (control == 2) { request.initialIntrinsics.push_back("Error"); }
+            request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+            const auto before = request;
+            auto error = ctnative::prepareDOMEntry(*candidate, request,
+                                                   control == 3   ? 0
+                                                   : control == 4 ? 1000
+                                                                  : 100000);
+            if (control) {
+                check(static_cast<bool>(error), "unproved class/DOM composition refuses");
+                llvm::consumeError(std::move(error));
+                check(printed(*candidate) == original &&
+                          request.moduleSha256 == before.moduleSha256 &&
+                          request.initialIntrinsics == before.initialIntrinsics &&
+                          request.elementParameters == before.elementParameters &&
+                          request.provider == before.provider && request.entry == before.entry,
+                      "class/DOM refusal preserves original source and contract");
+            } else {
+                if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+                const ctnative::DOMEntryAnalysis checked(*candidate, request);
+                check(mlir::succeeded(mlir::verify(*candidate)) && checked.proved() &&
+                          request.initialIntrinsics.empty() &&
+                          request.moduleSha256 == ctnative::hostContractFingerprint(*candidate) &&
+                          !(*candidate)->hasAttr("ctnative.supplied"),
+                      "class/DOM composition publishes only the fresh typed DOM proof");
+            }
+        }
+    }
     using ctnative::lowering_detail::inspectSingleInvocationRegion;
     using ctnative::lowering_detail::normalizeDOMURI;
     auto module = import(context, R"js(
