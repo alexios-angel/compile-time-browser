@@ -1,6 +1,7 @@
 #include "Facts.h"
 
 #include "../PartialEvaluation/Heap.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
@@ -173,9 +174,9 @@ Fact Analysis::operation(mlir::Operation * op) {
 
 bool Analysis::region(mlir::Region & body) {
     for (mlir::Block & block : body) {
-        // Region and CFG arguments are runtime values. Loop initializers are
-        // not facts about arbitrary iterations, and input annotations are inert.
-        for (mlir::BlockArgument arg : block.getArguments()) { facts[arg] = {}; }
+        // Only closed function entries have argument facts. CFG/SCF arguments
+        // remain unknown: an initializer is not a fact about every iteration.
+        for (mlir::BlockArgument arg : block.getArguments()) { facts[arg] = arguments.lookup(arg); }
         for (mlir::Operation & op : block) {
             if (!budget.take()) { return false; }
             for (mlir::Region & nested : op.getRegions()) {
@@ -201,14 +202,100 @@ bool Analysis::region(mlir::Region & body) {
     return true;
 }
 
+bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
+    for (ctjs::FuncOp fn : functions) {
+        if (fn->getParentOp() != module || !fn.isPrivate() || functionIndex(fn) == 0 ||
+            fn.getBody().empty() || fn.getUpvalueCount() != 0 ||
+            !fn.getBody().front().hasNoPredecessors() ||
+            fn.getBody().front().getNumArguments() <= ctjs::implicit_arguments) {
+            continue;
+        }
+        if (llvm::any_of(fn.getBody().front().getArgument(ctjs::arg_callee).getUsers(),
+                         [](mlir::Operation * user) { return !llvm::isa<ctjs::RootOp>(user); })) {
+            continue;
+        }
+        // Charge the complete symbol/closure census before publishing any
+        // caller evidence. Reports and supplied native annotations are inert.
+        auto charged = module.walk([&](mlir::Operation * op) {
+            for (unsigned i = 0; i <= op->getNumOperands(); ++i) {
+                if (!budget.take()) { return mlir::WalkResult::interrupt(); }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (charged.wasInterrupted()) { return false; }
+        const auto uses = mlir::SymbolTable::getSymbolUses(fn, module);
+        if (!uses || !closedCallableProblem(fn, module).empty()) { continue; }
+        bool argumentsObject = false;
+        fn.walk([&](ctjs::MakeArgumentsOp) { argumentsObject = true; });
+        if (argumentsObject) { continue; } // Non-strict arguments.callee publishes this callable.
+        llvm::SmallVector<ctjs::CallDirectOp> sites;
+        bool closed = true;
+        for (const auto & use : *uses) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+            if (!call || call.getTarget() != fn ||
+                call->getNumOperands() != fn.getBody().front().getNumArguments()) {
+                closed = false;
+                break;
+            }
+            sites.push_back(call);
+        }
+        // Specialization may keep this closure as another symbol's boxed
+        // dispatch value. Those actuals belong to the original function too;
+        // leave it generic instead of using only its remaining symbolic calls.
+        const auto alternate = [&](mlir::Value value) {
+            return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                return call && use.getOperandNumber() == 2 && call.getTarget() != fn;
+            });
+        };
+        const auto index = functionIndex(fn);
+        if (closed && index) {
+            module.walk([&](ctjs::CreateClosureOp made) {
+                if (made.getFunction() < 0 || static_cast<unsigned>(made.getFunction()) != *index) {
+                    return;
+                }
+                closed &= !alternate(made.getResult());
+                for (mlir::Operation * user : made.getResult().getUsers()) {
+                    auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+                    if (!store) { continue; }
+                    module.walk([&](ctjs::LoadGlobalOp load) {
+                        if (load.getName() == store.getName()) {
+                            closed &= !alternate(load.getResult());
+                        }
+                    });
+                }
+            });
+        }
+        if (closed && !sites.empty()) { callers[fn] = std::move(sites); }
+    }
+    return true;
+}
+
 void Analysis::run() {
     llvm::SmallVector<ctjs::FuncOp> functions;
     module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
+    if (!collectCallers(functions)) { return; }
     // Unknown summaries are the starting point. A recursive dependency cannot
     // invent a primitive result, while normal literal returns can ground a
     // summary even when the call has effects or might not return.
     for (size_t round = 0; round <= functions.size(); ++round) {
         bool changed = false;
+        for (const auto & [operation, sites] : callers) {
+            auto fn = llvm::cast<ctjs::FuncOp>(operation);
+            for (auto arg :
+                 llvm::drop_begin(fn.getBody().front().getArguments(), ctjs::implicit_arguments)) {
+                Fact common;
+                bool first = true;
+                for (auto call : sites) {
+                    if (!budget.take()) { return; }
+                    auto actual = get(call->getOperand(arg.getArgNumber()));
+                    common = first ? actual : join(common, actual);
+                    first = false;
+                }
+                changed |= arguments.lookup(arg) != common;
+                arguments[arg] = common;
+            }
+        }
         facts.clear();
         for (ctjs::FuncOp fn : functions) {
             if (!region(fn.getBody())) { return; }
@@ -222,7 +309,7 @@ void Analysis::run() {
             changed |= returns.lookup(fn) != result;
             returns[fn] = result;
         }
-        if (!changed) { return; }
+        if (!changed && (round != 0 || callers.empty())) { return; }
     }
 }
 

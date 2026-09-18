@@ -443,6 +443,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         closureLifter lifter{module, census};
         if (!hostContract) { lifted = lifter.run(); }
+        // Method and local-binding lifts expose the complete direct caller set.
+        // Reuse scalar guard folding before shape admission inspects dead arms.
+        if (!hostContract && optimize && precompute && (lifted.calls || lifted.bound)) {
+            mlir::OpPassManager guards(mlir::ModuleOp::getOperationName());
+            CTNativePrecomputeOptions options;
+            options.maxSteps = precomputeMaxSteps;
+            options.report = optimizationReport;
+            guards.addPass(createCTNativePrecompute(options));
+            if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
+        }
         // Recovery is speculative until type/effect admission and the entire
         // closed call component pass. Refused functions keep their original
         // status edges for boxed lowering; a diagnostic is never a proof.

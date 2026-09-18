@@ -53,7 +53,10 @@ private:
     mlir::ModuleOp module;
     Budget & budget;
     llvm::DenseMap<mlir::Value, Fact> facts;
+    llvm::DenseMap<mlir::Value, Fact> arguments;
     llvm::DenseMap<mlir::Operation *, Fact> returns;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
+    bool collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions);
     bool region(mlir::Region & region);
     Fact operation(mlir::Operation * op);
 };
