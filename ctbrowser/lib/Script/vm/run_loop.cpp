@@ -742,7 +742,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     break;
                 }
                 if (frames_.size() > 512) {
-                    raise("call stack exhausted");
+                    throw_error("RangeError", "Maximum call stack size exceeded");
                     break;
                 }
                 call_frame entered{&target, 0,     new_base, in.a,
@@ -1168,7 +1168,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                     registers_[new_base + i] = value::undefined();
                 }
                 if (frames_.size() > 512) {
-                    raise("call stack exhausted");
+                    throw_error("RangeError", "Maximum call stack size exceeded");
                     break;
                 }
                 // `new` ASKS FOR A COMPILED BODY TOO, and passes `constructing`,

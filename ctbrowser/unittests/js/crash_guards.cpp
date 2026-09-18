@@ -63,6 +63,12 @@ int main() {
     js_expect("(function(){var o={};o.toString=function(){return String(o)};"
               "try{String(o)}catch(e){return e.name}})()",
               "RangeError");
+    // The interpreter's own call/construct limits are catchable too.
+    js_expect("(function(){function f(){f()}try{f()}catch(e){return e.name}})()", "RangeError");
+    js_expect("(function(){function f(){f.call(null)}try{f()}catch(e){return e.name}})()",
+              "RangeError");
+    js_expect("(function(){function F(){new F()}try{new F()}catch(e){return e.name}})()",
+              "RangeError");
     // A SELF-REFERENTIAL ARRAY recurses with no call in it at all: to_string
     // walks the elements and finds the array again. V8 answers "" here (its
     // join carries a cycle guard); this engine answers RangeError, which is a

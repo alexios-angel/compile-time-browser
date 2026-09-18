@@ -181,7 +181,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         return produced;
     }
     if (frames_.size() > 512) {
-        raise("call stack exhausted");
+        throw_error("RangeError", "Maximum call stack size exceeded");
         return value::undefined();
     }
     const std::size_t depth = frames_.size();

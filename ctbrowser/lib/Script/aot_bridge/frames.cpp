@@ -18,8 +18,8 @@ namespace ctbrowser::script {
 // function_proto, reserve reg_count slots in context::registers_ (GC root
 // 2), count the frame against the 512 guard, and consume-and-clear
 // pending_new_target_ exactly as context::invoke (vm/call/invoke.cpp) does.
-// Returns NULL on the depth
-// raise, and the caller returns FAILED without leaving.
+// Returns NULL on stack exhaustion; the caller propagates the RangeError
+// without leaving a frame that was never entered.
 aot::ct_aot_frame * aot_bridge::enter(aot::ct_aot_ctx * c, const aot::ct_aot_site * site,
                                       std::uint32_t reg_count, std::uint64_t receiver,
                                       void * storage) {
@@ -33,7 +33,7 @@ aot::ct_aot_frame * aot_bridge::enter(aot::ct_aot_ctx * c, const aot::ct_aot_sit
     // second thing to keep in step with frames_.size(), which is exactly
     // what ct_aot_check's precedence is defined against.
     if (cx.frames_.size() > 512) {
-        cx.raise("call stack exhausted");
+        cx.throw_error("RangeError", "Maximum call stack size exceeded");
         return nullptr;
     }
 
