@@ -40,6 +40,9 @@ authorize the complete slot query when another obligation fails.
 class-descriptor initialization helper. This is an explicit initial identity,
 not an exemption based on a global's spelling. Source replacement and escaping
 uses still fail validation. The other host analyses do not interpret its effects.
+It also accepts `Error` for construction with one literal string and the exact
+same constructor/new-target identity. This declares no general exception or
+payload representation support.
 
 `ctnative-specialize-class-initialization` consumes that identity separately.
 Prepare source with `ctjs-resolve-globals` and `ctjs-lift-to-scf`, fingerprint
@@ -47,6 +50,7 @@ the resulting module, and bind a `closed-source-v1` manifest with
 `initial_intrinsics: ["__ctbrowser_class_defined"]`, empty absent/undefined
 bindings, and no realm receiver declaration. Existing roots/observations remain
 declarations; this pass grants no publication or ownership proof.
+The manifest may additionally declare `Error` for a local throwing static getter.
 
 ```sh
 ctjs-opt prepared.mlir \
@@ -96,6 +100,15 @@ refuse before mutation. Inherited classes, foreign receivers, getter stores and 
 still refuse. Closure metadata keys `name`, `length`, `__home`, `caller` and `arguments`
 remain excluded. The first three have independently measured Node/interpreter
 disagreements; the last two retain the conservative metadata boundary.
+
+A linear static getter may throw a literal primitive or a declared `Error`
+constructed from one literal string, used only by its throw and inert roots.
+Reads of a throwing getter and its dependent getters become direct calls to
+capture-free source functions, preserving abrupt completion and closure scope.
+Unused getter definitions can be removed after the same complete census.
+Ambient calls, escaping Error payloads, coercible messages and Error replacement
+still refuse. Native completion and Error representation remain separate proofs;
+preparation does not make these throwing calls executable natively.
 
 After every check succeeds, the pass removes the unused helper and unobservable
 home/backedge setup while preserving prototype method definitions. It also discards

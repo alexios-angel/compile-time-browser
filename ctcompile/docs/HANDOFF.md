@@ -15,6 +15,60 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered Error getters and signed bitwise snapshots, 2026-09-18 UTC
+
+**`5927fdb6`** finishes the four dirty Error/getter paths found at `2904c366`:
+AGENT-SYNC's **03:10:19** class-only gate and **03:21:38** recovery were
+abandoned at **03:12:41 / 03:22:56**. The September 7 WIP is already integrated.
+
+A separately declared standard `Error` identity permits only exact construction
+with one literal string, whose result stays with its throw. Throwing local
+getters and their transitive callers retain source functions and direct calls,
+preserving abrupt completion and closure scope. Unused single getters can be
+removed. Ambient effects, escaping payloads, coercible messages and replacement
+of Error still refuse. This supplies no native exception representation.
+
+Fresh focused devbox validation: explicit `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference` build, **no Ninja work**; ten-source probe
+**10 source / eight native / 20 unprepared / 11 preparation refusals**, plus
+**six native throw refusals**; exact class lit **1/1 (133.69s)** with **107 source
+observations / 248 native executions / 214 unprepared / 138 preparation refusals**,
+plus **16 ordinary executions / 20 refusals** and **ten native throw refusals**.
+Both optimization policies, explicit/deduced C++ and GCC/Clang run. The throwing
+getter chain first completes at budget **293**. Workflow exits **0**; all **1,290
+input hashes** match locally/remotely before documentation edits.
+
+The first fresh probe failed because the replacement-Error control's interpreter
+also prints `Error=9` before `a=7`. Its expected output now preserves that global;
+original JavaScript is unchanged. The saved predecessor failures also corrected
+anonymous getter-symbol matching and counting diagnostic text as throw operations.
+The prior exact host CTest **1/1 (0.46s)** applies to the same C++ hashes; it was
+not rerun. Evidence: `/tmp/ctcompile-error-closeout/` and
+`/tmp/ctcompile-error-finalize/`.
+
+Already landed **`2904c366`** preserves signed Number BitAnd/BitOr/BitXor/Shl
+snapshots. Recovered focused evidence: array CTest **1/1 (0.88s)** and
+`signed-bitwise` / `signed-bitnot` / `signed-subtraction` lit **3/3 (0.32s)**;
+new oracle **26 sites / 11 sound / zero violations / 11 of 15 precision**.
+Arrays measure **569 dense / 453 induction / 242 structured rows**, with
+**22,315 / 31,116 / 16,283** budget cutoffs. These checks were not replayed.
+
+Required pinned formatting retains **26 diagnostics in nine HEAD-identical files**;
+stable formatting passes **916 C++ / 109 Python / 105 web files**, and changed-file
+pinned formatting, Black and `git diff --check` pass. Full CTest/compiler lit,
+broad corpus/native matrices, WPT and test262 were skipped. No browser source
+or runtime semantics changed.
+
+**Exact next:** complete original Config still returns **a=7** in Node/interpreter.
+Preparation now gets past `NAME` and refuses the ambient **`r` load in
+`_mergeConfigObj`**. Its local helper identity/arguments and H calls need a
+composable source/host proof; Object.entries/destructuring, RegExp/type checking,
+TypeError exits, inheritance and DOM/default composition follow. Standalone native
+throw completion, full H Unicode keys, retained callbacks and the application
+driver remain open. Whole-Bootstrap/Button/Data measurements remain historical.
+The review also identified conservative retention of unused throwing-getter
+chains; a focused follow-up is in progress, alongside signed right-shift snapshots.
+
 ## Recovered literal throws and signed BitNot, 2026-09-18 UTC
 
 Resumed the seven dirty ctcompile paths at `b71d8034` from the **02:14:59 /

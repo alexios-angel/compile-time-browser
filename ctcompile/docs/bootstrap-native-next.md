@@ -1,5 +1,22 @@
 # What native Bootstrap needs next
 
+## Recovered Error getter boundary, 2026-09-18 UTC
+
+**`5927fdb6`** preserves literal or declared-Error static getter exits through
+capture-free direct calls, including transitive getter dependencies. Error needs
+one literal string and an exact constructor/new-target identity; escaping payloads,
+ambient effects, coercion and replacement refuse. Native throw representation
+remains unproved. Exact class lit passes **1/1 (133.69s): 107 source observations /
+248 native executions**, with ten preserved native throw refusals. The explicit
+three-target rebuild had no work; all **1,290 hashes** match. Full suites and
+broad matrices were skipped; HANDOFF records exact checks and formatter baseline.
+
+Complete original Config still returns **a=7** and now refuses **`r` in
+`_mergeConfigObj`**, after passing the throwing-NAME proof. Composable local helper
+and H contracts, iterator/type-check/TypeError exits, inheritance and DOM defaults
+remain. Signed-bitwise recovery **`2904c366`** and its measured oracle are recorded
+in Current native work. Evidence: `/tmp/ctcompile-error-closeout/`.
+
 ## Recovered literal-method throws, 2026-09-18 UTC
 
 **`552db1c7`** preserves outer CFG exits and literal primitive throws in proved
