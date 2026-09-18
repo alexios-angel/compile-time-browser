@@ -1,5 +1,6 @@
 // ClosureLifting/Methods.cpp - native lowering implementation.
 #include "ClosureLifter.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -183,6 +184,10 @@ llvm::SmallVector<closureLifter::closureCall> closureLifter::objectArgumentCalls
     if (!target || !completeObjectArgumentSymbols) { return {}; }
     llvm::SmallVector<closureCall> calls;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(use.getOwner());
+            store && objectArgumentDeclarations.lookup(store.getName()) == c) {
+            continue;
+        }
         const auto site = callSiteOf(use, target);
         if (!site) { return {}; }
         calls.push_back(site);
@@ -225,6 +230,17 @@ bool closureLifter::slotCarriesAnObject(ctjs::CreateClosureOp c, unsigned j) con
 }
 
 void closureLifter::argumentCensus() {
+    for (ctjs::CreateClosureOp c : closures) {
+        auto target = targetOf(c);
+        if (!target || target.getUpvalueCount() != 0 || !admissionIsDeclaration(c) ||
+            uniqueClosureByTarget.lookup(target) != c) {
+            continue;
+        }
+        auto store = llvm::cast<ctjs::StoreGlobalOp>(*c.getResult().getUsers().begin());
+        if (closedDeclaration(store, target, module)) {
+            objectArgumentDeclarations[store.getName()] = c;
+        }
+    }
     // Scanning the module once per parameter and fixpoint round made the
     // unchanged Phaser admission scan take minutes instead of seconds.
     if (const auto symbols = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
@@ -245,7 +261,6 @@ void closureLifter::argumentCensus() {
         // load-bearing for the ORDER - this census runs before
         // `methodCensus`, so `methodClosures` is still empty - and a
         // clause reading it here would have been silently vacuous.
-        if (admissionIsDeclaration(c)) { continue; }
         ctjs::FuncOp target = targetOf(c);
         if (!target || target.getBody().empty()) { continue; }
         const unsigned parameters =
@@ -300,6 +315,21 @@ void closureLifter::argumentCensus() {
             } else {
                 objectSlotsOf[c.getOperation()] = std::move(kept);
             }
+        }
+    }
+    // Declarations are already direct and need no closure rewrite. Give their
+    // proved borrows the same caller/callee carrier as lifted local helpers.
+    for (const auto & declaration : objectArgumentDeclarations) {
+        auto made = declaration.second;
+        llvm::SmallVector<int32_t> indices;
+        for (unsigned slot : objectSlotsOf.lookup(made.getOperation())) {
+            indices.push_back(static_cast<int32_t>(ctjs::implicit_arguments + slot));
+        }
+        if (indices.empty()) { continue; }
+        auto attribute = mlir::Builder(context).getDenseI32ArrayAttr(indices);
+        targetOf(made)->setAttr("ctnative.object_args", attribute);
+        for (const auto & site : objectArgumentCalls(made)) {
+            site.op->setAttr("ctnative.object_args", attribute);
         }
     }
     // AND THE REASON, ONTO THE LITERAL, for every object argument this

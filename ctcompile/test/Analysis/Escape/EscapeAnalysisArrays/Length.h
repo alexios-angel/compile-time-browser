@@ -1196,6 +1196,17 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     powerShrink.what = "power one preserves signed zero length and original result identity";
     powerShrink.body.replace(powerShrink.body.find("binary div"), 10, "binary pow");
     run(powerShrink);
+    for (const std::string exponent :
+         {"4611686018427387904", "4613937818241073152", "4751297606873776128"}) {
+        auto source = powerShrink.body;
+        source.replace(source.find("  %index ="), 0,
+                       "  %exponent = ctjs.constant #ctjs.number<" + exponent + ">\n");
+        source.replace(source.find("pow %negativeZero, %one"), 23, "pow %negativeZero, %exponent");
+        run({.what = "even and odd bounded zero powers preserve the original signed length result",
+             .body = source,
+             .arrays = "a:[]; result:[a,index]",
+             .exit = "result -> {a,result}"});
+    }
 
     const contents_row remainderShrink{
         .what = "a signed zero remainder supplies a non-growing length and keeps its origin",

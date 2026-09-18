@@ -140,6 +140,7 @@ POSITIVES = {
     "local-helper-arguments",
     "local-helper-branches",
     "local-helper-values",
+    "local-helper-order",
     "empty",
     "number",
     "method",
@@ -175,7 +176,6 @@ POSITIVES = {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "local-helper-order",
     "bootstrap-r",
     "method-dispatch-throw",
     "method-throw-default",

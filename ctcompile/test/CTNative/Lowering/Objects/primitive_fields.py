@@ -57,6 +57,13 @@ def main():
         "forwarded-short-call": 51,
         "forwarded-callable-escape": 5,
         "borrowed-alias-delete": 1,
+        "declared-forwarded": 151,
+        "declared-saved": 137,
+        "declared-mixed-actual": 21,
+        "declared-short-call": 51,
+        "declared-callable-escape": 5,
+        "declared-replaced": 9,
+        "declared-alias-delete": 1,
         "utf8-length": 7,
         "empty-length": 0,
         "unknown-property": 0,
@@ -94,6 +101,8 @@ def main():
             "forwarded-saved",
             "forwarded-multiple",
             "forwarded-parameters",
+            "declared-forwarded",
+            "declared-saved",
         ):
             checked += check_native(args, source, name, expected)
             continue
