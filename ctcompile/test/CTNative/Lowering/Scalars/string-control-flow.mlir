@@ -4,9 +4,9 @@
 // the same poison. While backedges target before-region arguments, whose
 // types may differ from the results at the same index.
 //
-// RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func --implicit-check-not=ub.poison
-// RUN: ctjs-opt %s "--pass-pipeline=builtin.module(ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" | ctjs-translate --mlir-to-cpp > %t.cpp
-// RUN: %cxx -Wall -Wextra -Werror -Wconversion %t.cpp
+// RUN: ctjs-opt %s --ctnative-lower-to-emitc=optimize=false | FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func --implicit-check-not=ub.poison
+// RUN: ctjs-opt %s "--pass-pipeline=builtin.module(ctnative-lower-to-emitc{optimize=false}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" | ctjs-translate --mlir-to-cpp > %t.cpp
+// RUN: %cxx_exe -Wall -Wextra -Werror -Wconversion %t.cpp -o %t.exe && %t.exe
 
 // CHECK-LABEL: emitc.func @if_poison_0() -> !emitc.opaque<"std::string">
 ctjs.func @if_poison$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
@@ -124,3 +124,56 @@ ctjs.func @while_initial$4(%receiver: !ctjs.value, %new_target: !ctjs.value,
   }
   ctjs.return %result#1
 }
+
+// Control flags have builtin types, not JavaScript carrier types. Verify the
+// uncanonicalized edges, then execute the live alternative after C++ emission.
+// CHECK-LABEL: emitc.func @control_poison_7() -> f64
+// CHECK: "emitc.constant"() <{value = 0 : i32}> : () -> i32
+// CHECK: arith.constant 0 : index
+ctjs.func @control_poison$7(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                           %callee: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %zero = arith.constant 0 : i32
+  %index = arith.constant 0 : index
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %condition = ctjs.truthy %one
+  %integerPoison = ub.poison : i32
+  %indexPoison = ub.poison : index
+  %pair:2 = scf.if %condition -> (i32, index) {
+    scf.yield %zero, %index : i32, index
+  } else {
+    scf.yield %integerPoison, %indexPoison : i32, index
+  }
+  %integerMatches = arith.cmpi eq, %pair#0, %zero : i32
+  %indexMatches = arith.cmpi eq, %pair#1, %index : index
+  %matches = arith.andi %integerMatches, %indexMatches : i1
+  %result = scf.if %matches -> (!ctjs.value) {
+    %seven = ctjs.constant #ctjs.number<4619567317775286272>
+    scf.yield %seven : !ctjs.value
+  } else {
+    scf.yield %one : !ctjs.value
+  }
+  ctjs.return %result
+}
+
+// The before region changes the backedge even when after only yields.
+// CHECK-LABEL: emitc.func @empty_after_8() -> f64
+ctjs.func @empty_after$8(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                        %callee: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  %limit = ctjs.constant #ctjs.number<4613937818241073152>
+  %zero = ctjs.constant #ctjs.number<0>
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %result = scf.while (%i = %zero) : (!ctjs.value) -> !ctjs.value {
+    %next = ctjs.binary add %i, %one
+    %less = ctjs.compare lt %i, %limit
+    %continue = ctjs.truthy %less
+    scf.condition(%continue) %next : !ctjs.value
+  } do {
+  ^bb0(%next: !ctjs.value):
+    scf.yield %next : !ctjs.value
+  }
+  ctjs.return %result
+}
+
+emitc.verbatim "int main() { return control_poison_7() == 7.0 && empty_after_8() == 4.0 ? 0 : 1; }"

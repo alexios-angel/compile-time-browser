@@ -128,6 +128,16 @@ void lowering::lower(ctjs::FuncOp fn) {
     });
     for (mlir::Operation * o : ops) { replace(o, isEntry, returnType); }
 
+    // ponytail: the pinned SCFToEmitC lowerDoWhile drops backedge assignments
+    // when after contains only a yield. Keep a printing no-op through later
+    // canonicalization, which can empty that region too. Remove after the
+    // upstream converter always lowers the yield of carried while loops.
+    made.getBody().walk([&](mlir::scf::WhileOp loop) {
+        if (loop.getInits().empty()) { return; }
+        mlir::OpBuilder after(loop.getYieldOp());
+        ec::VerbatimOp::create(after, loop.getLoc(), after.getStringAttr(""));
+    });
+
     // SWEEP THE CONSTANTS THE REWRITE ORPHANED - the NaN for an `undefined`
     // that main no longer returns, a literal folded into nothing. The
     // canonicalizer will not: emitc.constant carries no memory-effect
