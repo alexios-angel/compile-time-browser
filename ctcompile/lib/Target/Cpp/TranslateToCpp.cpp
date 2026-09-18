@@ -1972,6 +1972,10 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
     // `ctnative.deduced` and `ctnative.provenance` - one ctcompile pass sets
     // it, one consumer reads it.
     if (!shouldDeclareVariablesAtTop() && op.hasAttr("ctnative.statement")) {
+      // An opaque callee may name a type: Type(v) alone parses as a
+      // declaration. Explicit discard retains construction and destruction.
+      if (isa<emitc::CallOpaqueOp>(op))
+        os << "(void)";
       break;
     }
     if (shouldDeclareVariablesAtTop()) {

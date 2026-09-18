@@ -26,6 +26,8 @@
 // RUN: %cxx_exe -Wall -Wextra -Werror -Wconversion -pedantic %t.cpp -o %t.exe && %t.exe
 
 emitc.func private @effect(%x: f64) -> f64
+emitc.func private @effect_count_now() -> f64
+emitc.verbatim "struct Discarded { explicit Discarded(double x) { effect(x); } ~Discarded() { effect(0.0); } };"
 
 emitc.func @dropped(%a: f64) -> f64 attributes {ctnative.provenance = "function dropped, fixture.js:1:1"} {
   // read: a declaration, as always
@@ -46,7 +48,15 @@ emitc.func @after_cleanup(%a: f64) -> f64 {
   emitc.return %a : f64
 }
 
-emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effect_count; return x + 1.0; }\0Aint main() { return dropped(40.0) == 41.0 && after_cleanup(7.0) == 7.0 && effect_count == 4 ? 0 : 1; }"
+// A discarded constructor must be an expression, not the declaration Type(v).
+// Its destructor runs before the following source observation.
+emitc.func @drop_constructor(%a: f64) -> f64 {
+  %dead = emitc.call_opaque "Discarded"(%a) : (f64) -> !emitc.opaque<"Discarded">
+  %count = emitc.call @effect_count_now() : () -> f64
+  emitc.return %count : f64
+}
+
+emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effect_count; return x + 1.0; }\0Adouble effect_count_now() { return effect_count; }\0Aint main() { return dropped(40.0) == 41.0 && after_cleanup(7.0) == 7.0 && drop_constructor(9.0) == 6.0 && effect_count == 6 ? 0 : 1; }"
 
 // --- the pass marks exactly the dead one -----------------------------------
 //
@@ -73,6 +83,9 @@ emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effec
 // CPP-NEXT: effect([[A]]);
 // CPP-NEXT: effect([[A]]);
 // CPP-NEXT: return [[A]];
+// CPP-LABEL: double drop_constructor(
+// CPP-SAME: double [[A:v[0-9]+]]) {
+// CPP-NEXT: (void)Discarded([[A]]);
 
 // --- WITHOUT the mark, upstream's behaviour is unchanged --------------------
 //
@@ -103,5 +116,5 @@ emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effec
 // carries an explicit report and the test pins its number: the initially
 // unused call and the two whose last users were erased, never the live call.
 //
-// REPORT: pruned 1 variable(s) and 1 operation(s), marked 3 call(s) as statements
+// REPORT: pruned 1 variable(s) and 1 operation(s), marked 4 call(s) as statements
 // AGAIN: pruned 0 variable(s) and 0 operation(s), marked 0 call(s) as statements
