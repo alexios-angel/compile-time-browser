@@ -1,5 +1,27 @@
 # What native Bootstrap needs next
 
+## Original class-method arguments, 2026-09-18 UTC
+
+**8f322043** finishes the interrupted method-argument draft from the 13:27 loop
+failure. Five new native cases retain original key/element arguments, repeated
+calls, field replacements and multiple instances. Each parameterized method needs
+an original direct entry call per instance; unused formals and transitive-only
+methods remain refused. Entry short-circuit branches receive complete typed DOM
+reproof, including invalid calls in dead branches. All prior fixture bodies remain.
+
+**Next:** prove original W's transitive `_getConfig → _mergeConfigObj /
+_configAfterMerge / _typeCheckConfig` argument flow without inserting source calls.
+Defaulted/omitted arguments, full Config W/r/H, inheritance, full H Unicode,
+retained callbacks and the native application driver remain open.
+
+Focused class DOM **1/1 (23.36s), 76 source observations / 8 native executions /
+450 refusals**; class initialization **1/1 (200.83s)**; transaction **1/1 (3.71s)**.
+Independent primitive-product escape work landed as **a5838467**. HANDOFF records
+all targets, exact escape gates, initial failures and skipped coverage. Nine tested
+source hashes match; changed formatting passes, while the full formatting command
+retains 26 existing diagnostics in nine unchanged files. No full-suite or whole
+Bootstrap startup claim is made.
+
 ## Constructor-stored DOM methods, 2026-09-18 UTC
 
 **3a933858** finishes the interrupted original `class_element` method boundary.

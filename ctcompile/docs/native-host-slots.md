@@ -155,12 +155,21 @@ Class/DOM composition now reuses the complete original class proof in that priva
 transaction. The public class pass remains closed-source-only with unused entry
 parameters. A DOM request may instead supply exactly `__ctbrowser_class_defined`;
 its binding is proved before consumption, and mixed intrinsic declarations refuse.
-Selected-entry parameter uses and unknown entry calls defer to final typed DOM
-proof. Unknown calls in zero-parameter class methods instead require independent
-private probes at every actual entry-local construction. Every method is probed,
-including unused and transitive callers that can replace a receiver field. The
+Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
+results defer to final typed DOM proof, which checks both source branches.
+Unknown calls in zero-parameter class methods instead require independent
+private probes at every actual entry-local construction. Every such method is
+probed, including unused and transitive callers that can replace a receiver field. The
 original constructor/getter/helper effect census remains unchanged. Probe
 eligibility is checked before normalization can replace method bodies.
+
+Parameterized methods require an original direct entry call on each actual
+instance. One private proof retains every such call, its original arguments and
+the field state at that source position. Unused parameterized methods and methods
+called only transitively remain refused; no formal receives invented host
+authority. Missing arguments, bad later calls, uncalled second instances and
+invalid calls in dead branches still fail the complete proof. Transitive argument
+provenance is the next boundary for Bootstrap Config's `_getConfig` chain.
 
 The existing constructor/method lifter runs under a quadratic IR-size ceiling;
 only freshly proved lifted closures with inert root uses are removed. Input native

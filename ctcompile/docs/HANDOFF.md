@@ -15,6 +15,73 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original class-method arguments and primitive products, 2026-09-18 UTC
+
+Resumed four dirty files at **47a08427**, abandoned by the **13:27:02 AGENT-SYNC
+loop failure**. The September 7 WIP was absent from unmerged branches. Agents
+recovered native tests, extended primitive-product tests and audited the native
+proof; root finished the drafts after two agent service limits.
+
+**8f322043** proves parameterized class methods using original entry calls,
+with each method called directly on each actual entry-local instance. One private
+copy retains all those calls, their actual arguments and their source-position
+field state. Zero-parameter methods retain independent probes, including unused
+bodies. Unused parameterized methods and transitive-only invocation still refuse;
+no synthetic parameter authority is introduced. Entry `scf.if`/`scf.yield` results
+now reach the same complete typed DOM proof, including both branches. The public
+closed-source pass and constructor/getter/helper census remain unchanged.
+
+Five new native cases cover key/element arguments, repeated calls, field replacement,
+two instances and transitive calls with direct witnesses. All pre-session fixture
+bodies and observations remain unchanged. Dead-branch bad keys and unknown DOM
+calls, missing host authority, later invalid arguments and uncalled second instances
+remain refused. Ten added transaction checks cover both DOM providers.
+
+**a5838467** shares the existing exact primitive conversion between unary
+operations and multiplication. Boolean/null factors acquire bounded signed Number
+facts only at the result; original keys and identities survive. Both operand orders,
+saved factors and CFG/SCF snapshots are covered. Unknown/changing/repeated factors
+remain unproved. Two original false/null multiplication zero-shrink bodies now admit
+without source changes. No browser/runtime code or ownership carrier changed.
+
+Focused devbox evidence: `/tmp/ctcompile-arguments-finish/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference` and
+  `ctcompile-test-exception-recovery`: **7 initial / 4 retry build actions**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.71s; total 3.72s)**; first
+  **1/1 (3.64s)**. Covers successful publication and rollback for both providers.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (23.36s)**,
+  **76 Node/interpreter observations / 8 native executions / 450 refusals**.
+  Both DOM providers, C++ layouts and optimization settings pass GCC/Clang and
+  Script/AOT exclusion. First run failed **6.10s** at entry short-circuit census;
+  original fixture bodies were preserved while the proof gained typed branch handling.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (200.83s)**.
+- Built `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **3 initial /
+  2 retry actions**. The first arrays run failed **1.00s** because two new
+  structured tests expected one path instead of both; only expectations changed.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.99s; total 1.00s)**,
+  **656 dense / 756 induction / 330 structured rows**, with
+  **25,360 / 50,700 / 25,085** budget cutoffs.
+- Exact `Analysis/Escape/escape-claims/{primitive-product,primitive-unary,
+  signed-product}.test`: **3/3 (0.32s), zero soundness violations**.
+  Product and unary: each **24 sites / 9 sound / 9 of 13 precision**;
+  signed product: **33 sites / 17 sound / 17 of 19 precision**.
+- All nine source/test hashes match the devbox. Final native, escape and hash
+  wrappers exit **0**. No test was rerun after its final focused pass.
+
+Required `tools/format.sh --check` reports **26 existing diagnostics in nine
+HEAD-identical files**. Changed pinned C++ formatting, Black, syntax and diff checks
+pass. Full CTest/compiler lit, complete DOM suite, broad corpus/native matrices,
+WPT/test262 and historical Bootstrap replay were skipped. No push.
+
+**Exact next:** prove transitive-only original method arguments for Bootstrap W's
+`_getConfig → _mergeConfigObj / _configAfterMerge / _typeCheckConfig` chain without
+inserting artificial source calls. Defaulted/omitted arguments, complete Config
+W/r/H composition and inheritance remain open, as do full H Unicode, retained
+callbacks, the application driver and broader escape conversion proofs. Native
+Bootstrap and the overall plan remain unfinished.
+
 ## Constructor-stored DOM methods and primitive unary snapshots, 2026-09-18 UTC
 
 Resumed dirty **9586e616** after the **13:02:02 AGENT-SYNC loop failure**:
