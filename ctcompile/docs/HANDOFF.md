@@ -15,6 +15,72 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Structured class methods and signed division, 2026-09-18 UTC
+
+Continued clean `b965aa43` and the **23:35:19 AGENT-SYNC completion handoff**.
+The previous interrupted threads were landed; `codex-wip-20260907` exists but is
+already an ancestor of `ctcompile-v1`. This session resumed the recorded Config
+method boundary. Agents split escape work, fixtures and proof review; after service
+limits, root completed the drafts. Two agents later reviewed the frozen diffs
+without findings. No browser source or runtime semantics changed.
+
+**`9105a656`** admits structured branches and loops only inside proved ordinary
+local class methods. Both complete recursive operation censuses and all receiver
+uses remain checked. Every function still needs one outer block; constructors,
+getter expansion and class setup retain their linear-body restrictions. Unknown
+regions, nested ambient calls and method replacement refuse before mutation.
+Existing lowering emits the methods without new runtime helpers. The original
+mutual-method recursion fixture is now an execution positive with its body intact.
+
+**`b21653b9`** preserves exact bounded signed Number division and remainder
+snapshots. Div requires an integral quotient and a nonzero divisor; Mod follows
+the dividend's sign. Negative magnitudes remain separate from index facts, and
+zero retains its original result identity. Coercion, unknown/out-of-domain inputs,
+fractional quotients and unproved loop invariance still refuse.
+
+Focused devbox validation:
+
+- Explicit `ctjs-opt`, `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims` and `ctcompile-test-type-oracle` build: **nine Ninja
+  actions**. The class build additionally requested `ctcompile-test-native-reference`
+  and had no work. The corrected array test rebuilt in **two actions**.
+- Exact `ctcompile_escape_analysis_arrays` CTest: **1/1 (0.84s)**.
+- Exact escape lit `signed-division`, `signed-product` and `add-cancellation`:
+  **3/3 (0.32s)**. New signed-division oracle: **26 sites / 11 sound / zero
+  violations / 11 of 15 precision (73.3%)**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (103.87s)**,
+  **78 Node/interpreter observations / 192 native executions / 156 unprepared /
+  100 preparation refusals**, both policies, layouts and GCC/Clang. Ordinary
+  constructor controls add **16 executions / 20 refusals**. The nested-loop
+  source's first complete work budget is **278**.
+
+The first array run failed **24 assertions across four historical controls**:
+`-1 / -1` preserves length one, `-1 % -1` clears it, and zero divided/remaindered
+by a negative nonzero Number stays zero. Their bodies and live-mutation checks
+remain; only the obsolete refusal expectations changed. No production fix or
+fixture deletion was needed. Escape lit did not run after that initial failure.
+
+Both final workflows exit **0**. Each verified **1,821 local/remote input hashes**
+before documentation edits. Stable formatting passed **912 C++ / 108 Python /
+105 web files**; the later length-expectation edit also passed the changed-C++
+check. Required `tools/format.sh --check` retains **26 pinned-formatter diagnostics
+in nine files byte-identical to HEAD**, not a pinned-format pass. Black and
+`git diff --check` pass. Full CTest, full lit, broad corpus/native matrices, WPT
+and test262 were **not run by this task**. The initial shared-lock wait was for
+the independent browser workflow; it is not compiler validation.
+
+**Exact next:** the unchanged complete original Config (`W`) defaults-only probe
+still returns **a=7** in Node and the interpreter, imports every function, and
+refuses **class initialization requires complete capture-free source functions**.
+`_typeCheckConfig$9` retains three outer blocks after SCF lifting. Full Config
+needs the exceptional/iterator method proof, throwing `NAME`, inherited
+`this.constructor` and DOM/default composition. Full H still needs the public
+UTF-16/Unicode case seam and normalized-key proof. Retained callbacks and the
+application driver remain open. Bootstrap **19/574 / 0 of 47 globals**, Button
+**4/86 / 22 observations**, and Data **7/7** remain historical measurements.
+Evidence: `/tmp/ctcompile-structured-focused/`, including the preserved initial
+failure, final gate logs, both source manifests and original full-Config probe.
+
 ## Fresh Config defaults and signed Number products, 2026-09-17 UTC
 
 Continued `1af71cf8` and the **17:03:14 AGENT-SYNC handoff**. The earlier
