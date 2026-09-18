@@ -59,7 +59,7 @@ constexpr property_syntax modules[] = {
     {"mask-position", k::freeform, "", "0% 0%", false, false},
     {"mask-clip", k::freeform, "", "border-box", false, false},
     {"mask-origin", k::freeform, "", "border-box", false, false},
-    {"mask-size", k::freeform, "", "auto", false, false},
+    {"mask-size", k::freeform, "", "auto", false, true},
     {"mask-composite", k::freeform, "", "add", false, false},
     {"mask-type", k::keyword_only, "luminance alpha", "luminance", false, false},
     {"shape-outside", k::freeform, "", "none", false, false},

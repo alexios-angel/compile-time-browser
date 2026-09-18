@@ -113,6 +113,12 @@ void test_interpolation() {
     CHECK(interpolate_text("border-image-slice", "0% 10 20% 30 fill", "40% 50 60% 70 fill", -0.5,
                            context) == "0% 0 0% 10 fill");
     CHECK(interpolate_text("left", "0%", "20%", -0.5, context) == "-10%");
+    for (const auto property : {"background-size", "mask-size"}) {
+        CHECK(interpolate_text(property, "10px 10px", "20px 0px", 1.25, context) == "22.5px 0px");
+        CHECK(interpolate_text(property, "0% 20%", "20% 40%", -0.5, context) == "0% 10%");
+        CHECK(interpolate_text(property, "calc(100px + 10%) auto", "30% auto", 1.5, context) ==
+              "calc(40% - 50px) auto");
+    }
     CHECK(interpolate_text("font-weight", "100", "900", 2, context) == "1000");
     CHECK(interpolate_text("font-weight", "100", "900", -1, context) == "1");
     CHECK(interpolate_text("left", "calc(2 * 3px)", "12px", 0, context) == "6px");

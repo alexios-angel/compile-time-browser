@@ -189,7 +189,7 @@ constexpr property_syntax table[] = {
     {"background-image", k::freeform, "", "none", false, false},
     {"background-position", k::freeform, "", "0% 0%", false, false},
     {"background-repeat", k::freeform, "", "repeat", false, false},
-    {"background-size", k::freeform, "", "auto", false, false},
+    {"background-size", k::freeform, "", "auto", false, true},
     {"background-clip", k::keyword_only, "border-box padding-box content-box text", "border-box",
      false, false},
     {"background-origin", k::keyword_only, "border-box padding-box content-box", "padding-box",
