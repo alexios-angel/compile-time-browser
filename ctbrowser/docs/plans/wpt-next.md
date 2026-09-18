@@ -1,50 +1,48 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 24 complete.** Previous session 23 was clean
-at `eac82d47`; no interrupted browser drafts remained. Latest browser source
-is `22ff781c`, with compiler history through `c675f002`. The final browser gate
-passed **216/216** (69.42 seconds), excluding compiler tests with
-`CTCOMPILE_MLIR=OFF`; formatting passed. Full CSS: **1,607 -> 1,621 files
-PASS** and **70,418 -> 70,627 subtests PASS**, zero passing file or subtest
-losses.
+**Updated 2026-09-18: session 25 complete.** Previous session 24 was clean
+at `a73dc482`; no interrupted browser drafts remained. Latest browser source
+is `a7d76d12`, with compiler history through `c675f002`. Final browser gate:
+**216/216** (66.47 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
+formatting passed. Full CSS: **1,621 -> 1,625 files PASS** and
+**70,627 -> 70,812 subtests PASS**, zero passing file or subtest losses.
 
 Landed source commits:
 
-- `ca830c3b` (merged as `0ed3dda2`): border-image grammar, five-longhand
-  expansion, canonical serialization, resets and nonnegative range metadata.
-- `22ff781c`: clamp border widths after expansion and compute image components
-  before inheritance, preserving valid negative calculations through variable
-  substitution while rejecting literal negative values.
+- `0e70832e`: clamp nonnegative pure percentage animation results while
+  preserving unresolved length/percentage mixes.
+- `8bca06f4`: add identical numeric components during list composition.
+- `544e8d31` (merged as `a7d76d12`): recognize repeating gradients in
+  `CSS.supports()`; their parsers already supported the values.
 
-Fresh focused CSS backgrounds measured **66 -> 77 PASS/107** and
-**5,319 -> 5,480 subtests PASS**, with no losses. Root regression and the
-additional variable-substitution case failed before their fixes; final focused
-CTests passed **2/2** (0.06 seconds). Full CSS module deltas are in
-`css-conformance.md`.
-
-Prior radius, columns, geometry and runtime changes remain landed. This
-session changed no JS/VM semantics or public interfaces and did not replay
-test262 or non-CSS WPT directories.
+Fresh focused backgrounds measured **77 -> 80 PASS/107** and
+**5,480 -> 5,589 subtests PASS**, with no losses. Each added regression failed
+before its fix; final focused CTests passed **2/2** (0.02 seconds).
+No JS/VM semantics or public interfaces changed; test262 and non-CSS WPT
+directories were not replayed.
 
 **Next clear failures:**
 
-- Negative percentage animation clamping: border-image slice interpolation
-  retains 24 failing subtests, width interpolation four. Start at
-  `lib/Style/easing.cpp`'s numeric result range handling.
-- Image slice/outset computed values each have two failures using `cqw`;
-  additive border-image composition remains open.
-- Image source computed values retain three failures: gradient color hints,
-  conic angle precision and relative URL resolution. Broader gaps include
-  multicol pseudo selectors, image zoom/inline placement, 3D/relative transform
-  geometry, separate realms and UTF-16 strings.
+- Border-image outset/slice/width composition each retains 30 failing
+  subtests. List expansion and compression remain missing in the animation
+  path; start at `lib/Style/easing.cpp` and reuse the CSSOM value grammar.
+- Container-relative computed values: `unit_to_px` always uses viewport
+  dimensions. `engine::set_container_size` has no browser caller; styles run
+  before layout, and layout lacks size containment. Correct content-box
+  handoff, axis eligibility, invalidation and nested documents belong in the
+  fix. Do not substitute authored widths or add an arbitrary iteration loop.
+  Detailed diagnosis: `/tmp/ctbrowser25/container-diagnosis.md`; its unmerged
+  regression patch remains beside it for the eventual implementation.
+- Image source computed values still need conic angle precision and relative
+  URL resolution. Broader gaps include multicol pseudo selectors, image
+  zoom/inline placement, 3D/relative transforms, realms and UTF-16 strings.
 
-Evidence: `/tmp/ctbrowser24/` holds the full CSS JSON/comparison, focused
-before/after results, regression/gate/format logs and `source.sha256`; all
-seven source/test hashes match the devbox and commit. The grammar child
-worktree and branch were removed; no child devbox copy was created.
-An intermediate sync checksum failure stopped before tests; the verified
-rerun supplies the results above. Integration status is in AGENT-SYNC.
-The `d2664e9` ctjs commit remains local; do not assume its object is published.
+Evidence: `/tmp/ctbrowser25/` holds full CSS JSON/comparison, focused
+before/intermediate/after results, regression/gate/format logs and
+`source.sha256`; all four source/test hashes match devbox and commit.
+The child worktree/branch was removed; no child devbox copy existed.
+Integration status is in AGENT-SYNC. The `d2664e9` ctjs commit remains local;
+do not assume its object is published.
 
 Session 19's eight-directory wide baseline remains in `/tmp/w-b722aa41/`
 against `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result

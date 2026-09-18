@@ -14,6 +14,43 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Animation ranges, addition and repeating gradients — 2026-09-18
+
+Full `css/` replay at `a7d76d12`: **1,625/2,926 runnable files PASS, 70,812 subtests PASS**.
+Against `22ff781c`: **+4 files and +185 passing subtests, zero
+passing files or subtests lost**. Same WPT `3f6b09ae`, devbox, four workers,
+4 GB cap and deterministic GL driver; 203.3 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `a7d76d12` | 1,625 | 1,085 | 25 | 0 | 191 | 1,488 | 70,812 / 32,278 |
+
+`0e70832e` clamps pure percentage animation results for nonnegative properties,
+while retaining mixed length/percentage calculations until their basis exists.
+`8bca06f4` adds equal numeric list components during additive composition;
+identical keywords still retain their value. `544e8d31` recognizes the existing
+repeating-gradient parsers in `CSS.supports()` (merged as `a7d76d12`).
+
+Fresh focused backgrounds runs measured **77 -> 80 files PASS** and
+**5,480 -> 5,589 subtests PASS**, with no losses. Each regression failed before
+its fix. Final focused CTests passed **2/2** (0.02 seconds), and the browser
+gate passed **216/216** (66.47 seconds), excluding compiler tests with
+`CTCOMPILE_MLIR=OFF`; formatting passed. All four source/test hashes matched
+the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser25/` contains `browser25-css.json`,
+`css-comparison.json`, `measure-css.log`, the focused before/intermediate/after
+JSON and comparisons, `red.log`, `addition-red.log`, `gradient-red.log`,
+`gate-final.log`, `format-final.log` and `source.sha256`. No expectations,
+public interfaces or JS/VM behavior changed. Other WPT directories, test262
+and compiler suites were not replayed.
+
+Next: border-image composition still needs list expansion and compression.
+Container-relative lengths need actual layout content boxes and size containment:
+the browser never installs the style engine's container-size callback.
+The investigated flow is in `/tmp/ctbrowser25/container-diagnosis.md`;
+no container workaround was added.
+
 ## Border-image grammar and computed ranges — 2026-09-18
 
 Full `css/` replay at `22ff781c`: **1,621/2,926 runnable files PASS,

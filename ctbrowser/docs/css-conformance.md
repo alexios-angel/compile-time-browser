@@ -11,6 +11,36 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Animation ranges, addition and repeating gradients — 2026-09-18
+
+Full CSS at `a7d76d12`: **1,625/2,926 runnable files PASS, 70,812 subtests PASS**;
+**+4 files and +185 subtests** since `22ff781c`, with zero passing
+file or subtest losses. The browser gate passed **216/216** (66.47 seconds),
+excluding compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 77 / 80 | 5,480 / 5,589 |
+| `css/css-flexbox` | 29 / 30 | 955 / 959 |
+| `css/css-grid` | 25 / 25 | 1,805 / 1,869 |
+| `css/css-masking` | 21 / 21 | 1,290 / 1,292 |
+| `css/css-size-adjust` | 2 / 2 | 197 / 201 |
+| `css/motion` | 13 / 13 | 1,641 / 1,643 |
+
+Nonnegative pure percentages now clamp after animation arithmetic. Equal
+numeric components now add in lists, preserving equal keywords. Repeating
+linear, radial and conic gradients now report their existing support through
+`CSS.supports()`. Backgrounds gains the slice/width interpolation files and
+background-size composition; its focused run gains **109 passing subtests**.
+
+Next: the border-image outset, slice and width composition files each retain
+30 failing subtests, including unexpanded lists and uncompressed zero values.
+Container-relative slice/outset calculations still use viewport dimensions:
+layout size containment and the browser's container-size callback handoff are
+missing. The diagnosis is preserved without a source workaround.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser25/`.
+No expectations changed; test262 was not replayed.
+
 ## Border-image grammar and computed ranges — 2026-09-18
 
 Full CSS at `22ff781c`: **1,621/2,926 files PASS, 70,627 subtests PASS**;
