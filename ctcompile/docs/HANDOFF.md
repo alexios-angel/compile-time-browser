@@ -15,6 +15,66 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered declaration borrows and bounded powers, 2026-09-18 UTC
+
+Resumed the eleven dirty compiler paths at `c675f002`, first recorded in
+AGENT-SYNC at **05:02:53 / 05:20:56** and most recently abandoned at **08:07:19**.
+Both interrupted drafts are now committed; no September 7 WIP remains unmerged.
+
+**`fe2f5b7f`** extends the existing object-borrow census to unique closed hoisted
+declarations. Every symbolic caller participates, including forwarded arguments;
+caller and callee use the existing object-parameter carrier. Saved String fields
+retain their owned bytes across mutation. Mixed/short calls, escaping or replaced
+callables, and alias deletion retain refusal controls. The unchanged
+`local-helper-order` class specimen now executes natively and returns **122**.
+
+**`7133398b`** proves exact bounded Number powers with zero or positive-one
+bases, including negative finite integer exponents for one. Original result
+identity preserves signed zero; saved lengths and CFG/SCF transport retain the
+same invariance and budget checks. General powers and unknown, coercible or
+out-of-domain operands remain unproved.
+
+Focused devbox validation (workflow exit **0**, **933 input hashes** matched
+locally/remotely before and after):
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`; **38 build actions**.
+- Exact `ctcompile_escape_analysis_arrays` CTest: **1/1, 1.74s** total.
+  Dense/induction/structured rows: **585 / 512 / 259**; corresponding budget
+  cutoffs: **22,816 / 35,040 / 17,884**.
+- `Analysis/Escape/escape-claims/{bounded-power,power-identities}.test`:
+  **2/2, 0.20s**. Each oracle reports **26 sites / 11 sound / zero violations /
+  11 of 15 precision**.
+- `CTNative/Lowering/Objects/{primitive-fields,class-initialization}.mlir`:
+  **2/2, 151.50s**. Primitive fields: **152 native executions / 62 refusals**.
+  Classes: **119 source observations / 288 native executions / 238 unprepared /
+  148 preparation refusals**, plus **16 ordinary executions / 20 refusals** and
+  **12 prepared native refusals**. Both optimization policies, explicit/deduced
+  C++ and GCC/Clang pass; successful output has no ctbrowser/prototype metadata.
+  The branching-helper proof still first completes at **419 steps**.
+
+The initial gate failed SSH reachability before building. Authorized
+`server.sh start` and `allow-ip` restored access; the retry passed without source
+changes. Required `tools/format.sh --check` retains **26 diagnostics in nine
+HEAD-identical files**. Stable formatting passes **916 C++ / 109 Python / 105 web
+files**; changed-file pinned formatting, Black, Python syntax and
+`git diff --check` pass. Full CTest/compiler lit, broad corpus/native matrices,
+WPT and test262 were skipped. No browser source or runtime semantics changed.
+Evidence: `/tmp/ctcompile-native-close/`.
+
+**Exact next:** original W-only Config still refuses global **r**; original r+W
+still refuses global **H**, with **a=7** in Node/interpreter. The original r method
+probe prepares but its helper retains **a property read on an object that is not
+a closed-shape literal**. Hoisted object borrowing does not prove this nullable
+guard/property flow. Compose Config's closed-source class proof with the existing
+DOM proof for H through `HostContract/ClassInitialization.cpp`, `Contract.cpp`
+and `DOMSource.cpp`; merely allowing another intrinsic is insufficient.
+H.getDataAttribute/M/F already use public DOM C++, so no platform copy is needed.
+Object.entries/destructuring, RegExp/TypeError exits, inheritance, full H Unicode
+keys, retained callbacks and the application driver remain open. Whole-Bootstrap,
+Button and Data coverage counts remain historical.
+
 ## Local helper proofs and power identities, 2026-09-18 UTC
 
 Started from clean `a0f1b0f7`: its interrupted Error/getter work was already

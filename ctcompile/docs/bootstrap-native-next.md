@@ -1,5 +1,32 @@
 # What native Bootstrap needs next
 
+## Recovered declaration borrows and bounded powers, 2026-09-18 UTC
+
+**`fe2f5b7f`** finishes the interrupted hoisted-helper object-borrow draft:
+the existing closed declaration and all-caller census now carry forwarded object
+arguments. Saved strings survive mutation; mixed/short calls, callable escape,
+replacement and alias deletion retain refusal controls. The unchanged
+`local-helper-order` class case now executes natively (**122**).
+
+**`7133398b`** separately proves exact bounded Number zero/one-base powers,
+preserving signed-zero identity, saved lengths and CFG/SCF invariance.
+Focused array CTest **1/1 (1.74s)**; two power lit cases **2/2 (0.20s)**,
+each **26 sites / zero violations / 11 of 15 precision**. Primitive/class lit
+**2/2 (151.50s)**: **152 / 288 native executions**, plus the ordinary/refusal
+controls recorded in HANDOFF. Explicit six-target build: **38 actions**;
+workflow **0**, **933 input hashes** verified. Stable format **916/109/105** passes;
+required pinned check retains the same **26 diagnostics in nine unchanged files**.
+Full suites and broad matrices were skipped; no browser source changed.
+SSH access was repaired with the authorized start/allow-ip workflow.
+Evidence: `/tmp/ctcompile-native-close/`.
+
+**Next:** original r's nullable property flow still lacks a closed shape.
+Original r+W Config still reaches missing **H**; compose class and DOM proof
+authority through the existing HostContract passes and public DOM helpers.
+Object.entries/destructuring, RegExp/TypeError exits, inheritance, full H Unicode
+keys, retained callbacks and the application driver remain unfinished.
+Whole-Bootstrap/Button/Data counts remain historical.
+
 ## Local helper boundary measured, 2026-09-18 UTC
 
 **`27cb4729`** adds bounded exact parameterized-helper proof to class preparation,
