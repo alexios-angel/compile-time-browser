@@ -1,5 +1,54 @@
 # What native Bootstrap needs next
 
+## Direct DOM receivers and canonical String bitwise snapshots, 2026-09-18 UTC
+
+Recovered dirty **43860a33**, resuming the receiver-normalization thread named
+by AGENT-SYNC at **11:38:29** and abandoned at **11:38:51**. Independent agents
+recovered tests and audited the proof; root completed drafts after service limits.
+
+**3c4e3b1e** expands already normalized direct DOM helper calls through the
+existing body-cloning logic. Exact private capture-free targets have no live
+closure creation and undefined callee/new.target; each invocation receives its
+own actual receiver. Live closure rules, full source reproof, work/depth limits
+and unused-function refusals remain. Two native cases preserve reads and writes
+across distinct element receivers. The three original class/DOM specimens and
+fourteen adversarial class bodies remain preparation refusals; no new constructor
+or class-provider proof is claimed.
+
+**a1debd07** proves canonical String operands of AND/OR/XOR and Shl/Shr/UShr
+using the existing bounded parser and signed arithmetic. Original String/Number
+identities, masked counts and CFG/SCF snapshots remain; signed/noncanonical
+String forms and out-of-range values refuse. All eight original oracle bodies
+remain unchanged.
+
+Focused gates: exact arrays **1/1 (0.98s), 643/673/312 rows**;
+signed-right-shifts **1/1 (0.13s), 36 sites / 15 sound / zero violations /
+15 of 21 precision**; exception recovery **1/1 (3.48s)**; new class-dom
+**1/1 (10.92s), 20 source observations / 8 combined native executions /
+68 refusals**. Four existing DOM helper/F/H sources pass **16 source observations /
+8 combined GCC/Clang executions / 24 provenance checks / 88 refusals**. Both
+providers, optimization settings and explicit/deduced C++ pass with Script/AOT
+exclusion. Seven explicit build targets took **8 actions**, then **2 + 2** for
+header tests; all eight source hashes match the devbox. HANDOFF records the exact
+targets/selections and corrected original zero-shift expectation and test ABI anchor.
+Evidence: `/tmp/ctcompile-dom-recovery/`.
+
+Pinned formatting retains **26 existing diagnostics in nine unchanged files**;
+changed pinned formatting, Black, syntax and diff checks pass. Full CTest/compiler
+lit, class-initialization and complete DOM suites, broad matrices, WPT and test262
+were skipped. No browser source/runtime changes or push. Historical Bootstrap
+measurements remain historical.
+
+**Next:** join original class/DOM effects and normalize ordinary instance fields.
+The class provider remains closed-source-only with unused explicit parameters.
+`DOMSource` treats field-reading objects as callable holders; `DOMEntry` has JSON
+aggregates but no ordinary instance-field reads or element-valued fields. Reuse
+the constructor/prototype/receiver proof and the new direct inliner, preserving
+every original unused method/getter's effect obligations before erasure. The
+preserved `class_key`, `class_order`, and `class_element` sources are concrete next
+checks. Remaining Config, inheritance, full H Unicode, retained callbacks, the
+application driver and further String power/conversion proofs remain open.
+
 ## Explicit class entries and canonical String division, 2026-09-18 UTC
 
 Continued clean **18cc8b1b**, resuming the explicit-entry boundary after the

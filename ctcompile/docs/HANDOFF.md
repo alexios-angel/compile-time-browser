@@ -15,6 +15,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Direct DOM receivers and canonical String bitwise snapshots, 2026-09-18 UTC
+
+Resumed dirty **43860a33** from the **11:38:29 AGENT-SYNC journal** and its
+explicit **11:38:51 abandonment**. The interrupted files were the two-file
+String bitwise draft and untracked `class_dom.py` / `class-dom.mlir`. September 7
+WIP was absent from unmerged branches. Independent agents audited the native
+proof and recovered tests; root completed escape drafts after service limits.
+
+**3c4e3b1e** extends `DOMSource` to expand already normalized direct calls with
+an exact private, capture-free target, no live closure creation, exact arity and
+undefined callee/new.target. Each invocation binds its own actual receiver.
+The existing body-cloning logic is shared with live closure expansion; live
+closure receiver/lexical rules remain unchanged. Direct targets may observe their
+receiver, but not callee/new.target or nested closures/captures. Complete source
+bodies, recursion/depth/work limits, unvisited-function rejection and transactional
+DOM reproof remain required. This supplies no new source constructor/prototype
+proof or class-provider authority.
+
+Two equivalent source/normalized-IR cases execute natively: one attribute read
+and repeated reads/writes on two distinct element receivers. Three original
+class/DOM specimens retain Node/interpreter observations and preparation refusals;
+all fourteen adversarial class bodies remain. Generated and linked output calls
+public DOM C++ and excludes Script/AOT dependencies and dynamic class dispatch.
+
+**a1debd07** reuses the canonical decimal parser for both operands of bitwise
+AND/OR/XOR and left/signed-right/unsigned-right shifts. Signed Number snapshots,
+masked counts and original String identities survive CFG/SCF transport. Signed
+or noncanonical String forms and out-of-range values remain unproved. All eight
+original source-oracle function bodies remain byte-identical.
+
+Focused devbox checks only; evidence: `/tmp/ctcompile-dom-recovery/`.
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`,
+  `ctcompile-test-type-oracle`, `ctcompile-test-exception-recovery`.
+  Initial build: **8 actions**; two test-header rebuilds: **2 actions each**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.98s)**.
+  Dense/induction/structured rows: **643 / 673 / 312**; budget cutoffs:
+  **24,680 / 45,638 / 22,889**.
+- Exact `Analysis/Escape/escape-claims/signed-right-shifts.test`:
+  **1/1 (0.13s)**, **36 observed sites / 15 sound / zero violations /
+  15 of 21 precision**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.48s)**, including the existing
+  DOM preparation transaction and rollback checks.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (10.92s)**,
+  **20 Node/interpreter observations / 8 combined native executions / 68 refusals**.
+- Selected existing `helper_object_method`, `helper_object_extracted`,
+  `helper_object_multiple`, `helper_regex_original_h` fixtures:
+  **16 Node/interpreter observations / 8 combined GCC/Clang executions /
+  24 provenance checks / 88 refusals**. Both providers, optimization settings and
+  explicit/deduced C++ pass. This selection is not the complete DOM String suite.
+
+All eight changed source/test hashes match the devbox. The final native wrapper
+exits **0**. The initial array gate failed **0.97s (0.98s total)** on six stale
+assertions for the original `"0" >>> "0"` shrink; its source remained intact and
+its expectation now records the proved empty array. The first new native test
+failed **0.16s** because the fixture expected an indirect call after the resolver
+had already made it direct. Only the fixture changed after the production build.
+Malformed call arity remains the IR verifier's responsibility.
+
+Required pinned `tools/format.sh --check` reports **26 existing diagnostics in
+nine HEAD-identical files**. Changed-file pinned formatting, Black, Python syntax
+and diff checks pass. Full CTest/compiler lit, class-initialization and complete
+DOM lit suites, broad corpus/native matrices, WPT and test262 were skipped.
+No browser source/runtime changes or push; historical Bootstrap measurements
+were not replayed.
+
+**Exact next:** join complete original class and DOM effect proofs, then normalize
+ordinary instance fields before DOM admission. `ClassInitialization` remains
+closed-source-only and explicit entry parameters must be unused. `DOMSource`
+classifies ordinary objects with field reads as callable holders, while `DOMEntry`
+classifies fresh objects as JSON aggregates, rejects element-valued fields and
+lacks ordinary instance-field reads. Reuse constructor lifting's existing
+new.target, primitive-return, prototype and receiver proofs and the new direct
+inliner; preserve every original unused method/getter's effect obligations before
+erasure. The preserved `class_key`, `class_order`, and `class_element` specimens
+are the next concrete boundary. Remaining Config, inheritance, full H Unicode,
+retained callbacks, application driver and String power/other conversions remain
+open. Native Bootstrap is not complete.
+
 ## Explicit class entries and canonical String division, 2026-09-18 UTC
 
 Continued clean **18cc8b1b** after the **11:14:38 AGENT-SYNC journal** closed

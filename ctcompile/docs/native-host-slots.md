@@ -132,12 +132,24 @@ URI completion, source helper expansion, element guards, iteration, wrapper and
 optional-force normalization, then complete source reproof. It publishes the
 normalized module and refreshed contract together; refusal preserves both.
 `LowerToEmitC` calls that shared seam. It grants no class or ownership authority.
-Class/DOM composition still needs a proved constructor/prototype normalization
-inside an explicit element entry: the class pass currently requires script entry
-index 0, while DOM entry proof cannot carry ordinary constructed class instances.
-Host manifests also bypass the ordinary closure/constructor lifter. Those body,
-receiver and representation obligations must be joined before invoking the DOM
-transaction; adding class intrinsics to a DOM manifest does not establish them.
+DOM helper expansion also accepts already normalized direct calls to exact private
+capture-free targets with no live closure creation, exact arity and undefined
+callee/new.target. It binds the actual receiver separately at each call. Receiver
+observations on this route survive into complete DOM reproof; callee/new.target
+observations, nested closures/captures, recursion and unvisited source functions
+still refuse. Existing live closure and lexical receiver rules remain unchanged.
+This normalization supplies no constructor/prototype or class-provider proof.
+
+Class/DOM composition still needs the complete original class effect census and
+ordinary instance-field normalization. Explicit class entries now allow an inert
+declaration wrapper, but their parameters must be unused and the provider remains
+closed-source-only. DOM helper expansion classifies field-reading objects as
+callable holders, while DOM entry proof permits JSON aggregates but has no ordinary
+instance-field reads or element-valued fields. Host manifests also bypass the
+ordinary closure/constructor lifter. Join those body, receiver and representation
+obligations before DOM admission; adding class intrinsics to a DOM manifest does
+not establish them. The class/DOM regression preserves three original specimens
+as source observations and preparation refusals.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
