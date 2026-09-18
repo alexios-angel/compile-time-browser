@@ -82,6 +82,32 @@ int main() {
     js_expect("1n === 1n", "true");                              // by VALUE, not by allocation
     js_expect("2n === 1n", "false");
 
+    // Loose equality converts Booleans to Number and objects to primitives.
+    js_expect("[0n == false, false == 0n, 1n == true, true == 1n,"
+              " 2n != true, true != 2n, 0n == null, 0n == undefined].join(',')",
+              "true,true,true,true,true,true,false,false");
+    js_expect("[Object(1n) == 1n, 1n == Object(1n), Object(1n) != 2n,"
+              " 2n != Object(1n), Object(1n) == Object(1n)].join(',')",
+              "true,true,true,true,false");
+    js_expect(R"JS((function() {
+        var calls = '';
+        var object = {valueOf() { calls += 'v'; return {}; },
+                      toString() { calls += 's'; return '1'; }};
+        return [object == 1n, 1n != object, calls].join(',');
+    })())JS",
+              "true,false,vsvs");
+    js_expect(R"JS((function() {
+        var marker = {};
+        var object = {valueOf() { throw marker; }};
+        try { return 1n == object; } catch (e) { return e === marker; }
+    })())JS",
+              "true");
+    js_expect(R"JS((function() {
+        var object = {valueOf() { return {}; }, toString() { return {}; }};
+        try { return object != 1n; } catch (e) { return e.name; }
+    })())JS",
+              "TypeError");
+
     // --- conversion ------------------------------------------------------------
     js_expect("String(1n)", "1"); // the digits, with no trailing `n`
     js_expect("`${5n}`", "5");
