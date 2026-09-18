@@ -173,6 +173,7 @@ public:
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
     [[nodiscard]] ctjs::FuncOp entry() const { return checkedEntry; }
+    [[nodiscard]] bool returnsUndefined() const { return undefinedReturn; }
     [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
     [[nodiscard]] llvm::ArrayRef<ctjs::FuncOp> callbacks() const { return checkedCallbacks; }
     [[nodiscard]] ctjs::FuncOp callback(ctjs::CreateClosureOp closure) const;
@@ -204,6 +205,10 @@ public:
     // Complete String-only branch/invocation yields, independently of the
     // producer-wide lattice. This never narrows a getAttribute result.
     [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return strings; }
+    // Exact undefined tests and their truth conversions, after every arm is proved.
+    [[nodiscard]] llvm::ArrayRef<std::pair<mlir::Value, bool>> constantBooleans() const {
+        return booleans;
+    }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
     // Fresh owning data objects and guarded spreads, after the complete use
@@ -217,6 +222,7 @@ public:
 private:
     std::string refusal;
     ctjs::FuncOp checkedEntry;
+    bool undefinedReturn = false;
     ctjs::FuncOp checkedWrapper;
     std::vector<ctjs::FuncOp> checkedCallbacks;
     std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> callbackClosures;
@@ -234,6 +240,7 @@ private:
     std::vector<mlir::Value> optionalStrings;
     std::vector<HostDOMStringRefinement> refinements;
     std::vector<mlir::Value> strings;
+    std::vector<std::pair<mlir::Value, bool>> booleans;
     std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
     std::vector<HostDOMCall> calls;
     std::vector<ctjs::CreateObjectOp> jsonObjects;

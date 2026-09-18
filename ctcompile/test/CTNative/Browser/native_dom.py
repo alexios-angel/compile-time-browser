@@ -645,6 +645,16 @@ def main():
     includes, libraries = link_options(args)
     prepared = {}
     entries = (
+        (
+            "observed-remove-result",
+            "function remove(element) { return element.removeAttribute('disabled'); }",
+            1,
+            'assert(doc.set_attribute(button, atoms.intern("disabled"), ""));\n'
+            "static_assert(std::is_void_v<decltype(@ENTRY@(element))>);\n"
+            "@ENTRY@(element);\n"
+            "(void)pressed; (void)alias; (void)foreign;\n"
+            'assert(!doc.read().has_attribute(button, atoms.intern("disabled")));',
+        ),
         ("action", ACTION, 1, ACTION_CHECKS),
         ("identity", IDENTITY, 2, IDENTITY_CHECKS),
         ("contains", CONTAINS, 2, CONTAINS_CHECKS),
@@ -815,11 +825,6 @@ def main():
             "retained-field",
             "function retain(element) { element.saved = element; return true; }",
             "DOM",
-        ),
-        (
-            "observed-remove-result",
-            "function remove(element) { return element.removeAttribute('disabled'); }",
-            "unused",
         ),
     ]
     for method in (

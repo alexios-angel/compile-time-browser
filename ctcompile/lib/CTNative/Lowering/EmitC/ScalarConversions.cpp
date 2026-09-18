@@ -138,7 +138,9 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                 }
             });
         }
-        resultTypes[fn.getSymName()] = domResult ? domResult : scalarType(joinedReturnType(fn));
+        // A proved undefined DOM entry has no C++ result, rather than a tagged carrier.
+        resultTypes.try_emplace(fn.getSymName(),
+                                domResult ? domResult : scalarType(joinedReturnType(fn)));
         auto & params = parameterTypes[fn.getSymName()];
         for (mlir::BlockArgument arg : fn.getBody().front().getArguments()) {
             params.push_back(scalarType(typeOf(arg)));

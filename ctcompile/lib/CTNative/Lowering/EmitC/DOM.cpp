@@ -26,6 +26,9 @@ std::string lowering::domDataDefinition() const {
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     needsDOM = true;
+    if (entry.returnsUndefined()) {
+        resultTypes[entry.entry().getSymName()] = mlir::NoneType::get(context);
+    }
     domStringResults.insert(entry.stringResults().begin(), entry.stringResults().end());
     domStringRefinements.assign(entry.stringRefinements().begin(), entry.stringRefinements().end());
     domOptionalStrings.insert(entry.optionalStringJoins().begin(),
@@ -422,7 +425,10 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     switch (edge.kind) {
     case HostDOMMethod::datasetKeys: callee = "ctnative::dataset_keys"; break;
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
-    case HostDOMMethod::setAttribute: callee = "ctnative::set_attribute"; break;
+    case HostDOMMethod::setAttribute:
+        callee = call.getArgs()[1].getType() == optionalString ? "ctnative::set_optional_attribute"
+                                                               : "ctnative::set_attribute";
+        break;
     case HostDOMMethod::getAttribute: callee = "ctnative::get_attribute"; break;
     case HostDOMMethod::toggleAttribute: callee = "ctnative::toggle_attribute"; break;
     case HostDOMMethod::hasAttribute: callee = "ctnative::has_attribute"; break;

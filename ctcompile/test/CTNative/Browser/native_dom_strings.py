@@ -67,6 +67,7 @@ SOURCES = (
     *((name, source, 1) for name, source in CAPTURE_RETURNS.items()),
 )
 BOOLEAN_CASES = {
+    "set_value": ("element.setAttribute('y', element.getAttribute('x')); return true;", "1111"),
     "boolean": ("return !element.getAttribute('x');", "1100"),
     "truthy": ("return !!element.getAttribute('x');", "0011"),
     "nullable_equality": ("return element.getAttribute('x') === null;", "1000"),
@@ -960,6 +961,7 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    "set_value": 'assert(doc.read().attribute_value(node, atoms.intern("y")) == (value ? std::string_view(*value) : std::string_view("null")));',
     "helper_completion_effects": r"""assert(doc.read().attribute_value(node, atoms.intern("marker")) ==
             (!value ? "missing" : value->empty() ? "empty" :
              *value == std::string_view("a\0b", 3) ? "nul" : "wide"));""",
@@ -1281,7 +1283,6 @@ REFUSALS = {
     "object-name": "return element.getAttribute('x' + {});",
     "object-value": "element.setAttribute('x', 'y' + {}); return true;",
     "return-null": "element.getAttribute('x'); return null;",
-    "set-value": "element.setAttribute('y', element.getAttribute('x')); return true;",
     "dynamic-name": "return element.getAttribute(element.getAttribute('x'));",
     "string-property": "return element.getAttribute('x').length;",
     "nested-control": "if (element.hasAttribute('x')) return element.getAttribute('x'); return '';",

@@ -198,6 +198,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<mlir::Value> provedOptionalStrings;
     std::vector<HostDOMStringRefinement> provedRefinements;
     std::vector<mlir::Value> provedStrings;
+    std::vector<std::pair<mlir::Value, bool>> provedBooleans;
+    bool provedUndefinedReturn = false;
     mlir::DominanceInfo dominance(module);
     std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> provedClosures;
     llvm::DenseSet<mlir::Operation *> usedCallbacks;
@@ -257,6 +259,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         };
         llvm::DenseMap<mlir::Value, mlir::Value> typeQueries;
         llvm::DenseMap<mlir::Value, Predicate> predicates;
+        llvm::DenseMap<mlir::Value, bool> constantBooleans;
         llvm::DenseMap<mlir::Value, std::size_t> activeRefinements;
         for (mlir::BlockArgument argument : block.getArguments()) {
             if (!spend()) { return; }
@@ -453,6 +456,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         return false;
                     }
                     llvm::SmallVector<Kind> joined;
+                    const auto known = constantBooleans.find(branch.getCondition());
+                    const std::optional<bool> selected = known == constantBooleans.end()
+                                                             ? std::nullopt
+                                                             : std::optional(known->second);
                     for (mlir::Region & region : branch->getRegions()) {
                         if (region.empty()) { continue; }
                         if (!spend()) { return false; }
@@ -505,7 +512,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                     "DOM entry branch cannot carry a borrowed or callable value";
                                 return false;
                             }
-                            if (first) {
+                            // Both arms retain the complete typed effect proof, even
+                            // when an original argument decides the default branch.
+                            if (selected && first != *selected) { continue; }
+                            if (first || selected) {
                                 joined.push_back(kind);
                                 continue;
                             }
@@ -789,6 +799,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         return false;
                     }
                     returned = true;
+                    if (!callbackBody) {
+                        provedUndefinedReturn = hasKind(result.getValue(), Kind::undefined);
+                    }
                     continue;
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
@@ -1226,16 +1239,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
                     if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
                          (hasKind(arguments[1], Kind::string) ||
-                          hasKind(arguments[1], Kind::boolean))) ||
+                          hasKind(arguments[1], Kind::boolean) ||
+                          hasKind(arguments[1], Kind::optionalString))) ||
                         (hasKind(invoke.getCallee(), Kind::removeAttribute) &&
                          arguments.size() == 1 && hasKind(arguments[0], Kind::string))) {
-                        for (mlir::Operation * user : invoke.getResult().getUsers()) {
-                            if (!spend()) { return false; }
-                            if (!llvm::isa<ctjs::RootOp>(user)) {
-                                refusal = "DOM attribute write result must be unused";
-                                return false;
-                            }
-                        }
                         ++mutationEpoch;
                         provedCalls.push_back(
                             {invoke,
@@ -1308,6 +1315,24 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     const bool strings = hasKind(compare.getLhs(), Kind::string) &&
                                          hasKind(compare.getRhs(), Kind::string);
                     const bool strict = compare.getKind() == ctjs::CompareKind::StrictEq;
+                    if (strict && (hasKind(compare.getLhs(), Kind::undefined) ||
+                                   hasKind(compare.getRhs(), Kind::undefined))) {
+                        const auto scalar = [&](mlir::Value value) {
+                            return stringOrNull(value) || hasKind(value, Kind::undefined) ||
+                                   hasKind(value, Kind::boolean) || hasKind(value, Kind::number) ||
+                                   hasKind(value, Kind::json) ||
+                                   hasKind(value, Kind::jsonAggregate);
+                        };
+                        if (scalar(compare.getLhs()) && scalar(compare.getRhs())) {
+                            if (!spend()) { return false; }
+                            const bool equal = hasKind(compare.getLhs(), Kind::undefined) &&
+                                               hasKind(compare.getRhs(), Kind::undefined);
+                            values[compare.getResult()] = Kind::boolean;
+                            constantBooleans[compare.getResult()] = equal;
+                            provedBooleans.emplace_back(compare.getResult(), equal);
+                            continue;
+                        }
+                    }
                     if (strings || (strict && ((elementIdentity(compare.getLhs()) &&
                                                 elementIdentity(compare.getRhs())) ||
                                                (stringOrNull(compare.getLhs()) &&
@@ -1339,6 +1364,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                               hasKind(truth.getValue(), Kind::null))) {
                     values[truth.getResult()] = Kind::boolean;
                     if (!spend()) { return false; }
+                    if (auto found = constantBooleans.find(truth.getValue());
+                        found != constantBooleans.end()) {
+                        const bool value = found->second;
+                        constantBooleans[truth.getResult()] = value;
+                        provedBooleans.emplace_back(truth.getResult(), value);
+                    }
                     if (auto found = predicates.find(truth.getValue()); found != predicates.end()) {
                         const Predicate predicate = found->second;
                         predicates[truth.getResult()] = predicate;
@@ -1453,9 +1484,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     optionalStrings = std::move(provedOptionalStrings);
     refinements = std::move(provedRefinements);
     strings = std::move(provedStrings);
+    booleans = std::move(provedBooleans);
     checkedCallbacks = std::move(callbackFunctions);
     callbackClosures = std::move(provedClosures);
     checkedEntry = target;
+    undefinedReturn = provedUndefinedReturn;
     checkedWrapper = declaration;
     elements = std::move(provedElements);
     tokenLists = std::move(provedTokens);

@@ -3,6 +3,8 @@
 #include "Analysis.h"
 #include "Preparation.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -147,6 +149,36 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                     at, call.getLoc(), ctjs::BooleanAttr::get(call.getContext(), false));
                 call.getArgsMutable().slice(1, 1).assign(value.getResult());
             }
+        });
+        // Only a complete source proof can resolve defaults. Retain argument
+        // producers and the selected arm in place; never evaluate a skipped default.
+        for (auto [original, value] : source.constantBooleans()) {
+            auto result = mapping.lookup(original);
+            mlir::OpBuilder at(result.getDefiningOp());
+            mlir::Value constant;
+            if (result.getType().isInteger(1)) {
+                constant = mlir::arith::ConstantIntOp::create(at, result.getLoc(), value, 1);
+            } else {
+                constant = ctjs::ConstantOp::create(
+                    at, result.getLoc(), ctjs::BooleanAttr::get(module.getContext(), value));
+            }
+            result.replaceAllUsesWith(constant);
+            result.getDefiningOp()->erase();
+        }
+        prepared->walk<mlir::WalkOrder::PostOrder>([](mlir::scf::IfOp branch) {
+            auto condition = branch.getCondition().getDefiningOp<mlir::arith::ConstantIntOp>();
+            if (!condition) { return; }
+            auto & region = condition.value() ? branch.getThenRegion() : branch.getElseRegion();
+            if (region.empty()) {
+                branch.erase();
+                return;
+            }
+            auto & body = region.front();
+            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
+            branch.replaceAllUsesWith(yield.getOperands());
+            yield.erase();
+            branch->getBlock()->getOperations().splice(branch->getIterator(), body.getOperations());
+            branch.erase();
         });
     }
     prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });

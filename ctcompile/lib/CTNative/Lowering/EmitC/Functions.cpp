@@ -93,7 +93,10 @@ void lowering::lower(ctjs::FuncOp fn) {
     const std::string symbol = isEntry                ? std::string{"main"}
                                : named != names.end() ? named->second
                                                       : cIdentifier(fn.getSymName());
-    auto made = ec::FuncOp::create(b, fn.getLoc(), symbol, b.getFunctionType(params, {returnType}));
+    auto made = ec::FuncOp::create(b, fn.getLoc(), symbol,
+                                   b.getFunctionType(params, llvm::isa<mlir::NoneType>(returnType)
+                                                                 ? mlir::TypeRange{}
+                                                                 : mlir::TypeRange{returnType}));
     // The JavaScript name is the symbol before the importer's `$index`.
     const llvm::StringRef jsName = fn.getSymName().split('$').first;
     made->setAttr("ctnative.provenance",

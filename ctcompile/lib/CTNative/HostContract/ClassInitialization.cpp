@@ -88,10 +88,21 @@ struct classInitialization {
             if (!step()) { return false; }
             if (cells.count(cell.getResult())) { continue; }
             ctjs::CellSetOp first;
+            const auto readPosition = [&](mlir::Operation * op) {
+                if (llvm::isa<ctjs::CellGetOp>(op)) {
+                    while (op->getBlock() != cell->getBlock() &&
+                           llvm::isa_and_nonnull<mlir::scf::IfOp>(op->getParentOp())) {
+                        if (!step()) { break; }
+                        op = op->getParentOp();
+                    }
+                }
+                return op;
+            };
             for (mlir::OpOperand & use : cell.getResult().getUses()) {
                 if (!step()) { return false; }
                 auto * op = use.getOwner();
-                if (op->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(op)) {
+                auto * position = readPosition(op);
+                if (position->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(position)) {
                     return refuse("class local cell has a nonlocal or unordered use");
                 }
                 if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
@@ -109,7 +120,9 @@ struct classInitialization {
                     cellOperations.insert(op);
                     continue;
                 }
-                if (first && !first->isBeforeInBlock(op)) {
+                // A fixed cell may be read in a later short-circuit arm. All
+                // writes/captures still belong to its original ordered block.
+                if (first && !first->isBeforeInBlock(readPosition(op))) {
                     return refuse("class local cell is observed before initialization");
                 }
                 if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op);

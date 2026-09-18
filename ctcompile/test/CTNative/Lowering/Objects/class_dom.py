@@ -168,6 +168,107 @@ CLASS_CASES.update(
             .replace("second.read('other')", "second.press('other')"),
             "1000",
         ),
+        "class_method_omitted": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    read(key, missing) {
+      return this.element.getAttribute(key) === null && missing === void 0;
+    }
+  }
+  return new Button(element).read('x');
+""",
+            "1000",
+        ),
+        "class_method_default_key": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    read(key = 'x') { return this.element.getAttribute(key); }
+  }
+  const button = new Button(element);
+  const omitted = button.read();
+  const explicit = button.read(void 0);
+  element.setAttribute('marker', 'done');
+  const supplied = button.read('marker');
+  return omitted === null && explicit === null && supplied === 'done';
+""",
+            "1000",
+        ),
+        "class_method_default_constructor": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    static get KEY() { return 'x'; }
+    read(key = this.constructor.KEY) { return this.element.getAttribute(key); }
+    press(key) { return this.read(key); }
+  }
+  const button = new Button(element);
+  const omitted = button.press();
+  const explicit = button.press(void 0);
+  return omitted === null && explicit === null;
+""",
+            "1000",
+        ),
+        "class_method_default_config": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    static get DefaultType() { return {}; }
+    read(key, types = this.constructor.DefaultType) {
+      return this.element.getAttribute(key);
+    }
+    press(key) { return this.read(key); }
+  }
+  return new Button(element).press('x') === null;
+""",
+            "1000",
+        ),
+        "class_method_default_transitive": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    read(key = 'x') { return this.element.getAttribute(key); }
+    forward() { return this.read(); }
+    press() { return this.forward(); }
+  }
+  return new Button(element).press() === null;
+""",
+            "1000",
+        ),
+        "class_method_default_null": (
+            """class Reader {
+    read(value = 'x') { return value; }
+  }
+  const reader = new Reader();
+  const omitted = reader.read();
+  const explicit = reader.read(void 0);
+  const supplied = reader.read(null);
+  return element.getAttribute(omitted) === null && explicit === 'x' && supplied === null;
+""",
+            "1000",
+        ),
+        "class_method_default_order": (
+            """class Button {
+    constructor(element) { this.element = element; }
+    defaultKey() {
+      const order = this.element.getAttribute('order');
+      this.element.setAttribute('default', order);
+      return 'x';
+    }
+    read(key = this.defaultKey(), ignored = this.element.setAttribute('unused-default', this.element.getAttribute('default'))) {
+      const saved = this.element.getAttribute(key);
+      this.element.setAttribute('order', 'body');
+      return saved;
+    }
+  }
+  const button = new Button(element);
+  element.setAttribute('order', 'before');
+  const saved = button.read(void 0, element.setAttribute('order', 'argument'));
+  const order = element.getAttribute('default');
+  const unused = element.getAttribute('unused-default');
+  element.setAttribute('default', 'untouched');
+  element.setAttribute('unused-default', 'untouched');
+  button.read('x', true);
+  return saved === null && order === 'argument' && unused === 'argument';
+""",
+            "1000",
+        ),
     }
 )
 TWO_ELEMENT_CLASSES = {
@@ -326,6 +427,44 @@ CLASS_REFUSALS = {
     "method_transitive_bad_field_after_good": CLASS_CASES["class_method_transitive_order"][
         0
     ].replace("button.press('other', other)", "button.press('other', {})"),
+    "method_default_bad_key": CLASS_CASES["class_method_default_key"][0].replace(
+        "read(key = 'x')", "read(key = {})"
+    ),
+    "method_default_bad_receiver": """class Reader {
+    read(target = {}) { return target.getAttribute('x'); }
+  }
+  return new Reader().read() === null;
+""",
+    "method_default_skipped_ambient": CLASS_CASES["class_method_default_key"][0]
+    .replace("read(key = 'x')", "read(key = ambient())")
+    .replace("button.read()", "button.read('x')")
+    .replace("button.read(void 0)", "button.read('x')"),
+    "method_default_dead_unknown": CLASS_CASES["class_method_default_key"][0].replace(
+        "read(key = 'x')", "read(key = false ? this.element.unknown() : 'x')"
+    ),
+    "method_default_unused_parameter": CLASS_CASES["class_method_default_key"][0].replace(
+        "    read(key", "    unused(key = 'x') { this.element.getAttribute(key); }\n    read(key"
+    ),
+    "method_default_after_good": CLASS_CASES["class_method_default_key"][0]
+    .replace("read(key = 'x')", "read(key = {})")
+    .replace("  const omitted =", "  button.read('x');\n  const omitted ="),
+    "method_default_transitive_bad_key": CLASS_CASES["class_method_default_constructor"][0].replace(
+        "return 'x';", "return {};"
+    ),
+    "method_default_null_dom": CLASS_CASES["class_method_default_key"][0].replace(
+        "button.read(void 0)", "button.read(null)"
+    ),
+    "method_default_unused_effect": """class Button {
+    constructor(element) { this.element = element; }
+    read(ignored = this.element.unknown()) {
+      return this.element.getAttribute('x') === null;
+    }
+  }
+  return new Button(element).read(true);
+""",
+    "method_default_replaces_receiver": CLASS_CASES["class_method_default_key"][0].replace(
+        "read(key = 'x')", "read(key = (this.element = {}, 'x'))"
+    ),
 }
 CASES = {
     "direct_read": (
@@ -397,6 +536,12 @@ FIELD_CHECKS["class_order"] = FIELD_CHECKS["field_order"]
 FIELD_CHECKS["class_method_key"] = FIELD_CHECKS["class_method_transitive"] = FIELD_CHECKS[
     "method_transitive_only"
 ] = 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");'
+FIELD_CHECKS["class_method_default_key"] = FIELD_CHECKS["class_method_key"]
+FIELD_CHECKS["class_method_default_order"] = (
+    'assert(doc.read().attribute_value(node, atoms.intern("order")) == "body");'
+    'assert(doc.read().attribute_value(node, atoms.intern("default")) == "untouched");'
+    'assert(doc.read().attribute_value(node, atoms.intern("unused-default")) == "untouched");'
+)
 FIELD_CHECKS["class_unused_write"] = (
     'assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");'
     'assert(doc.read().attribute_value(node, atoms.intern("unused-probe")).empty());'
@@ -439,7 +584,7 @@ def check_oracles(args):
     observations, expected = [], []
     for name, (_, bits) in cases.items():
         for value, bit in zip(("null", "''", r"'a\0b'", r"'\u00e9'"), bits):
-            variable = f"observation{len(observations):02}"
+            variable = f"observation{len(observations):03}"
             effects = {
                 "class_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost class writes');",
                 "class_element": "if (toggles !== 1) throw new Error('lost class toggle');",
@@ -448,6 +593,8 @@ def check_oracles(args):
                 "class_method_key": "if (element.getAttribute('marker') !== 'done') throw new Error('lost method argument');",
                 "class_method_transitive": "if (element.getAttribute('marker') !== 'done') throw new Error('lost transitive argument');",
                 "method_transitive_only": "if (element.getAttribute('marker') !== 'done') throw new Error('lost transitive argument');",
+                "class_method_default_key": "if (element.getAttribute('marker') !== 'done') throw new Error('lost default argument');",
+                "class_method_default_order": "if (element.getAttribute('order') !== 'body' || element.getAttribute('default') !== 'untouched' || element.getAttribute('unused-default') !== 'untouched') throw new Error('lost default order');",
                 "class_method_transitive_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost transitive writes');",
                 "direct_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost receiver writes');",
                 "field_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost field writes');",
@@ -474,7 +621,7 @@ def check_oracles(args):
     path.write_text(
         oracle
         + "\n".join(
-            f"console.log('observation{i:02}=' + observation{i:02});"
+            f"console.log('observation{i:03}=' + observation{i:03});"
             for i in range(len(observations))
         )
     )

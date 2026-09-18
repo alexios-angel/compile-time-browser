@@ -393,7 +393,10 @@ struct DOMSource {
                 auto * operation = use.getOwner();
                 auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                 auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
-                if (operation->getBlock() != &block || !object->isBeforeInBlock(operation) ||
+                const bool ordered =
+                    get ? precedesInStructuredBody(object, get)
+                        : operation->getBlock() == &block && object->isBeforeInBlock(operation);
+                if (!ordered ||
                     (!llvm::isa<ctjs::RootOp>(operation) &&
                      (use.getOperandNumber() != 0 ||
                       !(get ? ctjs::ordinaryKey(get.getKey())
@@ -410,21 +413,28 @@ struct DOMSource {
             // initialized own fields are read; the complete use census rules
             // out aliases, identity observations, accessors and prototype edits.
             // Keep every value producer for the subsequent complete DOM proof.
-            // ponytail: one charged block scan per local object; index stores
+            // Writes stay in the source block; nested reads see the fields at
+            // their enclosing branch/loop, which cannot mutate this object.
+            // ponytail: one charged function scan per local object; index stores
             // if large straight-line entries exhaust the existing work budget.
             llvm::StringMap<mlir::Value> fields;
-            for (mlir::Operation & operation : llvm::make_early_inc_range(block)) {
-                if (!step()) { return false; }
-                if (!uses.contains(&operation)) { continue; }
+            const auto walked = function.walk([&](mlir::Operation * operation) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (!uses.contains(operation)) { return mlir::WalkResult::advance(); }
                 if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                     fields[ctjs::constantKey(set.getKey())] = set.getValue();
                 } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     auto value = fields.lookup(ctjs::constantKey(get.getKey()));
-                    if (!value) { return refuse("DOM local field read lacks a preceding write"); }
+                    if (!value) {
+                        refuse("DOM local field read lacks a preceding write");
+                        return mlir::WalkResult::interrupt();
+                    }
                     get.getResult().replaceAllUsesWith(value);
                 }
-                operation.erase();
-            }
+                operation->erase();
+                return mlir::WalkResult::advance();
+            });
+            if (walked.wasInterrupted()) { return false; }
             object.erase();
         }
         return true;

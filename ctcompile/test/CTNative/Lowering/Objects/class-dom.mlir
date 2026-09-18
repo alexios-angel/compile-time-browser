@@ -14,3 +14,8 @@
 // state. Original two/three-hop method calls prove transitive-only parameters on
 // each instance, preserving argument, field and DOM write order. Unused formals,
 // uncalled instances, invalid/dead calls and recursive dependencies still refuse.
+// Missing arguments stay undefined; original default expressions observe the
+// receiver, explicit undefined versus null, and argument/default/body order.
+// DefaultType keeps its original fresh-empty getter; unused formal defaults
+// retain effects and defaults run only for omitted or undefined arguments.
+// Unknown defaults still refuse when supplied arguments skip their execution.
