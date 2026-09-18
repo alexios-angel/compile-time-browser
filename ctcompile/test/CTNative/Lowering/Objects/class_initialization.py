@@ -26,6 +26,7 @@ OBSERVATIONS = {
     "local-helper-dynamic-key": (7, 7),
     "bootstrap-r": (7, 7),
     "bootstrap-config-r-defaults": (7, 7),
+    "bootstrap-config-r-h-defaults": (7, 7),
     "empty": (7, 7),
     "number": (92, 92),
     "method": (92, 92),
@@ -511,6 +512,51 @@ def check_executable(args, name, native, expected):
     return checked
 
 
+def check_helper_guards(args, declaration):
+    checked = refused = 0
+    for name, (body, native_expected) in {
+        "bootstrap-r-direct": (declaration + "var a = r(null) ? 9 : 7;\n", False),
+        "bootstrap-r-declaration": (
+            declaration + "function probe() { return r(null) ? 9 : 7; } var a = probe();\n",
+            True,
+        ),
+        "bootstrap-r-local": (
+            "function probe() { " + declaration + "return r(null) ? 9 : 7; } var a = probe();\n",
+            True,
+        ),
+    }.items():
+        source = args.fixtures / f"{name}.js"
+        source.write_text(body)
+        for command in ([args.node, "-e", NODE, str(source)], [args.reference, str(source)]):
+            observed = run(command)
+            if observed.stdout != "a=7\n":
+                raise RuntimeError(f"{name}: original helper observation changed")
+        raw = args.work / f"{name}.raw.mlir"
+        run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
+        functions = len(FUNCTION.findall(raw.read_text()))
+        if "ctjs.skipped" in raw.read_text() or not functions:
+            raise RuntimeError(f"{name}: helper source was omitted")
+        for optimize in (False, True):
+            native = args.work / f"{name}.{optimize}.mlir"
+            run(
+                [
+                    args.opt,
+                    str(raw),
+                    "--ctjs-resolve-globals",
+                    "--ctjs-lift-to-scf",
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    "-o",
+                    str(native),
+                ]
+            )
+            if optimize and native_expected:
+                checked += check_executable(args, name, native, 7)
+            else:
+                check_refusal(name, native.read_text(), functions)
+                refused += 1
+    return checked, refused
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "node", "reference"):
@@ -542,10 +588,18 @@ def main():
     (args.fixtures / "bootstrap-config-r-defaults.js").write_text(
         declaration + (args.fixtures / "bootstrap-config-defaults.js").read_text()
     )
+    # Defining H and its original normalization helpers does not grant DOM or
+    # callable-holder authority to the class proof. Keep all four H methods.
+    helpers = bootstrap[bootstrap.index("    function M(t) {") : start]
+    combined = (args.fixtures / "bootstrap-config-r-defaults.js").read_text()
+    (args.fixtures / "bootstrap-config-r-h-defaults.js").write_text(
+        combined.replace("var a = configDefaults();", helpers + "\nvar a = configDefaults();")
+    )
     (args.fixtures / "bootstrap-r.js").write_text(
         declaration + "function probe() { class Shape { read(t) { return r(t); } } "
         "var instance = new Shape(); return instance.read(null) ? 9 : 7; } var a = probe();\n"
     )
+    helper_checked, helper_refused = check_helper_guards(args, declaration)
     refusals = 0
     preparation_refusals = 0
     checked = prepared_refusals = 0
@@ -590,6 +644,7 @@ def main():
         if name.startswith(("static-throw-", "static-error-")) or name in (
             "bootstrap-config-defaults",
             "bootstrap-config-r-defaults",
+            "bootstrap-config-r-h-defaults",
         ):
             manifest["initial_intrinsics"].append("Error")
         if name in (
@@ -625,6 +680,7 @@ def main():
             "method-throw-parameter": "unknown call, binding or reflective effect",
             "bootstrap-config-defaults": 'unknown call, binding or reflective effect (global "r")',
             "bootstrap-config-r-defaults": 'unknown call, binding or reflective effect (global "H")',
+            "bootstrap-config-r-h-defaults": "unknown call, binding or reflective effect",
             "static-throw-ambient": "static getter body is not a closed expression",
             "static-throw-object": "static getter throw needs a literal or declared Error payload",
             "static-error-return": "declared Error payload escapes its throw",
@@ -753,6 +809,7 @@ def main():
     print(
         f"constructed method controls: {plain_checked} native executions, {plain_refused} refusals"
     )
+    print(f"original r guards: {helper_checked} native executions, {helper_refused} refusals")
     print(
         f"prepared source controls: {prepared_refusals} native refusals with original calls/exits"
     )
