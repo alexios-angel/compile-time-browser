@@ -14,6 +14,39 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Column-rule widths and layout coordinates — 2026-09-18
+
+Full `css/` replay at `92fda299`: **1,602/2,926 runnable files PASS,
+70,381 subtests PASS**. Against `7cfe95b5`: **+3 files and +6 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver; 201.2 seconds.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `92fda299` | 1,602 | 1,108 | 25 | 0 | 191 | 1,488 | 70,381 / 32,709 |
+
+`1084fb74` records accumulated translations in the shared coordinate lookup,
+so image `x`/`y` and `offsetLeft`/`offsetTop` discard transforms on the element
+and its ancestors. `HTMLImageElement-x-and-y-ignore-transforms` now passes.
+`7848b325` resolves column-rule width keywords before shorthand serialization,
+gaining multicol `inheritance` and `column-rule-computed`, plus one css-gaps
+subtest. Rules retain their computed width for `none` and `hidden` styles.
+
+Both added regression tests failed on the unchanged engine and passed with
+the fixes. The browser CTest gate passed **216/216** (66.98 seconds), excluding
+compiler tests with `CTCOMPILE_MLIR=OFF`; formatting passed. All four changed
+source/test hashes matched the devbox and the committed tree.
+
+Evidence: `/tmp/ctbrowser22/` contains `browser22-css.json`,
+`css-comparison.json`, `measure-css.log`, `red-retry.log`, `green.log`,
+`gate.log`, `format-green.log` and `source.sha256`, plus the focused image
+and multicol results. No expectations changed. Other WPT directories and
+test262 were not replayed; JS/VM behavior is unchanged.
+
+Next: border-radius accepts invalid values and loses the vertical radii in
+computed elliptical shorthands. Multicol's remaining failures concern
+pseudo-element selectors; image zoom/inline placement also remains open.
+
 ## Column-wrap and transformed geometry — 2026-09-18
 
 Full `css/` replay at `7cfe95b5`: **1,599/2,926 runnable files PASS,

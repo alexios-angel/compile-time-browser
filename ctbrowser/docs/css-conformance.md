@@ -11,6 +11,32 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Column-rule widths and layout coordinates — 2026-09-18
+
+Full CSS at `92fda299`: **1,602/2,926 files PASS, 70,381 subtests PASS**;
+**+3 files and +6 subtests** since `7cfe95b5`, with zero passing file or
+subtest losses. The browser gate passed **216/216** (66.98 seconds), excluding
+compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-multicol` | 34 / 36 | 1,456 / 1,460 |
+| `css/css-gaps` | 14 / 14 | 362 / 363 |
+| `css/cssom-view` | 78 / 79 | 1,141 / 1,142 |
+
+Column-rule width keywords now compute to pixels before shorthand folding,
+including the initial value and rules with `none` or `hidden` styles. Image
+coordinates and offset metrics subtract accumulated layout translations;
+their regression also covers percentage translations, scrolling and missing
+boxes. All other CSS modules match the preceding measurement.
+
+Next: border-radius has six failing computed-value subtests, eleven invalid
+value subtests and three valid serialization subtests. The first failures
+lose the vertical radii in `5em / 1px 2% 3px 4%`, accept `auto`, and fail to
+compress repeated vertical radii. Multicol's ten remaining subtest failures
+are in its three pseudo-selector files. Full status and evidence: `wpt.md`
+and `/tmp/ctbrowser22/`. No expectations changed; test262 was not replayed.
+
 ## Column-wrap and transformed geometry — 2026-09-18
 
 Full CSS at `7cfe95b5`: **1,599/2,926 files PASS, 70,375 subtests PASS**;
