@@ -3,8 +3,8 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name sub-negative-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-sub-negative-latch.claims
 
-// Original subtraction stays subtraction. Only original negative Number
-// strides establish increasing induction; coercible Strings retain refusal.
+// Original subtraction stays subtraction. Negative Numbers and bounded canonical
+// negative Strings establish increasing induction without changing original keys.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.binary sub
 // IMPORT-LABEL: ctjs.func @returned$
@@ -23,8 +23,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 
 //--- source.js
 function released() {

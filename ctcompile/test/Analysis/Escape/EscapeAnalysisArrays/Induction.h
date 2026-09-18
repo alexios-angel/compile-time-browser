@@ -664,9 +664,49 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
           "#ctjs.number<13826050856027422720>", "#ctjs.number<13974669643730649088>",
           "#ctjs.number<18442240474082181120>", "#ctjs.number<9221120237041090560>",
           "#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">"}) {
-        reject("subtraction requires an original bounded negative integral Number stride",
-               replace(subtract, negativeLiteral, constant));
+        const auto body = replace(subtract, negativeLiteral, constant);
+        if (constant == "#ctjs.string<\"-1\">") {
+            run({.what = "original negative String Sub latches preserve returned children",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("subtraction requires a bounded negative integral conversion", body);
+        }
     }
+    const auto stringSubtract = replace(subtract, negativeLiteral, "#ctjs.string<\"-1\">");
+    run({.what = "String Sub latches discharge only unreturned children",
+         .body = replace(stringSubtract, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "body-local String literals are invariant Sub latches",
+         .body =
+             replace(replace(stringSubtract, "  %minus = ctjs.constant #ctjs.string<\"-1\">\n", ""),
+                     "  %step =", "  %minus = ctjs.constant #ctjs.string<\"-1\">\n  %step ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "held String Sub latches preserve exact backedge transport",
+         .body =
+             replace(carriedSubtract, "#ctjs.number<13835058055282163712>", "#ctjs.string<\"-2\">"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    for (const std::string text : {"-0", "-01", "-1.0", " -1", "-1 ", "-4294967296"}) {
+        reject("String Sub latches require bounded canonical decimal spelling",
+               replace(stringSubtract, "#ctjs.string<\"-1\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("String Sub latches preserve original property keys",
+           replace(stringSubtract, "%base[%i]", "%base[%minus]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("String latches cannot borrow Sub conversion for Add concatenation",
+           replace(stringSubtract, "sub %i, %minus", "add %i, %minus"));
+    reject("String Sub still bounds its exact final update",
+           replace(replace(stringSubtract, "#ctjs.string<\"-1\">", "#ctjs.string<\"-4294967295\">"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     reject("negative subtraction still bounds the final update before replay",
            replace(replace(subtract, negativeLiteral, "#ctjs.number<13974669643728551936>"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));

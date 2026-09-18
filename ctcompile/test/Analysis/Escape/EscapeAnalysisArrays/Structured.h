@@ -547,8 +547,11 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(carriedSubtract, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
     reject("structured Sub cannot commute its induction operand",
            replace(subtract, "sub %i, %minus", "sub %minus, %i"));
-    reject("structured Sub cannot borrow a String stride",
-           replace(subtract, negativeLiteral, "#ctjs.string<\"-1\">"));
+    rows.push_back({.what = "structured Sub converts its original negative String latch",
+                    .body = replace(subtract, negativeLiteral, "#ctjs.string<\"-1\">"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("structured Sub cannot borrow a BigInt stride",
            replace(subtract, negativeLiteral, "#ctjs.bigint<\"-1\">"));
     reject("structured Sub cannot borrow an unknown stride",
@@ -608,6 +611,18 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(negativeStrings,
                            "    %step =", "    %repeated = ctjs.unary plus %text\n    %step ="),
                    "sub %i, %d", "sub %i, %repeated"));
+    const auto directStrings =
+        replace(replace(negativeStrings, "  %unit = ctjs.unary plus %text\n", ""), "%delta = %unit",
+                "%delta = %text");
+    rows.push_back({.what = "String latches keep each structured predecessor's original value",
+                    .body = directStrings,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "y -> {y}; x -> {x}"});
+    reject("String latches cannot change on a structured backedge",
+           replace(directStrings, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("String latches require canonical spelling on every predecessor",
+           replace(directStrings, "#ctjs.string<\"-2\">", "#ctjs.string<\"-02\">"));
     const auto savedNegative =
         replace(replace(savedUnit, "  %unit = ctjs.get_property %seed[%name]",
                         "  %magnitude = ctjs.get_property %seed[%name]\n"
