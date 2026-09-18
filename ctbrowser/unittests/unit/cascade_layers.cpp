@@ -93,6 +93,33 @@ void test_revert_rule() {
     expect_value(h, h.find("t"), "color", "green", "cascade order, not source order");
 }
 
+void test_revert_expanded_properties() {
+    for (const std::string_view keyword : {"revert", "revert-layer"}) {
+        fixture f;
+        f.load("<p>x</p>", "@layer a { p { all: " + std::string{keyword} + " } }",
+               "p { margin: 1em 2em; font-size: 20px }");
+        expect_value(f, f.find("p"), "margin-top", "20px", keyword);
+        expect_value(f, f.find("p"), "margin-left", "40px", keyword);
+    }
+    fixture g;
+    g.load("<t>x</t>", "t { writing-mode: vertical-rl; --space: 2em } "
+                       "@layer a { t { margin-block: var(--space) 3em } } "
+                       "@layer b { t { margin-right: 1px; margin-block-start: revert-layer } }");
+    expect_value(g, g.find("t"), "margin-right", "32px",
+                 "rollback sees substituted logical shorthand");
+    expect_value(g, g.find("t"), "margin-left", "48px", "the other logical side is unchanged");
+
+    fixture h;
+    h.load("<t>x</t>",
+           "t { padding: 5px 6px } t { padding-left: 9px; padding-inline-start: revert-rule }");
+    expect_value(h, h.find("t"), "padding-left", "6px", "rollback compares mapped longhands");
+
+    fixture i;
+    i.load("<t>x</t>", "@layer a { t { margin-top: 8px; margin-top: var(--missing) } }"
+                       "@layer b { t { margin-top: revert-layer } }");
+    expect_value(i, i.find("t"), "margin-top", "", "rollback preserves invalid computed values");
+}
+
 void test_supports_is_decided() {
     fixture f;
     f.load("<t>x</t>",
@@ -198,6 +225,7 @@ int main() {
     test_layers_across_sheets();
     test_revert_layer();
     test_revert_rule();
+    test_revert_expanded_properties();
     test_supports_is_decided();
     test_nesting();
     test_scope();

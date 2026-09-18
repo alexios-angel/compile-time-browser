@@ -1291,29 +1291,28 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     //   revert-layer, revert-rule
     //             likewise, one layer or one rule back - see rolled_back
     //
-    // THE ROLLBACKS ARE ANSWERED FROM THE SORTED MATCHES rather than from
-    // intermediate states of the fold: the value with some set of
-    // declarations removed is the last remaining declaration of the property
-    // in cascade order, and the matches are already in that order. `folding`
-    // is the position in it of the rule being applied, or the size for the
-    // style attribute, which every rule precedes.
+    // Rollbacks search the declarations produced by the fold, after variable
+    // substitution, shorthand expansion and logical-to-physical mapping. The
+    // raw rule may say `margin` or `margin-block`, neither of which would match
+    // a rollback of `margin-top`. Keep the rule index for origin/layer tests.
+    std::vector<std::pair<std::size_t, declaration>> applied;
+    // `folding` is the current rule's position, or the size for inline style.
     std::size_t folding = matches_.size();
-    // The last declaration of `property` before `limit` that `keep` admits,
-    // or the size when there is none.
-    const auto rolled_back = [this](atom property, std::size_t limit, const auto & keep) {
-        for (std::size_t i = limit; i-- > 0;) {
-            const rule & r = matches_[i];
-            if (keep(r) && declarations_[r.declaration].property == property) { return i; }
+    const auto rolled_back = [this, &applied](atom property, std::size_t limit, const auto & keep) {
+        for (std::size_t i = applied.size(); i-- > 0;) {
+            const auto & [at, d] = applied[i];
+            if (at < limit && d.property == property && keep(matches_[at])) { return i; }
         }
-        return matches_.size();
+        return applied.size();
     };
-    const auto put = [&out, &parent, &folding, &rolled_back, this](const declaration & d) {
+    const auto put = [&out, &parent, &folding, &rolled_back, &applied,
+                      this](const declaration & d) {
         std::string value = d.value;
         const std::string_view property = atoms_->text(d.property);
         // THE ROLLBACK KEYWORDS, each the cascade with some declarations
         // struck out (CSS Cascade 5 §7.3): `revert` strikes the author origin,
-        // so the answer is the last user-agent declaration - the whole list,
-        // since important UA rules sort after the author's; `revert-layer`
+        // so the answer is the last user-agent declaration (important UA
+        // rules that sort after the author's still apply later); `revert-layer`
         // strikes the current layer of the current origin, the style
         // attribute counting as a layer above all of them; `revert-rule` (a
         // Cascade 6 draft) strikes the current rule - the declarations filed
@@ -1321,7 +1320,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // itself, so this loops, always to an earlier position.
         std::size_t at = folding;
         for (int guard = 0; guard < 16; ++guard) {
-            std::size_t found = matches_.size();
+            std::size_t found = applied.size();
             if (value == "revert") {
                 found = rolled_back(d.property, matches_.size(),
                                     [](const rule & r) { return r.origin == 0; });
@@ -1340,12 +1339,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             } else {
                 break;
             }
-            if (found == matches_.size()) {
+            if (found == applied.size()) {
                 value = "unset";
                 break;
             }
-            at = found;
-            value = declarations_[matches_[found].declaration].value;
+            at = applied[found].first;
+            value = applied[found].second.value;
+        }
+        if (folding < matches_.size()) {
+            applied.emplace_back(folding, declaration{d.property, value});
         }
         if (value == "inherit") {
             value = std::string{parent ? parent->get(d.property) : std::string_view{}};
@@ -1924,7 +1926,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // whenever an earlier declaration set the same property, and which one
         // is right depends on when the value became invalid - see both callers.
         const auto unset = [&] {
-            const auto erase = [&out](atom property_to_erase) {
+            const auto erase = [&](atom property_to_erase) {
+                if (folding < matches_.size()) {
+                    applied.emplace_back(folding, declaration{property_to_erase, "unset"});
+                }
                 for (std::size_t i = 0; i < out.size(); ++i) {
                     if (out[i].property == property_to_erase) {
                         out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
