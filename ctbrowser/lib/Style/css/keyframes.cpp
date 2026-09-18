@@ -73,11 +73,9 @@ void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
                 const css::property_syntax * known = css::find_property(property);
                 if (known == nullptr) { continue; }
                 if (known->shorthand) {
-                    for (const auto & [longhand, value] :
-                         css::expand_cascaded_shorthand(property, text)) {
-                        const css::value_check checked = css::check_declaration(longhand, value);
-                        if (checked.valid) { put(longhand, checked.serialized); }
-                    }
+                    css::declaration_block expanded;
+                    (void)css::set_declaration(expanded, property, text, false);
+                    for (const css::declaration & d : expanded) { put(d.name, d.value); }
                     continue;
                 }
                 const css::value_check checked = css::check_declaration(property, text);

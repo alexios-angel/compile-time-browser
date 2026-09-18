@@ -582,11 +582,10 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
         // object"), as a `@keyframes` block already stores it: `borderWidth:
         // '20px 40px'` animates border-top-width and the rest.
         if (known->shorthand) {
-            for (const auto & [longhand, value] :
-                 style::css::expand_cascaded_shorthand(property, text)) {
-                const style::css::value_check checked =
-                    style::css::check_declaration(longhand, value);
-                if (checked.valid) { frame.values.emplace_back(longhand, checked.serialized); }
+            style::css::declaration_block expanded;
+            (void)style::css::set_declaration(expanded, property, text, false);
+            for (const style::css::declaration & d : expanded) {
+                frame.values.emplace_back(d.name, d.value);
             }
             return;
         }

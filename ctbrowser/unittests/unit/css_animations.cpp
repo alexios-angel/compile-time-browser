@@ -108,6 +108,19 @@ void test_keyframes_are_captured() {
 }
 
 void test_a_css_animation_is_sampled_at_the_flush() {
+    // CSS and Web Animations use the same shorthand grammar as style rules.
+    const std::string shorthand_values =
+        "[getComputedStyle(t).marginTop, getComputedStyle(t).marginBottom,"
+        " getComputedStyle(t).columnWidth, getComputedStyle(t).columnCount].join('|')";
+    is("var sheet = document.createElement('style');"
+       "sheet.textContent = '@keyframes shorthand { from { margin-block: 10px; columns: 200px 10 }"
+       " to { margin-block: 20px; columns: 100px 20 } }'; document.head.appendChild(sheet);"
+       "t.style.animation = 'shorthand 100s -50s linear';",
+       shorthand_values, "15px|15px|150px|15");
+    is("var a = t.animate([{marginBlock:'10px',columns:'200px 10'},"
+       " {marginBlock:'20px',columns:'100px 20'}], {duration:100,fill:'both'});"
+       "a.pause(); a.currentTime = 50;",
+       shorthand_values, "15px|15px|150px|15");
     is(midway, "getComputedStyle(t).left", "50px");
     is(midway, "t.getAnimations().length", "1");
     is(midway, "t.getAnimations()[0] instanceof CSSAnimation", "true");
