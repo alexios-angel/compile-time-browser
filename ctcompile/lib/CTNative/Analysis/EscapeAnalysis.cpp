@@ -1894,8 +1894,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // Independent primitive origins exclude source user conversion.
                 // Fresh objects/arrays are insufficient: inherited valueOf or
                 // toString can retain them or their contents even though today's
-                // VM converts them statically. Only bounded original Numbers or
-                // saved exact Number facts supply an index; never branch liveness.
+                // VM converts them statically. Only bounded original Numbers,
+                // canonical Strings or saved exact Number facts supply an index.
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
@@ -1906,14 +1906,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     binary.getKind() == ctjs::BinaryKind::Shl ||
                     binary.getKind() == ctjs::BinaryKind::Shr ||
                     binary.getKind() == ctjs::BinaryKind::UShr) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    if (!a && left.string()) { a = ownArrayIndex(lhs); }
+                    if (!b && right.string()) { b = ownArrayIndex(rhs); }
                     const auto negativeA = left.negativeIntegerNumber ? left.negativeIntegerNumber
                                                                       : boundedNumber(lhs, true);
                     const auto negativeB = right.negativeIntegerNumber ? right.negativeIntegerNumber
                                                                        : boundedNumber(rhs, true);
-                    // Exact signed Numbers wrap to unsigned bits before the
-                    // operation. Mask shift counts; C++23 signed right shift
+                    // Canonical Strings convert exactly; signed Numbers wrap
+                    // to unsigned bits. Mask shift counts; C++23 signed right shift
                     // preserves the sign. Only UShr keeps an unsigned result;
                     // negative magnitudes never become own-index facts.
                     if ((a || negativeA) && (b || negativeB)) {

@@ -730,6 +730,21 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     }
     reject("an unsigned shift snapshot cannot change across structured yields",
            replace(unsignedCarried, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+    const auto stringCount = replace(unsignedSaved, "  %count = ctjs.unary neg %one",
+                                     "  %count = ctjs.constant #ctjs.string<\"31\">");
+    rows.push_back(
+        {.what = "String counts preserve signed snapshots after structured source shrink",
+         .body = stringCount,
+         .arrays = "a:[x,y]; seed:[]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
+    rows.push_back({.what = "String shift snapshots release only unreturned structured children",
+                    .body = replace(stringCount, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    reject("structured String shifts cannot borrow noncanonical counts",
+           replace(stringCount, "#ctjs.string<\"31\">", "#ctjs.string<\"031\">"));
     const auto subSnapshot =
         replace(savedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
     rows.push_back(

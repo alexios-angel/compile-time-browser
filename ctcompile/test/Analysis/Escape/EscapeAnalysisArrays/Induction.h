@@ -962,6 +962,26 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("an unsigned shift cannot borrow an unknown count",
            replace(unsignedCarried, "ushr %operand, %count", "ushr %operand, %p"),
            ArrayContentsFailure::UnknownValue);
+    const auto stringShift =
+        replace(unsignedCarried, "ctjs.unary neg %one",
+                "ctjs.constant #ctjs.string<\"4294967294\"> {storage_test_id = \"text\"}");
+    run({.what = "unsigned conversion preserves the original String through CFG transport",
+         .body = replace(stringShift, "ctjs.return %result", "ctjs.return %operand"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "text -> {}"});
+    const auto stringCount =
+        replace(replace(unsignedCarried, "  %count = ctjs.unary neg %one",
+                        "  %count = ctjs.constant #ctjs.string<\"31\">"),
+                "  %operand = ctjs.unary neg %one",
+                "  %operand = ctjs.unary neg %one {storage_test_id = \"negative\"}");
+    run({.what = "a String shift count preserves the original signed Number identity",
+         .body = replace(stringCount, "ctjs.return %result", "ctjs.return %operand"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "negative -> {}"});
+    reject("String shift counts require canonical decimal evidence",
+           replace(stringCount, "#ctjs.string<\"31\">", "#ctjs.string<\"031\">"));
     const std::string makeSubUnit = "  %left = ctjs.unary plus %one\n"
                                     "  %magnitude = ctjs.unary plus %two\n"
                                     "  %minus = ctjs.binary sub %left, %magnitude\n";

@@ -1003,6 +1003,27 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
              .failure = ArrayContentsFailure::UnknownIndex});
     }
     for (const std::string kind : {"ushr", "shr", "shl", "bitand", "bitor", "bitxor"}) {
+        const std::string lhs = kind == "shr" || kind == "ushr"        ? "2147483648"
+                                : kind == "bitand" || kind == "bitxor" ? "3"
+                                : kind == "shl"                        ? "1"
+                                                                       : "0";
+        const std::string rhs = kind == "shr" || kind == "ushr" ? "31"
+                                : kind == "shl"                 ? "32"
+                                : kind == "bitxor"              ? "2"
+                                                                : "1";
+        const std::string expected = kind == "shr" ? "13830554455654793216" : "4607182418800017408";
+        run({.what = "canonical String bitwise operands keep exact signed and masked results",
+             .body = values + "  %lhs = ctjs.constant #ctjs.string<\"" + lhs +
+                     "\">\n  %rhs = ctjs.constant #ctjs.string<\"" + rhs +
+                     "\">\n  %expected = ctjs.constant #ctjs.number<" + expected +
+                     ">\n  %bits = ctjs.binary_static " + kind +
+                     " %lhs, %rhs\n"
+                     "  %index = ctjs.binary sub %bits, %expected\n" +
+                     indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    for (const std::string kind : {"ushr", "shr", "shl", "bitand", "bitor", "bitxor"}) {
         for (const std::string literal :
              {"#ctjs.number<4602678819172646912>",  // 0.5
               "#ctjs.number<13830554455654793216>", // -1
@@ -1010,21 +1031,23 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
               "#ctjs.number<13974669643730649088>", // -2^32
               "#ctjs.number<9218868437227405312>",  // infinity
               "#ctjs.number<9221120237041090560>",  // NaN
-              "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">", "#ctjs.boolean<false>", "#ctjs.null",
-              "#ctjs.undefined"}) {
+              "#ctjs.string<\"0\">", "#ctjs.string<\"00\">", "#ctjs.string<\"-1\">",
+              "#ctjs.string<\"1.0\">", "#ctjs.string<\"4294967295\">", "#ctjs.bigint<\"0\">",
+              "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
-                const bool signedZero =
-                    literal == "#ctjs.number<13830554455654793216>" &&
-                    (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
-                                          operands == "%zero, %input"));
+                const bool exactZero =
+                    literal == "#ctjs.string<\"0\">" ||
+                    (literal == "#ctjs.number<13830554455654793216>" &&
+                     (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
+                                           operands == "%zero, %input")));
                 run({.what = "only independently bounded bitwise inputs supply an exact index",
                      .body = values + "  %input = ctjs.constant " + literal +
                              "\n  %index = ctjs.binary_static " + kind + " " + operands + "\n" +
                              indexed,
-                     .failure = signedZero ? ArrayContentsFailure::None
-                                           : ArrayContentsFailure::UnknownIndex,
-                     .arrays = signedZero ? "a:[zero]" : "",
-                     .exit = signedZero ? "a -> {a}" : ""});
+                     .failure = exactZero ? ArrayContentsFailure::None
+                                          : ArrayContentsFailure::UnknownIndex,
+                     .arrays = exactZero ? "a:[zero]" : "",
+                     .exit = exactZero ? "a -> {a}" : ""});
             }
         }
         for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
@@ -1531,6 +1554,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             if (literal == "#ctjs.string<\"0\">" &&
                 (producer == "ctjs.binary sub %input, %zero" ||
                  producer == "ctjs.binary mul %input, %zero" ||
+                 producer == "ctjs.binary_static ushr %input, %input" ||
                  producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input")) {
                 run({.what = "canonical String numeric conversion supplies an exact empty length",
                      .body = body,
@@ -1985,8 +2009,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));
-        inspect(unary ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
-        if (unary) {
+        inspect(unary || shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
+        if (unary || shift) {
             literal.setValueAttr(ctjs::StringAttr::get(&context, "00"));
             inspect(ArrayContentsFailure::UnknownIndex);
         }
