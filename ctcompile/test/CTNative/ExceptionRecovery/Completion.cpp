@@ -1,3 +1,4 @@
+#include "../../../lib/CTNative/HostContract/Preparation.h"
 #include "Tests.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
@@ -403,6 +404,36 @@ function guarded(element) {
     contract.elementParameters = {0};
     contract.initialIntrinsics = {"decodeURIComponent"};
     contract.moduleSha256 = ctnative::hostContractFingerprint(*module);
+    for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
+                                ctnative::HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 4; ++control) {
+            mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+            auto request = contract;
+            request.provider = provider;
+            if (control == 1) { request.moduleSha256 = "stale"; }
+            if (control == 2) { request.initialIntrinsics.clear(); }
+            const auto fingerprint = request.moduleSha256;
+            auto error = ctnative::prepareDOMEntry(*candidate, request, control == 3 ? 0 : 100000);
+            if (control) {
+                check(static_cast<bool>(error), "unproved DOM preparation refuses");
+                llvm::consumeError(std::move(error));
+                check(printed(*candidate) == original && request.moduleSha256 == fingerprint &&
+                          request.provider == provider && request.entry == contract.entry &&
+                          request.elementParameters == contract.elementParameters &&
+                          request.initialIntrinsics == (control == 2 ? std::vector<std::string>{}
+                                                                     : contract.initialIntrinsics),
+                      "DOM preparation refusal preserves source and host request together");
+            } else {
+                if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+                const ctnative::DOMEntryAnalysis prepared(*candidate, request);
+                check(mlir::succeeded(mlir::verify(*candidate)) && prepared.proved() &&
+                          !prepared.wrapper() && prepared.entry().isPublic() &&
+                          request.moduleSha256 == ctnative::hostContractFingerprint(*candidate) &&
+                          request.moduleSha256 != fingerprint,
+                      "DOM preparation publishes the normalized entry with its fresh proof");
+            }
+        }
+    }
     mlir::OwningOpRef<mlir::ModuleOp> normalized(module->clone());
     if (auto error = normalizeDOMURI(*normalized, contract)) {
         check(false, "original URI source normalizes with unused payload and saved String");
