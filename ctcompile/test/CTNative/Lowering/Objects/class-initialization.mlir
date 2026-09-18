@@ -1114,3 +1114,111 @@ function method_counter_ambient() {
     return new Shape().n;
 }
 var a = method_counter_ambient();
+
+//--- receiver-defaults.js
+function receiver_defaults() {
+    class Config {
+        static get Default() { return {}; }
+        static get DefaultType() { return this.Default; }
+        read() {
+            var first = this.constructor.Default;
+            first.n = 7;
+            var second = this.constructor.Default, types = this.constructor.DefaultType;
+            second.n = 2;
+            types.n = 3;
+            first.n = 9;
+            return first.n * 100 + second.n * 10 + types.n;
+        }
+    }
+    return new Config().read();
+}
+var a = receiver_defaults();
+
+//--- instance-defaults.js
+function instance_defaults() {
+    class Config { static get Default() { return {}; } }
+    var instance = new Config();
+    var first = instance.constructor.Default, second = instance.constructor.Default;
+    first.n = 7;
+    second.n = 2;
+    return first.n * 10 + second.n;
+}
+var a = instance_defaults();
+
+//--- receiver-default-dispatch.js
+// Getter reads inside copied dispatch bodies must follow their private clones.
+function receiver_default_dispatch() {
+    class Config {
+        static get START() { return 1; }
+        static get EARLY() { return 20; }
+        static get TAIL() { return 10; }
+        constructor() { this.n = this.constructor.START; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return this.n + this.constructor.EARLY; }
+                this.n = this.n + i;
+            }
+            return this.n + this.constructor.TAIL;
+        }
+    }
+    var zero = new Config(), continued = new Config(), broken = new Config(), early = new Config();
+    return zero.read(0) * 1000000 + continued.read(3) * 10000 + broken.read(6) * 100 + early.read(5);
+}
+var a = receiver_default_dispatch();
+
+//--- receiver-default-shadow.js
+// Even an uncalled method cannot change the constructor backedge.
+function receiver_default_shadow() {
+    class Config {
+        static get Default() { return 7; }
+        read() { return this.constructor.Default; }
+        replace() { this.constructor = {}; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_shadow();
+
+//--- receiver-default-write.js
+function receiver_default_write() {
+    class Config {
+        static get Default() { return 7; }
+        read() { return this.constructor.Default; }
+        replace() { this.constructor.Default = 9; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_write();
+
+//--- receiver-default-identity.js
+function receiver_default_identity() {
+    class Config {
+        static get Default() { return 7; }
+        read() { return this.constructor.Default; }
+        identity() { return this.constructor; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_identity();
+
+//--- receiver-default-inherited.js
+function receiver_default_inherited() {
+    class Base { static get Default() { return 7; } }
+    class Config extends Base {
+        read() { return this.constructor.Default; }
+    }
+    return new Config().read();
+}
+var a = receiver_default_inherited();
+
+//--- instance-default-replacement.js
+// A constructor returning an object changes which constructor new exposes.
+function instance_default_replacement() {
+    class Config {
+        constructor() { return {}; }
+        static get Default() { return 7; }
+    }
+    return (typeof new Config().constructor.Default === "undefined") * 1;
+}
+var a = instance_default_replacement();

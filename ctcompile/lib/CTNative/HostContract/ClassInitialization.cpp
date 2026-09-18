@@ -31,6 +31,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
     llvm::DenseSet<mlir::Operation *> getters;
+    llvm::SmallVector<ctjs::GetPropertyOp> constructorReads;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
     llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
@@ -73,11 +74,30 @@ struct classInitialization {
         return store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
     }
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
+                    llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false) {
         for (mlir::OpOperand & use : object.getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                read && use.getOperandNumber() == 0 &&
+                ctjs::constantKey(read.getKey()) == "constructor") {
+                // The exact fresh prototype owns this backedge. Its identity
+                // may only select a proved local getter; no write or escape.
+                for (mlir::OpOperand & selected : read.getResult().getUses()) {
+                    if (!step()) { return false; }
+                    if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
+                    auto getter = llvm::dyn_cast<ctjs::GetPropertyOp>(selected.getOwner());
+                    if (!getter || selected.getOperandNumber() != 0 ||
+                        !ctjs::ordinaryKey(getter.getKey())) {
+                        return refuse("class constructor identity escapes its local getter read");
+                    }
+                    staticReads.push_back(getter);
+                }
+                constructorReads.push_back(read);
+                continue;
+            }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && methodsAvailable) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (use.getOperandNumber() == 1 && read && read.getObject() == object &&
@@ -306,13 +326,7 @@ struct classInitialization {
             backedge.getObject() != prototype.getResult()) {
             return refuse("class setup needs its exact fresh prototype, constructor and home");
         }
-        if (!staticGetters(staticDefinitions, staticReads, call)) { return false; }
-        for (ctjs::SetPropertyOp write : getterHomes) {
-            if (!step()) { return false; }
-            if (!setup.contains(write)) {
-                return refuse("class constructor reaches an unrelated getter home");
-            }
-        }
+        const auto firstConstructorRead = constructorReads.size();
         llvm::StringSet<> methodKeys;
         llvm::SmallVector<ctjs::SetPropertyOp> definitions;
         for (mlir::OpOperand & use : prototype.getResult().getUses()) {
@@ -361,7 +375,7 @@ struct classInitialization {
             auto & block = fn.getBody().front();
             if (!methodHome || !block.getArgument(ctjs::arg_callee).use_empty() ||
                 !block.getArgument(ctjs::arg_new_target).use_empty() ||
-                !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, true)) {
+                !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
                 return refuse("class method observes its identity, home or an unproved receiver");
             }
             methods.insert(fn);
@@ -376,22 +390,29 @@ struct classInitialization {
             }
         }
         for (ctjs::ConstructOp made : instances) {
-            if (!fieldsOnly(made.getResult(), methodKeys, true)) { return false; }
+            if (!fieldsOnly(made.getResult(), methodKeys, staticReads, true)) { return false; }
         }
-        if (!definitions.empty()) {
+        if (!definitions.empty() || constructorReads.size() != firstConstructorRead) {
             for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
                 if (!step() || !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
                     return refuse(
-                        "class method initialization needs a primitive constructor return");
+                        "class receiver getter or method needs a primitive constructor return");
                 }
             }
         }
         auto & entry = function.getBody().front();
         if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
             !entry.getArgument(ctjs::arg_callee).use_empty() ||
-            !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, true)) {
+            !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
             return refuse(
                 "class constructor observes new.target, lexical home or receiver identity");
+        }
+        if (!staticGetters(staticDefinitions, staticReads, call)) { return false; }
+        for (ctjs::SetPropertyOp write : getterHomes) {
+            if (!step()) { return false; }
+            if (!setup.contains(write)) {
+                return refuse("class constructor reaches an unrelated getter home");
+            }
         }
         constructors.insert(function);
         // Keep method definitions on the prototype until constructor lowering.
@@ -464,7 +485,7 @@ struct classInitialization {
         walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
-                llvm::is_contained(calls, op)) {
+                llvm::is_contained(calls, op) || llvm::is_contained(constructorReads, op)) {
                 return mlir::WalkResult::advance();
             }
             bool accepted =
@@ -563,12 +584,28 @@ struct classInitialization {
                 return mlir::WalkResult::advance();
             });
             if (walked.wasInterrupted()) { return false; }
-            mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone()));
+            mlir::IRMapping mapping;
+            mlir::OwningOpRef<ctjs::FuncOp> copy(
+                llvm::cast<ctjs::FuncOp>(function->clone(mapping)));
             if (auto failed = lowering_detail::normalizeStructuredExits(*copy, remaining)) {
                 auto message = llvm::toString(std::move(failed));
                 return refuse(message == "native exception recovery work budget exhausted"
                                   ? "class initialization work budget exhausted"
                                   : message);
+            }
+            // Exit normalization moves branch bodies without replacing their
+            // property reads. Expansion must follow the private copy too.
+            for (auto & [read, target] : getterReads) {
+                if (!step()) { return false; }
+                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+                }
+            }
+            for (ctjs::GetPropertyOp & read : constructorReads) {
+                if (!step()) { return false; }
+                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+                }
             }
             normalizedMethods.emplace_back(function, std::move(copy));
         }
@@ -646,6 +683,12 @@ struct CTNativeSpecializeClassInitializationPass
                 }
                 read.erase();
             }
+        }
+        for (ctjs::GetPropertyOp read : proof.constructorReads) {
+            for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
+                root->erase(); // Only inert roots remain after getter expansion.
+            }
+            read.erase();
         }
         for (ctjs::CallOp call : proof.calls) { call.erase(); }
         for (mlir::Operation * op : proof.setup) { op->erase(); }

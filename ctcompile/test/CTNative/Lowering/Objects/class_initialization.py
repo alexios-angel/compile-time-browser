@@ -102,6 +102,14 @@ OBSERVATIONS = {
     "static-caller": (1, 1),
     "static-arguments": (1, 1),
     "bootstrap-config-defaults": (7, 7),
+    "receiver-defaults": (923, 923),
+    "instance-defaults": (72, 72),
+    "instance-default-replacement": (1, 1),
+    "receiver-default-dispatch": (11131321, 11131321),
+    "receiver-default-shadow": (7, 7),
+    "receiver-default-write": (7, 7),
+    "receiver-default-identity": (7, 7),
+    "receiver-default-inherited": (7, 7),
 }
 POSITIVES = {
     "empty",
@@ -131,6 +139,9 @@ POSITIVES = {
     "static-repeated",
     "static-forward-chain",
     "static-order",
+    "receiver-defaults",
+    "instance-defaults",
+    "receiver-default-dispatch",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 
@@ -535,7 +546,12 @@ def main():
                 or "ctjs.binary_static add" not in structured.read_text()
             ):
                 raise RuntimeError(f"{name}: import lost the static counter operation")
-        if name in ("method-dispatch", "method-increment-dispatch", "method-decrement-dispatch"):
+        if name in (
+            "method-dispatch",
+            "method-increment-dispatch",
+            "method-decrement-dispatch",
+            "receiver-default-dispatch",
+        ):
             for operation in (
                 "scf.index_switch",
                 "arith.index_castui",
@@ -550,6 +566,7 @@ def main():
             "method-dispatch-shadow": "class method is observed or shadowed",
             "method-dispatch-throw": "complete capture-free source functions",
             "bootstrap-config-defaults": "complete capture-free source functions",
+            "instance-default-replacement": "primitive constructor return",
         }.get(name, "")
         prepared = prepare(
             args, name, structured, manifest, success=name in POSITIVES, diagnostic=diagnostic
@@ -573,6 +590,7 @@ def main():
             "method-loop",
             "method-dispatch",
             "method-increment-dispatch",
+            "receiver-default-dispatch",
             "method-constructor-order",
             "static-chain",
             "static-repeated",
