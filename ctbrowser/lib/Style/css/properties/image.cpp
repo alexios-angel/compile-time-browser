@@ -687,6 +687,10 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
                                      const image_context & ctx, int depth) {
     if (item.empty() || depth > 16) { return std::string{}; }
     const css_token & first = ts.tokens[item.front()];
+    if (first.type == token_type::url) {
+        if (item.size() != 1) { return std::string{}; }
+        return "url(" + string_text(ts.text_of(first)) + ")";
+    }
     if (first.type == token_type::ident && item.size() == 1) {
         if (ascii_iequals(ts.text_of(first), "none")) { return "none"; }
         // A keyword is no image; in cross-fade() it may be a colour, at the
@@ -765,9 +769,6 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
                 if (!take_percent(arg.size() - 1)) { return std::string{}; }
             }
             if (arg.empty()) { return std::string{}; }
-            for (const std::size_t k : arg) {
-                if (ts.tokens[k].type == token_type::percentage) { return std::string{}; }
-            }
             std::optional<std::string> one = one_image(ts, arg, ctx, depth + 1);
             if (one && one->empty()) { return std::string{}; }
             if (!one) {
@@ -778,7 +779,10 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
                         ? computed_color(*text, color_context{ctx.current_color, ctx.lengths})
                         : serialize_color(*text);
                 if (colour.empty()) {
-                    // A url() or an image function kept as written.
+                    // Only a single image may use the unmodelled-function fallback.
+                    if (!match_border_image("border-image-source", *text, colour)) {
+                        return std::string{};
+                    }
                     colour =
                         normalize_value_tokens(ts, *text, nullptr, arg.front(), arg.back() + 1);
                 }
