@@ -24,7 +24,10 @@ css-layout, css-visual, shadow-ce, t262-builtins, t262-language), one
 synthesizer, a critic loop (<= 3 rounds). Its result - the diagnoses and a
 PLAN of file-disjoint implementation items in waves of <= 4 - is in that
 run's `journal.jsonl` under the session's `subagents/workflows/` directory
-(the `result` records). The NEXT STEP is the implementation workflow: one
+(the `result` records). ALL TEN DIAGNOSES ARE IN: `docs/plans/wpt-round8-diagnoses.md` (152
+clusters, 33,428 failing subtests explained; trimmed - the raw JSON is
+`wt/wpt11-session/round8/diagnoses.json`). The NEXT STEP is the
+implementation workflow: one
 worktree agent per plan item (`isolation: worktree`, `model: fable`), each
 told to `git reset --hard ctbrowser-wpt` first, to read
 `~/Downloads/claude/wt/wpt11-session/round8/COMMON.md` (the standing rules:
