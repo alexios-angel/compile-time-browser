@@ -171,11 +171,12 @@ namespace detail {
 //
 // ponytail: 2D only, lengths in px alone; add `em`/percent against the probe's
 // font size and box when a test asks.
-[[nodiscard]] std::string transform_matrix_text(std::string_view text) {
+std::optional<std::array<double, 6>> transform_matrix(std::string_view text) {
+    if (text.empty() || ascii_iequals(text, "none")) { return std::nullopt; }
     using style::css::token_type;
     const style::css::token_stream ts = style::css::tokenize(text);
     // The affine matrix as CSS writes it: x' = a*x + c*y + e, y' = b*x + d*y + f.
-    double m[6] = {1, 0, 0, 1, 0, 0};
+    std::array<double, 6> m{1, 0, 0, 1, 0, 0};
     const auto multiply = [&m](const double (&n)[6]) {
         const double a = m[0] * n[0] + m[2] * n[1];
         const double b = m[1] * n[0] + m[3] * n[1];
@@ -190,7 +191,7 @@ namespace detail {
     for (;;) {
         while (ts.tokens[at].type == token_type::whitespace) { ++at; }
         if (ts.tokens[at].type == token_type::eof) { break; }
-        if (ts.tokens[at].type != token_type::function) { return std::string{text}; }
+        if (ts.tokens[at].type != token_type::function) { return std::nullopt; }
         const std::string_view raw = ts.text_of(ts.tokens[at]);
         const std::string name = ascii_lower_copy(raw.substr(0, raw.size() - 1));
         ++at;
@@ -230,10 +231,10 @@ namespace detail {
                     args.push_back(t.number * 360.0);
                     is_length.push_back(false);
                 } else {
-                    return std::string{text};
+                    return std::nullopt;
                 }
             } else {
-                return std::string{text};
+                return std::nullopt;
             }
             ++at;
         }
@@ -267,20 +268,27 @@ namespace detail {
         } else if (name == "skewy" && count == 1) {
             n[1] = std::tan(radians(args[0]));
         } else {
-            return std::string{text};
+            return std::nullopt;
         }
         // A LENGTH WHERE A NUMBER BELONGS, or the reverse, is a syntax error the
         // cascade let through; it is not this reader's to guess at.
         for (std::size_t i = 0; i < count; ++i) {
             const bool translate = name.starts_with("translate");
             if (is_length[i] != translate && !(translate && args[i] == 0.0)) {
-                return std::string{text};
+                return std::nullopt;
             }
         }
         multiply(n);
         any = true;
     }
-    if (!any) { return std::string{text}; }
+    if (!any) { return std::nullopt; }
+    return m;
+}
+
+std::string transform_matrix_text(std::string_view text) {
+    const auto matrix = transform_matrix(text);
+    if (!matrix) { return std::string{text}; }
+    const auto & m = *matrix;
     std::string out{"matrix("};
     for (std::size_t i = 0; i < 6; ++i) {
         if (i != 0) { out += ", "; }

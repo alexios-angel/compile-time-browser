@@ -1,10 +1,12 @@
 // dom_bindings - the views onto an element that are OBJECTS rather than
 // values: `attributes`, `style`, `classList`, `blocking`, `dataset` and the tree accessors.
 
+#include "../computed_style/internal.hpp"
 #include "internal.hpp"
 
 #include <ctbrowser/dom/token_list.hpp>
 #include <ctbrowser/layout/overflow.hpp>
+#include <ctbrowser/shell/page/canvas.hpp>
 
 namespace ctbrowser::shell {
 
@@ -242,12 +244,53 @@ std::vector<rect> dom_bindings::client_rects_of(node_id self) {
     if (fragments_ == nullptr || !self) { return out; }
     const point viewport = viewport_scroll();
     const auto walk = [&](auto && walk_, const layout::fragment & at, float dx, float dy,
-                          bool fixed) -> void {
+                          bool fixed, transform matrix) -> void {
         const rect box = at.absolute_bounds(dx, dy);
         const bool is_fixed =
             fixed || (at.box != nullptr && at.box->position == layout::position_kind::fixed);
+        // Layout already applies a translation to fragment positions. Replace
+        // that shift with the full transform about this box's origin, then
+        // compose with its ancestors before bounding the four corners.
+        // ponytail: same 2D/px transform subset as computed style; extend the
+        // shared parser for 3D and relative transform lengths.
+        if (at.box != nullptr && !is_inline_box(at)) {
+            if (const auto m = transform_matrix(cascade_value(at.source, "transform"))) {
+                const transform local{static_cast<float>((*m)[0]), static_cast<float>((*m)[1]),
+                                      static_cast<float>((*m)[2]), static_cast<float>((*m)[3]),
+                                      static_cast<float>((*m)[4]), static_cast<float>((*m)[5])};
+                style::css::length_context lengths;
+                lengths.font_size = at.box->font_size;
+                lengths.line_height = at.box->line_height;
+                lengths.viewport_width = static_cast<float>(viewport_width_);
+                lengths.viewport_height = static_cast<float>(viewport_height_);
+                style::css::color_context context;
+                context.lengths = &lengths;
+                const std::string origin = style::css::computed_transform_property(
+                    "transform-origin", cascade_value(at.source, "transform-origin"), context,
+                    box.width, box.height);
+                point pivot{box.width / 2, box.height / 2};
+                const auto parts = split_top_level(origin, html_whitespace);
+                if (parts.size() >= 2) {
+                    pivot = {layout::parse_length(parts[0]).resolve(box.width, lengths.font_size),
+                             layout::parse_length(parts[1]).resolve(box.height, lengths.font_size)};
+                }
+                const point shift{at.box->translate.x.resolve(box.width, lengths.font_size),
+                                  at.box->translate.y.resolve(box.height, lengths.font_size)};
+                matrix = transform::translation(-box.x - pivot.x, -box.y - pivot.y)
+                             .then(local)
+                             .then(transform::translation(box.x - shift.x + pivot.x,
+                                                          box.y - shift.y + pivot.y))
+                             .then(matrix);
+            }
+        }
         if (at.source == self) {
-            rect r = box;
+            const point origin = matrix.apply(box.x, box.y);
+            const point x_axis{matrix.a * box.width, matrix.b * box.width};
+            const point y_axis{matrix.c * box.height, matrix.d * box.height};
+            rect r{origin.x + std::min(0.0f, x_axis.x) + std::min(0.0f, y_axis.x),
+                   origin.y + std::min(0.0f, x_axis.y) + std::min(0.0f, y_axis.y),
+                   std::abs(x_axis.x) + std::abs(y_axis.x),
+                   std::abs(x_axis.y) + std::abs(y_axis.y)};
             if (!is_fixed) {
                 r.x -= viewport.x;
                 r.y -= viewport.y;
@@ -261,10 +304,10 @@ std::vector<rect> dom_bindings::client_rects_of(node_id self) {
             inner.y -= offset.y;
         }
         for (const layout::fragment & child : at.children) {
-            walk_(walk_, child, inner.x, inner.y, is_fixed);
+            walk_(walk_, child, inner.x, inner.y, is_fixed, matrix);
         }
     };
-    walk(walk, *fragments_, 0, 0, false);
+    walk(walk, *fragments_, 0, 0, false, transform{});
     return out;
 }
 

@@ -294,6 +294,59 @@ void test_hidden_viewport_overflow_keeps_no_scrollbar() {
     CHECK(!page.has_scrollbar());
 }
 
+// A scaled ancestor changes both rectangle APIs, without changing layout metrics.
+void test_transformed_client_rects() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><style>
+        body { margin: 0 }
+        #parent { width: 200px; height: 100px; transform: scale(0.5); transform-origin: 0 0 }
+        #child { width: 100px; height: 60px }
+        </style><div id=parent><div id=child></div></div><script>
+        const child = document.getElementById('child');
+        const bounds = child.getBoundingClientRect(), first = child.getClientRects()[0];
+        console.log('scaled=' + bounds.width + ',' + bounds.height + ',' +
+                    first.width + ',' + first.height + ',' + child.offsetWidth);
+        const parent = document.getElementById('parent');
+        function report(name) {
+            const r = child.getBoundingClientRect();
+            console.log(name + '=' + [r.x, r.y, r.width, r.height].map(Math.round).join(','));
+        }
+        parent.style.transform = 'scale(2)';
+        parent.style.transformOrigin = '50% 50%';
+        child.style.transform = 'translate(10px, 5px)';
+        report('origin');
+        parent.style.transform = 'rotate(90deg)';
+        parent.style.transformOrigin = '0 0';
+        child.style.transform = 'rotate(-90deg)';
+        child.style.transformOrigin = '0 0';
+        report('rotations');
+        parent.style.transform = 'none';
+        child.style.transform = 'scale(-1, 2)';
+        child.style.transformOrigin = 'right bottom';
+        report('reflected');
+        child.style.transform = 'translate(10px, 20px) scale(2)';
+        child.style.transformOrigin = '0 0';
+        report('list');
+        child.style.transform = 'none';
+        child.style.width = '300px';
+        child.style.height = '300px';
+        parent.style.transform = 'scale(0.5)';
+        parent.style.marginLeft = '40px';
+        parent.style.marginTop = '20px';
+        parent.style.overflow = 'hidden';
+        parent.scrollLeft = 20;
+        parent.scrollTop = 40;
+        report('scrolled');
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "scaled="), std::string{"scaled=50,30,50,30,100"});
+    CHECK_EQ(logged(page, "origin="), std::string{"origin=-80,-40,200,120"});
+    CHECK_EQ(logged(page, "rotations="), std::string{"rotations=0,0,100,60"});
+    CHECK_EQ(logged(page, "reflected="), std::string{"reflected=100,-60,100,120"});
+    CHECK_EQ(logged(page, "list="), std::string{"list=10,20,200,120"});
+    CHECK_EQ(logged(page, "scrolled="), std::string{"scrolled=30,0,150,150"});
+}
+
 } // namespace
 
 int main() {
@@ -304,5 +357,6 @@ int main() {
     test_quirks_mode_scrolling_element();
     test_geometry_utils();
     test_hidden_viewport_overflow_keeps_no_scrollbar();
+    test_transformed_client_rects();
     REPORT("cssom_view");
 }
