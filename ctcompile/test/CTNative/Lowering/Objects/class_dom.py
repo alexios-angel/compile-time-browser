@@ -68,6 +68,81 @@ CLASS_CASES = {
 """,
         "1000",
     ),
+    "class_method_key": (
+        """class Button {
+    constructor(element) { this.element = element; }
+    read(key) { return this.element.getAttribute(key); }
+  }
+  const button = new Button(element);
+  const saved = button.read('x');
+  element.setAttribute('marker', 'done');
+  const marker = button.read('marker');
+  return saved === null && marker === 'done';
+""",
+        "1000",
+    ),
+    "class_method_target": (
+        """class Reader {
+    read(target, key) { return target.getAttribute(key); }
+  }
+  const reader = new Reader();
+  const saved = reader.read(element, 'x');
+  const second = reader.read(other, 'other');
+  return saved === null && second === 'second';
+""",
+        "1000",
+    ),
+    "class_method_field_order": (
+        """class Button {
+    constructor(element) { this.element = element; }
+    read(key) { return this.element.getAttribute(key); }
+  }
+  const button = new Button(element);
+  const saved = button.read('x');
+  button.element = other;
+  const second = button.read('other');
+  return saved === null && second === 'second';
+""",
+        "1000",
+    ),
+    "class_method_instances": (
+        """class Button {
+    constructor(element) { this.element = element; }
+    read(key) { return this.element.getAttribute(key); }
+  }
+  const first = new Button(element);
+  const second = new Button(other);
+  const saved = first.read('x');
+  const again = second.read('other');
+  return saved === null && again === 'second';
+""",
+        "1000",
+    ),
+    "class_method_transitive": (
+        """class Button {
+    constructor(element) { this.element = element; }
+    read(target, key) { return target.getAttribute(key); }
+    press(key) { return this.read(this.element, key); }
+  }
+  const button = new Button(element);
+  const saved = button.read(element, 'x');
+  const again = button.press('x');
+  element.setAttribute('marker', 'done');
+  const marker = button.press('marker');
+  return saved === null && again === null && marker === 'done';
+""",
+        "1000",
+    ),
+}
+TWO_ELEMENT_CLASSES = {
+    "class_method_target",
+    "class_method_field_order",
+    "class_method_instances",
+    "method_bad_target_after_good",
+    "method_missing_target",
+    "method_detached_target",
+    "method_replaced_element_after_good",
+    "method_bad_key_after_field_change",
 }
 CLASS_REFUSALS = {
     "ambient_entry": CLASS + "  ambient();\n" + READ,
@@ -153,6 +228,46 @@ CLASS_REFUSALS = {
     + READ,
     "unused_ambient_helper": CLASS + "  function unused() { ambient(); }\n" + READ,
     "unused_dom_helper": CLASS + "  function unused(target) { target.getAttribute('x'); }\n" + READ,
+    "method_bad_key_after_good": CLASS_CASES["class_method_key"][0].replace(
+        "button.read('marker')", "button.read({})"
+    ),
+    "method_dead_bad_key": CLASS_CASES["class_method_key"][0].replace(
+        "  return saved", "  if (false) button.read({});\n  return saved"
+    ),
+    "method_dead_unknown_dom": CLASS_CASES["class_method_key"][0].replace(
+        "  return saved", "  if (false) element.unknown();\n  return saved"
+    ),
+    "method_bad_target_after_good": CLASS_CASES["class_method_target"][0].replace(
+        "reader.read(other, 'other')", "reader.read({}, 'other')"
+    ),
+    "method_missing_target": CLASS_CASES["class_method_target"][0].replace(
+        "reader.read(other, 'other')", "reader.read()"
+    ),
+    "method_detached_target": CLASS_CASES["class_method_target"][0].replace(
+        "const second = reader.read(other, 'other');",
+        "const read = reader.read; const second = read(element, 'other');",
+    ),
+    "method_unused_parameter": CLASS_CASES["class_method_key"][0].replace(
+        "    read(key)", "    unused(target) { target.getAttribute('x'); }\n    read(key)"
+    ),
+    "method_unused_unknown_parameter": CLASS_CASES["class_method_key"][0].replace(
+        "    read(key)", "    unused(target) { target.unknown(); }\n    read(key)"
+    ),
+    "method_second_instance_uncalled": CLASS_CASES["class_method_key"][0].replace(
+        "  const saved =", "  const unused = new Button(element);\n  const saved ="
+    ),
+    "method_replaced_element_after_good": CLASS_CASES["class_method_field_order"][0].replace(
+        "button.element = other", "button.element = {}"
+    ),
+    "method_bad_key_after_field_change": CLASS_CASES["class_method_field_order"][0].replace(
+        "button.read('other')", "button.read({})"
+    ),
+    "method_transitive_only": CLASS_CASES["class_method_transitive"][0].replace(
+        "button.read(element, 'x')", "button.press('x')"
+    ),
+    "method_transitive_bad_target": CLASS_CASES["class_method_transitive"][0].replace(
+        "this.read(this.element, key)", "this.read({}, key)"
+    ),
 }
 CASES = {
     "direct_read": (
@@ -221,6 +336,9 @@ FIELD_CHECKS = {
     "field_unused_effect": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");',
 }
 FIELD_CHECKS["class_order"] = FIELD_CHECKS["field_order"]
+FIELD_CHECKS["class_method_key"] = FIELD_CHECKS["class_method_transitive"] = (
+    'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");'
+)
 FIELD_CHECKS["class_unused_write"] = (
     'assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");'
     'assert(doc.read().attribute_value(node, atoms.intern("unused-probe")).empty());'
@@ -252,7 +370,7 @@ FUNCTION = re.compile(r"^  ctjs.func (?:private )?@([^ (]+)\([^\n]*\n.*?^  }\n",
 
 
 def source(name, body):
-    parameters = "element, other" if name in CASES else "element"
+    parameters = "element, other" if name in CASES or name in TWO_ELEMENT_CLASSES else "element"
     return f"function {name}({parameters}) {{\n  {body}}}\n"
 
 
@@ -268,6 +386,8 @@ def check_oracles(args):
                 "class_element": "if (toggles !== 1) throw new Error('lost class toggle');",
                 "class_unused_element": "if (toggles !== 1) throw new Error('lost class toggle');",
                 "class_unused_write": "if (toggles !== 1 || element.getAttribute('unused-probe') !== null) throw new Error('proof method executed');",
+                "class_method_key": "if (element.getAttribute('marker') !== 'done') throw new Error('lost method argument');",
+                "class_method_transitive": "if (element.getAttribute('marker') !== 'done') throw new Error('lost transitive argument');",
                 "direct_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost receiver writes');",
                 "field_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost field writes');",
                 "field_element": "if (other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost field receiver');",
@@ -459,7 +579,8 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 if owned
                 else "atom_table atoms_owner; document doc{atoms_owner};"
             )
-            parameters = "element" if name in CLASS_CASES else "element, other"
+            two_elements = name not in CLASS_CASES or name in TWO_ELEMENT_CLASSES
+            parameters = "element, other" if two_elements else "element"
             call = f"session.invoke({parameters})" if owned else f"{entry}({parameters})"
             check = (
                 strings.BOOLEAN_RUN.replace("@SETUP@", setup)
@@ -475,7 +596,7 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                     '            assert(doc.remove_attribute(node, atoms.intern("class")));\n'
                     "            const auto result =",
                 )
-            if name not in CLASS_CASES:
+            if two_elements:
                 check = check.replace(
                     "        const auto state =",
                     """        const auto other_node = doc.create_element(atoms.intern("button"));
@@ -565,7 +686,9 @@ def main():
             refusals += 1
     class_sources = {name: body for name, (body, _) in CLASS_CASES.items()} | CLASS_REFUSALS
     for name, body in class_sources.items():
-        ir, contract = dom.prepare(args, name, source(name, body), 1, entry_name=name)
+        ir, contract = dom.prepare(
+            args, name, source(name, body), 2 if name in TWO_ELEMENT_CLASSES else 1, entry_name=name
+        )
         check_mutable_helper(ir.read_text())
         if "ctjs.construct" not in ir.read_text() or '"prototype"' not in ir.read_text():
             raise RuntimeError(f"{name}: source lost ordinary class construction")
@@ -600,6 +723,15 @@ def main():
                 refusals += 1
             dom.lower(args, ir, request, f"{name}-{owned}-budget", success=False, max_steps=0)
             refusals += 1
+            if name in TWO_ELEMENT_CLASSES:
+                dom.lower(
+                    args,
+                    ir,
+                    dict(request, element_parameters=[0]),
+                    f"{name}-{owned}-missing-second-element",
+                    success=False,
+                )
+                refusals += 1
     for optimize in (False, True):
         modules = [
             (

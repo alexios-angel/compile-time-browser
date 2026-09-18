@@ -880,7 +880,11 @@ struct classInitialization {
                           mlir::arith::TruncIOp, mlir::ub::PoisonOp, ctjs::BinaryStaticOp,
                           mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(op)) {
                 auto fn = op->getParentOfType<ctjs::FuncOp>();
-                accepted = methods.contains(fn) || helpers.contains(fn);
+                // Entry short-circuit results keep their source branches for
+                // the final typed DOM proof; class setup is still checked above.
+                accepted =
+                    methods.contains(fn) || helpers.contains(fn) ||
+                    (domEntry && fn == entry && llvm::isa<mlir::scf::IfOp, mlir::scf::YieldOp>(op));
                 if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
                     dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());
                 }
@@ -992,9 +996,8 @@ struct classInitialization {
             for (auto [made, definition] : methodProbes) {
                 if (!step()) { return false; }
                 auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
-                if (!fn || fn.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
-                    made->getParentOfType<ctjs::FuncOp>() != entry) {
-                    return refuse("DOM class methods require parameter-free entry-local instances");
+                if (!fn || made->getParentOfType<ctjs::FuncOp>() != entry) {
+                    return refuse("DOM class methods require entry-local instances");
                 }
             }
         }
@@ -1046,12 +1049,38 @@ struct classInitialization {
             }
             return true;
         };
-        // ponytail: one private source clone per method/instance pair. Explicit
-        // method parameters and non-entry construction need provenance first.
+        // ponytail: parameterized methods require a direct entry call per
+        // instance. Transitive-only calls need a complete reachability proof.
+        // Their original calls share one proof copy: actual arguments and field
+        // state must stay at the original call sites, not after construction.
+        bool provedOriginalCalls = false;
         // Probe every method, including callers that overwrite a field before
         // dispatching to a DOM method; direct DOM calls alone are not a census.
         for (auto [made, definition] : methodProbes) {
             if (!step()) { return false; }
+            auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+            const bool hasParameters =
+                fn.getBody().front().getNumArguments() != ctjs::implicit_arguments;
+            if (hasParameters) {
+                bool called = false;
+                for (mlir::Operation * user : made.getResult().getUsers()) {
+                    if (!step()) { return false; }
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    if (!call || call->getBlock() != made->getBlock() ||
+                        !made->isBeforeInBlock(call) || call.getReceiver() != made.getResult()) {
+                        continue;
+                    }
+                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    called |=
+                        read && read.getObject() == made.getResult() &&
+                        ctjs::constantKey(read.getKey()) == ctjs::constantKey(definition.getKey());
+                }
+                if (!called) {
+                    return refuse("DOM class method parameters require an original entry call "
+                                  "for each instance");
+                }
+                if (provedOriginalCalls) { continue; }
+            }
             // Reserve the clone's operation/operand walk before allocating it.
             auto counted = module.walk([&](mlir::Operation * op) {
                 const uint64_t cost = uint64_t(1) + op->getNumOperands();
@@ -1070,14 +1099,16 @@ struct classInitialization {
             // them only from this proof copy so the existing lift sees exactly
             // the method under test and all original reachable method calls.
             if (!omitUnused(*probe, &mapping, definition)) { return false; }
-            auto instance = llvm::cast<ctjs::ConstructOp>(mapping.lookup(made.getOperation()));
-            mlir::OpBuilder at(instance);
-            at.setInsertionPointAfter(instance);
-            auto read = ctjs::GetPropertyOp::create(at, instance.getLoc(), instance.getType(),
-                                                    instance.getResult(),
-                                                    mapping.lookup(definition.getKey()));
-            ctjs::CallOp::create(at, instance.getLoc(), instance.getType(), read.getResult(),
-                                 instance.getResult(), mlir::ValueRange{});
+            if (!hasParameters) {
+                auto instance = llvm::cast<ctjs::ConstructOp>(mapping.lookup(made.getOperation()));
+                mlir::OpBuilder at(instance);
+                at.setInsertionPointAfter(instance);
+                auto read = ctjs::GetPropertyOp::create(at, instance.getLoc(), instance.getType(),
+                                                        instance.getResult(),
+                                                        mapping.lookup(definition.getKey()));
+                ctjs::CallOp::create(at, instance.getLoc(), instance.getType(), read.getResult(),
+                                     instance.getResult(), mlir::ValueRange{});
+            }
             if (auto error = liftDOMClasses(*probe, remaining)) {
                 return refuse(llvm::toString(std::move(error)));
             }
@@ -1089,6 +1120,7 @@ struct classInitialization {
             if (auto error = prepareDOMEntry(*probe, checked, remaining)) {
                 return refuse("DOM class method body: " + llvm::toString(std::move(error)));
             }
+            provedOriginalCalls |= hasParameters;
         }
         // Only now have all unused bodies passed the same typed source proof.
         // The original no-read census makes removing their definitions inert.

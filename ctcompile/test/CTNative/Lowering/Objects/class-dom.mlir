@@ -10,3 +10,6 @@
 // every original unused source body still requires proof before erasure.
 // Captured local class getter identities can supply a DOM key after the same
 // original constructor closure is proved across all writes to its local cell.
+// Parameterized methods use each original call's actual arguments and field
+// state. Every parameterized method on every instance needs an original entry
+// call; unused parameters, transitive-only calls and later invalid arguments refuse.

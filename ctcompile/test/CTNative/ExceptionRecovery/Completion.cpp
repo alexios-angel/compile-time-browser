@@ -385,8 +385,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 8; ++control) {
-            const std::string source =
+        for (unsigned control = 0; control < 13; ++control) {
+            std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
                       "constructor(value) { this.element = value; } "
@@ -402,6 +402,19 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                       "read() { return this.key; } } const shape = new Shape(); " +
                           std::string(control == 1 ? "element.unknown(); " : "") +
                           "return element.getAttribute(shape.read()) === null; }";
+            if (control >= 8) {
+                source = "function guarded(element) { class Shape { "
+                         "constructor(value) { this.element = value; } "
+                         "read(key) { return this.element.getAttribute(key); } " +
+                         std::string(control == 10
+                                         ? "unused(target) { return target.getAttribute('x'); } "
+                                         : "") +
+                         "} const shape = new Shape(element); const first = shape.read('x'); " +
+                         std::string(control == 11 ? "const other = new Shape(element); " : "") +
+                         std::string(control == 12 ? "shape.element = {}; " : "") +
+                         "return shape.read(" + std::string(control == 9 ? "{}" : "'x'") +
+                         ") === first; }";
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -419,7 +432,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                                    control == 3   ? 0
                                                    : control == 4 ? 1000
                                                                   : 100000);
-            if (control != 0 && control != 5) {
+            if (control != 0 && control != 5 && control != 8) {
                 check(static_cast<bool>(error), "unproved class/DOM composition refuses");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&
