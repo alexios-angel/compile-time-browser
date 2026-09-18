@@ -1388,3 +1388,79 @@ function static_error_method() {
     return instance.n;
 }
 var a = static_error_method();
+
+//--- local-helper-arguments.js
+function plus(n) { return n + 1; }
+function helperArguments() {
+    class Shape { read(n) { return plus(n); } }
+    var instance = new Shape();
+    return instance.read(7);
+}
+var a = helperArguments();
+
+//--- local-helper-branches.js
+function choose(n) { if (n > 0) { return n + 1; } return 2; }
+function helperBranches() {
+    class Shape { read(n) { return choose(n); } }
+    var instance = new Shape();
+    return instance.read(7) * 10 + instance.read(0);
+}
+var a = helperBranches();
+
+//--- local-helper-order.js
+function bump(box) { box.n = box.n + 1; return box.n; }
+function combine(left, right) { return left * 10 + right; }
+function helperOrder() {
+    class Shape { read(left, right) { return combine(left, right); } }
+    var instance = new Shape(), box = {n: 0};
+    return instance.read(bump(box), bump(box)) * 10 + box.n;
+}
+var a = helperOrder();
+
+//--- local-helper-replaced.js
+function plus(n) { return n + 1; }
+plus = function(n) { return n + 2; };
+function helperReplaced() {
+    class Shape { read(n) { return plus(n); } }
+    var instance = new Shape();
+    return instance.read(7);
+}
+var a = helperReplaced();
+
+// The helper is never called by this entry; its body must still be checked.
+//--- local-helper-ambient.js
+function unsafe(n) { unknown(n); return n; }
+function helperAmbient() {
+    class Shape { read(n) { return unsafe(n); } }
+    var instance = new Shape();
+    return 7;
+}
+var a = helperAmbient();
+
+//--- local-helper-receiver.js
+const read = n => this.n + n;
+function helperReceiver() {
+    class Shape { read(n) { return read(n); } }
+    var instance = new Shape();
+    return 7;
+}
+var a = helperReceiver();
+
+// Scalar assignment effects keep their left-to-right order through the helper call.
+//--- local-helper-values.js
+function combine(left, right) { return left * 10 + right; }
+function helperValues() {
+    class Shape { read(left, right) { return combine(left, right); } }
+    var instance = new Shape(), value = 0;
+    return instance.read(value = value + 1, value = value + 1) * 10 + value;
+}
+var a = helperValues();
+
+//--- local-helper-dynamic-key.js
+function select(object, key) { return object[key]; }
+function helperDynamicKey() {
+    class Shape { read(object, key) { return select(object, key); } }
+    var instance = new Shape();
+    return 7;
+}
+var a = helperDynamicKey();

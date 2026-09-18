@@ -25,12 +25,15 @@ struct classInitialization {
     std::string reason;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::StringMap<ctjs::StoreGlobalOp> globals;
+    llvm::StringMap<bool> closedGlobals;
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
+    llvm::DenseSet<mlir::Operation *> helpers;
+    llvm::DenseSet<mlir::Operation *> helperCalls;
     llvm::DenseSet<mlir::Operation *> getters;
     llvm::DenseSet<mlir::Operation *> throwingGetters;
     llvm::DenseSet<mlir::Operation *> errorOperations;
@@ -71,10 +74,30 @@ struct classInitialization {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
         auto load = value.getDefiningOp<ctjs::LoadGlobalOp>();
         auto store = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
-        if (!store || store->getBlock() != load->getBlock() || !store->isBeforeInBlock(load)) {
-            return {};
+        if (!store) { return {}; }
+        auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        if (store->getBlock() == load->getBlock() && store->isBeforeInBlock(load)) {
+            return closure;
         }
-        return store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto fn = target(closure);
+        if (!fn) { return {}; }
+        auto [cached, fresh] = closedGlobals.try_emplace(load.getName(), false);
+        if (fresh) {
+            // Charge the existing declaration proof's operation/use scans once
+            // per binding. Its hoisting and closed-callee rules also cover reads
+            // in other functions without trusting resolver annotations.
+            auto walked = module.walk([&](mlir::Operation * op) {
+                const uint64_t cost = uint64_t(2) + op->getNumOperands();
+                if (cost > remaining) {
+                    refuse("class initialization work budget exhausted");
+                    return mlir::WalkResult::interrupt();
+                }
+                remaining -= static_cast<unsigned>(cost);
+                return mlir::WalkResult::advance();
+            });
+            cached->second = !walked.wasInterrupted() && closedDeclaration(store, fn, module);
+        }
+        return cached->second ? closure : ctjs::CreateClosureOp{};
     }
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
@@ -536,6 +559,25 @@ struct classInitialization {
         for (ctjs::CallOp call : calls) {
             if (!examine(call)) { return false; }
         }
+        walked = module.walk([&](ctjs::CallDirectOp call) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            auto closure = sourceClosure(call.getCalleeValue());
+            auto fn = target(closure);
+            if (!fn || call.getTarget() != fn || constructors.contains(fn) ||
+                methods.contains(fn) || getters.contains(fn) || !undefined(call.getReceiver()) ||
+                !undefined(call.getNewTarget())) {
+                return mlir::WalkResult::advance();
+            }
+            auto & block = fn.getBody().front();
+            if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
+                !block.getArgument(ctjs::arg_new_target).use_empty()) {
+                return mlir::WalkResult::advance();
+            }
+            helpers.insert(fn);
+            helperCalls.insert(call);
+            return mlir::WalkResult::advance();
+        });
+        if (walked.wasInterrupted() || !reason.empty()) { return false; }
         // No ambient object, unknown callee, accessor, dynamic key or reflective
         // instruction can replace the fixed helper between entry and any call.
         // Reject the whole module, including suffixes and uncalled bodies.
@@ -554,7 +596,7 @@ struct classInitialization {
                           ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp,
                           ctjs::StoreGlobalOp, ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp,
                           ctjs::TruthyOp, ctjs::FromBoolOp>(op);
-            // Only proved ordinary methods may contain control flow.
+            // Proved ordinary methods and exact local helpers may contain control flow.
             // The recursive census still checks every arm/body, including ones
             // never called. Setup, constructors and getter cloning stay linear.
             // The lift represents break/continue/return edges with integer
@@ -567,7 +609,8 @@ struct classInitialization {
                           mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp,
                           mlir::arith::TruncIOp, mlir::ub::PoisonOp, ctjs::BinaryStaticOp,
                           mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(op)) {
-                accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>());
+                auto fn = op->getParentOfType<ctjs::FuncOp>();
+                accepted = methods.contains(fn) || helpers.contains(fn);
                 if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
                     dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());
                 }
@@ -582,28 +625,32 @@ struct classInitialization {
             }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
-                accepted = methods.contains(fn) ||
+                bool unusedReceiver = true;
+                for (mlir::OpOperand & use : block.getArgument(ctjs::arg_receiver).getUses()) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+                    // An arrow may save this without ever observing it. Its
+                    // exact helper body was checked before accepting the call.
+                    unusedReceiver &=
+                        closure && use.getOperandNumber() == 1 && helpers.contains(target(closure));
+                }
+                accepted = methods.contains(fn) || helpers.contains(fn) ||
                            (llvm::hasSingleElement(fn.getBody()) &&
                             (constructors.contains(fn) || getters.contains(fn) ||
-                             (block.getNumArguments() == 3 &&
-                              block.getArgument(ctjs::arg_receiver).use_empty() &&
+                             (block.getNumArguments() == 3 && unusedReceiver &&
                               block.getArgument(ctjs::arg_new_target).use_empty())));
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
-                accepted = target(closure) && target(closure) != entry &&
-                           undefined(closure.getEnclosingThis()) && closure.getUpvalues().empty();
+                auto fn = target(closure);
+                accepted = fn && fn != entry && closure.getUpvalues().empty() &&
+                           (undefined(closure.getEnclosingThis()) || helpers.contains(fn));
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
                 accepted = load.getName() == host_detail::classDefinedIntrinsic ||
                            static_cast<bool>(sourceClosure(load.getResult()));
             }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-                auto closure = sourceClosure(call.getCalleeValue());
-                accepted = target(closure) && call.getTarget() == target(closure) &&
-                           !constructors.contains(target(closure)) &&
-                           !methods.contains(target(closure)) &&
-                           !getters.contains(target(closure)) && undefined(call.getReceiver()) &&
-                           undefined(call.getNewTarget()) && call.getArgs().empty();
+                accepted = helperCalls.contains(call);
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
                 accepted = constructors.contains(
@@ -612,10 +659,19 @@ struct classInitialization {
             mlir::Value key;
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
             if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
-            if (key) { accepted = ctjs::ordinaryKey(key); }
+            if (key) {
+                auto constant = key.getDefiningOp<ctjs::ConstantOp>();
+                // Literal Number keys cannot name a prototype hook or invoke
+                // user coercion. Native field/index representation is separate.
+                accepted = ctjs::ordinaryKey(key) ||
+                           (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
+                            llvm::isa<ctjs::NumberAttr>(constant.getValue()));
+            }
             if (accepted) { return mlir::WalkResult::advance(); }
+            auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
             refuse("class initialization source contains an unknown call, binding or reflective "
-                   "effect");
+                   "effect" +
+                   (load ? " (global \"" + load.getName().str() + "\")" : std::string{}));
             return mlir::WalkResult::interrupt();
         });
         if (walked.wasInterrupted()) { return false; }

@@ -80,6 +80,16 @@ class setup and static getter expansion remain linear with one outer block.
 Every call stays within the supplied source; unresolved bindings, dynamic keys,
 reflection, captured functions and other nested regions fail closed.
 
+Parameterized local helpers use the same complete effect census. Every direct
+call rechecks its source closure and target, with unused receiver and new.target.
+Cross-function global loads additionally require the existing closed hoisting
+declaration proof, charged once per binding against the work budget. Structured
+helper bodies keep their branches and argument evaluation order; literal Number
+keys are accepted without granting native field/index representation. An arrow may
+capture an unused lexical `this`; observing it still refuses. This supplies no
+authority for unresolved browser calls, helper replacement or ambient effects
+inside an uncalled helper.
+
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
 constant proved getter reads and inert roots; writes and identity escape still

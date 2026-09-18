@@ -16,6 +16,16 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "local-helper-arguments": (8, 8),
+    "local-helper-branches": (82, 82),
+    "local-helper-order": (122, 122),
+    "local-helper-values": (122, 122),
+    "local-helper-replaced": (9, 9),
+    "local-helper-ambient": (7, 7),
+    "local-helper-receiver": (7, 7),
+    "local-helper-dynamic-key": (7, 7),
+    "bootstrap-r": (7, 7),
+    "bootstrap-config-r-defaults": (7, 7),
     "empty": (7, 7),
     "number": (92, 92),
     "method": (92, 92),
@@ -127,6 +137,9 @@ OBSERVATIONS = {
     "receiver-default-inherited": (7, 7),
 }
 POSITIVES = {
+    "local-helper-arguments",
+    "local-helper-branches",
+    "local-helper-values",
     "empty",
     "number",
     "method",
@@ -162,6 +175,8 @@ POSITIVES = {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "local-helper-order",
+    "bootstrap-r",
     "method-dispatch-throw",
     "method-throw-default",
     "static-throw-literal",
@@ -521,6 +536,16 @@ def main():
         + "\n    var instance = new W();\n    var result = W.Default;\n"
         "    result.n = 7;\n    return result.n;\n}\nvar a = configDefaults();\n"
     )
+    # Include the original helper separately; retain the W-only refusal above.
+    helper = bootstrap.split("        r = ", 1)[1].split(",\n        a = ", 1)[0]
+    declaration = "const r = " + helper + ";\n"
+    (args.fixtures / "bootstrap-config-r-defaults.js").write_text(
+        declaration + (args.fixtures / "bootstrap-config-defaults.js").read_text()
+    )
+    (args.fixtures / "bootstrap-r.js").write_text(
+        declaration + "function probe() { class Shape { read(t) { return r(t); } } "
+        "var instance = new Shape(); return instance.read(null) ? 9 : 7; } var a = probe();\n"
+    )
     refusals = 0
     preparation_refusals = 0
     checked = prepared_refusals = 0
@@ -562,9 +587,9 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        if (
-            name.startswith(("static-throw-", "static-error-"))
-            or name == "bootstrap-config-defaults"
+        if name.startswith(("static-throw-", "static-error-")) or name in (
+            "bootstrap-config-defaults",
+            "bootstrap-config-r-defaults",
         ):
             manifest["initial_intrinsics"].append("Error")
         if name in (
@@ -598,7 +623,8 @@ def main():
             "method-throw-ambient": "unknown call, binding or reflective effect",
             "method-throw-object": "unknown call, binding or reflective effect",
             "method-throw-parameter": "unknown call, binding or reflective effect",
-            "bootstrap-config-defaults": "unknown call, binding or reflective effect",
+            "bootstrap-config-defaults": 'unknown call, binding or reflective effect (global "r")',
+            "bootstrap-config-r-defaults": 'unknown call, binding or reflective effect (global "H")',
             "static-throw-ambient": "static getter body is not a closed expression",
             "static-throw-object": "static getter throw needs a literal or declared Error payload",
             "static-error-return": "declared Error payload escapes its throw",
@@ -619,7 +645,9 @@ def main():
         if name in PREPARED_ONLY:
             before, after = structured.read_text(), prepared.read_text()
             operations = (
-                ("cf.switch", "ctjs.throw") if name.startswith("method-") else ("ctjs.throw",)
+                ("ctjs.call_direct",)
+                if name in ("local-helper-order", "bootstrap-r")
+                else ("cf.switch", "ctjs.throw") if name.startswith("method-") else ("ctjs.throw",)
             )
             for operation in operations:
                 if not before.count(operation) or before.count(operation) != after.count(operation):
@@ -674,6 +702,7 @@ def main():
             "static-forward-chain",
             "static-defaults-chain",
             "static-throw-chain",
+            "local-helper-branches",
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
@@ -724,7 +753,9 @@ def main():
     print(
         f"constructed method controls: {plain_checked} native executions, {plain_refused} refusals"
     )
-    print(f"prepared throwing methods: {prepared_refusals} native refusals with original exits")
+    print(
+        f"prepared source controls: {prepared_refusals} native refusals with original calls/exits"
+    )
 
 
 if __name__ == "__main__":
