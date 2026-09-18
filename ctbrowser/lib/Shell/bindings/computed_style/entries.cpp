@@ -414,6 +414,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    the way `display: BLOCK` is.
         if (property.starts_with("--")) {
             std::string text{trim(declared(property), html_whitespace)};
+            if (text == style::guaranteed_invalid) { return {}; }
             // ...WITH ITS SUBSTITUTIONS PERFORMED. The cascade keeps a custom
             //    property as written so a later `var()` can read it lazily, but
             //    its COMPUTED value has every `var()` and `attr()` replaced

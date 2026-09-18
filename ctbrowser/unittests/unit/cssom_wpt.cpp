@@ -72,6 +72,10 @@ void test_background_substitution_failures() {
         console.log('initial=' + getComputedStyle(target).color);
         target.style.color = 'var(--inherited)';
         console.log('inherit=' + getComputedStyle(target).color);
+        for (const value of ['initial', 'var(--empty) initial', 'attr(missing, initial)']) {
+            target.style.setProperty('--invalid', value);
+            console.log('serialized-' + value + '=' + getComputedStyle(target).getPropertyValue('--invalid'));
+        }
         target.style.setProperty('--loop', 'var(--loop, initial)');
         console.log('cycle=' + getComputedStyle(target).getPropertyValue('--loop'));
     </script>)");
@@ -82,6 +86,9 @@ void test_background_substitution_failures() {
     CHECK_EQ(logged(page, "keyword="), std::string{"keyword=rgb(0, 128, 0)"});
     CHECK_EQ(logged(page, "initial="), std::string{"initial=rgb(255, 0, 0)"});
     CHECK_EQ(logged(page, "inherit="), std::string{"inherit=rgb(0, 0, 255)"});
+    for (const std::string value : {"initial", "var(--empty) initial", "attr(missing, initial)"}) {
+        CHECK_EQ(logged(page, "serialized-" + value + "="), "serialized-" + value + "=");
+    }
     CHECK_EQ(logged(page, "cycle="), std::string{"cycle="});
 }
 
