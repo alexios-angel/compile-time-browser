@@ -2045,12 +2045,18 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             // at computed-value time (attr-all-types). A value that is
             // still a function - `min(10px, 5%)` - is valid as it stands.
             if (had_var && !css::may_have_math(value)) {
-                const css::value_check checked = css::check_declaration(property, value);
+                // Image components are clamped separately below. Validate their
+                // substituted math syntax, not a negative intermediate result.
+                const bool image_components =
+                    ascii_iequals_any(property, {"border-image", "border-image-width",
+                                                 "border-image-outset", "border-image-slice"});
+                const css::value_check checked =
+                    css::check_declaration(property, image_components ? unfolded : value);
                 if (!checked.valid) {
                     unset();
                     return;
                 }
-                value = std::move(checked.serialized);
+                if (!image_components) { value = std::move(checked.serialized); }
             }
         }
         // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
@@ -2076,24 +2082,36 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // and still answers `96px` for `1in`.
         const auto folded = [&](std::string text, atom longhand) {
             const std::string_view name = atoms_->text(longhand);
-            if (name.starts_with("border-") && name.ends_with("-radius")) {
-                // Each axis computes before inheritance; scalar folding cannot
-                // resolve or clamp a pair as a single length.
-                std::vector<std::string> radii;
+            const css::property_syntax * known = css::find_property(name);
+            const auto component = [&](std::string_view part) {
+                std::string value = css::canonical_dimension_text(part, lengths_for(longhand))
+                                        .value_or(std::string{part});
+                return known != nullptr && known->nonnegative ? css::non_negative(value) : value;
+            };
+            const bool radius = name.starts_with("border-") && name.ends_with("-radius");
+            if (radius || name == "border-image-width" || name == "border-image-outset" ||
+                name == "border-image-slice") {
+                // Every component computes before inheritance; scalar folding
+                // cannot resolve or clamp a list as a single length.
+                std::vector<std::string> parts;
                 for (const std::string_view part : split_top_level(text, html_whitespace)) {
-                    radii.push_back(
-                        css::non_negative(css::canonical_dimension_text(part, lengths_for(longhand))
-                                              .value_or(std::string{part})));
+                    parts.push_back(component(part));
                 }
-                if (radii.size() == 2) {
-                    return radii[0] == radii[1] ? radii[0] : radii[0] + ' ' + radii[1];
+                if (radius && parts.size() == 2 && parts[0] == parts[1]) { parts.pop_back(); }
+                std::string result;
+                for (const std::string & part : parts) {
+                    if (!result.empty()) { result += ' '; }
+                    result += part;
                 }
-                if (radii.size() == 1) { return radii[0]; }
+                if (!radius) {
+                    const css::value_check checked = css::check_declaration(name, result, false);
+                    if (checked.valid) { return checked.serialized; }
+                }
+                return result;
             }
-            if (auto canonical = css::canonical_dimension_text(text, lengths_for(longhand))) {
-                return std::move(*canonical);
-            }
-            return text;
+            // Shorthands have no range of their own. Clamp after expansion,
+            // including components whose math was already folded above.
+            return component(text);
         };
         const auto expanded = expand_shorthand(property, value);
         if (expanded.empty()) {

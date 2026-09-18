@@ -21,6 +21,61 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_nonnegative_computed_widths() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #parent { font-size: 40px; border-style: solid;
+                  border-width: calc(10px - 0.5em) 1em;
+                  border-image-width: calc(10px - 0.5em) 1em 2 auto;
+                  border-image-outset: 0 calc(0.5em + 10px) 3 calc(10px - 0.5em); }
+        #child { font-size: 10px; border-image-width: inherit; border-image-outset: inherit; }
+        </style><div id="parent"><div id="child"></div></div>
+        <script>
+        const p = document.getElementById('parent');
+        console.log('sheet=' + getComputedStyle(p).borderWidth);
+        p.style.borderBottomWidth = 'calc(10px - 0.5em)';
+        console.log('inline=' + getComputedStyle(p).borderBottomWidth);
+        p.style.setProperty('--w', 'calc(10px - 0.5em)');
+        p.style.borderLeftWidth = 'var(--w)';
+        console.log('variable=' + getComputedStyle(p).borderLeftWidth);
+        p.style.borderWidth = 'var(--w)';
+        console.log('variable-shorthand=' + getComputedStyle(p).borderWidth);
+        for (const id of ['parent', 'child']) {
+            const cs = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + cs.borderImageWidth + '|' + cs.borderImageOutset);
+        }
+        p.style.borderImage = 'none 20 / calc(10px - 0.5em) / 1em round';
+        const cs = getComputedStyle(p);
+        console.log('shorthand=' + cs.borderImageWidth + '|' + cs.borderImageOutset + '|' +
+                    cs.borderImageRepeat);
+        p.style.borderImageWidth = '1em 40px';
+        console.log('compressed=' + getComputedStyle(p).borderImageWidth);
+        p.style.setProperty('--image-width', 'calc(10px - 0.5em) 1em');
+        p.style.borderImageWidth = 'var(--image-width)';
+        console.log('image-variable=' + getComputedStyle(p).borderImageWidth);
+        p.style.setProperty('--image', '20 / calc(10px - 0.5em) / 1em round');
+        p.style.borderImage = 'var(--image)';
+        console.log('image-variable-shorthand=' + getComputedStyle(p).borderImageWidth + '|' +
+                    getComputedStyle(p).borderImageOutset);
+        p.style.setProperty('--image-width', '-10px 1em');
+        p.style.borderImageWidth = 'var(--image-width)';
+        console.log('image-invalid-variable=' + getComputedStyle(p).borderImageWidth);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "sheet="), std::string{"sheet=0px 40px"});
+    CHECK_EQ(logged(page, "inline="), std::string{"inline=0px"});
+    CHECK_EQ(logged(page, "variable="), std::string{"variable=0px"});
+    CHECK_EQ(logged(page, "variable-shorthand="), std::string{"variable-shorthand=0px"});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=0px 40px 2 auto|0 30px 3 0px"});
+    CHECK_EQ(logged(page, "child="), std::string{"child=0px 40px 2 auto|0 30px 3 0px"});
+    CHECK_EQ(logged(page, "shorthand="), std::string{"shorthand=0px|40px|round"});
+    CHECK_EQ(logged(page, "compressed="), std::string{"compressed=40px"});
+    CHECK_EQ(logged(page, "image-variable="), std::string{"image-variable=0px 40px"});
+    CHECK_EQ(logged(page, "image-variable-shorthand="),
+             std::string{"image-variable-shorthand=0px|40px"});
+    CHECK_EQ(logged(page, "image-invalid-variable="), std::string{"image-invalid-variable=1"});
+}
+
 void test_elliptical_radius_cascade() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<style>
@@ -414,6 +469,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_nonnegative_computed_widths();
     test_elliptical_radius_cascade();
     test_resolved_colours();
     test_column_rule_widths();
