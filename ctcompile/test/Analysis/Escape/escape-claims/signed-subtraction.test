@@ -3,7 +3,7 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-subtraction
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-subtraction.claims
 
-// Negative Number snapshots also accept the existing canonical String offset proof.
+// Either subtraction operand accepts the existing bounded canonical String proof.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property
@@ -37,6 +37,20 @@
 // IMPORT: ctjs.get_property
 // IMPORT: ctjs.set_property
 // IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @leftStringSnapshotReleased$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @leftStringSnapshotReturned$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @bothStringsReleased$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @bothStringsReturned$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary sub
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
@@ -61,6 +75,16 @@
 // CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 12 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 12 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 13 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 14 {{[0-9]+}} arr confined
 
 //--- source.js
 function snapshotReleased() {
@@ -151,6 +175,42 @@ function stringSnapshotReturned() {
     }
     return saved;
 }
+function leftStringSnapshotReleased() {
+    var child = {}, array = [child, child], seed = [1, 1], saved = 0;
+    var length = seed.length;
+    seed.length = 0;
+    var step = "1" - length;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function leftStringSnapshotReturned() {
+    var child = {}, array = [child, child], seed = [1, 1], saved = 0;
+    var length = seed.length;
+    seed.length = 0;
+    var step = "1" - length;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function bothStringsReleased() {
+    var child = {}, array = [child, child], saved = 0;
+    var step = "1" - "2";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function bothStringsReturned() {
+    var child = {}, array = [child, child], saved = 0;
+    var step = "1" - "2";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
 snapshotReleased();
 var snapshotRetained = snapshotReturned();
 positiveReleased();
@@ -161,3 +221,7 @@ coercibleRight();
 coercibleLeft();
 stringSnapshotReleased();
 var stringRetained = stringSnapshotReturned();
+leftStringSnapshotReleased();
+var leftStringRetained = leftStringSnapshotReturned();
+bothStringsReleased();
+var bothStringsRetained = bothStringsReturned();

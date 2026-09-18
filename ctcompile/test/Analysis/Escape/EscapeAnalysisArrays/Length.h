@@ -1493,6 +1493,13 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                     retained ? "" : "x");
                 continue;
             }
+            if (literal == "#ctjs.string<\"0\">" && producer == "ctjs.binary sub %input, %zero") {
+                run({.what = "canonical left String subtraction supplies an exact empty length",
+                     .body = body,
+                     .arrays = "a:[]",
+                     .exit = "a -> {a}"});
+                continue;
+            }
             run({.what = "a computed shrink needs exact Number operands without coercion",
                  .body = body,
                  .failure = ArrayContentsFailure::UnknownIndex});
@@ -1810,6 +1817,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         binary->setOperand(0, binary.getRhs());
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
+        inspect(ArrayContentsFailure::None);
+        literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
         inspect(ArrayContentsFailure::None);

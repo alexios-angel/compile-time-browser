@@ -998,21 +998,27 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("zero and positive Sub results cannot supply a negative stride",
                replace(subChild, "binary sub %left, %magnitude", "binary sub " + operands));
     }
-    reject("a coercible left String supplies no negative Sub snapshot",
-           replace(subChild, "unary plus %one", "constant #ctjs.string<\"1\">"));
+    const auto leftStringSub = replace(subChild, "unary plus %one", "constant #ctjs.string<\"1\">");
+    const auto bothStringSub =
+        replace(leftStringSub, "unary plus %two", "constant #ctjs.string<\"2\">");
+    const auto savedLeftStringSub =
+        replace(savedSub, "unary plus %one", "constant #ctjs.string<\"1\">");
     const auto stringSub = replace(subChild, "unary plus %two", "constant #ctjs.string<\"2\">");
     const auto savedStringSub =
         replace(replace(savedSub, "unary plus %one", "get_property %seed[%name]"),
                 "%magnitude = ctjs.get_property %seed[%name]",
                 "%magnitude = ctjs.constant #ctjs.string<\"3\">");
-    for (const auto & source : {stringSub, savedStringSub}) {
-        const char * arrays = source == stringSub ? "a:[one,x]" : "a:[one,x]; seed:[]";
-        run({.what = "canonical String offsets retain negative snapshots after source shrink",
+    for (const auto & source :
+         {stringSub, savedStringSub, leftStringSub, bothStringSub, savedLeftStringSub}) {
+        const char * arrays = source == savedStringSub || source == savedLeftStringSub
+                                  ? "a:[one,x]; seed:[]"
+                                  : "a:[one,x]";
+        run({.what = "canonical String operands retain negative snapshots after source shrink",
              .body = source,
              .arrays = arrays,
              .reads = "a[0]=one; a[1]=x",
              .exit = "x -> {x}"});
-        run({.what = "negative String-offset snapshots discharge only unreturned children",
+        run({.what = "negative String subtraction snapshots discharge only unreturned children",
              .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
              .arrays = arrays,
              .reads = "a[0]=one; a[1]=x",
@@ -1038,6 +1044,27 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          {"02", "+2", "-2", "2.0", "2e0", " 2", "0x2", "4294967295", "NaN"}) {
         reject("negative String offsets require the existing bounded canonical decimal proof",
                replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"));
+        reject("left String subtraction requires the same bounded canonical decimal proof",
+               replace(leftStringSub, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("repeated left String producers still need independent invariance",
+           replace(replace(leftStringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
+                   "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="));
+    reject("a negative left String result cannot become an own array index",
+           replace(leftStringSub, "%base[%i]", "%base[%minus]"),
+           ArrayContentsFailure::UnknownIndex);
+    for (const auto & [left, right] :
+         {std::pair{"0", "9223372036854775808"}, std::pair{"1", "4607182418800017408"},
+          std::pair{"4294967294", "4751297606871678976"}}) {
+        run({.what = "canonical left String cancellation keeps the original exact zero result",
+             .body = prefix + "  %left = ctjs.constant #ctjs.string<\"" + left +
+                     "\">\n  %right = ctjs.constant #ctjs.number<" + right +
+                     ">\n  %actual = ctjs.binary sub %left, %right "
+                     "{storage_test_id = \"actual\"}\n"
+                     "  %read = ctjs.get_property %a[%actual]\n  ctjs.return %actual\n",
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one",
+             .exit = "actual -> {}"});
     }
     reject("negative Sub snapshots cannot become own array indices",
            replace(subChild, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);

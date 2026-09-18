@@ -1691,8 +1691,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     boundedNumberSum(left, right, result);
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                    const auto original =
-                        left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto original = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    if (!original && left.string()) { original = ownArrayIndex(lhs); }
                     auto literal = rhs.getDefiningOp<ctjs::ConstantOp>();
                     const auto number =
                         right.integerNumber ? right.integerNumber : boundedNumber(rhs);

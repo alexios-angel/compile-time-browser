@@ -760,6 +760,36 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const auto leftStringSub = replace(carriedSub, "  %unit = ctjs.binary sub %one, %magnitude",
+                                       "  %left = ctjs.constant #ctjs.string<\"1\">\n"
+                                       "  %unit = ctjs.binary sub %left, %magnitude");
+    rows.push_back({.what = "left String subtraction survives reordered structured transport",
+                    .body = leftStringSub,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured left String subtraction releases only unreturned children",
+                    .body = replace(leftStringSub, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    reject("left String subtraction snapshots cannot change across structured yields",
+           replace(leftStringSub, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    const auto leftPredecessors =
+        replace(leftStringSub, "  %left = ctjs.constant #ctjs.string<\"1\">\n",
+                "  %left = scf.if %flag -> (!ctjs.value) {\n"
+                "    %good = ctjs.constant #ctjs.string<\"1\">\n"
+                "    scf.yield %good : !ctjs.value\n"
+                "  } else {\n    scf.yield %one : !ctjs.value\n  }\n");
+    rows.push_back({.what = "left subtraction proves String and Number predecessors independently",
+                    .body = leftPredecessors,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; y -> {y}"});
+    reject("left subtraction cannot borrow another predecessor's canonical String",
+           replace(leftPredecessors, "scf.yield %one : !ctjs.value",
+                   "%bad = ctjs.constant #ctjs.string<\"01\">\n"
+                   "    scf.yield %bad : !ctjs.value"));
     const auto savedStringSub = replace(subSnapshot, "  %unit = ctjs.binary sub %zero, %magnitude",
                                         "  %offset = ctjs.constant #ctjs.string<\"2\">\n"
                                         "  %unit = ctjs.binary sub %magnitude, %offset");
