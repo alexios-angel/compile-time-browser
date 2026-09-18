@@ -1496,7 +1496,7 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
           "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
           "#ctjs.number<9218868437227405312>", "#ctjs.number<18442240474082181120>",
           "#ctjs.number<9221120237041090560>"}) {
-        reject("negative-one powers require exact bounded integer Number exponents",
+        reject("negative-one powers must supply a bounded negative Number stride",
                replace(signedUnitPower, "  %power = ctjs.binary pow %minus, %magnitude",
                        "  %exponent = ctjs.constant " + literal +
                            "\n  %power = ctjs.binary pow %minus, %exponent"));
@@ -1513,6 +1513,33 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(powerChild, power, ""), "  %step =", power + "  %step ="));
     const auto unitPower = replace(replace(powerChild, "pow %minus, %one", "pow %one, %minus"),
                                    "binary sub %i, %power", "binary_static add %i, %power");
+    for (const bool stringBase : {false, true}) {
+        const std::string makePower = "  %power = ctjs.binary pow " +
+                                      std::string(stringBase ? "%text, %minus" : "%minus, %text") +
+                                      "\n";
+        const auto source =
+            replace(stringBase ? unitPower : powerChild,
+                    stringBase ? "  %power = ctjs.binary pow %one, %minus\n" : power,
+                    "  %text = ctjs.constant #ctjs.string<\"1\">\n" + makePower);
+        run({.what = "canonical String powers retain original CFG children after source shrink",
+             .body = source,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "canonical String powers release only unreturned CFG children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        reject("a String power producer cannot borrow its previous iteration's result",
+               replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="));
+        for (const std::string invalid :
+             {"01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
+            reject("both power operands need bounded canonical String evidence",
+                   replace(source, "#ctjs.string<\"1\">", "#ctjs.string<\"" + invalid + "\">"));
+        }
+    }
     for (const std::string exponent : {"%minus", "%magnitude", "%three"}) {
         const auto source = replace(unitPower, "pow %one, %minus", "pow %one, " + exponent);
         run({.what = "positive-one powers retain bounded signed exponent snapshots after shrink",
@@ -1553,8 +1580,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
           "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
           "#ctjs.number<9218868437227405312>", "#ctjs.number<18442240474082181120>",
           "#ctjs.number<9221120237041090560>"}) {
-        reject("positive-one powers require exact bounded finite Number exponents",
-               replace(unitPower, "binary sub %left, %magnitude", "constant " + literal));
+        const auto source =
+            replace(unitPower, "binary sub %left, %magnitude", "constant " + literal);
+        if (literal == "#ctjs.string<\"2\">") {
+            run({.what = "the original canonical String exponent retains its returned child",
+                 .body = source,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            continue;
+        }
+        reject("positive-one powers require exact bounded finite exponent evidence", source);
     }
     reject("a positive-one base cannot bypass an unknown exponent",
            replace(unitPower, "pow %one, %minus", "pow %one, %p"),

@@ -1800,10 +1800,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Pow) {
-                    const auto exponent =
-                        right.integerNumber ? right.integerNumber : boundedNumber(rhs);
-                    const auto positive =
-                        left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto exponent = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    auto positive = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    if (!exponent && right.string()) { exponent = ownArrayIndex(rhs); }
+                    if (!positive && left.string()) { positive = ownArrayIndex(lhs); }
                     const auto negative = left.negativeIntegerNumber ? left.negativeIntegerNumber
                                                                      : boundedNumber(lhs, true);
                     const auto negativeExponent = right.negativeIntegerNumber
@@ -1811,7 +1811,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                                                       : boundedNumber(rhs, true);
                     // ponytail: only exact zero/unit identities; general powers
                     // need Number's implementation-approximated result proof.
-                    // Keep the result identity, including signed zero's parity.
+                    // Canonical Strings share Sub's exact conversion. Keep the
+                    // result identity, including signed zero's parity.
                     if (exponent && *exponent <= 1 && (positive || negative)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber =

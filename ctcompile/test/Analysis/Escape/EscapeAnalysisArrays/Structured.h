@@ -970,9 +970,9 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("repeated structured division, remainder and power need independent invariance",
                replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step ="));
     }
-    for (const std::string operation : {"div", "mod"}) {
+    for (const std::string operation : {"div", "mod", "pow"}) {
         const std::string literal = "  %text = ctjs.constant #ctjs.string<\"" +
-                                    std::string(operation == "div" ? "1" : "2") + "\">\n";
+                                    std::string(operation == "mod" ? "2" : "1") + "\">\n";
         const std::string makeResult = "  %negative = ctjs.unary neg %one\n" + literal +
                                        "  %unit = ctjs.binary " + operation + " %negative, %text\n";
         const auto stringRight =
@@ -982,7 +982,7 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     "%negative, %text", operation == "div" ? "%text, %one" : "%text, %magnitude"),
             "binary sub %i, %d", "binary add %i, %d");
         for (const auto & body : {stringRight, stringLeft}) {
-            rows.push_back({.what = "String division and remainder survive structured transport",
+            rows.push_back({.what = "String arithmetic survives structured transport",
                             .body = body,
                             .arrays = "a:[x,y]",
                             .reads = "a[0]=x; a[1]=y",

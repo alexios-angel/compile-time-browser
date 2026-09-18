@@ -1254,17 +1254,49 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
     powerShrink.what = "power one preserves signed zero length and original result identity";
     powerShrink.body.replace(powerShrink.body.find("binary div"), 10, "binary pow");
     run(powerShrink);
-    for (const std::string exponent :
-         {"4611686018427387904", "4613937818241073152", "4751297606873776128"}) {
+    for (const std::string literal :
+         {"#ctjs.number<4611686018427387904>", "#ctjs.number<4613937818241073152>",
+          "#ctjs.number<4751297606873776128>", "#ctjs.string<\"1\">", "#ctjs.string<\"2\">",
+          "#ctjs.string<\"3\">", "#ctjs.string<\"4294967294\">"}) {
         auto source = powerShrink.body;
         source.replace(source.find("  %index ="), 0,
-                       "  %exponent = ctjs.constant #ctjs.number<" + exponent + ">\n");
+                       "  %exponent = ctjs.constant " + literal + "\n");
         source.replace(source.find("pow %negativeZero, %one"), 23, "pow %negativeZero, %exponent");
         run({.what = "even and odd bounded zero powers preserve the original signed length result",
              .body = source,
              .arrays = "a:[]; result:[a,index]",
              .exit = "result -> {a,result}"});
     }
+    for (const auto & [base, exponent] :
+         {std::pair{"0", "3"}, std::pair{"1", "4294967294"}, std::pair{"4294967294", "0"},
+          std::pair{"4294967294", "1"}}) {
+        const std::string expected = std::string_view(base) == "0"       ? "0"
+                                     : std::string_view(exponent) == "1" ? "4751297606871678976"
+                                                                         : "4607182418800017408";
+        run({.what = "canonical String powers retain exact zero and unit identities at bounds",
+             .body = values + "  %base = ctjs.constant #ctjs.string<\"" + base +
+                     "\">\n  %exponent = ctjs.constant #ctjs.string<\"" + exponent +
+                     "\">\n  %expected = ctjs.constant #ctjs.number<" + expected +
+                     ">\n  %power = ctjs.binary pow %base, %exponent\n"
+                     "  %index = ctjs.binary sub %power, %expected\n" +
+                     indexed,
+             .arrays = "a:[zero]",
+             .exit = "a -> {a}"});
+    }
+    run({.what = "String power preserves the saved exponent's bytes after array replacement",
+         .body = values +
+                 "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n"
+                 "  %inputs = ctjs.create_array [%text] {storage_test_id = \"inputs\"}\n"
+                 "  %saved = ctjs.get_property %inputs[%zero]\n"
+                 "  ctjs.set_property %inputs[%zero], %x\n"
+                 "  cf.br ^next(%saved : !ctjs.value)\n"
+                 "^next(%exponent: !ctjs.value):\n"
+                 "  %index = ctjs.binary pow %zero, %exponent\n"
+                 "  ctjs.set_property %a[%index], %zero\n"
+                 "  ctjs.return %exponent\n",
+         .arrays = "a:[zero]; inputs:[x]",
+         .reads = "inputs[0]=text",
+         .exit = "text -> {}"});
 
     const contents_row remainderShrink{
         .what = "a signed zero remainder supplies a non-growing length and keeps its origin",
