@@ -1056,3 +1056,61 @@ function method_dispatch_throw() {
     return new Shape().read(0);
 }
 var a = method_dispatch_throw();
+//--- method-increment-dispatch.js
+// Increment and decrement retain the importer's non-reentering static Add.
+function method_increment_dispatch() {
+    class Shape {
+        constructor() { this.n = 1; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return this.n + 20; }
+                this.n = this.n + i;
+            }
+            this.n = this.n + 10;
+            return this.n;
+        }
+    }
+    var zero = new Shape(), continued = new Shape(), broken = new Shape(), early = new Shape();
+    return zero.read(0) * 1000000 + continued.read(3) * 10000 + broken.read(6) * 100 + early.read(5);
+}
+var a = method_increment_dispatch();
+
+//--- method-decrement-dispatch.js
+function method_decrement_dispatch() {
+    class Shape {
+        constructor() { this.n = 1; }
+        read(limit) {
+            for (var i = 0; i > limit; i--) {
+                if (i === -1) { continue; }
+                if (i === -3) { break; }
+                if (limit === -5) { return this.n + 20; }
+                this.n = this.n + i;
+            }
+            this.n = this.n + 10;
+            return this.n;
+        }
+    }
+    var zero = new Shape(), continued = new Shape(), broken = new Shape(), early = new Shape();
+    return zero.read(0) * 1000000 + continued.read(-3) * 10000 + broken.read(-6) * 100 + early.read(-5);
+}
+var a = method_decrement_dispatch();
+
+//--- method-counter-ambient.js
+// Static counter admission cannot hide an ambient call in an uncalled method.
+function method_counter_ambient() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return Math.abs(this.n); }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().n;
+}
+var a = method_counter_ambient();

@@ -478,10 +478,12 @@ struct classInitialization {
             // The lift represents break/continue/return edges with integer
             // flags and switches. These exact transport ops cannot reenter or
             // change the class helper; switch arms still get the full census.
+            // Static ++/-- conversions also cannot reenter; native admission
+            // separately requires numeric operands before emitting arithmetic.
             if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
                           mlir::scf::IndexSwitchOp, mlir::scf::YieldOp, mlir::scf::ConditionOp,
                           mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp,
-                          mlir::arith::TruncIOp, mlir::ub::PoisonOp>(op)) {
+                          mlir::arith::TruncIOp, mlir::ub::PoisonOp, ctjs::BinaryStaticOp>(op)) {
                 accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>());
                 if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
                     dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());

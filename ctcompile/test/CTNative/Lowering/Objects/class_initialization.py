@@ -23,6 +23,9 @@ OBSERVATIONS = {
     "method-branches": (3434, 3434),
     "method-loop": (5555, 5555),
     "method-dispatch": (11131321, 11131321),
+    "method-increment-dispatch": (11131321, 11131321),
+    "method-decrement-dispatch": (11090921, 11090921),
+    "method-counter-ambient": (7, 7),
     "method-dispatch-ambient": (7, 7),
     "method-dispatch-shadow": (7, 7),
     "method-dispatch-throw": (7, 7),
@@ -108,6 +111,8 @@ POSITIVES = {
     "method-branches",
     "method-loop",
     "method-dispatch",
+    "method-increment-dispatch",
+    "method-decrement-dispatch",
     "method-empty",
     "method-chain",
     "method-chain-empty",
@@ -520,7 +525,17 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        if name == "method-dispatch":
+        if name in (
+            "method-increment-dispatch",
+            "method-decrement-dispatch",
+            "method-counter-ambient",
+        ):
+            if (
+                "ctjs.binary_static add" not in text
+                or "ctjs.binary_static add" not in structured.read_text()
+            ):
+                raise RuntimeError(f"{name}: import lost the static counter operation")
+        if name in ("method-dispatch", "method-increment-dispatch", "method-decrement-dispatch"):
             for operation in (
                 "scf.index_switch",
                 "arith.index_castui",
@@ -530,6 +545,7 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
             "method-dispatch-throw": "complete capture-free source functions",
@@ -556,6 +572,7 @@ def main():
             "method-chain-order",
             "method-loop",
             "method-dispatch",
+            "method-increment-dispatch",
             "method-constructor-order",
             "static-chain",
             "static-repeated",
