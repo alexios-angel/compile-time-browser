@@ -1,5 +1,42 @@
 # What native Bootstrap needs next
 
+## Entry-local Bootstrap M and primitive addition, 2026-09-18 UTC
+
+Continued clean **92192514** after the **16:07:54 AGENT-SYNC closure** confirmed
+all interrupted work committed. **5d12efaa** composes exact local helper calls
+with DOM classes, retaining original intrinsic and exception operations for the
+existing typed proof. Ordinary and resolved entry calls work. Every affected
+class method is still probed; global-holder slots, constructors/getters and
+helpers without an entry call stay strict. Lifted callee identities disappear
+only when unobserved, with all premises checked before any closure deletion.
+
+Complete vendor-pinned **M** now executes as `M(shape.read())`, including Number,
+JSON and URI success/failure paths. All **123 prior fixture entries** remain
+unchanged; M tests use an explicit bounded budget, leaving production defaults
+unchanged. **1d13c777** proves Boolean/null addition while excluding String
+concatenation, preserving saved inputs and CFG/SCF provenance. Root completed
+parallel fixture/escape work after agent service limits; the audit identified
+the cleanup-order requirement. No browser or runtime source changed.
+
+Focused passes: class DOM **1/1 (44.52s), 160 source observations / 8 native
+executions / 982 refusals**; transaction **1/1 (3.86s)**; contract **1/1 (0.46s)**;
+public class initialization **1/1 (196.01s)** before final DOM-only corrections;
+arrays **1/1 (1.09s)**; primitive addition **1/1 (0.12s)** and negative-add /
+add-cancellation **2/2 (0.22s)**, all zero violations. All **10 tested hashes**
+match the devbox. Required formatting retains **26 existing diagnostics in nine
+unchanged files**; changed checks pass. HANDOFF records explicit targets,
+initial failures and exact counts; evidence: `/tmp/ctcompile-helper-effects/`.
+Full/broad suites and whole-Bootstrap replay were skipped; no bundle gain or
+full-suite pass is claimed. No push.
+
+**Exact next:** original class-method callable captures, then complete F/H helper
+identity/effect proof. Sibling M captures, nested callee dependencies and unused
+global-holder slots remain unproved. W also needs `Object.entries`, iterator
+destructuring, original `s`, RegExp/TypeError and spread before inheritance.
+Preserve the original W/W+r/W+r+H refusals; the last specimen still omits `s`.
+Full H Unicode, retained callbacks, broader escape conversions and the application
+driver remain open. Native Bootstrap and the overall plan are unfinished.
+
 ## Mixed class/DOM intrinsics and primitive subtraction, 2026-09-18 UTC
 
 Continued clean **051ab3d2** after the **15:45 AGENT-SYNC closure** confirmed

@@ -15,6 +15,92 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Entry-local Bootstrap M and primitive addition, 2026-09-18 UTC
+
+Started clean at **92192514**. The **16:07:54 AGENT-SYNC closure** confirmed
+all interrupted work committed; September 7 WIP is already an ancestor. Both
+agents' logs and historical unmerged branches were reviewed. Continued the
+original W/r/H helper boundary in HANDOFF and master 00/24. Parallel agents
+supplied an escape draft and source audit; root completed the three-file escape
+draft and native fixtures after agent service limits.
+
+**5d12efaa** composes exact entry-local helpers with DOM classes. A helper's
+original entry call may be ordinary or already resolved, but its closure and
+receiver must be proved. Its intrinsic loads, Number `toString` and raw exception
+CFG survive into existing typed DOM and URI/JSON proof. These deferrals also
+force complete class-method probes. Global-holder targets, constructors, getters
+and helpers without that entry call retain the stricter census; unused bodies
+cannot disappear without proof. The public class pass remains closed-source-only.
+
+Ordinary lifted helpers discard a direct-call callee operand only for the exact
+target with an unused callee argument. All such checks precede closure deletion,
+so deleting a child first cannot change acceptance. Nested callee dependencies
+remain refused. The original module and contract survive every preparation
+failure; no browser source, new value representation or VM dependency was added.
+
+The complete vendor-pinned **M** now executes as `M(shape.read())`, covering
+Number/null paths, valid JSON and malformed URI/JSON fallback. All **123 existing
+source/expected fixture entries** remain unchanged. New original-M fixtures use
+an explicit **1,000,000-step** budget because the conservative class-lift size
+bound exceeds the default; the production default remains **100,000**.
+Native output still passes the Script/AOT symbol and class-dispatch exclusions.
+
+**1d13c777** proves bounded Boolean/null addition through the existing primitive
+conversion, explicitly excluding String concatenation first. Saved operands,
+signed cancellation, CFG/SCF transport and zero/unit lengths retain their original
+identities. String, BigInt, undefined, unknown/changing/repeated operands and
+out-of-bound results remain unproved. Existing source bodies were preserved;
+false/null zero-index and zero-length expectations now reflect the proof.
+
+Focused devbox evidence: `/tmp/ctcompile-helper-effects/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`:
+  **8 initial actions, 5 first-retry actions, 6 final actions**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.86s; total 3.87s)**,
+  with twelve added transaction controls per DOM provider.
+- Exact `ctcompile_host_contract`: **1/1 (0.46s; total 0.47s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (44.52s)**,
+  **160 Node/interpreter observations, 8 native executions, 982 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (196.01s)**;
+  **154 observations, 380 native executions, 308 unprepared / 190 preparation
+  refusals**, plus 16 constructed-method executions / 20 refusals, 8 original-r
+  executions / 4 refusals, 4 prototype-key executions / 6 refusals and 11
+  prepared-source refusals. This passed before the final DOM-only ordinary-call
+  and cleanup corrections; its public-pass path was unchanged by those edits.
+- Built `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **3 actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.09s)**.
+- Exact `Analysis/Escape/escape-claims/primitive-addition.test`: **1/1 (0.12s)**,
+  **29 sites / 11 sound / 11 of 17 precision**, zero violations.
+- Exact `Analysis/Escape/escape-claims/{negative-add,add-cancellation}.test`:
+  **2/2 (0.22s)**; each **20 sites / 8 sound / 8 of 12 precision**, zero violations.
+
+The initial transaction run failed **3.77s (total 3.78s)** on retained callee
+bookkeeping and the original-M size budget. After those corrections, transaction
+and contract passed **3.79s / 0.45s**, but class DOM failed **7.44s** because the
+conditional argument left M's call ordinary. Proving that exact local call and
+making cleanup order-independent produced the final passes above. A nested-helper
+refusal pins the latter boundary. Escape checks needed no retry.
+
+All **10 tested source/test hashes** match the devbox. Required
+`tools/format.sh --check` reports **26 pre-existing diagnostics in nine
+HEAD-identical files**; changed C++ formatting, Black, Node syntax and
+`git diff --check` pass. Full CTest, full compiler lit, complete DOM suites,
+broad corpus/native matrices, WPT/test262 and whole-Bootstrap replay were skipped.
+No whole-bundle gain is claimed. No browser edits or push.
+
+**Exact next:** original W/r/H still needs callable captures and complete helper
+identity/effect composition. A class method capturing sibling M is outside the
+constructor-only capture proof; nested callee dependencies and unused global
+holder slots remain strict. Continue that boundary without artificial source
+calls, then F's callback/RegExp and full H. W also requires `Object.entries`,
+destructuring's `__ctbrowser_iter_open`, original `s`, RegExp/TypeError and spread
+proofs before inheritance. Preserve the existing W/W+r/W+r+H refusals; the last
+specimen still omits `s`. Full H Unicode, retained callbacks, broader escape
+conversions and the application driver remain unfinished. Native Bootstrap and
+the overall plan are not complete.
+
 ## Mixed class/DOM intrinsics and primitive subtraction, 2026-09-18 UTC
 
 Started clean at **051ab3d2**. The **15:45 AGENT-SYNC closure** confirmed the

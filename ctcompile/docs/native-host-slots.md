@@ -166,17 +166,30 @@ getters may then disappear; referenced throws still require final typed DOM
 proof and currently refuse.
 
 Declared DOM loads and `toString` reads in entry/method bodies defer to that
-complete typed proof. `toString` requires an actual Number receiver; arbitrary
+complete typed proof. Exact capture-free helpers created and called in the entry
+also defer, whether their original call is ordinary or already resolved. Their
+calls survive class rewriting; all global-holder targets retain the stricter
+census because unused slots can be removed earlier. Original helper exception
+CFGs stay intact for the existing URI/JSON normalization and final typed proof.
+This composes unchanged Bootstrap M with `M(shape.read())` in the entry; a method
+capturing M remains outside the constructor-only capture proof.
+
+`toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
-requires a probe. An ignored pure intrinsic result is inert, while observable
+requires a probe; deferred helper operations also force the complete method
+probes. An ignored pure intrinsic result is inert, while observable
 identity uses, unknown effects and unsupported inputs still refuse. Constructors,
-getters and helpers retain their existing stricter census.
+getters and other helpers retain their existing stricter census. Lifted helpers
+discard their direct-call callee operand only when it names the exact lifted
+target and that target does not observe its callee argument. All premises are
+checked before deleting any closure, so child deletion order cannot authorize a
+parent. Nested callee dependencies remain refused.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent
 private probes at every actual entry-local construction. Every such method is
 probed, including unused and transitive callers that can replace a receiver field. The
-original constructor/getter/helper effect census remains unchanged. Probe
+constructor/getter and other helper effect censuses remain unchanged. Probe
 eligibility is checked before normalization can replace method bodies.
 
 Parameterized methods require reachability from an original direct entry call
