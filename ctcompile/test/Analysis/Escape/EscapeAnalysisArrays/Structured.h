@@ -625,6 +625,45 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(replace(carriedNegative, "ctjs.binary add %one, %one",
                            "ctjs.constant #ctjs.number<4751297606873776128>"),
                    "%index = %zero", "%index = %one"));
+    const auto carriedComplement = replace(carriedNegative, makeNegative,
+                                           "  %magnitude = ctjs.unary plus %one\n"
+                                           "  %unit = ctjs.unary bitnot %magnitude\n");
+    rows.push_back({.what = "BitNot keeps its signed snapshot through reordered structured yields",
+                    .body = carriedComplement,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "structured BitNot snapshots release only unreturned children",
+                    .body = replace(carriedComplement, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "zero -> {}"});
+    const auto savedComplement =
+        replace(savedNegative, "unary neg %magnitude", "unary bitnot %magnitude");
+    rows.push_back({.what = "structured BitNot retains its source length before shrink",
+                    .body = savedComplement,
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "structured BitNot predecessors preserve their own exact magnitude",
+                    .body = replace(carriedComplement, "  %unit = ctjs.unary bitnot %magnitude\n",
+                                    "  %unit = scf.if %flag -> (!ctjs.value) {\n"
+                                    "    %twoStep = ctjs.unary bitnot %magnitude\n"
+                                    "    scf.yield %twoStep : !ctjs.value\n"
+                                    "  } else {\n"
+                                    "    %oneStep = ctjs.unary bitnot %zero\n"
+                                    "    scf.yield %oneStep : !ctjs.value\n  }\n"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x; a[1]=y",
+                    .exit = "x -> {x}; y -> {y}"});
+    reject("a BitNot snapshot cannot change across structured yields",
+           replace(carriedComplement, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("BitNot cannot borrow a Number from the other structured predecessor",
+           replace(carriedComplement, "  %magnitude = ctjs.unary plus %one\n",
+                   "  %text = ctjs.constant #ctjs.string<\"1\">\n"
+                   "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
+                   "    scf.yield %one : !ctjs.value\n"
+                   "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
     const auto subSnapshot =
         replace(savedNegative, "unary neg %magnitude", "binary sub %zero, %magnitude");
     rows.push_back(

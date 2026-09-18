@@ -1,0 +1,122 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-bitnot
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-bitnot.claims
+
+// BitNot preserves signed Number snapshots with ToInt32 wrap, not coercion facts.
+// IMPORT-LABEL: ctjs.func @snapshotReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @snapshotReturned$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @positiveReleased$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @positiveReturned$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @zeroReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @zeroReturned$
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @coercibleInput$
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @unboundedInput$
+// IMPORT: ctjs.unary bitnot
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function snapshotReleased() {
+    var child = {}, array = [child, child, child], seed = [1, 1], saved = 0;
+    var step = ~seed.length;
+    seed.length = 0;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function snapshotReturned() {
+    var child = {}, array = [child, child, child], seed = [1, 1], saved = 0;
+    var step = ~seed.length;
+    seed.length = 0;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function positiveReleased() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 0 - 3, step = ~negative;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function positiveReturned() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 0 - 3, step = ~negative;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function zeroReleased() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var start = ~4294967295;
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+function zeroReturned() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var start = ~4294967295;
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return saved;
+}
+function coercibleInput() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var step = ~"2";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function unboundedInput() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var step = ~4294967296;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+snapshotReleased();
+var snapshotRetained = snapshotReturned();
+positiveReleased();
+var positiveRetained = positiveReturned();
+zeroReleased();
+var zeroRetained = zeroReturned();
+coercibleInput();
+unboundedInput();

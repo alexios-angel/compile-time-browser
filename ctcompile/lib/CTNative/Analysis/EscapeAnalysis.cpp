@@ -1557,6 +1557,26 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         if ((integerNumber || negativeIntegerNumber) && !spend()) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
+                    } else {
+                        const auto positive = input.integerNumber ? input.integerNumber
+                                                                  : boundedNumber(input.origin());
+                        const auto negative = input.negativeIntegerNumber
+                                                  ? input.negativeIntegerNumber
+                                                  : boundedNumber(input.origin(), true);
+                        // Complement the exact ToUint32 bits, then recover the
+                        // signed Number magnitude without a signed overflow.
+                        // Coercible primitives supply no bounded Number fact.
+                        if (positive || negative) {
+                            const std::uint32_t bits =
+                                ~(positive ? static_cast<std::uint32_t>(*positive)
+                                           : 0U - static_cast<std::uint32_t>(*negative));
+                            if (bits < 2147483648ULL) {
+                                integerNumber = bits;
+                            } else {
+                                negativeIntegerNumber = 4294967296ULL - bits;
+                            }
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        }
                     }
                     break;
                 }

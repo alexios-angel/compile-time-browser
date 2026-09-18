@@ -2,6 +2,8 @@
 
 #include "Harness.h"
 
+#include <utility>
+
 namespace ctcompile::test::escape::arrays {
 
 inline void checkArrayInduction(mlir::MLIRContext & context) {
@@ -744,6 +746,82 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                            "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
                            "  %magnitude = ctjs.unary plus %maximum"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    const std::string makeComplement = "  %operand = ctjs.unary plus %zero\n"
+                                       "  %minus = ctjs.unary bitnot %operand\n";
+    const auto complementChild = replace(negativeChild, makeNegativeUnit, makeComplement);
+    const auto savedComplement =
+        replace(complementChild, makeComplement,
+                "  %seed = ctjs.create_array [] {storage_test_id = \"seed\"}\n"
+                "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                "  %operand = ctjs.get_property %seed[%name]\n"
+                "  %minus = ctjs.unary bitnot %operand\n"
+                "  ctjs.append %one to %seed\n");
+    for (const auto & source : {complementChild, savedComplement}) {
+        const char * arrays = source == complementChild ? "a:[one,x]" : "a:[one,x]; seed:[one]";
+        run({.what = "BitNot keeps its exact signed Number snapshot after source growth",
+             .body = source,
+             .arrays = arrays,
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "BitNot snapshots discharge only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = arrays,
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    const auto carriedComplement = replace(carriedNegative, makeNegative,
+                                           "  %magnitude = ctjs.unary plus %one\n"
+                                           "  %unit = ctjs.unary bitnot %magnitude\n");
+    run({.what = "BitNot preserves its exact negative magnitude through CFG transport",
+         .body = carriedComplement,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    reject("a BitNot snapshot cannot change across the backedge",
+           replace(carriedComplement, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("a repeated BitNot still needs independent invariance",
+           replace(replace(complementChild, "  %minus = ctjs.unary bitnot %operand\n", ""),
+                   "  %step =", "  %minus = ctjs.unary bitnot %operand\n  %step ="));
+    reject("negative BitNot facts are never own indices",
+           replace(complementChild, "%base[%i]", "%base[%minus]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("BitNot cannot supply a bounded Number from an unknown input",
+           replace(complementChild, "bitnot %operand", "bitnot %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    for (const std::string constant :
+         {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>"}) {
+        reject("BitNot bounds its original Number rather than relying on conversion",
+               replace(complementChild, "ctjs.unary plus %zero", "ctjs.constant " + constant));
+    }
+    // Subtracting the expected signed result must produce index zero. This
+    // checks the full magnitude at both ToInt32 boundaries, not just its sign.
+    for (const auto & [input, output] :
+         {std::pair{"0", "13830554455654793216"},
+          std::pair{"9223372036854775808", "13830554455654793216"},
+          std::pair{"13830554455654793216", "0"},
+          std::pair{"13835058055282163712", "4607182418800017408"},
+          std::pair{"4746794007244308480", "13970166044103278592"},
+          std::pair{"4746794007248502784", "4746794007244308480"},
+          std::pair{"4751297606873776128", "0"},
+          std::pair{"13970166044103278592", "4746794007244308480"},
+          std::pair{"13974669643728551936", "13835058055282163712"}}) {
+        run({.what = "BitNot preserves exact ToInt32 boundary values and its result identity",
+             .body = prefix + "  %operand = ctjs.constant #ctjs.number<" + input +
+                     ">\n"
+                     "  %expected = ctjs.constant #ctjs.number<" +
+                     output +
+                     ">\n"
+                     "  %actual = ctjs.unary bitnot %operand {storage_test_id = \"actual\"}\n"
+                     "  %index = ctjs.binary sub %actual, %expected\n"
+                     "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one",
+             .exit = "actual -> {}"});
+    }
     const std::string makeSubUnit = "  %left = ctjs.unary plus %one\n"
                                     "  %magnitude = ctjs.unary plus %two\n"
                                     "  %minus = ctjs.binary sub %left, %magnitude\n";
