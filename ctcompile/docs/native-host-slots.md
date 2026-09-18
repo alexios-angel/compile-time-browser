@@ -62,9 +62,12 @@ passing or returning the receiver and observing a method identity still refuse.
 Every instance method read must feed its own receiver call. Constructors may call
 those immutable methods on the same receiver and must return a primitive constant
 when methods exist. Method writes and replacement return objects remain excluded.
-Methods may contain structured `if`, `for` and `while` regions; every arm and
-body retains the complete effect and receiver-use census. Mutual method calls
-use the same proof. Every function still requires one outer block. Constructors,
+Methods may contain structured `if`, `for` and `while` regions, including lifted
+break/continue/return dispatch. Every arm and body retains the complete effect
+and receiver-use census. After those checks, a budgeted private method clone
+normalizes switches and unused/all-poison results using the existing exception
+recovery machinery. Failure leaves the source untouched; this grants no throwing
+call or iterator authority. Mutual method calls use the same proof. Every function still requires one outer block. Constructors,
 class setup and static getter expansion remain linear. Every call stays within
 the supplied source; unresolved bindings, dynamic keys, reflection, captured
 functions and other nested regions fail closed.

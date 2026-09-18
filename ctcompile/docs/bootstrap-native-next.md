@@ -1,5 +1,28 @@
 # What native Bootstrap needs next
 
+## Current boundary: method exit dispatch recovery, 2026-09-18
+
+Recovered **`ab646056` / `63a021c1` / `2167f4d2`**: exact negative Number sums,
+integer/index poison and while backedges, and budgeted normalization of proved
+method exit dispatch. Complete effect/receiver checks remain; iterator/throwing
+call authority is unchanged. The interrupted full original Config source is now
+an executable refusal regression: Node/interpreter return **a=7**, every function
+imports, and `_typeCheckConfig` still has three outer blocks.
+
+Fresh exact class lit passes **1/1 (108.52s): 83 source observations / 200 native
+executions / 166 unprepared / 108 preparation refusals**, plus **16 ordinary
+executions / 20 refusals**. The explicit three-target build had no work. Recovered
+escape CTest/lit and scalar results, initial failures and formatter baseline are
+recorded in HANDOFF. No broad compiler/browser suites were run by this task.
+Bootstrap **19/574 / 0 of 47 globals**, Button **4/86 / 22 observations** and Data
+**7/7** remain historical.
+
+**Next:** the original iterator counter uses `ctjs.binary_static add`, currently
+missing from the ordinary-method effect census. Numeric increment/decrement is a
+small prerequisite; exception/iterator proof, throwing `NAME`, exact constructor
+provenance, inheritance and DOM/default composition still follow. Full H Unicode
+keys, retained callbacks and the application driver remain open.
+
 ## Current boundary: structured class methods, 2026-09-18
 
 **`9105a656`** admits structured branches and loops in proved ordinary local class

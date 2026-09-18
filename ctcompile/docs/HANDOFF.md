@@ -15,6 +15,53 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Recovered method dispatch continuation, 2026-09-18 UTC
+
+Resumed `2167f4d2`, the sole dirty `class_initialization.py`, and the
+**01:19:28 / 01:22:57 AGENT-SYNC checkpoint and interruption**. September 7 WIP
+is already an ancestor. The interrupted thread had landed **`ab646056`** (exact
+negative Number sums), **`63a021c1`** (integer/index poison and carried while
+backedges), and **`2167f4d2`** (proved local method exit dispatch).
+
+Method break/continue/return dispatch is normalized on budgeted private clones
+only after complete source effects and receiver uses pass. Existing exception
+normalizers handle switches and unused/all-poison results. Throwing calls and
+iterators gain no authority. Integer poison retains its control type; an inert
+empty EmitC marker keeps upstream SCF conversion from losing an empty-after
+while backedge. Neither change adds a native runtime dependency.
+
+Recovered focused evidence in `/tmp/ctcompile-dispatch-focused/`: array CTest
+**1/1 (0.86s)**; escape lit `negative-add`, `add-cancellation`, `signed-division`
+**3/3 (0.34s)**; negative-Add oracle **20 sites / eight sound / zero violations /
+eight of 12 precision**. Class lit passed with **82 source observations / 200
+native executions / 164 unprepared / 107 preparation refusals**, plus **16 ordinary
+constructor executions / 20 refusals**, and dispatch's first complete budget
+**1,196**. The combined class/scalar run had one scalar pipeline failure; after
+adding the missing index conversion pass, the exact scalar replay passed **1/1
+(0.51s)**. The minimized empty-after loop also passed; its pre-fix run timed out.
+These are recovered measurements, not suites rerun by this continuation.
+
+Fresh recovery gate: explicit `ctjs-opt`, `ctjs-translate` and
+`ctcompile-test-native-reference` build had no work; exact class lit passes
+**1/1 (108.52s): 83 source observations / 200 native executions / 166 unprepared /
+108 preparation refusals**, plus **16 ordinary executions / 20 refusals**.
+Required pinned formatting retains **26 diagnostics in nine HEAD-identical files**;
+stable formatting passes **912 C++ / 108 Python / 105 web files**, and changed-file
+Black plus `git diff --check` pass. Full CTest/lit, broad corpus/native matrices,
+WPT and test262 were skipped. No browser source or runtime semantics changed.
+Fresh evidence: `/tmp/ctcompile-config-recovery/class-gate.log` (exit 0).
+
+The full original Bootstrap Config (`W`) source is now a permanent refusal
+regression. It retains all getters and methods, imports every function, and
+returns **a=7** in Node/interpreter; preparation still requires complete
+capture-free source functions because `_typeCheckConfig` has three outer blocks.
+The next native prerequisite is the static numeric increment used by its
+iterator counter, then exact local `this.constructor.Default` / `DefaultType` reads; the full class additionally needs iterator/exception proof,
+throwing `NAME`, inheritance and DOM/default composition. Full H's Unicode key
+seam, retained callbacks and the application driver remain open. Bootstrap
+**19/574 / 0 of 47 globals**, Button **4/86 / 22 observations** and Data **7/7**
+remain historical measurements.
+
 ## Structured class methods and signed division, 2026-09-18 UTC
 
 Continued clean `b965aa43` and the **23:35:19 AGENT-SYNC completion handoff**.
