@@ -98,6 +98,7 @@ OBSERVATIONS = {
     "static-home": (1, 0),
     "static-caller": (1, 1),
     "static-arguments": (1, 1),
+    "bootstrap-config-defaults": (7, 7),
 }
 POSITIVES = {
     "empty",
@@ -470,6 +471,16 @@ def main():
         body = f"        static get {name}() {{\n            return {{}}\n        }}"
         if body not in bootstrap or body not in defaults:
             raise RuntimeError(f"Bootstrap Config {name} getter source pin changed")
+    # Keep every original Config method, even though this entry only reads Default.
+    # Its iterator/throw exits remain a separate proof boundary from local dispatch.
+    start = bootstrap.index("    class W {")
+    end = bootstrap.index("    class B extends W {", start)
+    (args.fixtures / "bootstrap-config-defaults.js").write_text(
+        "function configDefaults() {\n"
+        + bootstrap[start:end]
+        + "\n    var instance = new W();\n    var result = W.Default;\n"
+        "    result.n = 7;\n    return result.n;\n}\nvar a = configDefaults();\n"
+    )
     refusals = 0
     preparation_refusals = 0
     checked = 0
@@ -522,6 +533,7 @@ def main():
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
             "method-dispatch-throw": "complete capture-free source functions",
+            "bootstrap-config-defaults": "complete capture-free source functions",
         }.get(name, "")
         prepared = prepare(
             args, name, structured, manifest, success=name in POSITIVES, diagnostic=diagnostic
