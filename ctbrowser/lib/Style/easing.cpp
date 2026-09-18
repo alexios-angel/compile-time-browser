@@ -415,9 +415,10 @@ struct oklab {
 
 template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & b) {
     if (a.empty() || b.empty() || a.size() == b.size()) { return; }
-    const std::size_t n = std::lcm(a.size(), b.size());
-    for (std::size_t i = a.size(); i < n; ++i) { a.push_back(a[i % a.size()]); }
-    for (std::size_t i = b.size(); i < n; ++i) { b.push_back(b[i % b.size()]); }
+    const std::size_t a_size = a.size(), b_size = b.size();
+    const std::size_t n = std::lcm(a_size, b_size);
+    for (std::size_t i = a_size; i < n; ++i) { a.push_back(a[i % a_size]); }
+    for (std::size_t i = b_size; i < n; ++i) { b.push_back(b[i % b_size]); }
 }
 
 [[nodiscard]] bool image_sides(std::string_view property) {

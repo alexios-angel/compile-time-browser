@@ -176,6 +176,12 @@ void test_interpolation() {
     // A background layer list repeats to match the longer one.
     CHECK(interpolate_text("background-position", "10px 10px", "30px 30px, 50px 50px", 0.5,
                            context) == "20px 20px, 30px 30px");
+    CHECK(interpolate_text("background-position-x", "10px, 20px", "100px, 200px, 300px", 0.5,
+                           context) == "55px, 110px, 155px, 60px, 105px, 160px");
+    CHECK(interpolate_text("background-position-x", "100px, 200px, 300px", "10px, 20px", 0.5,
+                           context) == "55px, 110px, 155px, 60px, 105px, 160px");
+    CHECK(composite_text("background-position-x", "10px, 20px", "100px, 200px, 300px",
+                         composite_op::add, context) == "110px, 220px, 310px, 120px, 210px, 320px");
     CHECK(with_currentcolor("currentcolor 1px 1px, red 2px 2px", "rgb(1, 2, 3)") ==
           "rgb(1, 2, 3) 1px 1px, red 2px 2px");
     CHECK(with_currentcolor("CurrentColor", "blue") == "blue");
