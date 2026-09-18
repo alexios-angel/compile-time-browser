@@ -1,48 +1,45 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: session 21 recovery complete.** Resumed the interrupted
-rectangle regression and column-wrap child draft, then committed both.
-Latest browser source is `7cfe95b5`; compiler history through `a0f1b0f7`
-is merged as `7f8531e8`. The final browser gate passed **216/216**
-(70.52 seconds), excluding compiler tests with `CTCOMPILE_MLIR=OFF`;
-formatting passed. Full CSS: **1,596 -> 1,599 files PASS** and
-**70,328 -> 70,375 subtests PASS**, zero passing file or subtest losses.
+**Updated 2026-09-18: session 23 complete.** Previous session 22 was clean
+at `c9495148`; no interrupted browser drafts remained. Latest browser source
+is `47d281a0`, with compiler history through `c675f002`. The browser gate
+passed **216/216** (68.82 seconds), excluding compiler tests with
+`CTCOMPILE_MLIR=OFF`; formatting passed. Full CSS: **1,602 -> 1,607 files
+PASS** and **70,381 -> 70,418 subtests PASS**, zero passing file or subtest
+losses.
 
 Landed source commits:
 
-- `7cbc05fa` (merged as `6830e96c`): `column-wrap` support and reset through
-  `columns`; multicol **32 -> 34 PASS/39**, **1,413 -> 1,456 subtests PASS**.
-- `4d93744f`: composed 2D transforms and origins for client rectangles;
-  the scaled-viewport WPT now passes.
-- `7cfe95b5`: shared fragment geometry for rectangles, quads and coordinate
-  conversions. Restores seven GeometryUtils subtests lost in the first replay
-  and gains two more; preserves the untransformed DOMQuad constructor's
-  infinite-coordinate behavior with a regression test.
+- `7de3cd0c` (merged as `7cb3bcbd`): radius grammar, corner expansion,
+  canonical serialization, WebKit aliases and nonnegative range metadata.
+- `47d281a0`: preserve both radius axes in the cascade and compute each
+  component before inheritance. CSS backgrounds **61 -> 66 PASS/107**,
+  **5,282 -> 5,319 subtests PASS**; all other CSS modules are unchanged.
 
+Session 22's column-rule widths and image coordinates remain landed.
 Session 20's BigInt string grammar and loose-equality fixes remain landed;
-`test262.md` holds their measurements. No new JS/VM semantics change or
-whole-test262 measurement this session. Other wide WPT directories were not
-replayed. Binding geometry changes are journaled as SHARED; public interfaces
-and bytecode are unchanged.
+`test262.md` holds their measurements. This session changed no JS/VM
+semantics and did not replay test262 or non-CSS WPT directories. The shared
+borrowed shorthand helper now leaves radius expansion to the existing owned
+CSSOM path; public signatures and bytecode are unchanged.
 
 **Next clear failures:**
 
-- Column-rule computed/default values: four multicol subtests. Initial
-  `column-rule-width` reports `medium` instead of `3px`; the shorthand drops
-  `medium`. Ten further multicol failures concern pseudo selectors.
-- `HTMLImageElement-x-and-y-ignore-transforms`: translation bookkeeping in
-  `Shell/bindings/element/views.cpp::locate` remains absent.
-- Elliptical border-radius expansion drops the vertical axis.
-- Transform geometry retains the existing 2D/px parser limit. Broader runtime
-  gaps include separate realms and UTF-16 strings.
+- Border-image grammar and shorthand expansion: eleven failing subtests in
+  `border-image-invalid`, twenty-one in `border-image-shorthand.sub`.
+- Negative computed widths: `border-width-computed` expects `0px` for
+  `border-bottom-width: calc(-0.5em + 10px)` but receives `-10px`.
+  Border-image width and outset have further clamping failures.
+- Multicol pseudo selectors, image zoom/inline placement and the existing
+  2D/px transform geometry limit remain. Broader runtime gaps include
+  separate realms and UTF-16 strings.
 
-Evidence: `/tmp/ctbrowser21/` holds final `browser21-corrected-css.json`,
-`corrected-css-comparison.json`, gate logs and `corrected-source.sha256`.
-The first replay's seven losses remain in `browser21-final-css.json` and
-`css-comparison.json`; do not use that intermediate result as the baseline.
-The columns child worktree, branch and devbox copy were removed. Integration
-status is recorded in the latest AGENT-SYNC journal. The `d2664e9` ctjs
-commit remains local; do not assume its object is published.
+Evidence: `/tmp/ctbrowser23/` holds `browser23-css.json`,
+`css-comparison.json`, focused before/after results, gate/format logs and
+`source.sha256`; all ten source/test hashes match the devbox and commit.
+The grammar child worktree and branch were removed; no child devbox copy
+was created. Integration status is in the latest AGENT-SYNC journal.
+The `d2664e9` ctjs commit remains local; do not assume its object is published.
 
 Session 19's eight-directory wide baseline is in `/tmp/w-b722aa41/` against
 `/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result and is

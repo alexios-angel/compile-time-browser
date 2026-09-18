@@ -14,6 +14,45 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Border-radius grammar and computed values — 2026-09-18
+
+Full `css/` replay at `47d281a0`: **1,607/2,926 runnable files PASS,
+70,418 subtests PASS**. Against `92fda299`: **+5 files and +37 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `47d281a0` | 1,607 | 1,103 | 25 | 0 | 191 | 1,488 | 70,418 / 32,672 |
+
+`7de3cd0c` validates radius components, expands both axes into corner
+longhands, compresses repeated values and shares storage with the WebKit
+aliases. Radius range metadata also clamps negative animation results.
+`47d281a0` removes the cascade's lossy horizontal-only expansion and computes
+each corner component before inheritance, including relative lengths and
+negative calculations. The borrowed expansion helper now leaves radius to
+the existing owned CSSOM path; its signature is unchanged.
+
+Only `css/css-backgrounds` moved: **61 -> 66 files PASS**, **5,282 -> 5,319
+subtests PASS**. The gained files are `border-radius-interpolation`,
+`border-radius-computed`, `border-radius-invalid`, `border-radius-valid`
+and `webkit-border-radius-valid`. A fresh focused before/after run matched
+the full replay. The added cascade regression failed before the fix;
+the three focused CTests passed afterward. The browser gate passed
+**216/216** (68.82 seconds), excluding compiler tests with
+`CTCOMPILE_MLIR=OFF`; formatting passed. All ten source/test hashes matched
+the devbox and committed tree.
+
+Evidence: `/tmp/ctbrowser23/` contains `browser23-css.json`,
+`css-comparison.json`, `measure-css.log`, `browser23-backgrounds-{before,after}.json`,
+`backgrounds-comparison.json`, `red-retry.log`, `green.log`, `gate.log`,
+`format-combined.log` and `source.sha256`. No expectations changed.
+Other WPT directories and test262 were not replayed; JS/VM behavior is unchanged.
+
+Next: border-image accepts invalid values and lacks shorthand expansion;
+negative computed widths also remain. `border-width-computed` still reports
+`-10px` for `border-bottom-width: calc(-0.5em + 10px)` where it expects `0px`.
+
 ## Column-rule widths and layout coordinates — 2026-09-18
 
 Full `css/` replay at `92fda299`: **1,602/2,926 runnable files PASS,

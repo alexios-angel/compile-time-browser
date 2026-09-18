@@ -11,6 +11,31 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Border-radius grammar and computed values — 2026-09-18
+
+Full CSS at `47d281a0`: **1,607/2,926 files PASS, 70,418 subtests PASS**;
+**+5 files and +37 subtests** since `92fda299`, with zero passing file or
+subtest losses. The browser gate passed **216/216** (68.82 seconds), excluding
+compiler tests; formatting passed.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-backgrounds` | 61 / 66 | 5,282 / 5,319 |
+
+Radius shorthand parsing now validates both axes, expands four corner pairs
+and compresses repeated values. WebKit aliases share the same declarations.
+The cascade retains vertical radii and computes each component before
+inheritance; radius animation results respect the nonnegative range.
+The computed, invalid, valid, WebKit-valid and interpolation files all pass.
+All other CSS modules match the preceding measurement.
+
+Next: border-image grammar and shorthand expansion. Its invalid-value file
+has eleven failing subtests; the shorthand file has twenty-one. Negative
+computed widths remain too: `border-width-computed` has one failing subtest,
+`border-image-width-computed` one and `border-image-outset-computed` three.
+Full status and evidence: `wpt.md` and `/tmp/ctbrowser23/`.
+No expectations changed; test262 was not replayed.
+
 ## Column-rule widths and layout coordinates — 2026-09-18
 
 Full CSS at `92fda299`: **1,602/2,926 files PASS, 70,381 subtests PASS**;
