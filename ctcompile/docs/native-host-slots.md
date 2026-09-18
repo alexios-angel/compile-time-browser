@@ -105,7 +105,8 @@ A linear static getter may throw a literal primitive or a declared `Error`
 constructed from one literal string, used only by its throw and inert roots.
 Reads of a throwing getter and its dependent getters become direct calls to
 capture-free source functions, preserving abrupt completion and closure scope.
-Unused getter definitions can be removed after the same complete census.
+Unused getter chains are removed in reverse dependency order; direct symbol
+uses keep live callees after the complete closure census.
 Ambient calls, escaping Error payloads, coercible messages and Error replacement
 still refuse. Native completion and Error representation remain separate proofs;
 preparation does not make these throwing calls executable natively.

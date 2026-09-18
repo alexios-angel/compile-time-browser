@@ -15,6 +15,66 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Getter cleanup and signed right shifts, 2026-09-18 UTC
+
+The interrupted Error/getter thread is complete in **`5927fdb6`**, with its
+recovered measurements below. Two subsequent concerns landed separately:
+
+- **`a427abbe`** removes unused throwing-getter chains in reverse dependency order.
+  Every remaining numeric getter closure has a direct symbol call, so MLIR's
+  symbol-use check preserves live callees and removes dead dependencies. A source
+  probe first reproduced the native refusal from retained, unreachable Error
+  getters. The new regression now compiles; Error construction in an uncalled
+  ordinary method still refuses. Proof cutoffs are unchanged.
+- **`bf363c05`** preserves bounded signed Number `Shr`/`UShr` snapshots using the
+  existing bitwise transfer. Counts wrap and mask to five bits; signed right shift
+  keeps its sign, while unsigned shift retains the unsigned result. Original
+  identity, saved lengths and CFG/SCF transport survive. Negative magnitudes never
+  become own-index facts; coercible, unknown, out-of-domain and unstable inputs
+  remain unproved. This deletes the duplicate right-shift transfer.
+
+Final focused devbox checks: exact class lit **1/1 (137.06s)** with **109 source
+observations / 256 native executions / 218 unprepared / 139 preparation refusals**,
+plus **16 ordinary executions / 20 refusals** and **ten preserved native throw
+refusals**. Both optimization policies, explicit/deduced C++ and GCC/Clang run;
+source/native observations agree, and output contains no ctbrowser or prototype
+metadata. The throwing-chain proof still first completes at budget **293**.
+Explicit `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference` build:
+**five Ninja actions**, including the frozen escape core.
+
+Exact `ctcompile_escape_analysis_arrays` CTest passes **1/1 (0.89s)**;
+`signed-right-shifts`, `signed-bitwise`, `signed-bitnot` lit passes **3/3 (0.33s)**.
+The new oracle reports **26 sites / 11 sound / zero violations / 11 of 15
+precision**. Arrays measure **581 dense / 482 induction / 252 structured rows**,
+with **22,609 / 32,619 / 17,251** budget cutoffs. The explicit array/claims/type-oracle/
+translate build performed **three actions**; the array-only retry performed **two**.
+
+The first array run failed **1/1 (0.92s)** on four assertions for one old control:
+`-1 >>> -1` now proves length one. Its original body and retained-child check
+remain; only its expected admission changed. Compiler code was unchanged for the
+retry. The class and final escape workflows exit **0** and verify **1,287 / 1,291
+input hashes** locally/remotely. The class manifest excluded the three escape
+headers the child was still editing; its compiler core was frozen. Evidence:
+`/tmp/ctcompile-error-closeout/{chain-gate,shifts-gate,shifts-final-gate}.log`.
+
+Required final pinned formatting retains **26 diagnostics in nine unchanged
+files**. Stable full formatting passes **916 C++ / 109 Python / 105 web files**;
+the later Length expectation edit also passes both formatters. Changed-file checks,
+Black and `git diff --check` pass. Full CTest/compiler lit, broad corpus/native
+matrices, WPT and test262 were skipped. No browser source or runtime semantics
+changed. Review and the independent escape implementation ran in parallel;
+root serialized builds, reconciled results and committed each concern.
+
+**Exact next:** complete original Config still returns **a=7** in Node/interpreter
+and refuses **`r` in `_mergeConfigObj`**, after passing throwing-NAME preparation.
+Prove the local helper's identity/arguments and compose H's existing host boundary;
+do not waive the whole-source effect census. Object.entries/destructuring,
+RegExp/type checking and TypeError exits, then inheritance and DOM/default
+composition remain. Native throw completion, full H Unicode keys, retained
+callbacks and the application driver are unfinished. Whole-Bootstrap/Button/Data
+counts remain historical; separately owned browser/Unicode work is tracked in
+AGENT-SYNC. No source draft from this session remains uncommitted.
+
 ## Recovered Error getters and signed bitwise snapshots, 2026-09-18 UTC
 
 **`5927fdb6`** finishes the four dirty Error/getter paths found at `2904c366`:

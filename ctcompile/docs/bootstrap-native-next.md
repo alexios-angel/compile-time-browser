@@ -1,5 +1,27 @@
 # What native Bootstrap needs next
 
+## Unused getter chains closed, 2026-09-18 UTC
+
+After **`5927fdb6`** recovered declared-Error getter preparation, **`a427abbe`**
+removes unused throwing-getter chains in reverse dependency order while preserving
+live direct calls. The source regression first reproduced retained dead Error
+bodies; it now compiles with both policies/layouts and GCC/Clang. Ordinary-method
+Error construction remains outside this getter proof.
+
+Exact class lit passes **1/1 (137.06s): 109 source observations / 256 native
+executions**, plus ten native throw refusals; proof budgets are unchanged.
+Independent **`bf363c05`** adds signed Shr/UShr escape snapshots: exact array CTest
+**1/1 (0.89s)**, three selected escape lit cases **3/3 (0.33s)**, new oracle
+**26 sites / zero violations / 11 of 15 precision**. HANDOFF and Current native
+work record exact builds, corrected historical expectation, hashes and formatting.
+Full suites and broad matrices were skipped; no browser source changed.
+
+Complete original Config still returns **a=7** and refuses **`r` in
+`_mergeConfigObj`**. Local helper identity/arguments and H composition are next;
+Object.entries/destructuring, RegExp/TypeError exits, inheritance/DOM defaults,
+full H Unicode keys, retained callbacks and the application driver remain open.
+Evidence: `/tmp/ctcompile-error-closeout/`.
+
 ## Recovered Error getter boundary, 2026-09-18 UTC
 
 **`5927fdb6`** preserves literal or declared-Error static getter exits through
