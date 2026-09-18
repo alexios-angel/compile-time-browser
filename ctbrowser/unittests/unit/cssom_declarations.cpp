@@ -357,6 +357,41 @@ void test_border_image() {
     }
 }
 
+void test_repeating_gradients() {
+    using ctbrowser::style::css::computed_image;
+    using ctbrowser::style::css::supports_declaration;
+    for (const auto & [value, computed] :
+         {std::pair{"repeating-linear-gradient(-45deg, red, 30%, currentcolor 70%, lime)",
+                    "repeating-linear-gradient(-45deg, rgb(255, 0, 0), 30%, rgb(0, 0, 255) 70%, "
+                    "rgb(0, 255, 0))"},
+          {"repeating-radial-gradient(red, 30%, currentcolor 70%, lime)",
+           "repeating-radial-gradient(rgb(255, 0, 0), 30%, rgb(0, 0, 255) 70%, rgb(0, 255, 0))"},
+          {"repeating-conic-gradient(red, 30deg, currentcolor 70deg, lime)",
+           "repeating-conic-gradient(rgb(255, 0, 0), 30deg, rgb(0, 0, 255) 70deg, rgb(0, 255, "
+           "0))"}}) {
+        for (const std::string_view property :
+             {"border-image-source", "background-image", "mask-image", "list-style-image"}) {
+            declaration_block block;
+            CHECK(supports_declaration(property, value));
+            CHECK(set_declaration(block, property, value, false));
+            CHECK_EQ(declaration_value(block, property), std::string{value});
+        }
+        CHECK_EQ(computed_image(value, {"rgb(0, 0, 255)"}), std::string{computed});
+    }
+    for (const std::string_view function :
+         {"repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient"}) {
+        for (const std::string_view stops :
+             {"30%, red, blue", "red, 30%, 40%, blue", "red, blue, 30%"}) {
+            const std::string value = std::string{function} + "(" + std::string{stops} + ")";
+            CHECK(!supports_declaration("border-image-source", value));
+        }
+    }
+    CHECK(
+        !supports_declaration("background-image", "unknown(repeating-linear-gradient(red, blue))"));
+    CHECK(
+        !supports_declaration("background-image", "repeating-linear-gradient(red, unknown(blue))"));
+}
+
 // css/css-multicol/parsing/columns-*: width/count in either order and optional height.
 void test_columns() {
     using ctbrowser::style::css::supports_declaration;
@@ -433,6 +468,7 @@ int main() {
     test_reads_and_all();
     test_border_radius();
     test_border_image();
+    test_repeating_gradients();
     test_columns();
     REPORT("cssom_declarations");
 }
