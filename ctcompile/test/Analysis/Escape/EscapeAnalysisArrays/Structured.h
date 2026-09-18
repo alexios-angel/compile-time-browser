@@ -1120,6 +1120,53 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
              .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
              .exit = "y -> {y}; y -> {y}"});
     }
+    for (const bool primitiveBase : {false, true}) {
+        const std::string primitivePower =
+            "  %unit = ctjs.binary pow " +
+            std::string(primitiveBase ? "%operand, %negative" : "%negative, %operand") + "\n";
+        auto source = replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                              "  %negative = ctjs.unary neg %one\n"
+                              "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                              "    %truth = ctjs.constant #ctjs.boolean<true>\n"
+                              "    scf.yield %truth : !ctjs.value\n"
+                              "  } else {\n    scf.yield %one : !ctjs.value\n  }\n" +
+                                  primitivePower);
+        if (primitiveBase) { source = replace(source, "binary sub %i, %d", "binary add %i, %d"); }
+        rows.push_back({.what = "primitive powers prove each structured predecessor snapshot",
+                        .body = source,
+                        .arrays = "a:[x,y] | a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                        .exit = "y -> {y}; y -> {y}"});
+        rows.push_back({.what = "primitive powers release only unreturned structured children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y] | a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                        .exit = "zero -> {}; zero -> {}"});
+        reject("primitive power snapshots cannot change across structured backedges",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+        reject("primitive powers cannot borrow another predecessor's exact operand",
+               replace(source, "scf.yield %one :", "scf.yield %p :"),
+               ArrayContentsFailure::UnsupportedOperation);
+        reject("repeated structured primitive powers need independent invariance",
+               replace(replace(source, "    %step =",
+                               replace(primitivePower, "%unit =", "%repeated =") + "    %step ="),
+                       primitiveBase ? "binary add %i, %d" : "binary sub %i, %d",
+                       primitiveBase ? "binary add %i, %repeated" : "binary sub %i, %repeated"));
+        auto zero =
+            replace(replace(source, "#ctjs.boolean<true>", "#ctjs.boolean<false>"),
+                    "scf.yield %one :", "%nil = ctjs.constant #ctjs.null\n    scf.yield %nil :");
+        if (primitiveBase) {
+            zero = replace(replace(zero, "pow %operand, %negative", "pow %operand, %magnitude"),
+                           "%index = %zero", "%index = %unit");
+        }
+        rows.push_back(
+            {.what = "false/null powers retain exact starts and strides across joins",
+             .body = replace(zero, primitiveBase ? "binary add %i, %d" : "binary sub %i, %d",
+                             primitiveBase ? "binary add %i, %one" : "binary add %i, %d"),
+             .arrays = "a:[x,y] | a:[x,y]",
+             .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+             .exit = "y -> {y}; y -> {y}"});
+    }
     const std::string makePower = "  %exponent = ctjs.unary neg %magnitude\n"
                                   "  %unit = ctjs.binary pow %one, %exponent\n";
     const auto carriedPower =

@@ -1747,6 +1747,58 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(powerChild, power, ""), "  %step =", power + "  %step ="));
     const auto unitPower = replace(replace(powerChild, "pow %minus, %one", "pow %one, %minus"),
                                    "binary sub %i, %power", "binary_static add %i, %power");
+    for (const std::string literal :
+         {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const bool primitiveBase : {false, true}) {
+            const bool negative = !primitiveBase && literal == "#ctjs.boolean<true>";
+            const std::string makePower =
+                "  %power = ctjs.binary pow " +
+                std::string(primitiveBase ? "%primitive, %minus" : "%minus, %primitive") + "\n";
+            const auto source =
+                replace(negative ? powerChild : unitPower,
+                        negative ? power : "  %power = ctjs.binary pow %one, %minus\n",
+                        "  %primitive = ctjs.constant " + literal + "\n" + makePower);
+            if (primitiveBase && literal != "#ctjs.boolean<true>") {
+                reject("false/null to a negative exponent cannot prove finite CFG progress",
+                       source);
+                continue;
+            }
+            run({.what = "primitive powers retain signed CFG snapshots after source shrink",
+                 .body = source,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "primitive powers release only unreturned CFG children",
+                 .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            reject("power conversion cannot turn its original primitive into an own key",
+                   replace(source, "%base[%i]", "%base[%primitive]"),
+                   ArrayContentsFailure::UnknownIndex);
+            reject("repeated primitive powers need independent invariance",
+                   replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="));
+            reject("primitive power identities still require both original operands",
+                   replace(source, "ctjs.constant " + literal, "ctjs.unary plus %p"),
+                   ArrayContentsFailure::UnsupportedOperation);
+            reject("Undefined cannot borrow a primitive power snapshot",
+                   replace(source, literal, "#ctjs.undefined"));
+        }
+    }
+    const auto primitiveCarriedPower =
+        replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
+                "  %primitive = ctjs.constant #ctjs.boolean<true>\n"
+                "  %negative = ctjs.unary neg %magnitude\n"
+                "  %unit = ctjs.binary pow %negative, %primitive\n");
+    run({.what = "primitive power snapshots survive exact CFG backedge transport",
+         .body = primitiveCarriedPower,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    reject("primitive power snapshots cannot change across CFG backedges",
+           replace(primitiveCarriedPower, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
     for (const bool stringBase : {false, true}) {
         const std::string makePower = "  %power = ctjs.binary pow " +
                                       std::string(stringBase ? "%text, %minus" : "%minus, %text") +

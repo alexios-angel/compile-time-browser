@@ -1,0 +1,101 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name primitive-power
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-primitive-power.claims
+
+// Original Boolean/null inputs convert at Pow; their own property keys stay unchanged.
+// IMPORT-LABEL: ctjs.func @trueReleased$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @trueReturned$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @falseReleased$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @falseReturned$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @nullReleased$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @nullReturned$
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.get_property
+// IMPORT-LABEL: ctjs.func @unknownInput$
+// IMPORT: ctjs.binary pow
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function trueReleased() {
+    var child = {}, array = [child, child, child], saved = 0, step = true ** -1;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function trueReturned() {
+    var child = {}, array = [child, child, child], saved = 0, step = (-1) ** true;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function falseReleased() {
+    var child = {}, array = [child, child, child], saved = 0, start = false ** true;
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+function falseReturned() {
+    var child = {}, array = [child, child, child], saved = 0, step = (-1) ** false;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function nullReleased() {
+    var child = {}, array = [child, child, child], saved = 0, start = null ** true;
+    for (var i = start; i < array.length; i++) {
+        saved = array[i];
+    }
+    return 0;
+}
+function nullReturned() {
+    var child = {}, array = [child, child, child], saved = 0, step = (-1) ** null;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = array[false];
+    return 0;
+}
+function unknownInput(input) {
+    var child = {}, array = [child, child, child], saved = 0, step = (-1) ** input;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+trueReleased();
+var trueRetained = trueReturned();
+falseReleased();
+var falseRetained = falseReturned();
+nullReleased();
+var nullRetained = nullReturned();
+originalKey();
+unknownInput(true);

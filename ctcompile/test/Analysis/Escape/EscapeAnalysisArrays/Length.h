@@ -1319,6 +1319,39 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
          .arrays = "a:[zero]; inputs:[x]",
          .reads = "inputs[0]=text",
          .exit = "text -> {}"});
+    for (const std::string base : {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const std::string exponent :
+             {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+            const bool retained =
+                base == "#ctjs.boolean<true>" || exponent != "#ctjs.boolean<true>";
+            run({.what = "primitive power zero/unit identities preserve length and result origin",
+                 .body = values + "  %base = ctjs.constant " + base +
+                         "\n  %exponent = ctjs.constant " + exponent +
+                         "\n  %index = ctjs.binary pow %base, %exponent "
+                         "{storage_test_id = \"index\"}\n"
+                         "  ctjs.set_property %a[%key], %index\n"
+                         "  %result = ctjs.create_array [%a, %index] "
+                         "{storage_test_id = \"result\"}\n"
+                         "  ctjs.return %result\n",
+                 .arrays = retained ? "a:[x]; result:[a,index]" : "a:[]; result:[a,index]",
+                 .exit = retained ? "result -> {a,result,x}" : "result -> {a,result}"},
+                retained ? "" : "x");
+        }
+    }
+    run({.what = "primitive power preserves a saved exponent after source replacement",
+         .body = values +
+                 "  %truth = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"truth\"}\n"
+                 "  %inputs = ctjs.create_array [%truth] {storage_test_id = \"inputs\"}\n"
+                 "  %saved = ctjs.get_property %inputs[%zero]\n"
+                 "  ctjs.set_property %inputs[%zero], %x\n"
+                 "  cf.br ^next(%saved : !ctjs.value)\n"
+                 "^next(%exponent: !ctjs.value):\n"
+                 "  %index = ctjs.binary pow %zero, %exponent\n"
+                 "  ctjs.set_property %a[%index], %zero\n"
+                 "  ctjs.return %exponent\n",
+         .arrays = "a:[zero]; inputs:[x]",
+         .reads = "inputs[0]=truth",
+         .exit = "truth -> {}"});
 
     const contents_row remainderShrink{
         .what = "a signed zero remainder supplies a non-growing length and keeps its origin",
