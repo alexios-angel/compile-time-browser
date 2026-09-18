@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove direct DOM receivers while retaining the class/DOM refusal boundary."""
+"""Prove DOM receivers and local fields; retain the class/DOM refusal boundary."""
 
 import argparse
 from pathlib import Path
@@ -98,6 +98,68 @@ CASES = {
         "1000",
     ),
 }
+FIELD_CASES = {
+    "field_key": (
+        "const shape = {key: 'x'}; return element.getAttribute(shape.key) === null;",
+        "1000",
+    ),
+    "field_order": (
+        """const shape = {key: 'x'};
+  const saved = element.getAttribute(shape.key);
+  shape.key = 'marker'; element.setAttribute(shape.key, 'done');
+  shape.key = 'x'; element.setAttribute(shape.key, 'after');
+  return saved === null;""",
+        "1000",
+    ),
+    "field_element": (
+        """const holder = {element};
+  const saved = holder.element.getAttribute('x');
+  holder.element = other; holder.element.setAttribute('other', 'after');
+  return saved === null;""",
+        "1000",
+    ),
+    "field_snapshot": (
+        """const holder = {saved: element.getAttribute('x')};
+  const saved = holder.saved; holder.saved = 'after';
+  element.setAttribute('x', holder.saved); return saved === null;""",
+        "1000",
+    ),
+    "field_empty_key": (
+        "const holder = {'': 'x'}; return element.getAttribute(holder['']) === null;",
+        "1000",
+    ),
+    "field_unused_effect": (
+        """const holder = {key: 'x', unused: element.setAttribute('marker', 'done')};
+  return element.getAttribute(holder.key) === null;""",
+        "1000",
+    ),
+}
+CASES.update(FIELD_CASES)
+FIELD_CHECKS = {
+    "field_order": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");\n'
+    'assert(doc.read().attribute_value(node, state) == "after");',
+    "field_element": 'assert(doc.read().attribute_value(other_node, atoms.intern("other")) == "after");\n'
+    'assert(doc.read().attribute_value(other_node, state) == "different");',
+    "field_snapshot": 'assert(doc.read().attribute_value(node, state) == "after");',
+    "field_unused_effect": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");',
+}
+FIELD_REFUSALS = {
+    "missing_field": "const holder = {}; return element.getAttribute(holder.key) === null;",
+    "read_before_write": "const holder = {}; const key = holder.key; holder.key = 'x'; return element.getAttribute(key) === null;",
+    "prototype_key": "const holder = {}; holder.__proto__ = element; return holder.__proto__.getAttribute('x') === null;",
+    "reserved_key": "const holder = {valueOf: 'x'}; return element.getAttribute(holder.valueOf) === null;",
+    "dynamic_key": "const holder = {x: 'x'}; return element.getAttribute(holder[element.getAttribute('key')]) === null;",
+    "escaped_holder": "const holder = {key: 'x'}; element.saved = holder; return element.getAttribute(holder.key) === null;",
+    "returned_holder": "const holder = {key: 'x'}; element.getAttribute(holder.key); return holder;",
+    "nested_write": "const holder = {key: 'x'}; if (element.hasAttribute('x')) holder.key = 'marker'; return element.getAttribute(holder.key) === null;",
+    "deleted_field": "const holder = {key: 'x'}; delete holder.key; return element.getAttribute(holder.key) === null;",
+    "unknown_stored_effect": "const holder = {key: 'x', unused: element.unknown()}; return element.getAttribute(holder.key) === null;",
+    "ambient_stored_effect": "const holder = {key: 'x', unused: ambient()}; return element.getAttribute(holder.key) === null;",
+    "overwritten_effect": "const holder = {key: 'x', unused: ambient()}; holder.unused = 0; return element.getAttribute(holder.key) === null;",
+    "self_store": "const holder = {key: 'x'}; holder.self = holder; return element.getAttribute(holder.key) === null;",
+    "fake_dom_receiver": "const holder = {element: {}}; return holder.element.getAttribute('x') === null;",
+    "unused_callable": "const holder = {key: 'x', unused() { ambient(); }}; return element.getAttribute(holder.key) === null;",
+}
 ORDER_CHECKS = """assert(doc.read().attribute_value(node, state) == "after");
             assert(doc.read().attribute_value(other_node, atoms.intern("other")) == "after");
             assert(doc.read().attribute_value(other_node, state) == "different");"""
@@ -120,6 +182,10 @@ def check_oracles(args):
                 "class_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost class writes');",
                 "class_element": "if (toggles !== 1) throw new Error('lost class toggle');",
                 "direct_order": "if (element.getAttribute('x') !== 'after' || other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost receiver writes');",
+                "field_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost field writes');",
+                "field_element": "if (other.getAttribute('other') !== 'after' || other.getAttribute('x') !== 'different') throw new Error('lost field receiver');",
+                "field_snapshot": "if (element.getAttribute('x') !== 'after') throw new Error('lost snapshot write');",
+                "field_unused_effect": "if (element.getAttribute('marker') !== 'done') throw new Error('lost unused effect');",
             }.get(name, "")
             observations.append(f"""var {variable} = (() => {{
   const element = observationElement({value});
@@ -321,7 +387,10 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                     "            const auto result =",
                 )
                 .replace("@CALL@", call)
-                .replace("@CHECKS@", ORDER_CHECKS if name == "direct_order" else "")
+                .replace(
+                    "@CHECKS@",
+                    ORDER_CHECKS if name == "direct_order" else FIELD_CHECKS.get(name, ""),
+                )
             )
             expected.extend("true\n" if bit == "1" else "false\n" for bit in CASES[name][1])
         path = args.work / f"combined-{optimize}-{layout}.cpp"
@@ -360,7 +429,10 @@ def main():
     prepared, refusals = [], 0
     for name, (body, _) in CASES.items():
         ir, contract = dom.prepare(args, name, source(name, body), 2, entry_name=name)
-        normalized, refreshed, facts = direct_receiver(args, name, ir, contract)
+        if name in FIELD_CASES:
+            normalized, refreshed, facts = ir, contract, {}
+        else:
+            normalized, refreshed, facts = direct_receiver(args, name, ir, contract)
         for owned in (False, True):
             request = dict(
                 refreshed,
@@ -387,6 +459,14 @@ def main():
                 refusals += 1
         if name == "direct_read":
             refusals += check_direct_refusals(args, normalized, refreshed, facts)
+    for name, body in FIELD_REFUSALS.items():
+        ir, contract = dom.prepare(args, name, source(name, body), 1, entry_name=name)
+        for owned in (False, True):
+            request = dict(
+                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+            )
+            dom.lower(args, ir, request, f"{name}-{owned}", success=False)
+            refusals += 1
     for optimize in (False, True):
         modules = [
             (
@@ -412,7 +492,7 @@ def main():
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
     print(
-        f"DOM receivers: {observations} Node/interpreter observations, "
+        f"DOM receivers and fields: {observations} Node/interpreter observations, "
         f"8 combined native executions, {refusals} refusals; class/DOM preparation remains refused"
     )
 

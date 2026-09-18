@@ -8,6 +8,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <optional>
 
@@ -377,6 +378,54 @@ struct DOMSource {
         for (ctjs::CellGetOp read : reads) {
             read.getResult().replaceAllUsesWith(value);
             read.erase();
+        }
+        return true;
+    }
+
+    bool forwardFields(ctjs::FuncOp function) {
+        auto & block = function.getBody().front();
+        llvm::SmallVector<ctjs::CreateObjectOp> objects(block.getOps<ctjs::CreateObjectOp>());
+        for (ctjs::CreateObjectOp object : objects) {
+            llvm::DenseSet<mlir::Operation *> uses;
+            bool confined = true, read = false;
+            for (mlir::OpOperand & use : object.getResult().getUses()) {
+                if (!step()) { return false; }
+                auto * operation = use.getOwner();
+                auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
+                if (operation->getBlock() != &block || !object->isBeforeInBlock(operation) ||
+                    (!llvm::isa<ctjs::RootOp>(operation) &&
+                     (use.getOperandNumber() != 0 ||
+                      !(get ? ctjs::ordinaryKey(get.getKey())
+                            : set && ctjs::ordinaryKey(set.getKey()) &&
+                                  !set.getValue().getDefiningOp<ctjs::CreateClosureOp>())))) {
+                    confined = false;
+                    break;
+                }
+                read |= static_cast<bool>(get);
+                uses.insert(operation);
+            }
+            if (!confined || !read) { continue; }
+            // The isolated DOM provider fixes the initial prototype. Only
+            // initialized own fields are read; the complete use census rules
+            // out aliases, identity observations, accessors and prototype edits.
+            // Keep every value producer for the subsequent complete DOM proof.
+            // ponytail: one charged block scan per local object; index stores
+            // if large straight-line entries exhaust the existing work budget.
+            llvm::StringMap<mlir::Value> fields;
+            for (mlir::Operation & operation : llvm::make_early_inc_range(block)) {
+                if (!step()) { return false; }
+                if (!uses.contains(&operation)) { continue; }
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                    fields[ctjs::constantKey(set.getKey())] = set.getValue();
+                } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    auto value = fields.lookup(ctjs::constantKey(get.getKey()));
+                    if (!value) { return refuse("DOM local field read lacks a preceding write"); }
+                    get.getResult().replaceAllUsesWith(value);
+                }
+                operation.erase();
+            }
+            object.erase();
         }
         return true;
     }
@@ -1303,6 +1352,7 @@ struct DOMSource {
             callDepth.erase(call);
             call.erase();
         }
+        if (!forwardFields(function)) { return false; }
         auto & block = function.getBody().front();
         llvm::SmallVector<ctjs::CreateClosureOp> closures;
         llvm::SmallVector<ctjs::CreateObjectOp> methodObjects;
