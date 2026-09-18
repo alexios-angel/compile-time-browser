@@ -1149,6 +1149,28 @@ provably native: agent E's compiler gave every object-literal method an own
 `5865c08b` emits the link only for a method that says `super`; the next row
 is the one measured behind a green gate.
 
+## BigInt measured at `96781de5` — 2026-09-18
+
+Focused devbox replay of `test/built-ins/BigInt`: **63 -> 74 PASS**,
+**13 -> 2 FAIL**, one SKIP, 77 files; **11 gained, zero lost**. The fresh
+before run matched the saved `b722aa41` results. Same instrument: four
+workers, 10-second timeout, 2 GB address-space cap. The two affected CTests,
+`bigint_basics` and `symbol_basics`, passed.
+
+`BigInt(value)` now converts objects with the number hint before choosing
+NumberToBigInt or ToBigInt, preserving coercion exceptions. Its `toString`
+method converts and checks the radix before narrowing it to an integer.
+Remaining failures are `constructor-from-string-syntax-errors.js` (shared
+BigInt string grammar) and `wrapper-object-ordinary-toprimitive.js` (shared
+VM coercion). Native construction-state handling remains a separate gap.
+
+Evidence: `/tmp/browser-resume-bigint-{before,after}.json` and
+`/tmp/browser-resume-bigint-gate2.log`. A combined-tree replay at `b78e68cb`
+confirmed 74 PASS, two FAIL and one SKIP in
+`/tmp/ctbrowser-resume/final/browser-resume-final-bigint.json`. The whole
+test262 corpus was not replayed for this change; its last complete
+measurement remains below.
+
 ## Measured at `b722aa41` — 2026-09-18, round seven (J2: RegExp and the async tail)
 
 **40,832 of 48,624 (84.0%; 85.4% of the 47,791 that ran)**, from 39,731 at

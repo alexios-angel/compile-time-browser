@@ -1,58 +1,59 @@
 # WPT — the next round, as briefs
 
-**Resumed 2026-09-18.** Session 19's eight baseline directories finished;
-their recovered results are now in `wpt.md` and `css-conformance.md`:
-wide 2,696 -> 2,860 files PASS, CSS 1,413 -> 1,535. There are 23 CSS
-PASS-to-FAIL files to triage first (16 revert variants, four logical
-margin/padding interpolation files, columns, outline width, scaled
-viewport). The extra encoding sweep was stopped without a complete
-result; it was absent from the prior baseline. The shared devbox lock is
-released for the queued compiler checks. The ten diagnoses are saved,
-but the workflow journal has no synthesizer result, so do not wait for a
-finished plan that was never written. No new JS/VM change in this recovery.
+**Updated 2026-09-18: resumed session 19 and committed the recovery.**
+Latest browser source is `73833c09`; current compiler history through
+`63a021c1` is merged. The browser gate passed **233/233** (70.77 seconds)
+and formatting passed. Full CSS: **1,535 -> 1,591 files PASS**, **68,941 ->
+70,223 subtests PASS**, zero file or subtest losses. BigInt's focused
+77-file test262 replay: **63 -> 74 PASS**, **13 -> 2 FAIL**, one SKIP,
+zero lost files. The instrument docs contain measured rows and settings.
 
-**Updated 2026-09-18, session 19 (HANDOFF - read this first).** Round SEVEN
-is MERGED: K `274c693e`, A3 `46b5f01f`, L2 `274c6b49`, J2 `b722aa41` (ctjs
-gitlink `d2664e9`, in the worktree submodule and the
-`~/Downloads/claude/compile-time-javascript` object store only). Gated
-233/233 at `b722aa41`; measured (rows in `docs/wpt.md`, `docs/test262.md`):
-five suites 805 -> **816**, test262 39,731 -> **40,832 (84.0%)**, zero
-PASS->FAIL. The WIDE corpus and `docs/css-conformance.md` were NOT
-re-measured before the session ended: `/tmp/wpt18/wide.sh b722aa41` was
-running (results `/tmp/w-b722aa41/` on the WSL box; the round-six wide
-baseline is `/tmp/w-9f8da347/`; tally with
-`~/Downloads/claude/wt/wpt11-session/wtally.py <dir> <before-dir>`). If
-`/tmp` is gone, re-run `/tmp/wpt18/{gate,measure,wide}.sh <sha>` - they are
-the round-seven versions of session 11's scripts (gate = engine-only build +
-ctest of the pinned `wt/ctbrowser-wpt-measure` worktree in
-`projects/ctbrowser-wpt`; measure = five suites + test262; wide = the
-corpus with `--update-expectations`).
+Landed source commits:
 
-**What is in flight.** A Workflow `wpt-diagnose-plan` (run
-`wf_8916c675-fe8`): ten read-only diagnosers over the `9f8da347` baseline
-(one slice each: dom-nodes, dom-events, html-dom, html-parsing, css-om,
-css-layout, css-visual, shadow-ce, t262-builtins, t262-language), one
-synthesizer, a critic loop (<= 3 rounds). Its result - the diagnoses and a
-PLAN of file-disjoint implementation items in waves of <= 4 - is in that
-run's `journal.jsonl` under the session's `subagents/workflows/` directory
-(the `result` records). ALL TEN DIAGNOSES ARE IN: `docs/plans/wpt-round8-diagnoses.md` (152
-clusters, 33,428 failing subtests explained; trimmed - the raw JSON is
-`wt/wpt11-session/round8/diagnoses.json`). The NEXT STEP is the
-implementation workflow: one
-worktree agent per plan item (`isolation: worktree`, `model: fable`), each
-told to `git reset --hard ctbrowser-wpt` first, to read
-`~/Downloads/claude/wt/wpt11-session/round8/COMMON.md` (the standing rules:
-tip, ctjs SHA, devbox lock, measuring) and its item brief, and to REUSE a
-devbox dir from `projects/ctbrowser-agent{A3,K,L2,J,CE,V}` (deleting them
-was denied by auto mode). Then: merge each branch under the git lock, gate
-the merged tree, measure, write the rows, journal (JS SEMANTICS lines for
-anything under lib/Script), and integrate into `ctcompile-v1` from the main
-checkout with `--no-ff` only when it is clean.
+- `96781de5`: BigInt object coercion and radix conversion/range errors.
+  JS/VM semantics are journaled for the compiler differential oracle.
+- `448ecf29`: cascade rollback over substituted, expanded physical
+  declarations, including invalid-at-computed-value history.
+- `cc5c2133`, `73833c09`: CSSOM shorthand grammar for CSS/Web Animation
+  keyframes, fallback for shorthands CSSOM retains whole, and inherited
+  keyframes using the parent's animated computed value. An initial combined
+  replay lost 26 subtests; the correction restores all of them.
 
-**Known, unplanned, measured this session:** `getBoundingClientRect`
-ignores `transform: scale()` (`shell/bindings/element/views.cpp` applies
-the translation only) - `css/css-values/viewport-relative-lengths-scaled-
-viewport.html`.
+The recovered round-seven wide baseline at `b722aa41` is **2,860 files
+PASS / 249,277 subtests PASS**. Only CSS was replayed across that entire
+directory after these fixes. The other wide directories and whole test262
+were not remeasured; do not extrapolate their totals. Full test262 remains
+**40,832/48,624** at its last complete measurement.
+
+**Next clear failures:**
+
+- Two of round seven's 23 lost CSS files remain: `columns-interpolation`
+  has four failing count-clamp subtests (`0` instead of `1`) and sixteen
+  failures for `columns: 10 100px / auto`; scaled viewport rectangles
+  ignore `transform: scale()` in `Shell/bindings/element/views.cpp`.
+- BigInt's two failing files are `constructor-from-string-syntax-errors.js`
+  (shared string grammar) and `wrapper-object-ordinary-toprimitive.js`
+  (shared VM hint handling). Native NewTarget handling remains separate.
+- The existing elliptical border-radius expander still drops the vertical
+  axis. The animation changes preserve prior behavior without fixing that
+  older gap.
+
+Evidence: `/tmp/ctbrowser-resume/corrected/` holds the final full CSS JSON,
+comparison, browser gate and verified source hashes;
+`/tmp/browser-resume-bigint-{before,after}.json` and
+`/tmp/ctbrowser-resume/final/browser-resume-final-bigint.json` hold the
+focused runtime runs. Agent branches/worktrees/devbox copies created for
+this recovery have been removed. The main checkout was dirty during the
+last check; integrate only after the protocol's locked clean-tree guard.
+
+Session 19's old wide sweep finished its eight baseline directories;
+those JSONs are in `/tmp/w-b722aa41/` against `/tmp/w-9f8da347/`.
+The extra encoding sweep was stopped without a result and is excluded.
+The ten round-eight diagnoses are saved in `wpt-round8-diagnoses.md` and
+`wt/wpt11-session/round8/diagnoses.json`; no synthesizer result was written.
+Read those diagnoses rather than waiting for the abandoned workflow.
+The ctjs gitlink `d2664e9` remains local to the worktree submodule and
+`~/Downloads/claude/compile-time-javascript`; do not assume it is published.
 
 **Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
 (`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after

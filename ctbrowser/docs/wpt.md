@@ -14,6 +14,36 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## CSS recovery — 2026-09-18
+
+**1,591 of 2,926 runnable CSS files PASS (54.4%), 70,223 subtests PASS**
+at `73833c09`: **+56 files and +1,282 subtests** against `b722aa41`,
+with **zero passing files or subtests lost**. This is a fresh full `css/`
+measurement, not a replay of the other wide directories or all test262.
+Same WPT `3f6b09ae`, devbox, four workers, 4 GB address-space cap and
+`CTBROWSER_GL_DRIVER=deterministic`.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `b722aa41` | 1,535 | 1,175 | 25 | 0 | 191 | 1,488 | 68,941 / 34,147 |
+| `73833c09` | 1,591 | 1,119 | 25 | 0 | 191 | 1,488 | 70,223 / 32,865 |
+
+Cascade rollback now uses substituted, expanded physical declarations.
+CSS and Web Animation keyframes use the CSSOM shorthand grammar, retaining
+the old expansion for shorthands CSSOM still stores whole. Inherited
+keyframes read the flat-tree parent's computed value, including animations.
+This restores 21 of the 23 files lost in round seven. The remaining two
+are `columns-interpolation` (positive count clamping and slash syntax) and
+`viewport-relative-lengths-scaled-viewport` (scaled bounding rectangles).
+
+The first combined replay exposed 26 lost subtests in ellipse shorthand
+expansion and inherited columns. Those were fixed before this final replay;
+no expectations were changed. The browser CTest gate passed **233/233**
+(70.77 seconds), and formatting passed. Evidence:
+`/tmp/ctbrowser-resume/corrected/{gate.log,browser-resume-corrected-css.json,comparison.json,source-sha256.json}`.
+Module deltas are in `css-conformance.md`. The separate focused BigInt
+measurement gained 11 test262 files; see `test262.md`.
+
 ## Wide baseline — 2026-09-18: round seven recovered
 
 **2,860 of 5,155 runnable files PASS (55.5%), 249,277 subtests PASS** at
@@ -39,13 +69,13 @@ no new engine build was needed to recover these completed measurements.
 | `selection` | 41 | 46 | 3 | 0 | 6 | 87 | 33,332 / 723 |
 | `url` | 39 | 7 | 1 | 0 | 2 | 0 | 9,269 / 665 |
 
-All 23 lost files are CSS: 16 `all-prop-revert[-layer]-noop` variants,
+All 23 files lost at this revision are CSS: 16 `all-prop-revert[-layer]-noop` variants,
 four logical margin/padding interpolation files, `columns-interpolation`,
 `outline-width-interpolation`, and the previously documented scaled
-viewport test. These are open failures, not accepted new expectations.
-The revert variants read zero logical margins where the UA stylesheet
-supplies paragraph/heading margins; the interpolation losses need separate
-triage. The full CSS module table is in `css-conformance.md`.
+viewport test. The revert variants read zero logical margins where the UA
+stylesheet supplies paragraph/heading margins. The later recovery is
+recorded above; expectations were not changed to accept these failures.
+The full CSS module table is in `css-conformance.md`.
 
 ## The baseline — 2026-09-18: round seven merged (five suites + test262)
 

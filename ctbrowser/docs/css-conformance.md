@@ -11,6 +11,57 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## CSS recovery — 2026-09-18
+
+Full `css/` replay at `73833c09`: **1,591 of 2,926 runnable files PASS
+(54.4%), 70,223 subtests PASS**. Against `b722aa41`: **+56 files,
++1,282 passing subtests, zero passing files or subtests lost**. There are
+1,119 FAIL, 25 TIMEOUT, zero CRASH, 191 HARNESS_ERROR and 1,488 SKIP files;
+subtests are 70,223 PASS, 32,865 FAIL, 22 TIMEOUT, 71 NOTRUN and one
+PRECONDITION_FAILED. Corpus and execution settings are unchanged.
+
+Changed modules only; all other module counts match the round-seven table:
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-align` | 49 / 51 | 1,289 / 1,309 |
+| `css/css-backgrounds` | 59 / 61 | 5,146 / 5,282 |
+| `css/css-box` | 30 / 32 | 857 / 877 |
+| `css/css-break` | 19 / 19 | 422 / 470 |
+| `css/css-cascade` | 33 / 52 | 968 / 1,014 |
+| `css/css-color` | 44 / 46 | 12,020 / 12,050 |
+| `css/css-flexbox` | 26 / 29 | 910 / 952 |
+| `css/css-fonts` | 53 / 53 | 2,776 / 3,090 |
+| `css/css-grid` | 25 / 25 | 1,785 / 1,805 |
+| `css/css-logical` | 54 / 58 | 708 / 756 |
+| `css/css-masking` | 20 / 21 | 1,270 / 1,290 |
+| `css/css-multicol` | 24 / 27 | 1,277 / 1,353 |
+| `css/css-position` | 26 / 30 | 1,024 / 1,056 |
+| `css/css-shapes` | 6 / 7 | 310 / 328 |
+| `css/css-size-adjust` | 2 / 2 | 173 / 197 |
+| `css/css-sizing` | 16 / 20 | 2,500 / 2,540 |
+| `css/css-text` | 73 / 73 | 1,390 / 1,470 |
+| `css/css-transforms` | 30 / 33 | 3,186 / 3,310 |
+| `css/css-transitions` | 16 / 17 | 719 / 759 |
+| `css/css-ui` | 28 / 31 | 1,221 / 1,281 |
+| `css/css-variables` | 26 / 27 | 432 / 436 |
+| `css/motion` | 12 / 13 | 1,601 / 1,641 |
+
+`448ecf29` fixes cascade rollback after shorthand expansion, variable
+substitution and logical-to-physical mapping. `cc5c2133` and `73833c09`
+share the CSSOM grammar with both keyframe paths, preserve existing
+shorthand expansion where CSSOM is incomplete, and compute inherited
+keyframe values from the animated parent. New controls cover rollback,
+logical and columns keyframes, elliptical shorthand expansion, and animated
+parent inheritance. The combined browser gate passed 233/233 CTests.
+
+The final replay restores 21 of round seven's 23 lost files. Remaining:
+`columns-interpolation` needs positive integer clamping and the columns
+slash grammar; scaled viewport rectangles need transform-aware CSSOM View
+bounds. The existing elliptical-radius expander still drops the vertical
+axis. Evidence and the full status table are in `wpt.md` and
+`/tmp/ctbrowser-resume/corrected/`.
+
 ## 1. The measurement was wrong before it was low
 
 **94 of `css/css-values`' 128 harness errors were a missing file, not a
@@ -49,8 +100,9 @@ Recovered session 19's completed `css.json` at `b722aa41`; comparison is
 against `9f8da347`, with the same corpus, worker count, cap and GL driver.
 **1,535 of 2,926 runnable files PASS (52.5%), 68,941 subtests PASS**:
 net **+122 files and +9,379 passing subtests**. The whole wide result and
-all file losses are recorded in `wpt.md`. The 23 lost CSS files remain
-open; expectations were not changed to accept them.
+all file losses are recorded in `wpt.md`. The 23 files lost at this revision
+were investigated in the later recovery above; expectations were not
+changed to accept them.
 
 | suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
