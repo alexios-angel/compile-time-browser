@@ -1040,7 +1040,8 @@ function method_dispatch_shadow() {
 }
 var a = method_dispatch_shadow();
 
-// A throw/return exit still has multiple outer blocks and needs its own proof.
+// Literal throws preserve their outer exits through class setup preparation.
+// Native completion lowering remains a separate proof.
 //--- method-dispatch-throw.js
 function method_dispatch_throw() {
     class Shape {
@@ -1056,6 +1057,53 @@ function method_dispatch_throw() {
     return new Shape().read(0);
 }
 var a = method_dispatch_throw();
+
+//--- method-throw-ambient.js
+// An uncalled alternate exit still cannot invoke an ambient function.
+function method_throw_ambient() {
+    class Shape {
+        read(flag) { if (flag) { external(); throw 9; } return 7; }
+    }
+    return new Shape().read(false);
+}
+var a = method_throw_ambient();
+
+//--- method-throw-object.js
+// Uncaught object formatting may reenter through toString.
+function method_throw_object() {
+    class Shape {
+        read(flag) { if (flag) { throw {}; } return 7; }
+    }
+    return new Shape().read(false);
+}
+var a = method_throw_object();
+
+//--- method-throw-parameter.js
+function method_throw_parameter() {
+    class Shape {
+        read(flag, error) { if (flag) { throw error; } return 7; }
+    }
+    return new Shape().read(false, 9);
+}
+var a = method_throw_parameter();
+
+//--- method-throw-default.js
+// Getter reads in a copied method with multiple outer exits retain provenance.
+function method_throw_default() {
+    class Shape {
+        static get Default() { return 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i++) {
+                if (i === 1) { continue; }
+                if (i === 3) { throw 9; }
+            }
+            return this.constructor.Default;
+        }
+    }
+    return new Shape().read(0);
+}
+var a = method_throw_default();
+
 //--- method-increment-dispatch.js
 // Increment and decrement retain the importer's non-reentering static Add.
 function method_increment_dispatch() {

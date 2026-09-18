@@ -29,6 +29,10 @@ OBSERVATIONS = {
     "method-dispatch-ambient": (7, 7),
     "method-dispatch-shadow": (7, 7),
     "method-dispatch-throw": (7, 7),
+    "method-throw-ambient": (7, 7),
+    "method-throw-object": (7, 7),
+    "method-throw-parameter": (7, 7),
+    "method-throw-default": (7, 7),
     "method-branch-ambient": (7, 7),
     "method-branch-shadow": (7, 7),
     "constructor-branch": (7, 7),
@@ -144,6 +148,7 @@ POSITIVES = {
     "receiver-default-dispatch",
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
+PREPARED_ONLY = {"method-dispatch-throw", "method-throw-default"}
 
 
 def check_constructed_methods(args):
@@ -499,7 +504,7 @@ def main():
     )
     refusals = 0
     preparation_refusals = 0
-    checked = 0
+    checked = prepared_refusals = 0
     cutoffs = {}
     for name, (node_expected, reference_expected) in OBSERVATIONS.items():
         source = args.fixtures / f"{name}.js"
@@ -564,14 +569,33 @@ def main():
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
-            "method-dispatch-throw": "complete capture-free source functions",
-            "bootstrap-config-defaults": "complete capture-free source functions",
+            "method-throw-ambient": "unknown call, binding or reflective effect",
+            "method-throw-object": "unknown call, binding or reflective effect",
+            "method-throw-parameter": "unknown call, binding or reflective effect",
+            "bootstrap-config-defaults": "static getter body is not a closed expression",
             "instance-default-replacement": "primitive constructor return",
         }.get(name, "")
         prepared = prepare(
-            args, name, structured, manifest, success=name in POSITIVES, diagnostic=diagnostic
+            args,
+            name,
+            structured,
+            manifest,
+            success=name in POSITIVES | PREPARED_ONLY,
+            diagnostic=diagnostic,
         )
-        preparation_refusals += name not in POSITIVES
+        preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name in PREPARED_ONLY:
+            before, after = structured.read_text(), prepared.read_text()
+            for operation in ("cf.switch", "ctjs.throw"):
+                if not before.count(operation) or before.count(operation) != after.count(operation):
+                    raise RuntimeError(
+                        f"{name}: preparation changed the original {operation} exits"
+                    )
+            # Preparation removes the two reads; unused key literals may remain.
+            if name == "method-throw-default" and (
+                before.count("ctjs.get_property") - after.count("ctjs.get_property") != 2
+            ):
+                raise RuntimeError("throwing method retained a constructor getter read")
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
         if name == "empty":
@@ -590,6 +614,7 @@ def main():
             "method-loop",
             "method-dispatch",
             "method-increment-dispatch",
+            "method-dispatch-throw",
             "receiver-default-dispatch",
             "method-constructor-order",
             "static-chain",
@@ -616,7 +641,7 @@ def main():
             if name == "helper-global-alias":
                 check_mutable_helper(native.read_text())
             refusals += 1
-            if name in POSITIVES:
+            if name in POSITIVES | PREPARED_ONLY:
                 native = args.work / f"{name}.{optimize}.trusted.mlir"
                 run(
                     [
@@ -627,7 +652,14 @@ def main():
                         str(native),
                     ]
                 )
-                checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+                if name in PREPARED_ONLY:
+                    native_text = native.read_text()
+                    check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
+                    if native_text.count("ctjs.throw") != prepared.read_text().count("ctjs.throw"):
+                        raise RuntimeError(f"{name}: native refusal changed the source throw exits")
+                    prepared_refusals += 1
+                else:
+                    checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
     plain_checked, plain_refused = check_constructed_methods(args)
     print(
         f"class initialization controls: {len(OBSERVATIONS)} source observations, "
@@ -637,6 +669,7 @@ def main():
     print(
         f"constructed method controls: {plain_checked} native executions, {plain_refused} refusals"
     )
+    print(f"prepared throwing methods: {prepared_refusals} native refusals with original exits")
 
 
 if __name__ == "__main__":

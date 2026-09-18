@@ -3,6 +3,7 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/IRMapping.h"
@@ -436,8 +437,8 @@ struct classInitialization {
             if (!step()) { return false; }
             auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
             auto index = fn ? functionIndex(fn) : std::nullopt;
-            if (!fn || !index || !llvm::hasSingleElement(fn.getBody()) ||
-                fn.getUpvalueCount() != 0 || fn.getBody().front().getNumArguments() < 3 ||
+            if (!fn || !index || fn.getBody().empty() || fn.getUpvalueCount() != 0 ||
+                fn.getBody().front().getNumArguments() < 3 ||
                 !functions.try_emplace(*index, fn).second) {
                 return refuse(
                     "class initialization requires complete capture-free source functions");
@@ -493,7 +494,7 @@ struct classInitialization {
                           ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp,
                           ctjs::StoreGlobalOp, ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp,
                           ctjs::TruthyOp, ctjs::FromBoolOp>(op);
-            // Only proved ordinary methods may contain structured control flow.
+            // Only proved ordinary methods may contain control flow.
             // The recursive census still checks every arm/body, including ones
             // never called. Setup, constructors and getter cloning stay linear.
             // The lift represents break/continue/return edges with integer
@@ -504,19 +505,28 @@ struct classInitialization {
             if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
                           mlir::scf::IndexSwitchOp, mlir::scf::YieldOp, mlir::scf::ConditionOp,
                           mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp,
-                          mlir::arith::TruncIOp, mlir::ub::PoisonOp, ctjs::BinaryStaticOp>(op)) {
+                          mlir::arith::TruncIOp, mlir::ub::PoisonOp, ctjs::BinaryStaticOp,
+                          mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(op)) {
                 accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>());
                 if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
                     dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());
                 }
             }
+            if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(op)) {
+                // An uncaught object throw can reenter through formatting.
+                // Preserve literal primitive throws; downstream lowering still
+                // has to prove their completion and payload representation.
+                accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>()) &&
+                           thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+            }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
-                accepted = constructors.contains(fn) || methods.contains(fn) ||
-                           getters.contains(fn) ||
-                           (block.getNumArguments() == 3 &&
-                            block.getArgument(ctjs::arg_receiver).use_empty() &&
-                            block.getArgument(ctjs::arg_new_target).use_empty());
+                accepted = methods.contains(fn) ||
+                           (llvm::hasSingleElement(fn.getBody()) &&
+                            (constructors.contains(fn) || getters.contains(fn) ||
+                             (block.getNumArguments() == 3 &&
+                              block.getArgument(ctjs::arg_receiver).use_empty() &&
+                              block.getArgument(ctjs::arg_new_target).use_empty())));
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
                 accepted = target(closure) && target(closure) != entry &&
