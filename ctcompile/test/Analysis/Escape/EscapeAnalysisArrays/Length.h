@@ -1057,7 +1057,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
               "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
                 const bool exactZero =
-                    literal == "#ctjs.string<\"0\">" ||
+                    literal == "#ctjs.string<\"0\">" || literal == "#ctjs.boolean<false>" ||
+                    literal == "#ctjs.null" ||
                     (literal == "#ctjs.number<13830554455654793216>" &&
                      (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
                                            operands == "%zero, %input")));
@@ -1617,7 +1618,8 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             }
             if ((literal == "#ctjs.boolean<false>" || literal == "#ctjs.null") &&
                 (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input" ||
-                 producer == "ctjs.binary mul %input, %zero")) {
+                 producer == "ctjs.binary mul %input, %zero" ||
+                 producer == "ctjs.binary_static ushr %input, %input")) {
                 run({.what = "Boolean/null numeric conversion supplies an exact empty length",
                      .body = body,
                      .arrays = "a:[]",

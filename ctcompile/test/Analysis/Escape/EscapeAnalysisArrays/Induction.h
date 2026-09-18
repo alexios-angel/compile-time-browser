@@ -1014,6 +1014,90 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .reads = "a[0]=one",
              .exit = "actual -> {}"});
     }
+    struct primitive_bitwise_case {
+        const char * kind;
+        const char * trueLeft;
+        const char * zeroLeft;
+        const char * trueRight;
+        const char * zeroRight;
+    };
+    for (const auto & [kind, trueLeft, zeroLeft, trueRight, zeroRight] :
+         {primitive_bitwise_case{"bitand", "4607182418800017408", "0", "4607182418800017408", "0"},
+          primitive_bitwise_case{"bitor", "13830554455654793216", "13830554455654793216",
+                                 "13830554455654793216", "13830554455654793216"},
+          primitive_bitwise_case{"bitxor", "13835058055282163712", "13830554455654793216",
+                                 "13835058055282163712", "13830554455654793216"},
+          primitive_bitwise_case{"shl", "13970166044103278592", "0", "13835058055282163712",
+                                 "13830554455654793216"},
+          primitive_bitwise_case{"shr", "0", "0", "13830554455654793216", "13830554455654793216"},
+          primitive_bitwise_case{"ushr", "0", "0", "4746794007244308480", "4751297606873776128"}}) {
+        for (const std::string literal :
+             {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+            for (const bool commuted : {false, true}) {
+                const std::string expected = literal == "#ctjs.boolean<true>"
+                                                 ? (commuted ? trueRight : trueLeft)
+                                                 : (commuted ? zeroRight : zeroLeft);
+                run({.what =
+                         "Boolean/null bitwise operands retain exact signed and unsigned results",
+                     .body = prefix + "  %input = ctjs.constant " + literal +
+                             "\n  %negative = ctjs.unary neg %one\n"
+                             "  %actual = ctjs.binary_static " +
+                             kind + " " + (commuted ? "%negative, %input" : "%input, %negative") +
+                             " {storage_test_id = \"actual\"}\n"
+                             "  %expected = ctjs.constant #ctjs.number<" +
+                             expected +
+                             ">\n  %index = ctjs.binary sub %actual, %expected\n"
+                             "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+                     .arrays = "a:[one,two,three]",
+                     .reads = "a[0]=one",
+                     .exit = "actual -> {}"});
+            }
+        }
+    }
+    for (const auto & [literal, kind] :
+         {std::pair{"#ctjs.boolean<true>", "bitand"}, std::pair{"#ctjs.boolean<false>", "bitor"},
+          std::pair{"#ctjs.null", "bitxor"}}) {
+        const std::string input = "  %input = ctjs.constant " + std::string(literal) + "\n";
+        const std::string operation =
+            "  %unit = ctjs.binary_static " + std::string(kind) + " %input, %one\n";
+        const auto source = replace(computedUnitChild, makeUnit, input + operation);
+        const auto saved =
+            replace(source, operation,
+                    "  %holder = ctjs.create_array [%input] {storage_test_id = \"holder\"}\n"
+                    "  %savedOperand = ctjs.get_property %holder[%zero]\n"
+                    "  ctjs.set_property %holder[%zero], %x\n" +
+                        replace(operation, "%input,", "%savedOperand,"));
+        run({.what = "saved primitive bitwise operands survive replacement and retain CFG children",
+             .body = saved,
+             .arrays = "a:[one,x]; holder:[x]",
+             .reads = "holder[0]=ctjs.constant; a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "primitive bitwise snapshots discharge only unreturned CFG children",
+             .body = replace(saved, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; holder:[x]",
+             .reads = "holder[0]=ctjs.constant; a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        const auto carried = replace(carriedUnit, makeUnit, input + operation);
+        run({.what = "primitive bitwise snapshots survive exact CFG backedge transport",
+             .body = carried,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
+        reject("primitive bitwise snapshots cannot change across CFG backedges",
+               replace(carried, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %zero"));
+        reject("primitive bitwise conversion cannot turn its original operand into an own key",
+               replace(saved, "%base[%i]", "%base[%savedOperand]"),
+               ArrayContentsFailure::UnknownIndex);
+        reject("repeated primitive bitwise producers still need independent invariance",
+               replace(replace(source, operation, ""), "  %step =", operation + "  %step ="));
+        reject("primitive bitwise operands cannot borrow an unknown value",
+               replace(source, operation, replace(operation, "%input,", "%p,")),
+               ArrayContentsFailure::UnknownValue);
+        reject("Undefined cannot borrow primitive bitwise Number evidence",
+               replace(source, literal, "#ctjs.undefined"));
+    }
     const std::string unsignedOperation = "  %count = ctjs.unary neg %one\n"
                                           "  %unit = ctjs.binary_static ushr %operand, %count\n";
     const auto unsignedCarried =

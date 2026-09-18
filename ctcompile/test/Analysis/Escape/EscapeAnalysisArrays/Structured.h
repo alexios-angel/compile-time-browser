@@ -745,6 +745,35 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                        "    scf.yield %negative : !ctjs.value\n"
                        "  } else {\n    scf.yield %text : !ctjs.value\n  }\n"));
     }
+    const std::string primitiveBits = "  %operand = scf.if %flag -> (!ctjs.value) {\n"
+                                      "    %truth = ctjs.constant #ctjs.boolean<true>\n"
+                                      "    scf.yield %truth : !ctjs.value\n"
+                                      "  } else {\n"
+                                      "    %nil = ctjs.constant #ctjs.null\n"
+                                      "    scf.yield %nil : !ctjs.value\n  }\n"
+                                      "  %unit = ctjs.binary_static bitor %operand, %one\n";
+    const auto primitiveBitwise = replace(carriedUnit, makeUnit, primitiveBits);
+    rows.push_back({.what = "primitive bitwise proves each structured predecessor snapshot",
+                    .body = primitiveBitwise,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; y -> {y}"});
+    rows.push_back({.what = "primitive bitwise releases only unreturned structured children",
+                    .body = replace(primitiveBitwise, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+                    .exit = "zero -> {}; zero -> {}"});
+    reject("primitive bitwise snapshots cannot change across structured backedges",
+           replace(primitiveBitwise, "%base, %step, %read, %d :", "%base, %step, %read, %zero :"));
+    reject("primitive bitwise cannot borrow another predecessor's exact operand",
+           replace(primitiveBitwise, "scf.yield %nil :", "scf.yield %p :"),
+           ArrayContentsFailure::UnknownValue);
+    reject("Undefined cannot borrow the structured primitive bitwise proof",
+           replace(primitiveBitwise, "#ctjs.null", "#ctjs.undefined"));
+    reject("repeated structured primitive bitwise producers need independent invariance",
+           replace(replace(primitiveBitwise, "    %step =",
+                           "    %repeated = ctjs.binary_static bitor %operand, %one\n    %step ="),
+                   "add %i, %d", "add %i, %repeated"));
     const std::string unsignedOperation = "  %count = ctjs.unary neg %one\n"
                                           "  %unit = ctjs.binary_static ushr %operand, %count\n";
     const auto unsignedCarried =
