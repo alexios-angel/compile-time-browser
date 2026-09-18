@@ -157,10 +157,20 @@ calls expand; JSON aggregate behavior is unchanged.
 Class/DOM composition now reuses the complete original class proof in that private
 transaction. The public class pass remains closed-source-only with unused entry
 parameters. A DOM request may supply `__ctbrowser_class_defined` and optional
-unique `Error`. Both bindings and complete original getter bodies are proved
-before their declarations are consumed. Unused literal-message Error getters
-may then disappear; referenced throws still require final typed DOM proof and
-currently refuse. Other mixed intrinsic declarations remain unsupported.
+unique `Error` alongside existing DOM intrinsic declarations. The class helper
+and Error bindings and complete original getter bodies are proved before only
+those declarations are consumed. DOM identities survive every method probe and
+final typed reproof. The original source census rejects declared intrinsic
+replacement before any method can disappear. Unused literal-message Error
+getters may then disappear; referenced throws still require final typed DOM
+proof and currently refuse.
+
+Declared DOM loads and `toString` reads in entry/method bodies defer to that
+complete typed proof. `toString` requires an actual Number receiver; arbitrary
+coercion hooks remain unsupported. Even a method with only an intrinsic load
+requires a probe. An ignored pure intrinsic result is inert, while observable
+identity uses, unknown effects and unsupported inputs still refuse. Constructors,
+getters and helpers retain their existing stricter census.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent

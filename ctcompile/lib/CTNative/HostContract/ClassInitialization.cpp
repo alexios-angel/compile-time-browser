@@ -777,6 +777,10 @@ struct classInitialization {
                 return mlir::WalkResult::interrupt();
             }
             if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+                if (domEntry && llvm::is_contained(contract.initialIntrinsics, store.getName())) {
+                    refuse("declared DOM intrinsic binding is replaced by source");
+                    return mlir::WalkResult::interrupt();
+                }
                 auto [at, fresh] = globals.try_emplace(store.getName(), store);
                 if (!fresh) { at->second = {}; }
             }
@@ -933,6 +937,15 @@ struct classInitialization {
                 accepted = load.getName() == host_detail::classDefinedIntrinsic ||
                            globalHolderLoads.contains(load) ||
                            static_cast<bool>(sourceClosure(load.getResult()));
+                auto fn = op->getParentOfType<ctjs::FuncOp>();
+                if (domEntry && (fn == entry || methods.contains(fn)) &&
+                    load.getName() != "Error" &&
+                    llvm::is_contained(contract.initialIntrinsics, load.getName())) {
+                    // Only the complete typed DOM proof can authorize these
+                    // identities and their uses, including unused method bodies.
+                    accepted = true;
+                    needsDOMMethodProof |= methods.contains(fn);
+                }
             }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
                 accepted = helperCalls.contains(call);
@@ -951,6 +964,14 @@ struct classInitialization {
                 accepted = ctjs::ordinaryKey(key) ||
                            (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
                             llvm::isa<ctjs::NumberAttr>(constant.getValue()));
+                auto fn = op->getParentOfType<ctjs::FuncOp>();
+                if (domEntry && (fn == entry || methods.contains(fn)) &&
+                    llvm::isa<ctjs::GetPropertyOp>(op) && ctjs::constantKey(key) == "toString") {
+                    // The DOM proof requires the actual Number receiver; this
+                    // is not permission to invoke an arbitrary coercion hook.
+                    accepted = true;
+                    needsDOMMethodProof |= methods.contains(fn);
+                }
             }
             // Method calls defer only to complete private DOM probes below,
             // including unused/transitive callers. Constructors, getters and
@@ -1465,31 +1486,33 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     };
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
-        !llvm::is_contained(contract.initialIntrinsics, host_detail::classDefinedIntrinsic) ||
-        !(contract.initialIntrinsics.size() == 1 ||
-          (contract.initialIntrinsics.size() == 2 &&
-           llvm::is_contained(contract.initialIntrinsics, "Error"))) ||
-        contract.realmGlobalThis || contract.classicScriptRealm ||
-        !contract.absentBindings.empty() || !contract.undefinedBindings.empty() ||
-        !contract.realmOwnDataProperties.empty()) {
+        llvm::count(contract.initialIntrinsics, host_detail::classDefinedIntrinsic) != 1 ||
+        llvm::count(contract.initialIntrinsics, "Error") > 1 || contract.realmGlobalThis ||
+        contract.classicScriptRealm || !contract.absentBindings.empty() ||
+        !contract.undefinedBindings.empty() || !contract.realmOwnDataProperties.empty()) {
         return refuse("DOM class initialization requires the standard class helper and optional "
                       "Error identity");
     }
     classInitialization proof{module, maxSteps};
     if (!proof.prove(contract, true)) { return refuse(proof.reason); }
     // Reuse the binding proof before consuming its declaration. This projected
-    // contract proves helper and optional Error identity; DOM parameters are
-    // proved later. Referenced throwing getters retain their original bodies
-    // and must still pass the final typed DOM proof after rewriting.
+    // contract proves helper and optional Error identity; DOM declarations and
+    // parameters are proved later. Referenced throwing getters retain their
+    // original bodies and must pass the final typed DOM proof after rewriting.
     HostContract binding = contract;
     binding.provider = HostContract::Provider::closedSource;
     binding.elementParameters.clear();
+    llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
+        return name != host_detail::classDefinedIntrinsic && name != "Error";
+    });
     if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
         return refuse(problem);
     }
     if (!proof.normalizeMethods()) { return refuse(proof.reason); }
     proof.rewrite();
-    contract.initialIntrinsics.clear();
+    llvm::erase_if(contract.initialIntrinsics, [](const auto & name) {
+        return name == host_detail::classDefinedIntrinsic || name == "Error";
+    });
     if (!proof.proveDOMMethods(contract)) { return refuse(proof.reason); }
     return llvm::Error::success();
 }

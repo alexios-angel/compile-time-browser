@@ -486,6 +486,69 @@ CLASS_REFUSALS = {
         "read(key = 'x')", "read(key = (this.element = {}, 'x'))"
     ),
 }
+NUMBER_CLASS = """class Shape {
+    constructor(element) { this.element = element; }
+    read() { return Number(this.element.getAttribute('x')).toString() === '0'; }
+  }
+  return new Shape(element).read();
+"""
+NUMBER_CASES = {
+    "class_number_unused_identity": (
+        NUMBER_CLASS.replace("    read()", "    unused() { return Number; }\n    read()"),
+        "1100",
+    ),
+    "class_number_method": (NUMBER_CLASS, "1100"),
+    "class_number_entry": (
+        CLASS + "  return Number(element.getAttribute(shape.read())).toString() === '0';\n",
+        "1100",
+    ),
+    "class_number_unused": (
+        NUMBER_CLASS.replace(
+            "    read()",
+            "    unused() { Number(this.element.getAttribute('x')); }\n    read()",
+        ),
+        "1100",
+    ),
+    "class_error_number": (
+        NUMBER_CLASS.replace(
+            "    read()",
+            "    static get NAME() { throw new Error('unused NAME'); }\n    read()",
+        ),
+        "1100",
+    ),
+}
+NUMBER_REFUSALS = {
+    "class_number_unused_escape": NUMBER_CLASS.replace(
+        "    read()", "    unused() { this.element.setAttribute('leak', Number); }\n    read()"
+    ),
+    "class_number_unused_replace_without_calls": CLASS.replace(
+        "    read()", "    unused() { Number = 9; }\n    read()"
+    )
+    + READ,
+    "class_number_object_to_string": NUMBER_CLASS.replace(
+        "Number(this.element.getAttribute('x'))", "{}"
+    ),
+    "class_number_unused_replace": NUMBER_CLASS.replace(
+        "    read()", "    unused() { Number = 9; }\n    read()"
+    ),
+    "class_number_unused_object": NUMBER_CLASS.replace(
+        "    read()", "    unused() { Number({}); }\n    read()"
+    ),
+    "class_number_replaced_after_read": NUMBER_CLASS.replace(
+        "return Number(", "const saved = Number("
+    ).replace("=== '0';", "=== '0'; Number = 9; return saved;"),
+    "class_number_dead_unknown": NUMBER_CLASS.replace(
+        "    read() {", "    read() { if (false) this.element.unknown();"
+    ),
+    "class_number_dead_replaced": NUMBER_CLASS.replace(
+        "    read() {", "    read() { if (false) Number = 9;"
+    ),
+    "class_number_effectful_getter": NUMBER_CLASS.replace(
+        "    read()", "    static get NAME() { return Number('0'); }\n    read()"
+    ),
+}
+CLASS_CASES.update(NUMBER_CASES)
+CLASS_REFUSALS.update(NUMBER_REFUSALS)
 CASES = {
     "direct_read": (
         """function directRead(target, key) { return target.getAttribute(key); }
@@ -925,7 +988,8 @@ def main():
                 contract,
                 provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1",
                 initial_intrinsics=["__ctbrowser_class_defined"]
-                + (["Error"] if name.startswith("class_error_") else []),
+                + (["Error"] if name.startswith("class_error_") else [])
+                + (["Number"] if name in NUMBER_CASES or name in NUMBER_REFUSALS else []),
             )
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
@@ -938,7 +1002,12 @@ def main():
             dom.lower(
                 args,
                 ir,
-                dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Error"]),
+                dict(
+                    request,
+                    initial_intrinsics=list(
+                        dict.fromkeys(request["initial_intrinsics"] + ["Error"])
+                    ),
+                ),
                 f"{name}-{owned}-extra-authority",
             )
             if name == "class_error_unused":
@@ -950,15 +1019,45 @@ def main():
                     success=False,
                 )
                 refusals += 1
+            # Keep the old mixed request verbatim: only sources requiring Error
+            # or Number still lack an identity. Also prove the full mixed request.
+            mixed = ["__ctbrowser_class_defined", "Object"]
+            missing_identity = name.startswith("class_error_") or name in NUMBER_CASES
+            dom.lower(
+                args,
+                ir,
+                dict(request, initial_intrinsics=mixed),
+                f"{name}-{owned}-mixed-dom-authority",
+                success=not missing_identity,
+            )
+            refusals += int(missing_identity)
+            dom.lower(
+                args,
+                ir,
+                dict(request, initial_intrinsics=request["initial_intrinsics"] + ["Object"]),
+                f"{name}-{owned}-complete-mixed-authority",
+            )
+            if name in NUMBER_CASES:
+                for control, identities in (
+                    (
+                        "undeclared-number",
+                        [i for i in request["initial_intrinsics"] if i != "Number"],
+                    ),
+                    ("duplicate-number", request["initial_intrinsics"] + ["Number"]),
+                ):
+                    dom.lower(
+                        args,
+                        ir,
+                        dict(request, initial_intrinsics=identities),
+                        f"{name}-{owned}-{control}",
+                        success=False,
+                    )
+                    refusals += 1
             for control, changed in (
                 ("missing-entry", dict(request, entry="missing$999")),
                 ("missing-element", dict(request, element_parameters=[])),
                 ("stale", dict(request, module_sha256="0" * 64)),
                 ("no-authority", dict(request, initial_intrinsics=[])),
-                (
-                    "mixed-dom-authority",
-                    dict(request, initial_intrinsics=["__ctbrowser_class_defined", "Object"]),
-                ),
                 (
                     "duplicate-error",
                     dict(

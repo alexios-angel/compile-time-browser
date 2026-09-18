@@ -140,15 +140,15 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                         names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
                     return std::move(failure);
                 }
-                // Class preparation proves and consumes these identities before
-                // the ordinary typed DOM proof, including unused throwing getters.
-                const bool classOnly =
-                    llvm::is_contained(result.initialIntrinsics,
-                                       host_detail::classDefinedIntrinsic) &&
-                    llvm::all_of(result.initialIntrinsics, [](const auto & name) {
-                        return name == host_detail::classDefinedIntrinsic || name == "Error";
-                    });
-                if (!classOnly && llvm::any_of(result.initialIntrinsics, [](const auto & name) {
+                // Class preparation consumes only its own identities. The DOM
+                // declarations survive for every method probe and final proof.
+                const bool hasClasses = llvm::is_contained(result.initialIntrinsics,
+                                                           host_detail::classDefinedIntrinsic);
+                if (llvm::any_of(result.initialIntrinsics, [&](const auto & name) {
+                        if (hasClasses &&
+                            (name == host_detail::classDefinedIntrinsic || name == "Error")) {
+                            return false;
+                        }
                         return name != "Object" && name != "Number" &&
                                name != "decodeURIComponent" && name != "JSON" && name != "Array" &&
                                name != "String" && name != "RegExp" &&

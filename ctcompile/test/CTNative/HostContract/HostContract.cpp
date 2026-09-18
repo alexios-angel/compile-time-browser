@@ -117,7 +117,10 @@ module {
              {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
               "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",
               "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]",
-              "[\"__ctbrowser_class_defined\",\"Error\",\"Error\"]"}) {
+              "[\"__ctbrowser_class_defined\",\"Error\",\"Error\"]",
+              "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]",
+              "[\"__ctbrowser_class_defined\",\"Math\"]",
+              "[\"__ctbrowser_class_defined\",\"Number\",\"Number\"]"}) {
             const auto request = replaced(
                 replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
                 (std::string("\"initial_intrinsics\":") + identities + ",\"element_parameters\""));
@@ -125,9 +128,13 @@ module {
             const bool allowed =
                 std::string_view(identities) == "[\"__ctbrowser_class_defined\"]" ||
                 std::string_view(identities) == "[\"__ctbrowser_class_defined\",\"Error\"]" ||
-                std::string_view(identities) == "[\"Error\",\"__ctbrowser_class_defined\"]";
+                std::string_view(identities) == "[\"Error\",\"__ctbrowser_class_defined\"]" ||
+                std::string_view(identities) ==
+                    "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]" ||
+                std::string_view(identities) ==
+                    "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]";
             check(static_cast<bool>(classes) == allowed,
-                  "DOM class declarations allow only helper and optional unique Error");
+                  "DOM class declarations compose unique existing intrinsic identities");
             if (classes) {
                 check(!DOMEntryAnalysis(*module, *classes).proved(),
                       "class declarations require preparation before typed DOM admission");

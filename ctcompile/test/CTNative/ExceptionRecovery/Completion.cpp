@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 35; ++control) {
+        for (unsigned control = 0; control < 46; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -466,6 +466,25 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     source.replace(source.find("'unused NAME'"), 13, "unknown()");
                 }
             }
+            if (control >= 35) {
+                source =
+                    "function guarded(element) { class Shape { "
+                    "static get NAME() { throw new Error('unused NAME'); } "
+                    "constructor(value) { this.element = value; } "
+                    "read() { return Number(this.element.getAttribute('x')).toString(); } " +
+                    std::string(control == 45
+                                    ? "unused() { this.element.setAttribute('leak', Number); } "
+                                : control == 38 ? "unused() { return Number; } "
+                                : control == 39 ? "unused() { Number = 9; } "
+                                : control == 44 ? "unused() { Number({}); } "
+                                                : "") +
+                    "} const shape = new Shape(element); " +
+                    std::string(control == 40   ? "Number = 9; "
+                                : control == 41 ? "element.unknown(); "
+                                                : "") +
+                    "return shape.read() === '0'; }";
+                if (control == 42) { source += " Number = 9;"; }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -480,6 +499,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 request.initialIntrinsics.push_back("Error");
             }
             if (control == 33) { request.initialIntrinsics.push_back("Error"); }
+            if (control >= 35 && control != 36) { request.initialIntrinsics.push_back("Number"); }
+            if (control == 37) { request.initialIntrinsics.push_back("Number"); }
+            if (control == 43) { request.initialIntrinsics.push_back("__ctbrowser_class_defined"); }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
             auto error = ctnative::prepareDOMEntry(*candidate, request,
@@ -487,7 +509,10 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                                    : control == 4 || control == 17 ? 1000
                                                                                    : 100000);
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
-                control != 19 && control != 23 && control != 25) {
+                control != 19 && control != 23 && control != 25 && control != 35 && control != 38) {
+                if (!error) {
+                    llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
+                }
                 check(static_cast<bool>(error), "unproved class/DOM composition refuses");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&
@@ -500,7 +525,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
                 const ctnative::DOMEntryAnalysis checked(*candidate, request);
                 check(mlir::succeeded(mlir::verify(*candidate)) && checked.proved() &&
-                          request.initialIntrinsics.empty() &&
+                          (control >= 35
+                               ? request.initialIntrinsics == std::vector<std::string>{"Number"}
+                               : request.initialIntrinsics.empty()) &&
                           request.moduleSha256 == ctnative::hostContractFingerprint(*candidate) &&
                           !(*candidate)->hasAttr("ctnative.supplied"),
                       "class/DOM composition publishes only the fresh typed DOM proof");

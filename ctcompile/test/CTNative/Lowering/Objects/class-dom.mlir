@@ -21,3 +21,6 @@
 // Unknown defaults still refuse when supplied arguments skip their execution.
 // Unused throwing NAME getters require declared Error identity and complete body proof.
 // Replaced bindings, escaping errors, effectful messages and live throws still refuse.
+// Mixed class/DOM declarations retain their identities through complete method
+// probes and final typed proof. Number conversion reuses the DOM implementation;
+// unused identity escapes, replacements and unknown effects still refuse.
