@@ -824,6 +824,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return px_text(border_width_px(text, at.font_size));
         }
+        // Column rules keep their computed width even for `none` and `hidden`.
+        // Resolve line-width keywords before the shorthand fold can omit `medium`.
+        if (property == "column-rule-width" &&
+            (text.empty() || ascii_iequals(text, "thin") || ascii_iequals(text, "medium") ||
+             ascii_iequals(text, "thick"))) {
+            return px_text(border_width_px(text, at.font_size));
+        }
         if (text.empty()) { return {}; }
         // 3. LENGTHS, through layout's own parser against layout's own basis.
         //    `auto` stays `auto`, which is what Chrome returns for a margin that
