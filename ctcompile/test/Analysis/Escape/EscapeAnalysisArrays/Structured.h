@@ -707,6 +707,33 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                opcode == "binary" ? ArrayContentsFailure::UnsupportedOperation
                                   : ArrayContentsFailure::UnknownValue);
     }
+    for (const std::string opcode : {"binary", "binary_static"}) {
+        const std::string negativeSum = "  %negative = ctjs.unary neg %magnitude\n"
+                                        "  %unit = ctjs." +
+                                        opcode + " add %negative, %one\n";
+        const auto source =
+            replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n", negativeSum);
+        rows.push_back({.what = "negative Add survives reordered structured transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured negative Add releases unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        reject("negative Add snapshots cannot change across structured yields",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("negative Add needs an exact Number on every structured predecessor",
+               replace(source, "  %negative = ctjs.unary neg %magnitude\n",
+                       "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                       "    %n = ctjs.unary neg %magnitude\n"
+                       "    scf.yield %n : !ctjs.value\n"
+                       "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+               opcode == "binary" ? ArrayContentsFailure::UnsupportedOperation
+                                  : ArrayContentsFailure::UnknownValue);
+    }
     for (const std::string operation : {"div", "mod"}) {
         const std::string makeResult =
             "  %unit = ctjs.binary " + operation +

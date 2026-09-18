@@ -1879,10 +1879,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
-        // A negative Sub offset proves growth, never holes or release.
+        // A negative Sub offset, including saved Add, proves growth, never holes or release.
         // A nonzero negative divisor keeps these zero results exact.
-        inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub &&
-                        binary.getRhs().getDefiningOp<ctjs::ConstantOp>() == literal
+        inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub
                     ? ArrayContentsFailure::MissingElement
                 : binary && (binary.getKind() == ctjs::BinaryKind::Div ||
                              binary.getKind() == ctjs::BinaryKind::Mod)
