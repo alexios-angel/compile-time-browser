@@ -105,6 +105,14 @@ void test_interpolation() {
         CHECK(interpolate_text(property, "10", "20", 0.05, context) == "11");
     }
     CHECK(interpolate_text("width", "0px", "100px", -0.5, context) == "0px");
+    for (const auto property :
+         {"width", "border-image-width", "border-image-slice", "border-top-left-radius"}) {
+        CHECK(interpolate_text(property, "0%", "20%", -0.5, context) == "0%");
+        CHECK(interpolate_text(property, "10%", "20%", 1.5, context) == "25%");
+    }
+    CHECK(interpolate_text("border-image-slice", "0% 10 20% 30 fill", "40% 50 60% 70 fill", -0.5,
+                           context) == "0% 0 0% 10 fill");
+    CHECK(interpolate_text("left", "0%", "20%", -0.5, context) == "-10%");
     CHECK(interpolate_text("font-weight", "100", "900", 2, context) == "1000");
     CHECK(interpolate_text("font-weight", "100", "900", -1, context) == "1");
     CHECK(interpolate_text("left", "calc(2 * 3px)", "12px", 0, context) == "6px");
