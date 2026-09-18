@@ -1192,6 +1192,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         .arrays = "a:[]; result:[a,index]",
         .exit = "result -> {a,result}"};
     run(quotientShrink);
+    contents_row powerShrink = quotientShrink;
+    powerShrink.what = "power one preserves signed zero length and original result identity";
+    powerShrink.body.replace(powerShrink.body.find("binary div"), 10, "binary pow");
+    run(powerShrink);
+
     const contents_row remainderShrink{
         .what = "a signed zero remainder supplies a non-growing length and keeps its origin",
         .body = values + one + read +

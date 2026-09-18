@@ -1270,6 +1270,33 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    replace(source, "div %minus, %one", "div %minus, %two"));
         }
     }
+    const std::string power = "  %power = ctjs.binary pow %minus, %one\n";
+    const auto powerChild = replace(replace(savedSub, "  cf.br ^header", power + "  cf.br ^header"),
+                                    "sub %i, %minus", "sub %i, %power");
+    run({.what = "power one keeps the original negative length snapshot through CFG transport",
+         .body = powerChild,
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "power zero releases only unreturned children",
+         .body = replace(replace(replace(powerChild, "pow %minus, %one", "pow %minus, %zero"),
+                                 "binary sub %i, %power", "binary_static add %i, %power"),
+                         "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    for (const std::string exponent : {"%two", "%minus"}) {
+        reject("general and negative powers need a separate exact Number proof",
+               replace(powerChild, "pow %minus, %one", "pow %minus, " + exponent));
+    }
+    reject("power snapshots cannot borrow an unknown exponent",
+           replace(powerChild, "pow %minus, %one", "pow %minus, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("negative powers cannot supply an own array index",
+           replace(powerChild, "%base[%i]", "%base[%power]"), ArrayContentsFailure::UnknownIndex);
+    reject("a power snapshot cannot change on the CFG backedge",
+           replace(replace(powerChild, power, ""), "  %step =", power + "  %step ="));
     const std::string factor = "  %factor = ctjs.unary plus %one\n";
     const std::string product = "  %product = ctjs.binary mul %minus, %factor "
                                 "{storage_test_id = \"product\"}\n";

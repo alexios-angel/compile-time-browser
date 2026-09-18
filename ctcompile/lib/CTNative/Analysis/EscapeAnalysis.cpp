@@ -1786,6 +1786,25 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         }
                     }
                 }
+                if (binary.getKind() == ctjs::BinaryKind::Pow) {
+                    const auto exponent =
+                        right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    const auto positive =
+                        left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    const auto negative = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                                     : boundedNumber(lhs, true);
+                    // ponytail: only zero/one exponents; general powers need a
+                    // proof matching Number's implementation-approximated result.
+                    // Keep the result identity, including the sign of base ** 1.
+                    if (exponent && *exponent <= 1 && (positive || negative)) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.integerNumber =
+                            *exponent == 0 ? std::optional<std::size_t>{1} : positive;
+                        if (*exponent == 1 && !positive) {
+                            result.negativeIntegerNumber = negative;
+                        }
+                    }
+                }
                 state.values[binary.getResult()] = result;
                 continue;
             }
