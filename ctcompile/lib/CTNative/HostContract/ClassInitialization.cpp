@@ -1,6 +1,7 @@
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 
@@ -428,8 +429,9 @@ struct classInitialization {
                 return mlir::WalkResult::interrupt();
             }
             if (op->getNumRegions() && op != module.getOperation() &&
-                !(llvm::isa<ctjs::FuncOp>(op) && op->getParentOp() == module.getOperation())) {
-                refuse("class initialization requires only its checked top-level function regions");
+                !(llvm::isa<ctjs::FuncOp>(op) && op->getParentOp() == module.getOperation()) &&
+                !llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
+                refuse("class initialization contains an unchecked source region");
                 return mlir::WalkResult::interrupt();
             }
             if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
@@ -463,6 +465,13 @@ struct classInitialization {
                           ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp,
                           ctjs::StoreGlobalOp, ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp,
                           ctjs::TruthyOp, ctjs::FromBoolOp>(op);
+            // Only proved ordinary methods may contain structured control flow.
+            // The recursive census still checks every arm/body, including ones
+            // never called. Setup, constructors and getter cloning stay linear.
+            if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp, mlir::scf::YieldOp,
+                          mlir::scf::ConditionOp>(op)) {
+                accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>());
+            }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
                 accepted = constructors.contains(fn) || methods.contains(fn) ||
