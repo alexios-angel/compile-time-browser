@@ -1615,8 +1615,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                 continue;
             }
             if ((literal == "#ctjs.boolean<false>" || literal == "#ctjs.null") &&
-                (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input")) {
-                run({.what = "Boolean/null unary conversion supplies an exact empty length",
+                (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input" ||
+                 producer == "ctjs.binary mul %input, %zero")) {
+                run({.what = "Boolean/null numeric conversion supplies an exact empty length",
                      .body = body,
                      .arrays = "a:[]",
                      .exit = "a -> {a}"});

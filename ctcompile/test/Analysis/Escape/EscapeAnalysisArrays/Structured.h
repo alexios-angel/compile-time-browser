@@ -1106,6 +1106,27 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         replace(carriedProduct, "  %unit = ctjs.binary mul %negative, %one\n",
                 "  %factor = ctjs.constant #ctjs.string<\"1\">\n"
                 "  %unit = ctjs.binary mul %factor, %negative\n");
+    const auto booleanProduct =
+        replace(stringProduct, "  %factor = ctjs.constant #ctjs.string<\"1\">\n",
+                "  %factor = scf.if %flag -> (!ctjs.value) {\n"
+                "    %truth = ctjs.constant #ctjs.boolean<true>\n"
+                "    scf.yield %truth : !ctjs.value\n"
+                "  } else {\n    scf.yield %one : !ctjs.value\n  }\n");
+    rows.push_back({.what = "Boolean and Number products prove each structured predecessor",
+                    .body = booleanProduct,
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x",
+                    .exit = "x -> {x}; x -> {x}"});
+    rows.push_back({.what = "Boolean products release only unreturned structured children",
+                    .body = replace(booleanProduct, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[0]=x",
+                    .exit = "zero -> {}; zero -> {}"});
+    reject("Boolean products cannot change across structured backedges",
+           replace(booleanProduct, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("a Boolean product cannot authorize an unknown structured predecessor",
+           replace(booleanProduct, "scf.yield %one :", "scf.yield %p :"),
+           ArrayContentsFailure::UnsupportedOperation);
     rows.push_back(
         {.what = "String products preserve signed snapshots through structured transport",
          .body = stringProduct,

@@ -1687,6 +1687,50 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                 "sub %i, %minus", "sub %i, %product");
     const auto stringProduct =
         replace(productChild, factor, "  %factor = ctjs.constant #ctjs.string<\"1\">\n");
+    for (const std::string literal :
+         {"#ctjs.boolean<true>", "#ctjs.boolean<false>", "#ctjs.null"}) {
+        for (const bool negative : {false, true}) {
+            for (const bool commuted : {false, true}) {
+                const std::string expected = literal != "#ctjs.boolean<true>" ? "0"
+                                             : negative ? "13830554455654793216"
+                                                        : "4607182418800017408";
+                run({.what = "Boolean/null products keep exact signed Number magnitudes",
+                     .body = prefix + "  %input = ctjs.constant " + literal +
+                             "\n  %factor = ctjs.unary " + (negative ? "neg" : "plus") +
+                             " %one\n  %snapshot = ctjs.binary mul " +
+                             (commuted ? "%factor, %input" : "%input, %factor") +
+                             "\n  %expected = ctjs.constant #ctjs.number<" + expected +
+                             ">\n  %index = ctjs.binary sub %snapshot, %expected\n"
+                             "  %read = ctjs.get_property %a[%index]\n  ctjs.return %read\n",
+                     .arrays = "a:[one,two,three]",
+                     .reads = "a[0]=one",
+                     .exit = "one -> {}"});
+            }
+        }
+    }
+    const auto booleanProduct =
+        replace(productChild, factor, "  %factor = ctjs.constant #ctjs.boolean<true>\n");
+    for (const auto & source :
+         {booleanProduct, replace(booleanProduct, "mul %minus, %factor", "mul %factor, %minus")}) {
+        run({.what = "Boolean products preserve signed snapshots through CFG transport",
+             .body = source,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "Boolean products discharge only unreturned CFG children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    reject("a product cannot turn its original Boolean factor into an own index",
+           replace(booleanProduct, "%base[%i]", "%base[%factor]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("a repeated Boolean product still needs independent invariance",
+           replace(replace(booleanProduct, product, ""), "  %step =", product + "  %step ="));
+    reject("an Undefined factor cannot borrow Boolean product evidence",
+           replace(booleanProduct, "#ctjs.boolean<true>", "#ctjs.undefined"));
     for (const auto & source :
          {productChild, replace(productChild, "mul %minus, %factor", "mul %factor, %minus"),
           stringProduct, replace(stringProduct, "mul %minus, %factor", "mul %factor, %minus"),
@@ -1721,6 +1765,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .reads = "holder[0]=ctjs.constant; a[0]=one; a[1]=x",
          .exit = "zero -> {}"},
         "x");
+    run({.what = "a saved Boolean factor keeps its read-time value after replacement",
+         .body = replace(savedStringProduct, "#ctjs.string<\"1\">", "#ctjs.boolean<true>"),
+         .arrays = "a:[one,x]; seed:[]; holder:[x]",
+         .reads = "holder[0]=ctjs.constant; a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("a repeated String product needs independent invariance",
            replace(replace(stringProduct, product, ""), "  %step =", product + "  %step ="));
     const auto positiveProduct =
@@ -1731,8 +1780,8 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,x]; seed:[]",
          .reads = "a[1]=x; a[1]=x",
          .exit = "x -> {x}"});
-    for (const std::string zero :
-         {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>", "#ctjs.string<\"0\">"}) {
+    for (const std::string zero : {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
+                                   "#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null"}) {
         const auto zeroProduct = replace(
             replace(replace(productChild, factor, "  %factor = ctjs.constant " + zero + "\n"),
                     "binary sub %i, %product", "binary_static add %i, %one"),

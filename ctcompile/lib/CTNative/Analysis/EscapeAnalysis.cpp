@@ -895,6 +895,23 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
+// The nonnegative part of an exact primitive Number conversion. Facts attach
+// only to the operation result; Boolean/null origins keep their property keys.
+std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input) {
+    if (input.integerNumber) { return input.integerNumber; }
+    const auto origin = input.origin();
+    if (!origin) { return std::nullopt; }
+    if (auto number = boundedNumber(origin)) { return number; }
+    if (input.string()) { return ownArrayIndex(origin); }
+    if (auto literal = origin.getDefiningOp<ctjs::ConstantOp>()) {
+        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
+            return boolean.getValue() ? 1 : 0;
+        }
+        if (llvm::isa<ctjs::NullAttr>(literal.getValue())) { return 0; }
+    }
+    return std::nullopt;
+}
+
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(left.origin());
@@ -1544,22 +1561,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // rejects publication, calls and handlers, so that early
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
-                    auto positive =
-                        input.integerNumber ? input.integerNumber : boundedNumber(input.origin());
-                    if (!positive && input.string()) { positive = ownArrayIndex(input.origin()); }
+                    const auto positive = boundedConvertedNumber(input);
                     const auto negative = input.negativeIntegerNumber
                                               ? input.negativeIntegerNumber
                                               : boundedNumber(input.origin(), true);
-                    if (auto literal = input.origin().getDefiningOp<ctjs::ConstantOp>(); literal) {
-                        // Original Boolean/null primitives convert without hooks
-                        // (context::to_number). Only the unary result is a Number;
-                        // their original identities never become numeric keys.
-                        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
-                            positive = boolean.getValue() ? 1 : 0;
-                        } else if (llvm::isa<ctjs::NullAttr>(literal.getValue())) {
-                            positive = 0;
-                        }
-                    }
                     if (unary.getKind() != ctjs::UnaryKind::BitNot) {
                         // Preserve held signed Numbers through Plus/Neg, keeping
                         // negative magnitudes separate from own-index facts.
@@ -1748,10 +1753,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                    auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
-                    if (!a && left.string()) { a = ownArrayIndex(lhs); }
-                    if (!b && right.string()) { b = ownArrayIndex(rhs); }
+                    auto a = boundedConvertedNumber(left);
+                    auto b = boundedConvertedNumber(right);
                     const bool negative = a.has_value() != b.has_value();
                     if (!a) {
                         a = left.negativeIntegerNumber ? left.negativeIntegerNumber
@@ -1761,9 +1764,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         b = right.negativeIntegerNumber ? right.negativeIntegerNumber
                                                         : boundedNumber(rhs, true);
                     }
-                    // Canonical Strings convert exactly like Sub's operands.
-                    // A bounded product excludes rounding and wrap; zero keeps
-                    // its original signed value as the origin.
+                    // Original Boolean/null and canonical Strings share unary's
+                    // exact conversion. A bounded product excludes rounding and
+                    // wrap; zero keeps its original signed value as the origin.
                     if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         const auto product = *a * *b;
