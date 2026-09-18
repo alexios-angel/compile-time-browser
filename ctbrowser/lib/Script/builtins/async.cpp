@@ -1435,6 +1435,7 @@ void install_promise(context & cx) {
             return c.string(out);
         });
         stat("fromCodePoint", 1, [](context & c, std::span<value> a) {
+            const std::string before = c.current_stack();
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 // 22.1.2.2 step 2c: a code point must be an INTEGER in
@@ -1442,7 +1443,9 @@ void install_promise(context & cx) {
                 // wrapped instead, so `String.fromCodePoint(-1)` produced the
                 // encoding of 0xFFFFFFFF and `fromCodePoint(1.5)` produced one
                 // for 1.
+                if (!numeric_arg(c, a[i])) { return value::undefined(); }
                 const double code = c.to_number_value(a[i]);
+                if (detail::threw_since(c, before)) { return value::undefined(); }
                 if (code != std::trunc(code) || std::isnan(code) || code < 0 || code > 0x10FFFF) {
                     c.throw_error("RangeError", "Invalid code point");
                     return c.string(std::string{});
@@ -1458,19 +1461,32 @@ void install_promise(context & cx) {
         // is the whole surface. 25 of the 30 test262 files read "TypeError:
         // raw is undefined, not a function" before this.
         stat("raw", 1, [](context & c, std::span<value> a) {
+            const std::string before = c.current_stack();
             const value cooked = arg_at(a, 0);
             const value literals = c.lookup_property(cooked, "raw");
+            if (detail::threw_since(c, before)) { return value::undefined(); }
+            const context::rooted keep{c, literals};
             const value raw_len = c.lookup_property(literals, "length");
+            if (detail::threw_since(c, before) || !numeric_arg(c, raw_len)) {
+                return value::undefined();
+            }
             const double count = to_length(c.to_number_value(raw_len));
+            if (detail::threw_since(c, before)) { return value::undefined(); }
             std::string out;
             for (double k = 0; k < count; k += 1.0) {
-                out += c.to_string(c.lookup_index(literals, value::number(k)));
+                const value segment = c.lookup_index(literals, value::number(k));
+                if (detail::threw_since(c, before)) { return value::undefined(); }
+                out += string_arg(c, segment);
+                if (detail::threw_since(c, before)) { return value::undefined(); }
                 if (k + 1 == count) { break; }
                 // One substitution BETWEEN each pair of literals, and running
                 // out of them ends the interpolation rather than the string:
                 // `String.raw({raw: ['a','b','c']}, 'x')` is "axbc".
                 const std::size_t at = static_cast<std::size_t>(k) + 1;
-                if (at < a.size()) { out += c.to_string(a[at]); }
+                if (at < a.size()) {
+                    out += string_arg(c, a[at]);
+                    if (detail::threw_since(c, before)) { return value::undefined(); }
+                }
             }
             return c.string(out);
         });
