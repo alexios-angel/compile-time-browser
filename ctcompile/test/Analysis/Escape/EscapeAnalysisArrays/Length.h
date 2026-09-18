@@ -1481,9 +1481,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                 (producer == "ctjs.binary mul %input, %zero" ||
                  producer == "ctjs.binary div %input, %input" ||
                  producer == "ctjs.binary mod %input, %input" ||
-                 producer == "ctjs.binary_static ushr %input, %input")) {
+                 producer == "ctjs.binary_static ushr %input, %input" ||
+                 producer == "ctjs.unary neg %input")) {
                 const bool retained = producer == "ctjs.binary div %input, %input" ||
-                                      producer == "ctjs.binary_static ushr %input, %input";
+                                      producer == "ctjs.binary_static ushr %input, %input" ||
+                                      producer == "ctjs.unary neg %input";
                 run({.what = "signed Number arithmetic preserves the exact zero or unit length",
                      .body = body,
                      .arrays = retained ? "a:[x]" : "a:[]",
@@ -1878,7 +1880,9 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             contents_row current = source;
             current.failure = failure;
             if (retained) {
-                current.arrays = shift ? "a:[x]; result:[a,index]" : "a:[x]; result:[a,length]";
+                current.arrays = shift   ? "a:[x]; result:[a,index]"
+                                 : unary ? "a:[x]; result:[a,wanted]"
+                                         : "a:[x]; result:[a,length]";
                 current.exit = "result -> {a,result,x}";
             }
             check(*module, current, retained ? "" : "x");
@@ -1908,16 +1912,20 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         // A negative Sub offset, including saved Add, proves growth, never holes or release.
         // A nonzero negative divisor keeps these zero results exact.
         // A signed mask or shift count also keeps the original zero result.
+        // Negating the original -1 retains the full unit-length array.
+        const bool negatedUnit = unary && unary.getKind() == ctjs::UnaryKind::Neg;
         inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub
                     ? ArrayContentsFailure::MissingElement
-                : (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
-                              binary.getKind() == ctjs::BinaryKind::Mod)) ||
+                : negatedUnit ||
+                        (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
+                                    binary.getKind() == ctjs::BinaryKind::Mod)) ||
                         (shift && (shiftKind.getValue() == ctjs::BinaryKind::Shl ||
                                    shiftKind.getValue() == ctjs::BinaryKind::Shr ||
                                    shiftKind.getValue() == ctjs::BinaryKind::UShr ||
                                    shiftKind.getValue() == ctjs::BinaryKind::BitAnd))
                     ? ArrayContentsFailure::None
-                    : ArrayContentsFailure::UnknownIndex);
+                    : ArrayContentsFailure::UnknownIndex,
+                negatedUnit);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));

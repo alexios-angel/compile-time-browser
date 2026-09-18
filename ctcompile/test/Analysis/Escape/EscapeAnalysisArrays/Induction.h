@@ -1462,6 +1462,56 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         const auto signedChild =
             replace(replace(negativeChild, "  cf.br ^header", makeSigned + "  cf.br ^header"),
                     "binary sub %i, %minus", "binary " + operation + " %i, %signed");
+        const auto literalChild =
+            replace(signedChild, "ctjs.unary neg %magnitude", "ctjs.constant " + negativeLiteral);
+        run({.what = "signed unary literals retain the returned child after CFG induction",
+             .body = literalChild,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "signed unary literals discharge only unreturned CFG children",
+             .body = replace(literalChild, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        for (const auto & [input, negated] :
+             {std::pair{"9223372036854775808", "0"},
+              std::pair{"13830554455654793216", "4607182418800017408"},
+              std::pair{"13835058055282163712", "4611686018427387904"},
+              std::pair{"13974669643728551936", "4751297606873776128"}}) {
+            run({.what =
+                     "signed unary literals retain exact magnitude and original result identity",
+                 .body = prefix + "  %input = ctjs.constant #ctjs.number<" + input +
+                         ">\n"
+                         "  %expected = ctjs.constant #ctjs.number<" +
+                         (unary == "plus" ? input : negated) +
+                         ">\n"
+                         "  %actual = ctjs.unary " +
+                         unary +
+                         " %input {storage_test_id = \"actual\"}\n"
+                         "  %index = ctjs.binary sub %actual, %expected\n"
+                         "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one",
+                 .exit = "actual -> {}"});
+        }
+        for (const std::string constant :
+             {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
+              "#ctjs.number<13826050856027422720>", "#ctjs.number<13974669643730649088>",
+              "#ctjs.number<18442240474082181120>", "#ctjs.number<9221120237041090560>",
+              "#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">"}) {
+            reject("signed unary literal strides require exact nonzero bounded Numbers",
+                   replace(literalChild, negativeLiteral, constant));
+        }
+        reject(
+            "signed unary literals cannot be recomputed on the CFG backedge",
+            replace(replace(literalChild, makeSigned, ""), "  %step =", makeSigned + "  %step ="));
+        if (unary == "plus") {
+            reject("a signed unary literal's negative magnitude is never an own array index",
+                   replace(literalChild, "%base[%i]", "%base[%signed]"),
+                   ArrayContentsFailure::UnknownIndex);
+        }
         run({.what = "signed unary snapshots retain the exact returned child",
              .body = signedChild,
              .arrays = "a:[one,x]",

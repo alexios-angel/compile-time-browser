@@ -1011,6 +1011,28 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
             replace(replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
                             "  %negative = ctjs.unary neg %magnitude\n" + makeSigned),
                     "binary sub %i, %d", "binary " + operation + " %i, %d");
+        const auto carriedLiteral = replace(carriedSigned, "ctjs.unary neg %magnitude",
+                                            "ctjs.constant #ctjs.number<13835058055282163712>");
+        rows.push_back({.what = "signed unary literals survive reordered structured transport",
+                        .body = carriedLiteral,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x",
+                        .exit = "x -> {x}"});
+        rows.push_back({.what = "signed unary literals discharge unreturned structured children",
+                        .body = replace(carriedLiteral, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x",
+                        .exit = "zero -> {}"});
+        reject("signed unary literal strides must remain unchanged across structured yields",
+               replace(carriedLiteral, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("signed unary literals cannot borrow another structured arm's exact input",
+               replace(carriedLiteral,
+                       "  %negative = ctjs.constant #ctjs.number<13835058055282163712>\n",
+                       "  %negative = scf.if %flag -> (!ctjs.value) {\n"
+                       "    %n = ctjs.constant #ctjs.number<13835058055282163712>\n"
+                       "    scf.yield %n : !ctjs.value\n"
+                       "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+               ArrayContentsFailure::UnsupportedOperation);
         rows.push_back({.what = "signed unary strides survive reordered structured transport",
                         .body = carriedSigned,
                         .arrays = "a:[x,y]",

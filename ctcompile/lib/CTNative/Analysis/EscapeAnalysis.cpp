@@ -1551,6 +1551,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         integerNumber = input.integerNumber ? input.integerNumber
                                                             : boundedNumber(input.origin());
                         negativeIntegerNumber = input.negativeIntegerNumber;
+                        if (!integerNumber && !negativeIntegerNumber) {
+                            negativeIntegerNumber = boundedNumber(input.origin(), true);
+                        }
                         if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
                             std::swap(integerNumber, negativeIntegerNumber);
                         }
