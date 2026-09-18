@@ -266,6 +266,13 @@ void test_urls_quoted_unquoted_and_bad() {
     CHECK(shape(s) == "ident { ident colon bad-url } ident { ident colon ident }");
     const token_stream body = tokenize("url(a.png)");
     CHECK(body.text_of(body.tokens.front()) == "a.png");
+    for (const std::string_view text :
+         {R"(url(a\2e png))", R"(url(a\00002epng))", R"(url(a\.png))"}) {
+        const token_stream escaped = tokenize(text);
+        CHECK(shape(escaped) == "url");
+        CHECK(escaped.text_of(escaped.tokens.front()) == "a.png");
+    }
+    expect_shape(R"(url(a\2e  png))", "bad-url");
 }
 
 void test_escapes_decode_into_the_token() {

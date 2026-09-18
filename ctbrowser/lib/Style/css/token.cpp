@@ -464,7 +464,7 @@ private:
                     break;
                 }
                 escaped = true;
-                at_ += 2;
+                (void)consume_escape();
                 continue;
             }
             ++at_;
