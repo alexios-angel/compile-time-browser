@@ -84,6 +84,41 @@ void test_offset_parent_and_offsets() {
     CHECK_EQ(logged(page, "offset="), std::string{"offset=10,7,10,0"});
 }
 
+// HTMLImageElement-x-and-y-ignore-transforms: layout metrics discard both
+// the element's translation and every ancestor's, including percentages.
+void test_layout_coordinates_ignore_transforms() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><style>
+        body { margin: 0 }
+        #outer { position: relative; margin: 10px; border: 5px solid; padding: 7px;
+                 width: 200px; height: 100px }
+        #image { display: block; width: 20px; height: 20px; margin-left: 3px }
+        </style><div id=outer><img id=image></div><div style="height: 900px"></div><script>
+        const outer = document.getElementById('outer'), image = document.getElementById('image');
+        function metrics() {
+            return [image.x, image.y, image.offsetLeft, image.offsetTop,
+                    outer.offsetLeft, outer.offsetTop].join(',');
+        }
+        console.log('before=' + metrics());
+        outer.style.transform = 'translate(40px, -20px)';
+        image.style.transform = 'translate(50%, -50%)';
+        console.log('translated=' + metrics());
+        const rect = image.getBoundingClientRect();
+        console.log('visual=' + rect.x + ',' + rect.y);
+        window.scrollTo(0, 100);
+        console.log('scrolled=' + metrics());
+        image.style.display = 'none';
+        const detached = document.createElement('img');
+        console.log('boxless=' + image.x + ',' + image.y + ',' + detached.x + ',' + detached.y);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "before="), std::string{"before=25,22,10,7,10,0"});
+    CHECK_EQ(logged(page, "translated="), std::string{"translated=25,22,10,7,10,0"});
+    CHECK_EQ(logged(page, "visual="), std::string{"visual=75,-8"});
+    CHECK_EQ(logged(page, "scrolled="), std::string{"scrolled=25,22,10,7,10,0"});
+    CHECK_EQ(logged(page, "boxless="), std::string{"boxless=0,0,0,0"});
+}
+
 // elementScroll, scrollLeftTop, element-scroll-arguments: a scroll
 // container's offset is read and written through scrollTop/scrollLeft and
 // the three methods, clamped to its scrolling area; a box with nothing to
@@ -371,6 +406,7 @@ void test_transformed_client_rects() {
 int main() {
     test_scroll_and_client_metrics();
     test_offset_parent_and_offsets();
+    test_layout_coordinates_ignore_transforms();
     test_element_scrolling();
     test_viewport_scrolling_and_hit_testing();
     test_quirks_mode_scrolling_element();

@@ -30,13 +30,18 @@ dom_bindings::located dom_bindings::locate(node_id id, bool scrolled) const {
     located out;
     if (fragments_ == nullptr || !id) { return out; }
     const auto walk = [&](auto && self, const layout::fragment & at, float dx, float dy,
-                          bool under_fixed) -> bool {
+                          bool under_fixed, point translation) -> bool {
         const rect box = at.absolute_bounds(dx, dy);
+        if (at.box != nullptr) {
+            translation.x += at.box->translate.x.resolve(box.width, at.box->font_size);
+            translation.y += at.box->translate.y.resolve(box.height, at.box->font_size);
+        }
         const bool fixed =
             under_fixed || (at.box != nullptr && at.box->position == layout::position_kind::fixed);
         if (at.source == id) {
             out.f = &at;
             out.abs = box;
+            out.translation = translation;
             if (scrolled && !fixed) {
                 const point viewport = viewport_scroll();
                 out.abs.x -= viewport.x;
@@ -53,11 +58,11 @@ dom_bindings::located dom_bindings::locate(node_id id, bool scrolled) const {
             inner.y -= offset.y;
         }
         for (const layout::fragment & child : at.children) {
-            if (self(self, child, inner.x, inner.y, fixed)) { return true; }
+            if (self(self, child, inner.x, inner.y, fixed, translation)) { return true; }
         }
         return false;
     };
-    (void)walk(walk, *fragments_, 0, 0, false);
+    (void)walk(walk, *fragments_, 0, 0, false, point{});
     return out;
 }
 
