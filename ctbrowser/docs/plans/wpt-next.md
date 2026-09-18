@@ -1,67 +1,55 @@
 # WPT — the next round, as briefs
 
-**Updated 2026-09-18: resumed session 19 and committed the recovery.**
-Latest browser source is `f5a00a58`; compiler history through the integration
-commit `b71d8034` is merged. The browser gate passed **233/233** (69.00
-seconds) and formatting passed. Full CSS: **1,535 -> 1,592 files PASS**,
-**68,941 -> 70,275 subtests PASS**, zero file or subtest losses. BigInt's focused
-77-file test262 replay: **63 -> 74 PASS**, **13 -> 2 FAIL**, one SKIP,
-zero lost files. The instrument docs contain measured rows and settings.
+**Updated 2026-09-18: session 20 recovery complete.** Latest browser source
+is `39f651a3`, including compiler history through `2904c366`. The combined
+browser gate passed **216/216** (68.27 seconds), with compiler tests excluded
+and `CTCOMPILE_MLIR=OFF`; formatting passed. The interrupted full CSS replay
+was rerun after source-hash verification: **1,592 -> 1,596 files PASS**,
+**70,275 -> 70,328 subtests PASS**, zero passing file or subtest losses.
 
 Landed source commits:
 
-- `96781de5`: BigInt object coercion and radix conversion/range errors.
-  JS/VM semantics are journaled for the compiler differential oracle.
-- `448ecf29`: cascade rollback over substituted, expanded physical
-  declarations, including invalid-at-computed-value history.
-- `cc5c2133`, `73833c09`: CSSOM shorthand grammar for CSS/Web Animation
-  keyframes, fallback for shorthands CSSOM retains whole, and inherited
-  keyframes using the parent's animated computed value. An initial combined
-  replay lost 26 subtests; the correction restores all of them.
-- `f5a00a58`: positive integer animation results clamp to one after
-  rounding, sharing the parser's range convention; +1 file and +52
-  subtests in the full CSS replay against `73833c09`.
+- `be67d400`: BigInt string conversion rejects numeric separators and
+  signed nondecimal prefixes; source literal grammar is unchanged.
+- `1eb790b0`: loose equality preserves BigInt/Symbol primitive identity,
+  converts Boolean operands to Number, and calls default-hint ToPrimitive
+  for actual objects. Both VM and AOT use the shared operation. The JS/VM
+  semantics changes are journaled for the compiler differential oracle.
+- `696ce3cb` (merged as `39f651a3`): `columns` handles unordered width/count
+  components, optional slash height and omitted-longhand resets. All four
+  columns parsing/interpolation files now pass.
 
-The recovered round-seven wide baseline at `b722aa41` is **2,860 files
-PASS / 249,277 subtests PASS**. Only CSS was replayed across that entire
-directory after these fixes. The other wide directories and whole test262
-were not remeasured; do not extrapolate their totals. Full test262 remains
-**40,832/48,624** at its last complete measurement.
+Focused test262: BigInt **74 -> 76 PASS / 77**, one cross-realm SKIP;
+`equals` **44 -> 47 / 47** and `does-not-equals` **36 -> 38 / 38**.
+Seven files gained, zero lost. Whole test262 remains at its last complete
+measurement, **40,832/48,624**; non-CSS wide WPT directories were not replayed.
 
 **Next clear failures:**
 
-- Two of round seven's 23 lost CSS files remain: `columns-interpolation`
-  has sixteen failures for `columns: 10 100px / auto` (the slash grammar
-  and `column-height`); the count clamp is fixed. Scaled viewport rectangles
-  ignore `transform: scale()` in `Shell/bindings/element/views.cpp`.
-- BigInt's two failing files are `constructor-from-string-syntax-errors.js`
-  (shared string grammar) and `wrapper-object-ordinary-toprimitive.js`
-  (shared VM hint handling). Native NewTarget handling remains separate.
-- The existing elliptical border-radius expander still drops the vertical
-  axis. The animation changes preserve prior behavior without fixing that
-  older gap.
+- `column-wrap` support/reset: 43 remaining multicol subtests. The other
+  multicol failures are pseudo selectors (ten) and column-rule
+  computed/default values (four).
+- Scaled viewport rectangles ignore `transform: scale()` in
+  `Shell/bindings/element/views.cpp`; this is the last of round seven's
+  lost CSS files still failing after the recovery.
+- The existing elliptical border-radius expander drops the vertical axis.
+- Broader runtime work still includes separate realms and UTF-16 strings;
+  the focused BigInt and equality failures above are fixed.
 
-Evidence: `/tmp/ctbrowser-resume/positive-integers/` holds the final full
-CSS JSON, before/after and session comparisons, browser gate and verified
-source hashes. `/tmp/ctbrowser-resume/corrected/` retains the earlier recovery;
-`/tmp/browser-resume-bigint-{before,after}.json` and
-`/tmp/ctbrowser-resume/final/browser-resume-final-bigint.json` hold the
-focused runtime runs. Agent branches/worktrees/devbox copies created for
-this recovery have been removed. The recovery through `9e7b6fdf` was
-integrated into main as `b71d8034` after its locked clean-tree check passed.
-The positive-integer follow-up still needs integration when main is clean.
-The integration changed main's ctjs gitlink to `d2664e9`; its submodule
-worktree was still at `3cb2ef95` immediately afterwards. The compiler owner
-was notified in AGENT-SYNC to align it before an oracle build.
+Evidence: `/tmp/ctbrowser20/` holds before/after focused JSON, the full
+`browser20-final-css.json`, `css-comparison.json`, `runtime-comparison.json`,
+browser gate logs, formatting and source hashes. The columns child branch,
+worktree and devbox copy were merged and removed. Session 19's recovery
+through `a42f2cdf` was integrated into main as `dfc0385d`; session 20 is
+ready to integrate when main is clean. Main's earlier ctjs checkout mismatch
+was corrected by the compiler owner. The `d2664e9` gitlink remains local;
+do not assume its object is published.
 
-Session 19's old wide sweep finished its eight baseline directories;
-those JSONs are in `/tmp/w-b722aa41/` against `/tmp/w-9f8da347/`.
-The extra encoding sweep was stopped without a result and is excluded.
-The ten round-eight diagnoses are saved in `wpt-round8-diagnoses.md` and
-`wt/wpt11-session/round8/diagnoses.json`; no synthesizer result was written.
-Read those diagnoses rather than waiting for the abandoned workflow.
-The ctjs gitlink `d2664e9` remains local to the worktree submodule and
-`~/Downloads/claude/compile-time-javascript`; do not assume it is published.
+Session 19's eight-directory wide baseline is in `/tmp/w-b722aa41/` against
+`/tmp/w-9f8da347/`. The extra encoding sweep stopped without a result and is
+excluded. Read `wpt-round8-diagnoses.md` and
+`wt/wpt11-session/round8/diagnoses.json` for the remaining subsystem briefs;
+the abandoned synthesizer produced no result.
 
 **Updated 2026-09-17, session 17.** Round six is MERGED: H by session 16
 (`05404d4d`), J/CE/V by session 17 (`8a993f13`, `ab60122e`, `9f8da347`) after

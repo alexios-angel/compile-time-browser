@@ -11,6 +11,30 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Columns recovery — 2026-09-18
+
+Full CSS at `39f651a3`: **1,596/2,926 files PASS, 70,328 subtests PASS**;
+**+4 files and +53 subtests** since `f5a00a58`, with zero passing file or
+subtest losses. `columns` now shares validation and CSSOM expansion for
+unordered width/count values and optional `/ column-height`.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-multicol` | 28 / 32 | 1,361 / 1,413 |
+| `css/css-cascade` | 52 / 52 | 1,014 / 1,015 |
+
+The four gained files are `columns-interpolation`, `columns-computed`,
+`columns-invalid` and `columns-valid`. The cascade gain is the new
+`column-height` initial-value subtest. Multicol still has 57 failing
+subtests: 43 for `column-wrap` support/reset, ten for pseudo selectors,
+and four for column-rule computed/default values. Scaled viewport bounds
+and elliptical radius expansion remain separate gaps.
+
+All other modules match the preceding full CSS measurement. The full
+status row and evidence are in `wpt.md` and `/tmp/ctbrowser20/`.
+The combined browser gate passed 216/216 CTests (68.27 seconds), excluding
+compiler tests; formatting passed. No expectations changed.
+
 ## Positive integer animation follow-up — 2026-09-18
 
 Full CSS at `f5a00a58`: **1,592/2,926 files PASS, 70,275 subtests PASS**;

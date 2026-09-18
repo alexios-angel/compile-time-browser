@@ -14,6 +14,32 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Columns and runtime recovery — 2026-09-18
+
+Full `css/` replay at `39f651a3`: **1,596/2,926 runnable files PASS,
+70,328 subtests PASS**. Against `f5a00a58`: **+4 files and +53 passing
+subtests, zero passing files or subtests lost**. Same WPT `3f6b09ae`,
+devbox, four workers, 4 GB cap and deterministic GL driver.
+
+| css | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `39f651a3` | 1,596 | 1,114 | 25 | 0 | 191 | 1,488 | 70,328 / 32,761 |
+
+`696ce3cb` parses the unordered width/count components of `columns`, its
+optional `/ column-height`, and resets omitted longhands. The interpolation,
+computed, valid and invalid columns files now pass. Multicol gains 52
+subtests; `all-prop-initial-xml` gains the newly exposed `column-height`
+check. Scaled viewport rectangles remain open.
+
+The combined browser CTest gate passed **216/216** (68.27 seconds), with
+compiler tests excluded and `CTCOMPILE_MLIR=OFF`; formatting passed. The
+interrupted CSS sweep produced no JSON and was rerun after verifying the
+committed source hashes. Evidence: `/tmp/ctbrowser20/` contains
+`browser20-final-css.json`, `css-comparison.json`, `recovered-css.log`,
+`combined-gate.log`, `combined-source.sha256` and `recovered-format.log`.
+The separate runtime fixes gain seven focused test262 files, recorded in
+`test262.md`; other WPT directories and whole test262 were not replayed.
+
 ## Positive integer animation follow-up — 2026-09-18
 
 Full `css/` replay at `f5a00a58`: **1,592 of 2,926 runnable files PASS
