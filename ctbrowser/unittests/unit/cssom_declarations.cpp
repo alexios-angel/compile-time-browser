@@ -194,6 +194,76 @@ void test_reads_and_all() {
     CHECK_EQ(serialize_declaration_block(block), std::string{"--ab: value; --0: x;"});
 }
 
+// css/css-backgrounds/parsing/{border-radius,webkit-border-radius}-*.
+void test_border_radius() {
+    using ctbrowser::style::css::supports_declaration;
+    for (const std::string_view name : {"border-radius", "-webkit-border-radius"}) {
+        for (const auto & [value, expected] :
+             {std::pair{"0", "0px"},
+              {"1px 2% 1px 2%", "1px 2%"},
+              {"1px 1px 1px 2% / 1px 2% 1px 2%", "1px 1px 1px 2% / 1px 2%"},
+              {"1px 1px 1px 1px / 1px 1px 2% 1px", "1px / 1px 1px 2%"},
+              {"1px 2% 2% 2% / 1px 2% 3px 2%", "1px 2% 2% / 1px 2% 3px"},
+              {"1px 2% / 1px 2%", "1px 2%"},
+              {"calc(20px / 2) / 5%", "calc(10px) / 5%"},
+              {"calc(-1px) / 10px", "calc(-1px) / 10px"}}) {
+            declaration_block block;
+            CHECK(supports_declaration(name, value));
+            CHECK(set_declaration(block, name, value, false));
+            CHECK_EQ(block.size(), std::size_t{4});
+            CHECK_EQ(declaration_value(block, name), std::string{expected});
+        }
+        declaration_block block;
+        CHECK(set_declaration(block, name, "1px 2px 3px / 4% 5%", true));
+        CHECK_EQ(declaration_value(block, "border-top-left-radius"), std::string{"1px 4%"});
+        CHECK_EQ(declaration_value(block, "border-top-right-radius"), std::string{"2px 5%"});
+        CHECK_EQ(declaration_value(block, "border-bottom-right-radius"), std::string{"3px 4%"});
+        CHECK_EQ(declaration_value(block, "border-bottom-left-radius"), std::string{"2px 5%"});
+        for (const std::string_view invalid :
+             {"auto", "-1px", "1px / -5%", "1px 2px 3px 4px 5px", "1px / 2px 3px 4px 5px 6px",
+              "/ 1px", "1px /", "1px // 2px", "1px / / 2px", "1px / 2px / 3px", "1px inherit",
+              "1px, 2px", "1", "1deg", "calc(1s)", "calc(1)"}) {
+            CHECK(!supports_declaration(name, invalid));
+            CHECK(!set_declaration(block, name, invalid, false));
+        }
+        CHECK_EQ(declaration_priority(block, name), std::string{"important"});
+        bool removed = false;
+        CHECK_EQ(remove_declaration(block, name, removed), std::string{"1px 2px 3px / 4% 5%"});
+        CHECK(removed && block.empty());
+    }
+    for (const std::string_view name :
+         {"border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius",
+          "border-bottom-left-radius", "border-start-start-radius", "border-start-end-radius",
+          "border-end-start-radius", "border-end-end-radius", "-webkit-border-top-left-radius",
+          "-webkit-border-top-right-radius", "-webkit-border-bottom-right-radius",
+          "-webkit-border-bottom-left-radius"}) {
+        declaration_block block;
+        CHECK(set_declaration(block, name, "1PX 1px", false));
+        CHECK_EQ(declaration_value(block, name), std::string{"1px"});
+        CHECK(set_declaration(block, name, "calc(10% + 1px) 2em", false));
+        for (const std::string_view invalid :
+             {"auto", "-1px", "1px -2%", "1px 2px 3px", "1px / 2px", "1px initial", "calc(1deg)"}) {
+            CHECK(!supports_declaration(name, invalid));
+            CHECK(!set_declaration(block, name, invalid, false));
+        }
+    }
+    declaration_block block;
+    CHECK(set_declaration(block, "-webkit-border-radius", "1px 2px", false));
+    CHECK_EQ(declaration_value(block, "border-radius"), std::string{"1px 2px"});
+    CHECK(set_declaration(block, "border-radius", "3px 4px", false));
+    CHECK_EQ(declaration_value(block, "-webkit-border-radius"), std::string{"3px 4px"});
+    CHECK(set_declaration(block, "-webkit-border-top-left-radius", "5px", false));
+    CHECK_EQ(declaration_value(block, "border-top-left-radius"), std::string{"5px"});
+    CHECK_EQ(round_trip("border-radius: 1px; border-start-start-radius: 2px; "
+                        "border-top-left-radius: 3px"),
+             std::string{"border-top-right-radius: 1px; border-bottom-right-radius: 1px; "
+                         "border-bottom-left-radius: 1px; border-start-start-radius: 2px; "
+                         "border-top-left-radius: 3px;"});
+    CHECK_EQ(round_trip("border-radius: initial"), std::string{"border-radius: initial;"});
+    CHECK_EQ(round_trip("border-radius: var(--radius)"),
+             std::string{"border-radius: var(--radius);"});
+}
+
 // css/css-multicol/parsing/columns-*: width/count in either order and optional height.
 void test_columns() {
     using ctbrowser::style::css::supports_declaration;
@@ -268,6 +338,7 @@ int main() {
     test_shorthand_values();
     test_logical_groups();
     test_reads_and_all();
+    test_border_radius();
     test_columns();
     REPORT("cssom_declarations");
 }

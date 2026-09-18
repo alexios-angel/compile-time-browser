@@ -159,7 +159,7 @@ constexpr property_syntax table[] = {
     {"border-image-width", k::freeform, "", "1", false, false},
     {"border-image-outset", k::freeform, "", "0", false, false},
     {"border-image-repeat", k::freeform, "", "stretch", false, false},
-    {"border-radius", k::freeform, "", "0px", false, false, true},
+    {"border-radius", k::freeform, "", "0px", false, true, true},
     // The four per-side shorthands. Named here rather than left out because
     // `css/cssom/getComputedStyle-getter-v-properties` asks for all four by
     // name, and a property CSSOM says exists must answer `in`.
@@ -167,10 +167,10 @@ constexpr property_syntax table[] = {
     {"border-right", k::freeform, "", "0px none currentcolor", false, false, true},
     {"border-bottom", k::freeform, "", "0px none currentcolor", false, false, true},
     {"border-left", k::freeform, "", "0px none currentcolor", false, false, true},
-    {"border-top-left-radius", k::freeform, "", "0px", false, false},
-    {"border-top-right-radius", k::freeform, "", "0px", false, false},
-    {"border-bottom-right-radius", k::freeform, "", "0px", false, false},
-    {"border-bottom-left-radius", k::freeform, "", "0px", false, false},
+    {"border-top-left-radius", k::freeform, "", "0px", false, true},
+    {"border-top-right-radius", k::freeform, "", "0px", false, true},
+    {"border-bottom-right-radius", k::freeform, "", "0px", false, true},
+    {"border-bottom-left-radius", k::freeform, "", "0px", false, true},
     {"border-collapse", k::keyword_only, "separate collapse", "separate", true, false},
     {"border-spacing", k::freeform, "", "0px", true, false},
     {"outline", k::freeform, "", "medium none currentcolor", false, false, true},

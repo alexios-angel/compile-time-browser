@@ -391,6 +391,13 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
+    if (p->name.ends_with("-radius") &&
+        (p->name.starts_with("border-") || p->name.starts_with("-webkit-border-"))) {
+        std::string serialized;
+        if (!match_border_radius(simplified, p->shorthand, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
+
     if (ascii_iequals(property, "columns")) {
         std::vector<std::string> parts;
         return split_columns(simplified, parts) ? yes(simplified) : value_check{};

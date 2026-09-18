@@ -26,6 +26,7 @@ namespace {
 enum class shape : std::uint8_t {
     sides,       // 1-4 values: top, right, bottom, left, in `margin`'s way
     pair,        // 1-2 values: start/end, x/y or row/column; one sets both
+    radius,      // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
     place,       // `place-*`: an align value then a justify one, each of several words
     grid_lines,  // grid-row / grid-column / grid-area: `/`-separated grid lines
     slash_pair,  // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
@@ -165,7 +166,7 @@ constexpr shorthand_syntax table[] = {
      "animation-direction animation-fill-mode animation-play-state animation-name "
      "animation-timeline animation-range-start animation-range-end",
      "none"},
-    {"border-radius", shape::whole,
+    {"border-radius", shape::radius,
      "border-top-left-radius border-top-right-radius border-bottom-right-radius "
      "border-bottom-left-radius",
      ""},
@@ -176,6 +177,14 @@ struct expansion {
     std::vector<std::string_view> longhands;
 };
 
+[[nodiscard]] std::string_view radius_name(std::string_view name) {
+    if (ascii_istarts_with(name, "-webkit-border-") &&
+        ascii_iequals(name.substr(name.size() - 7), "-radius") && find_property(name) != nullptr) {
+        return name.substr(8);
+    }
+    return name;
+}
+
 // The table with its longhand lists split once. `all` is every longhand the
 // property table has except the two CSS Cascade 4 §3.1 leaves out.
 const std::vector<expansion> & expansions() {
@@ -185,7 +194,8 @@ const std::vector<expansion> & expansions() {
             expansion e{&one, {}};
             if (one.kind == shape::all) {
                 for (const property_syntax & p : known_properties()) {
-                    if (p.shorthand || p.name == "direction" || p.name == "unicode-bidi") {
+                    if (p.shorthand || p.name == "direction" || p.name == "unicode-bidi" ||
+                        radius_name(p.name) != p.name) {
                         continue;
                     }
                     e.longhands.push_back(p.name);
@@ -245,6 +255,11 @@ struct logical_group {
 };
 
 [[nodiscard]] logical_group group_of(std::string_view name) {
+    if (name.starts_with("border-") && name.ends_with("-radius")) {
+        const bool logical = name.find("-start") != std::string_view::npos ||
+                             name.find("-end") != std::string_view::npos;
+        return {"border-radius", logical ? mapping::block : mapping::physical};
+    }
     static constexpr std::pair<std::string_view, mapping> parts[] = {
         {"-inline-start", mapping::inline_}, {"-inline-end", mapping::inline_},
         {"-block-start", mapping::block},    {"-block-end", mapping::block},
@@ -620,6 +635,50 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
+// Each radius axis has the same nonnegative <length-percentage> grammar as padding.
+bool radius_components(std::string_view value, std::size_t maximum,
+                       std::vector<std::string> & out) {
+    const auto parts = split_top_level(value, html_whitespace);
+    if (parts.empty() || parts.size() > maximum) { return false; }
+    out.clear();
+    for (const std::string_view part : parts) {
+        const value_check checked = check_declaration("padding-top", part, false);
+        if (!checked.valid || is_wide_keyword(checked.serialized)) { return false; }
+        out.push_back(checked.serialized);
+    }
+    return true;
+}
+
+bool split_radius(std::string_view value, std::vector<std::string> & out) {
+    const token_stream ts = tokenize(value);
+    std::size_t slash = std::string_view::npos;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            if (slash != std::string_view::npos) { return false; }
+            slash = token.text;
+        }
+    }
+    std::vector<std::string> horizontal, vertical;
+    if (!radius_components(value.substr(0, slash), 4, horizontal)) { return false; }
+    horizontal = expand_positional<std::string>(horizontal, 4);
+    if (slash == std::string_view::npos) {
+        out = std::move(horizontal);
+        return true;
+    }
+    if (!radius_components(value.substr(slash + 1), 4, vertical)) { return false; }
+    vertical = expand_positional<std::string>(vertical, 4);
+    out = std::move(horizontal);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        if (out[i] != vertical[i]) { out[i] += " " + vertical[i]; }
+    }
+    return true;
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
@@ -652,6 +711,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     switch (e.syntax->kind) {
     case shape::sides:
     case shape::pair: return split_positional(e, parts, out);
+    case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
         if (!split_place(e.syntax->name, value, align, justify)) { return split::invalid; }
@@ -693,6 +753,19 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     if (parts.size() == 3 && parts[2] == parts[0]) { parts.pop_back(); }
     if (parts.size() == 2 && parts[1] == parts[0]) { parts.pop_back(); }
     return join(parts);
+}
+
+[[nodiscard]] std::string fold_radius(std::span<const std::string> values) {
+    std::vector<std::string> horizontal, vertical;
+    for (const std::string & value : values) {
+        const auto parts = split_top_level(value, html_whitespace);
+        if (parts.empty() || parts.size() > 2) { return {}; }
+        horizontal.emplace_back(parts.front());
+        vertical.emplace_back(parts.back());
+    }
+    const std::string h = fold_sides(horizontal);
+    const std::string v = fold_sides(vertical);
+    return h == v ? h : h + " / " + v;
 }
 
 // `font`, folded: the keywords that are not `normal`, the size, ` / ` and
@@ -806,6 +879,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::all:
     case shape::whole: return {};
     case shape::sides: return fold_sides(v);
+    case shape::radius: return fold_radius(v);
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);
@@ -925,6 +999,7 @@ bool erase_named(declaration_block & block, std::span<const std::string_view> na
 // One declaration into the block, from either path.
 bool put(declaration_block & block, std::string_view name, std::string_view text, bool important,
          bool parsed) {
+    name = radius_name(name);
     const value_check checked = check_declaration(name, text, false);
     if (!checked.valid) { return false; }
     const auto add = parsed ? add_parsed : set_one;
@@ -962,6 +1037,18 @@ bool put(declaration_block & block, std::string_view name, std::string_view text
 }
 
 } // namespace
+
+bool detail::match_border_radius(std::string_view value, bool shorthand, std::string & out) {
+    std::vector<std::string> parts;
+    if (shorthand) {
+        if (!split_radius(value, parts)) { return false; }
+        out = fold_radius(parts);
+    } else {
+        if (!radius_components(value, 2, parts)) { return false; }
+        out = parts.front() == parts.back() ? parts.front() : join(parts);
+    }
+    return true;
+}
 
 // CSS Multicol 2: auto does not choose width or count until the other
 // component is known; the slash introduces a separate, optional height.
@@ -1005,6 +1092,7 @@ bool detail::split_columns(std::string_view value, std::vector<std::string> & ou
 }
 
 std::span<const std::string_view> longhands_of(std::string_view shorthand) {
+    shorthand = radius_name(shorthand);
     const expansion * e = expansion_of(shorthand);
     return e == nullptr ? std::span<const std::string_view>{} : e->longhands;
 }
@@ -1032,6 +1120,7 @@ void parse_declaration_block(declaration_block & block, std::string_view text,
 }
 
 std::string remove_declaration(declaration_block & block, std::string_view name, bool & removed) {
+    name = radius_name(name);
     std::string was = declaration_value(block, name);
     const std::span<const std::string_view> longhands = longhands_of(name);
     removed = erase_named(block, std::array<std::string_view, 1>{name});
@@ -1040,6 +1129,7 @@ std::string remove_declaration(declaration_block & block, std::string_view name,
 }
 
 std::string declaration_value(const declaration_block & block, std::string_view name) {
+    name = radius_name(name);
     if (const std::size_t at = index_of(block, name); at < block.size()) { return block[at].value; }
     const expansion * e = name.starts_with("--") ? nullptr : expansion_of(name);
     if (e == nullptr) { return {}; }
@@ -1056,6 +1146,7 @@ std::string declaration_value(const declaration_block & block, std::string_view 
 }
 
 std::string declaration_priority(const declaration_block & block, std::string_view name) {
+    name = radius_name(name);
     if (const std::size_t at = index_of(block, name); at < block.size()) {
         return block[at].important ? "important" : "";
     }
