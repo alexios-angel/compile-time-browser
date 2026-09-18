@@ -606,6 +606,57 @@ function static_constant() {
 }
 var a = static_constant();
 
+// Bootstrap's empty defaults allocate a fresh object at every source read.
+//--- static-defaults.js
+function static_defaults() {
+    class Config {
+        static get Default() {
+            return {}
+        }
+        static get DefaultType() {
+            return {}
+        }
+    }
+    var instance = new Config();
+    var first = Config.Default;
+    first.n = 7;
+    var second = Config.Default, types = Config.DefaultType;
+    second.n = 2;
+    types.n = 3;
+    first.n = 9;
+    return first.n * 100 + second.n * 10 + types.n;
+}
+var a = static_defaults();
+
+// A dependency must clone its allocation for each read, in source order.
+//--- static-defaults-chain.js
+function static_defaults_chain() {
+    class Config {
+        static get DefaultType() { return this.Default; }
+        static get Default() { return {}; }
+    }
+    var instance = new Config();
+    var first = Config.DefaultType;
+    first.n = 1;
+    var second = Config.DefaultType;
+    second.n = 2;
+    var before = first.n * 10 + second.n;
+    var third = Config.Default;
+    third.n = 3;
+    first.n = 4;
+    return before * 1000 + first.n * 100 + second.n * 10 + third.n;
+}
+var a = static_defaults_chain();
+
+// Fresh allocation does not prove the getter's property initialization effects.
+//--- static-default-fields.js
+function static_default_fields() {
+    class Config { static get Default() { return {n: 7}; } }
+    var instance = new Config();
+    return Config.Default.n;
+}
+var a = static_default_fields();
+
 // Bootstrap's NAME/DATA_KEY dependency starts with an ordinary base receiver.
 //--- static-chain.js
 function static_chain() {

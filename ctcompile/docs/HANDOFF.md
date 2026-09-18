@@ -15,6 +15,81 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fresh Config defaults and signed Number products, 2026-09-17 UTC
+
+Continued `1af71cf8` and the **17:03:14 AGENT-SYNC handoff**. The earlier
+prefix-assignment recovery was complete; the frozen signed-product draft in the
+**17:10:37 journal** was reviewed, corrected and committed before the next native
+change. Independent agents handled escape proofs, Config fixtures and deletion
+review; root reconciled and gated their changes.
+
+**`fe56eae8`** preserves exact bounded signed Number multiplication snapshots.
+Negative magnitudes stay separate from nonnegative index facts; the product must
+fit the existing 32-bit domain. The original result remains the value identity,
+including signed zero. Source-length mutation, both operand orders, negative times
+negative, zero trips, retained/released children and CFG/SCF transport are covered.
+Coercible Strings/BigInts, unknown operands, unstable latches and overflow refuse.
+
+**`f1450d60`** expands local static getters returning fresh empty objects, including
+the exact Bootstrap `Default` and `DefaultType` bodies. Each original read gets its
+own allocation, also through getter dependencies. After all reads are expanded,
+the pass removes only the proved getter definitions and their closure/descriptor
+setup. A charged census checks symbol references in module attributes and the body;
+remaining getter references and unresolved targets refuse before mutation. Numeric
+function indices remain stable. This does not admit general escaping object
+returns, getter stores/nonempty literals, inherited receivers or the full Config
+class. The existing complete host identity, callable-use and budget checks remain.
+
+Focused validation on the devbox:
+
+- Explicit targets `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims` and
+  `ctcompile-test-type-oracle`: eight initial Ninja actions; the corrected array
+  test rebuilt in two actions. The final class-only three-target build used four
+  actions, including pass declaration generation.
+- Exact `ctcompile_escape_analysis_arrays` CTest: **1/1 (0.84s)**. It covers **567
+  dense / 296 induction / 196 structured rows**, with **21,961 / 20,847 / 11,765**
+  respective budget cutoffs.
+- Exact escape lit cases `signed-product`, `add-cancellation`, `sub-snapshot` and
+  `signed-unary`: **4/4**. The new oracle measures **26 sites / 11 sound / zero
+  violations / 11 of 15 precision (73.3%)**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (92.67s)**,
+  **72 source observations / 168 native executions / 144 unprepared refusals /
+  93 preparation refusals**. Ordinary constructed-method controls add **16 native
+  executions / 20 refusals**. Both optimization policies, explicit/deduced output,
+  GCC/Clang, independent allocations and exact getter removal pass. The new
+  dependency source's first complete budget is **267**.
+
+The initial array failure was six assertions for one old refusal: `-1 * 0` now
+correctly clears array length as `-0`; its original body remains as a positive.
+The first class run exposed unused getter definitions that still failed ordinary
+escaping-object admission; the complete deletion proof resolves that failure.
+The earlier five-case lit run was **four passes / one failure (57.00s)**; only the
+class case was replayed after its fix. No failure was hidden by dropping a fixture.
+
+Final class workflow exits **0**, with all **1,820 input hashes** matching locally
+and remotely before documentation edits. Stable formatting passes **912 C++ /
+108 Python / 105 web files**. Required `tools/format.sh --check` still reports
+**26 pinned-formatter diagnostics in nine files byte-identical to HEAD**; this is
+not a pinned-format pass. Black, changed-C++ formatting and `git diff --check` pass.
+Full CTest, full lit, broad corpus/native matrices, WPT and test262 were **not run**,
+following the user's repeated focused-check instruction. No browser source changed.
+
+**Exact next:** one fresh probe retains the complete original Config (`W`) class
+body in a defaults-only wrapper. Node and the interpreter both return **a=7**;
+import skips no functions, but preparation refuses **class initialization requires
+complete capture-free source functions**. All imported functions are capture-free;
+`_typeCheckConfig$9` still has three blocks after SCF lifting. Full Config needs a
+proof for its structured/exceptional methods, throwing `NAME`, inherited
+`this.constructor` and default/DOM composition. Do not merely relax that census.
+Full H still needs the public UTF-16/Unicode case seam and normalized-key proof;
+its last admission result is from the prior session, not remeasured here. Retained
+callbacks and the application driver remain open. Signed division/remainder
+snapshots are an independent next escape item. Bootstrap **19/574 / 0 of 47 globals**,
+Button **4/86 / 22 observations**, and Data **7/7** remain historical measurements.
+Evidence: `/tmp/ctcompile-config-focused/` (logs, source manifests, passing generated
+C++, array log, failure evidence and the complete Config probe).
+
 ## Filtered prefix assignments and Number cancellation, 2026-09-17 UTC
 
 Resumed unmerged **`codex-dynamic-20260917`** from the **16:17:07 AGENT-SYNC
