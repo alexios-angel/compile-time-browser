@@ -567,6 +567,31 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("a dynamic subtract latch cannot borrow the Add proof",
            replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
+    for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
+        for (const std::string unary : {"plus", "neg"}) {
+            const auto source =
+                replace(savedChild, "  %step = ctjs.binary_static add %i, %one",
+                        "  %literal = ctjs.constant " + literal + "\n  %converted = ctjs.unary " +
+                            unary + " %literal\n  %step = ctjs.binary " +
+                            (unary == "neg" ? "sub" : "add") + " %i, %converted");
+            run({.what = "original unary primitive latches preserve the returned child",
+                 .body = source,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "original unary primitive latches release only unreturned children",
+                 .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+            reject("a repeated unary parameter cannot borrow literal conversion",
+                   replace(source, unary + " %literal", unary + " %p"));
+            reject("unary primitive latches retain final own-index bounds",
+                   replace(source, "%base[%i]", "%base[%two]"),
+                   ArrayContentsFailure::MissingElement);
+        }
+    }
     const std::string makeBoolean =
         "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n";
     for (const std::string opcode : {"binary_static", "binary"}) {
@@ -718,8 +743,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(subtract, "sub %i, %minus", "sub %i, %p"));
     reject("a repeated computed negative stride needs an independent invariant proof",
            replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"));
-    reject("repeated String Neg still needs an independent invariant proof",
-           replace(subtractNegated, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"));
+    run({.what = "repeated original String Neg supplies its invariant literal stride",
+         .body =
+             replace(subtractNegated, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     for (const std::string constant :
          {"#ctjs.number<0>", "#ctjs.number<4607182418800017408>",
           "#ctjs.number<13826050856027422720>", "#ctjs.number<13974669643730649088>",
@@ -983,8 +1012,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .reads = "a[0]=one; a[1]=x",
              .exit = "zero -> {}"},
             "x");
-        reject("a repeated primitive unary producer still needs independent invariance",
-               replace(replace(body, operation, ""), "  %step =", operation + "  %step ="));
+        const auto repeated =
+            replace(replace(body, operation, ""), "  %step =", operation + "  %step =");
+        if (std::string{kind} == "bitnot") {
+            reject("a repeated primitive BitNot still needs independent invariance", repeated);
+        } else {
+            run({.what = "repeated primitive Plus/Neg uses its original literal stride",
+                 .body = repeated,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        }
         reject("a converted primitive does not turn its original Boolean/null into an index",
                replace(body, "%base[%i]", "%base[%input]"), ArrayContentsFailure::UnknownIndex);
         reject("Undefined unary conversion supplies no bounded Number fact",
@@ -2385,9 +2423,13 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             reject("unary String snapshots require the existing bounded canonical decimal proof",
                    replace(stringChild, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">"));
         }
-        reject("repeated String unary producers need independent invariance",
-               replace(replace(stringChild, "  %minus = ctjs.unary " + unary + " %text\n", ""),
-                       "  %step =", "  %minus = ctjs.unary " + unary + " %text\n  %step ="));
+        run({.what = "repeated String Plus/Neg uses its original literal stride",
+             .body =
+                 replace(replace(stringChild, "  %minus = ctjs.unary " + unary + " %text\n", ""),
+                         "  %step =", "  %minus = ctjs.unary " + unary + " %text\n  %step ="),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         if (unary == "neg") {
             reject("a negated String snapshot is never an own array index",
                    replace(stringChild, "%base[%i]", "%base[%minus]"),
@@ -2447,9 +2489,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                 reject("signed unary strides require exact nonzero bounded conversion", body);
             }
         }
-        reject(
-            "signed unary literals cannot be recomputed on the CFG backedge",
-            replace(replace(literalChild, makeSigned, ""), "  %step =", makeSigned + "  %step ="));
+        run({.what = "signed unary literals retain their fixed stride on the CFG backedge",
+             .body = replace(replace(literalChild, makeSigned, ""),
+                             "  %step =", makeSigned + "  %step ="),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         if (unary == "plus") {
             reject("a signed unary literal's negative magnitude is never an own array index",
                    replace(literalChild, "%base[%i]", "%base[%signed]"),

@@ -443,8 +443,12 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            ArrayContentsFailure::MissingElement);
     reject("a structured swapped step cannot reuse its first iteration's Number one",
            replace(carriedUnit, "%base, %step, %read, %d :", "%base, %step, %d, %read :"));
-    reject("a structured repeated step producer needs a separate invariant proof",
-           replace(replace(computedUnit, makeUnit, ""), "    %step =", makeUnit + "    %step ="));
+    rows.push_back({.what = "a structured repeated literal conversion proves its fixed stride",
+                    .body = replace(replace(computedUnit, makeUnit, ""),
+                                    "    %step =", makeUnit + "    %step ="),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("a structured inclusive guard does not prove an own index",
            replace(original, "compare lt", "compare le"));
     reject("a structured reversed inclusive guard does not prove an own index",
@@ -510,6 +514,24 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(commuted, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("commuted structured Add still requires its exact induction formal",
            replace(commuted, "add %one, %i", "add %one, %last"));
+    for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
+        for (const std::string unary : {"plus", "neg"}) {
+            const auto source = replace(original, "    %step = ctjs.binary_static add %i, %one",
+                                        "    %literal = ctjs.constant " + literal +
+                                            "\n    %converted = ctjs.unary " + unary +
+                                            " %literal\n    %step = ctjs.binary " +
+                                            (unary == "neg" ? "sub" : "add") + " %i, %converted");
+            rows.push_back({.what = "structured unary primitive latches keep original identities",
+                            .body = source,
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+            reject("structured unary parameters cannot borrow literal conversion",
+                   replace(source, unary + " %literal", unary + " %p"));
+            reject("a structured unary zero cannot certify progress",
+                   replace(source, literal, "#ctjs.null"));
+        }
+    }
     const std::string makeBoolean =
         "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n";
     const auto boolean = replace(replace(carriedUnit, makeUnit, makeBoolean),

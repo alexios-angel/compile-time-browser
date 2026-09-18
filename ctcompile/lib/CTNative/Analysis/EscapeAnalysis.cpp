@@ -1168,6 +1168,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
         }
         if (!stride) {
+            // One unary conversion of an original literal is invariant even
+            // inside the latch. Nonliteral producers still need a held fact.
+            auto unary = increment.getDefiningOp<ctjs::UnaryOp>();
+            auto literal =
+                unary ? unary.getOperand().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+            if (literal && (unary.getKind() == ctjs::UnaryKind::Plus ||
+                            unary.getKind() == ctjs::UnaryKind::Neg)) {
+                stride = boundedConvertedNumber(
+                    {literal.getResult(), llvm::isa<ctjs::StringAttr>(literal.getValue())
+                                              ? ContentsKind::String
+                                              : ContentsKind::Identity},
+                    subtract != (unary.getKind() == ctjs::UnaryKind::Neg));
+            }
+        }
+        if (!stride) {
             // Repeated producers need their own invariant proof; a prior
             // iteration's saved fact cannot certify a header/body computation.
             auto * definition = increment.getDefiningOp();
