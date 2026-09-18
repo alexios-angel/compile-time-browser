@@ -1,5 +1,42 @@
 # What native Bootstrap needs next
 
+## Mixed class/DOM intrinsics and primitive subtraction, 2026-09-18 UTC
+
+Continued clean **051ab3d2** after the **15:45 AGENT-SYNC closure** confirmed
+all interrupted Error/power work committed. **690ff8b6** composes class helper
+and optional Error declarations with existing DOM intrinsics. Only class
+identities are consumed; DOM identities survive every method probe and final
+reproof. Number/`toString` now executes through entry-local classes using existing
+ctbrowser code. Declared replacement, observable identity use, arbitrary coercion
+receivers and unknown effects refuse. Ignored pure intrinsic results are inert.
+All **109 pre-session source/expected entries** remain unchanged.
+
+**18e56dac** reuses bounded primitive conversion for Boolean/null subtraction,
+retaining saved operands, signed results and CFG/SCF provenance. Original primitive
+keys and unknown/changing/repeated inputs remain unproved. Four old expectations
+changed without source rewrites. Parallel agents supplied escape work and a source
+audit; root completed native fixtures after service limits.
+
+Focused devbox passes: class DOM **1/1 (36.29s), 140 source observations /
+8 native executions / 814 refusals**; exception recovery **1/1 (3.80s)**;
+host contract **1/1 (0.48s)**; public class initialization **1/1 (201.27s)**;
+arrays **1/1 (1.06s)**; primitive/signed subtraction lit **2/2 (0.23s), zero
+violations**. All **11 tested hashes** match. Required formatting retains
+**26 existing diagnostics in nine unchanged files**; changed checks pass.
+HANDOFF records exact targets and the production/test corrections; evidence:
+`/tmp/ctcompile-mixed-intrinsics/`. Full CTest/compiler lit, complete DOM, broad
+corpus/native matrices, WPT/test262 and whole-Bootstrap replay were skipped.
+No browser edits or push.
+
+**Exact next:** complete original **W/r/H** helper effects, starting M's
+Number/JSON/URI exception chain and F/H identities. Constructors/getters/helpers
+retain the stricter class census. W also needs `Object.entries`, destructuring's
+`__ctbrowser_iter_open`, original `s`, RegExp/TypeError and spread proofs. Preserve
+the current original W/W+r/W+r+H refusals; the last specimen still omits `s`.
+Then inheritance. Full H Unicode, retained callbacks, the application driver and
+broader primitive conversions remain open. Native Bootstrap and the plan are
+unfinished.
+
 ## Declared Error class/DOM composition and primitive powers, 2026-09-18 UTC
 
 Recovered eight dirty files plus the primitive-power oracle at **c2108572** from

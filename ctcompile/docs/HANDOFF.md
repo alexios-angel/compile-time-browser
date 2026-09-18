@@ -15,6 +15,88 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mixed class/DOM intrinsics and primitive subtraction, 2026-09-18 UTC
+
+Started clean at **051ab3d2**. The **15:45 AGENT-SYNC closure** confirmed the
+interrupted Error/power drafts were committed. September 7 WIP is already an
+ancestor; historical isolated branches were retained. Continued the exact
+W/r/H boundary recorded by HANDOFF and master 00/24. Parallel agents supplied
+escape implementation and a source audit; root completed native fixtures after
+agent service limits. No browser implementation or runtime semantics changed.
+
+**690ff8b6** composes the existing DOM intrinsic declarations with the class
+helper and optional Error. Class preparation proves and consumes only its own
+identities; the DOM declarations survive all private method probes and final
+reproof. Entry/method intrinsic loads and Number `toString` use that existing
+typed proof. Every affected method is probed, even one with no call. The original
+source census rejects intrinsic replacement before any method disappears.
+Constructors, getters and helpers retain their stricter census.
+
+Number conversion now executes with entry-local classes and an unused throwing
+Error getter, using existing ctbrowser behavior. An ignored pure intrinsic result
+is inert; observable identity use, arbitrary coercion receivers, unknown effects,
+missing/duplicate identity and late failures still refuse. Failed preparation
+preserves the original module and contract. Native output retains the no-Script/
+AOT and no-class-dispatch checks. All **109 pre-session source/expected entries** remain unchanged.
+
+**18e56dac** reuses bounded primitive Number conversion for Boolean/null
+subtraction. Saved operands, negative results and CFG/SCF transport retain their
+original identities; primitive property keys and unknown/changing/repeated inputs
+remain unproved. Four old expectations changed without source rewrites.
+
+Focused devbox evidence: `/tmp/ctcompile-mixed-intrinsics/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`:
+  **10 initial actions**, **4 after the production correction**, then **three
+  2-action test-only rebuilds**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.80s; total 3.81s)**;
+  eleven additional transaction controls per DOM provider.
+- Exact `ctcompile_host_contract`: **1/1 (0.48s; total 0.49s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (36.29s)**,
+  **140 Node/interpreter observations, 8 native executions, 814 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (201.27s)**;
+  **154 observations, 380 native executions, 308 unprepared / 190 preparation
+  refusals**, plus 16 constructed-method executions / 20 refusals, 8 original-r
+  executions / 4 refusals, 4 prototype-key executions / 6 refusals and 11
+  prepared-source refusals. Original W/W+r/W+r+H refusal controls remain intact.
+- Built `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **3 actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.06s; total 1.07s)**.
+- Exact `Analysis/Escape/escape-claims/{primitive-subtraction,signed-subtraction}.test`:
+  **2/2 (0.23s)**, zero violations. Primitive: **26 sites / 11 sound /
+  11 of 15 precision**; signed: **48 / 26 / 26 of 28**.
+
+The first transaction run failed **3.77s** because the class census rejected
+Number `toString`; the production correction delegates that exact read to typed
+receiver proof. Two later runs (**3.76s / 3.84s**) identified an incorrect new
+refusal expectation for an ignored pure Number return. Its original source became
+a positive; a DOM write using the identity supplies the actual refusal. A fourth
+run (**3.79s**) caught its stale contract assertion. After transaction/parser
+passed, class DOM failed **0.19s** on duplicated mixed-request setup in the direct
+helper test loop. Removing that duplicate required only a Python sync and the
+successful exact class-DOM retry above. No later production change or replay of
+passing compatibility/escape tests was needed.
+
+All **11 tested source/test hashes** match the devbox. Required
+`tools/format.sh --check` retains **26 pre-existing diagnostics in nine unchanged
+files**, verified byte-identical to HEAD. Changed formatting, Black, Node syntax
+and `git diff --check` pass. Full CTest, full compiler lit, complete DOM suites,
+broad corpus/native matrices, WPT/test262 and whole-Bootstrap replay were skipped.
+No browser edits or push.
+
+**Exact next:** complete original **W/r/H** helper effects through typed DOM proof,
+starting M's Number/JSON/URI exception chain and F/H helper identities. Mixed
+declarations now compose; constructors/getters/helpers still use the stricter
+class census. W also needs `Object.entries`, destructuring's
+`__ctbrowser_iter_open`, original `s` (`Object.prototype.toString.call`),
+RegExp/TypeError and spread proofs. The current W+r+H specimen does not include
+`s`; retain that refusal control and include the original helper in a later full
+specimen. Then address inheritance. Full H Unicode, retained callbacks, the
+application driver and broader primitive conversions remain unfinished. Escape
+next can address Boolean/null addition with explicit exclusion of String
+concatenation. Native Bootstrap and the overall plan are not complete.
+
 ## Declared Error class/DOM composition and primitive powers, 2026-09-18 UTC
 
 Resumed **eight dirty tracked files plus the primitive-power oracle at c2108572**,
