@@ -1,5 +1,44 @@
 # What native Bootstrap needs next
 
+## Declared Error class/DOM composition and primitive powers, 2026-09-18 UTC
+
+Recovered eight dirty files plus the primitive-power oracle at **c2108572** from
+the **15:25:30 AGENT-SYNC loop failure**. **4bcc196c** reuses the original class
+binding/getter proof for optional unique Error declarations in DOM requests.
+Unused literal-message throwing `NAME` getters now compose with typed DOM
+methods. Complete source and binding checks precede erasure; live throws,
+replacement, escaping payloads, effectful messages and late DOM failures refuse.
+All **102 previous fixture bodies/expectations** remain intact; former optional
+Error requests now lower successfully. No Error runtime, VM dependency, browser
+implementation or ownership carrier was added.
+
+**a5a08550** shares bounded primitive Number conversion with Boolean/null
+power identities and retains saved operands, original primitive keys, negative
+parity and CFG/SCF transport. General powers and unknown/changing/repeated
+producers remain unproved. Two stale canonical String power expectations changed
+without modifying their original `(-1) ** "2"` body.
+
+Focused devbox passes: class DOM **1/1 (32.92s), 120 source observations /
+8 native executions / 720 refusals**; exception recovery **1/1 (3.78s)**;
+host contract **1/1 (0.46s)**; class initialization **1/1 (200.61s)**; arrays
+**1/1 (1.04s)**. Three power lit cases passed in the initial **0.42s** run;
+unit-power passed its test-only expectation retry **1/1 (0.11s)**. All four power oracles report zero violations.
+All **12 tested source/test hashes** match the devbox. Required formatting retains **26 existing diagnostics in
+nine unchanged files**; changed formatting/syntax/diff checks pass. HANDOFF
+records exact targets and the stale-expectation retry; evidence:
+`/tmp/ctcompile-error-finalize/`. Full CTest/compiler lit, complete DOM, broad
+corpus/native matrices, WPT/test262 and whole-Bootstrap replay were skipped.
+No push.
+
+**Exact next:** complete original **W/r/H** class/DOM effects and binding
+composition: mixed intrinsic declarations, TypeError, Object/RegExp/iterator
+operations and helper identities. Optional Error now composes for unused
+throwing getters; all methods and live `NAME` throws still need proof. Original
+W, W+r and W+r+H controls still refuse at `r`, `H`, and an unproved
+call/binding/effect respectively. Then address inheritance. Full H Unicode,
+retained callbacks, the native application driver and broader primitive
+conversions remain open. Native Bootstrap and the overall plan are unfinished.
+
 ## Original Config defaults and void DOM returns, 2026-09-18 UTC
 
 **b871feb2** finishes the native part of the six-file interrupted thread

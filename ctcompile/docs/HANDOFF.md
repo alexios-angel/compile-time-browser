@@ -15,6 +15,81 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Declared Error class/DOM composition and primitive powers, 2026-09-18 UTC
+
+Resumed **eight dirty tracked files plus the primitive-power oracle at c2108572**,
+left by the **15:25:30 AGENT-SYNC loop failure**. The original **15:11:07 journal**,
+diff and current handoff identified the interrupted Error/primitive-power thread.
+September 7 WIP is already an ancestor; both agents' logs and unmerged branches
+were reviewed. Parallel agents completed escape recovery and part of the audit;
+root finished native fixtures after service limits.
+
+**4bcc196c** composes the existing declared Error binding/getter proof with DOM
+class preparation. Requests may declare the class helper plus optional unique
+`Error`. The complete original source and initial bindings are proved before
+those declarations are consumed. An unused literal-message throwing `NAME`
+getter can then be erased. Referenced throws, including reads in unused methods,
+still reach the final typed DOM proof and refuse. Error replacement inside the
+entry or in a suffix, escaping payloads, effectful messages, missing/duplicate
+identity, late unknown DOM effects and exhausted budgets remain refusals; failed
+preparation preserves both source and contract. No new Error representation,
+VM dependency, browser implementation or ownership carrier was added.
+
+The class fixture retains all **102 previous source bodies and expectations**.
+Its former optional-Error declaration refusals now lower those exact requests
+successfully; duplicate Error declarations supply a separate refusal control.
+Native output still passes its Script/AOT symbol and class-dispatch checks.
+
+**a5a08550** reuses the existing exact primitive Number conversion for
+Boolean/null power bases and exponents, keeping the bounded zero/unit identities,
+negative parity, saved operands and CFG/SCF transport. Original primitive keys,
+unknown/changing/repeated producers and general powers remain unproved. All old
+bodies remain intact. The focused oracle exposed two stale `unit-power.test`
+expectations for the already supported original `(-1) ** "2"` body; only its
+claims changed to confined, with zero observed soundness violations.
+
+Focused devbox evidence: `/tmp/ctcompile-error-finalize/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`: **10 actions**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.78s; total 3.79s)**;
+  ten added transaction controls per DOM provider.
+- Exact `ctcompile_host_contract`: **1/1 (0.46s; total 0.47s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (32.92s)**,
+  **120 Node/interpreter observations, 8 combined native executions, 720 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (200.61s)**;
+  **154 source observations, 380 native executions, 308 unprepared refusals,
+  190 preparation refusals**, plus 16 constructed-method executions / 20 refusals,
+  8 original-r executions / 4 refusals, 4 prototype-key executions / 6 refusals,
+  and 11 prepared-source refusals.
+- Built `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **3 actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.04s; total 1.05s)**.
+- Exact `Analysis/Escape/escape-claims/{primitive-power,bounded-power,
+  power-identities}.test`: **3 passes** in the initial four-case **0.42s** run.
+  `unit-power.test` alone failed FileCheck on the two stale expectations above;
+  its test-only retry passed **1/1 (0.11s)**. No production correction or passing-test replay was needed.
+- All four power oracles report zero violations. Primitive power: **24 sites /
+  9 sound / 9 of 13 precision**; bounded/unit power: each **26 / 13 / 13 of 15**;
+  power identities: **26 / 11 / 11 of 15**.
+
+Required `tools/format.sh --check` retains **26 pre-existing diagnostics in nine
+unchanged files**, verified byte-identical to HEAD. Changed C++ formatting,
+Black, Python/Node syntax and `git diff --check` pass. All **12 tested source/test hashes** match the devbox.
+Full CTest, full compiler lit, complete DOM suites, broad corpus/native matrices,
+WPT/test262 and historical whole-Bootstrap replay were skipped. No browser edits
+or push.
+
+**Exact next:** complete original **W/r/H** class/DOM effects and binding
+composition. Optional Error now composes for unused throwing getters; mixed
+class/DOM intrinsic declarations, TypeError, Object/RegExp/iterator operations
+and full helper identities remain unsupported. Preserve every original method
+and `NAME` throw while proving them. Original W, W+r and W+r+H controls still
+refuse at `r`, `H`, and an unproved call/binding/effect respectively. Then address
+inheritance. Full H Unicode, retained callbacks, the native application driver
+and broader primitive conversions remain open. Native Bootstrap and the overall
+plan are unfinished.
+
 ## Config defaults and primitive bitwise snapshots, 2026-09-18 UTC
 
 Resumed **six dirty files at d7e13751**, abandoned by the **14:17:21 AGENT-SYNC
