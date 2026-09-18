@@ -211,6 +211,42 @@ void test_resolved_colours() {
                          "rgb(255, 0, 0) 16px 0px 0px|rgb(0, 0, 255) 0px 0px 0px 1px"});
 }
 
+// css-multicol/inheritance and column-rule-computed: line-width keywords
+// compute to lengths even when the rule is hidden, and survive shorthand folding.
+void test_column_rule_widths() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><div id=t style="color: lime"></div><script>
+        const cs = getComputedStyle(t);
+        console.log('initial=' + cs.columnRuleWidth);
+        console.log('widths=' + ['none', 'hidden', 'solid'].map(style => {
+            t.style.columnRuleStyle = style;
+            return ['thin', 'medium', 'thick'].map(width => {
+                t.style.columnRuleWidth = width;
+                return cs.columnRuleWidth;
+            }).join();
+        }).join('|'));
+        console.log('rules=' + ['dotted', 'medium hidden currentcolor',
+                                'medium solid currentcolor', '10px'].map(rule => {
+            t.style.columnRule = rule;
+            return cs.columnRule;
+        }).join('|'));
+        console.log('specified=' + t.style.columnRuleWidth + '|' + t.style.columnRule);
+        console.log('borders=' + ['none', 'hidden', 'solid'].map(style => {
+            t.style.border = 'medium ' + style;
+            t.style.outline = 'medium ' + style;
+            return cs.borderTopWidth + ',' + cs.outlineWidth;
+        }).join('|'));
+    </script></body></html>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "initial="), std::string{"initial=3px"});
+    CHECK_EQ(logged(page, "widths="), std::string{"widths=1px,3px,5px|1px,3px,5px|1px,3px,5px"});
+    CHECK_EQ(logged(page, "rules="),
+             std::string{"rules=3px dotted rgb(0, 255, 0)|3px hidden rgb(0, 255, 0)|"
+                         "3px solid rgb(0, 255, 0)|10px rgb(0, 255, 0)"});
+    CHECK_EQ(logged(page, "specified="), std::string{"specified=10px|10px"});
+    CHECK_EQ(logged(page, "borders="), std::string{"borders=0px,0px|0px,0px|3px,3px"});
+}
+
 // getComputedStyle-detached-subtree, getComputedStyle-pseudo-with-argument: an
 // element outside the flat tree - a light child of a shadow host that no
 // `<slot>` takes - has no computed style, while a slotted one keeps its own;
@@ -345,6 +381,7 @@ void test_descriptors_refuse_tree_counting() {
 
 int main() {
     test_resolved_colours();
+    test_column_rule_widths();
     test_flat_tree_and_pseudo_arguments();
     test_live_sheet_list();
     test_sticky_insets();
