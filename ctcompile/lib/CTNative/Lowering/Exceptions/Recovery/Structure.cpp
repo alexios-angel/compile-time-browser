@@ -10,6 +10,19 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining) {
+    function.getContext()->getOrLoadDialect<mlir::arith::ArithDialect>();
+    function.getContext()->getOrLoadDialect<mlir::ub::UBDialect>();
+    recovery normalization{function, remaining, ExceptionRecoveryMode::ExplicitThrows};
+    const bool complete = normalization.normalizeIndexSwitches(function) &&
+                          normalization.trimUnusedIfResults(function);
+    remaining = normalization.remaining;
+    if (!complete) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), normalization.refusal);
+    }
+    return llvm::Error::success();
+}
+
 bool recovery::structure(mlir::Region & region) {
     // The upstream algorithm has no work callback. Precharge a conservative
     // quadratic bound for this acyclic, finite register CFG before calling

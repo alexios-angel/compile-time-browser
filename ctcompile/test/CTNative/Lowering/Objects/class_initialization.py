@@ -22,6 +22,10 @@ OBSERVATIONS = {
     "method-arguments": (3737, 3737),
     "method-branches": (3434, 3434),
     "method-loop": (5555, 5555),
+    "method-dispatch": (11131321, 11131321),
+    "method-dispatch-ambient": (7, 7),
+    "method-dispatch-shadow": (7, 7),
+    "method-dispatch-throw": (7, 7),
     "method-branch-ambient": (7, 7),
     "method-branch-shadow": (7, 7),
     "constructor-branch": (7, 7),
@@ -102,6 +106,7 @@ POSITIVES = {
     "method-arguments",
     "method-branches",
     "method-loop",
+    "method-dispatch",
     "method-empty",
     "method-chain",
     "method-chain-empty",
@@ -504,7 +509,23 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        prepared = prepare(args, name, structured, manifest, success=name in POSITIVES)
+        if name == "method-dispatch":
+            for operation in (
+                "scf.index_switch",
+                "arith.index_castui",
+                "arith.trunci",
+                "ub.poison",
+            ):
+                if operation not in structured.read_text():
+                    raise RuntimeError(f"method dispatch no longer exercises {operation}")
+        diagnostic = {
+            "method-dispatch-ambient": "unknown call, binding or reflective effect",
+            "method-dispatch-shadow": "class method is observed or shadowed",
+            "method-dispatch-throw": "complete capture-free source functions",
+        }.get(name, "")
+        prepared = prepare(
+            args, name, structured, manifest, success=name in POSITIVES, diagnostic=diagnostic
+        )
         preparation_refusals += name not in POSITIVES
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
@@ -522,6 +543,7 @@ def main():
             "method",
             "method-chain-order",
             "method-loop",
+            "method-dispatch",
             "method-constructor-order",
             "static-chain",
             "static-repeated",

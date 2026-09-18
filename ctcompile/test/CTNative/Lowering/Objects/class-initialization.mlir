@@ -983,3 +983,76 @@ function static_branch() {
     return Shape.Ready;
 }
 var a = static_branch();
+
+// The lift dispatches continue, break, early return and normal completion.
+//--- method-dispatch.js
+function method_dispatch() {
+    class Shape {
+        constructor() { this.n = 1; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return this.n + 20; }
+                this.n = this.n + i;
+            }
+            this.n = this.n + 10;
+            return this.n;
+        }
+    }
+    var zero = new Shape(), continued = new Shape(), broken = new Shape(), early = new Shape();
+    return zero.read(0) * 1000000 + continued.read(3) * 10000 + broken.read(6) * 100 + early.read(5);
+}
+var a = method_dispatch();
+
+// The recursive census includes every switch arm, even uncalled methods.
+//--- method-dispatch-ambient.js
+function method_dispatch_ambient() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { return Math.abs(this.n); }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().n;
+}
+var a = method_dispatch_ambient();
+
+//--- method-dispatch-shadow.js
+function method_dispatch_shadow() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { break; }
+                if (limit === 5) { this.read = limit; return this.n; }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().n;
+}
+var a = method_dispatch_shadow();
+
+// A throw/return exit still has multiple outer blocks and needs its own proof.
+//--- method-dispatch-throw.js
+function method_dispatch_throw() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(limit) {
+            for (var i = 0; i < limit; i = i + 1) {
+                if (i === 1) { continue; }
+                if (i === 3) { throw 9; }
+            }
+            return this.n;
+        }
+    }
+    return new Shape().read(0);
+}
+var a = method_dispatch_throw();

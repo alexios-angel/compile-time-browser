@@ -1,11 +1,15 @@
+#include "../Lowering/Exceptions/Recovery.h"
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -30,6 +34,8 @@ struct classInitialization {
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
     llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
+    llvm::SetVector<mlir::Operation *> dispatchMethods;
+    llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
 
     classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
 
@@ -430,7 +436,8 @@ struct classInitialization {
             }
             if (op->getNumRegions() && op != module.getOperation() &&
                 !(llvm::isa<ctjs::FuncOp>(op) && op->getParentOp() == module.getOperation()) &&
-                !llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
+                !llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                           mlir::scf::IndexSwitchOp>(op)) {
                 refuse("class initialization contains an unchecked source region");
                 return mlir::WalkResult::interrupt();
             }
@@ -468,9 +475,17 @@ struct classInitialization {
             // Only proved ordinary methods may contain structured control flow.
             // The recursive census still checks every arm/body, including ones
             // never called. Setup, constructors and getter cloning stay linear.
-            if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp, mlir::scf::YieldOp,
-                          mlir::scf::ConditionOp>(op)) {
+            // The lift represents break/continue/return edges with integer
+            // flags and switches. These exact transport ops cannot reenter or
+            // change the class helper; switch arms still get the full census.
+            if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                          mlir::scf::IndexSwitchOp, mlir::scf::YieldOp, mlir::scf::ConditionOp,
+                          mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp,
+                          mlir::arith::TruncIOp, mlir::ub::PoisonOp>(op)) {
                 accepted = methods.contains(op->getParentOfType<ctjs::FuncOp>());
+                if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
+                    dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());
+                }
             }
             if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
                 auto & block = fn.getBody().front();
@@ -529,6 +544,34 @@ struct classInitialization {
         }
         return true;
     }
+
+    bool normalizeMethods() {
+        for (mlir::Operation * operation : dispatchMethods) {
+            auto function = llvm::cast<ctjs::FuncOp>(operation);
+            // Charge the private copy before allocating it. All source effect
+            // and receiver checks have finished; only structural transport is
+            // normalized, with the existing bounded exception machinery.
+            auto walked = function.walk([&](mlir::Operation * op) {
+                const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+                if (cost > remaining) {
+                    refuse("class initialization work budget exhausted");
+                    return mlir::WalkResult::interrupt();
+                }
+                remaining -= static_cast<unsigned>(cost);
+                return mlir::WalkResult::advance();
+            });
+            if (walked.wasInterrupted()) { return false; }
+            mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone()));
+            if (auto failed = lowering_detail::normalizeStructuredExits(*copy, remaining)) {
+                auto message = llvm::toString(std::move(failed));
+                return refuse(message == "native exception recovery work budget exhausted"
+                                  ? "class initialization work budget exhausted"
+                                  : message);
+            }
+            normalizedMethods.emplace_back(function, std::move(copy));
+        }
+        return true;
+    }
 };
 
 struct CTNativeSpecializeClassInitializationPass
@@ -570,9 +613,17 @@ struct CTNativeSpecializeClassInitializationPass
             module.emitError() << problem;
             return signalPassFailure();
         }
+        if (!proof.normalizeMethods()) {
+            module.emitError() << proof.reason;
+            return signalPassFailure();
+        }
         // All current-IR checks precede the first mutation. Nothing inferred
         // from report attributes authorizes removal, even on a repeated run.
         module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        for (auto & [function, copy] : proof.normalizedMethods) {
+            (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+            function.getBody().takeBody(copy->getBody());
+        }
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
         for (auto [read, target] : proof.getterReads) { reads[target].push_back(read); }
         for (ctjs::FuncOp target : proof.getterOrder) {

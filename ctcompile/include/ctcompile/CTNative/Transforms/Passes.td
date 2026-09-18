@@ -41,7 +41,7 @@ def CTNativeSpecializeClassInitialization : Pass<"ctnative-specialize-class-init
     an immutable local constructor/prototype census. Only then remove the
     unused descriptor helper and unobservable prototype/constructor/home edges.
     Immutable local methods retain their prototype until constructor lowering;
-    structured method branches and loops retain the complete recursive effect
+    structured method branches, loops and exit dispatch retain the complete recursive effect
     and receiver-use census. Constructors and getter expansion stay linear;
     closed static getters with scalars or fresh empty objects expand at their
     exact reads after a bounded dependency proof; unused getter definitions are
