@@ -14,6 +14,39 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Wide baseline — 2026-09-18: round seven recovered
+
+**2,860 of 5,155 runnable files PASS (55.5%), 249,277 subtests PASS** at
+`b722aa41`, compared with 2,696 files and 239,070 subtests at `9f8da347`:
+**187 files gained, 23 lost; net +164 files and +10,207 passing subtests**.
+This completes session 19's interrupted reporting. The eight baseline
+JSON files in `/tmp/w-b722aa41/` finished before the extra `encoding/`
+sweep, which was stopped without a result. Encoding has no previous wide
+baseline and is excluded from both sides of this comparison.
+
+Same pinned WPT corpus, devbox, four workers, 4 GB address-space cap and
+`CTBROWSER_GL_DRIVER=deterministic`. The engine's recorded gate is 233/233;
+no new engine build was needed to recover these completed measurements.
+
+| directory | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css` | 1,535 | 1,175 | 25 | 0 | 191 | 1,488 | 68,941 / 34,147 |
+| `html` | 706 | 336 | 75 | 1 | 31 | 535 | 73,566 / 1,492 |
+| `dom` | 386 | 94 | 15 | 4 | 5 | 150 | 51,826 / 4,909 |
+| `shadow-dom` | 66 | 101 | 12 | 0 | 3 | 163 | 8,545 / 291 |
+| `custom-elements` | 70 | 106 | 1 | 0 | 3 | 13 | 3,471 / 702 |
+| `domparsing` | 17 | 42 | 0 | 0 | 10 | 3 | 327 / 1,285 |
+| `selection` | 41 | 46 | 3 | 0 | 6 | 87 | 33,332 / 723 |
+| `url` | 39 | 7 | 1 | 0 | 2 | 0 | 9,269 / 665 |
+
+All 23 lost files are CSS: 16 `all-prop-revert[-layer]-noop` variants,
+four logical margin/padding interpolation files, `columns-interpolation`,
+`outline-width-interpolation`, and the previously documented scaled
+viewport test. These are open failures, not accepted new expectations.
+The revert variants read zero logical margins where the UA stylesheet
+supplies paragraph/heading margins; the interpolation losses need separate
+triage. The full CSS module table is in `css-conformance.md`.
+
 ## The baseline — 2026-09-18: round seven merged (five suites + test262)
 
 **816 of the 1,102 that ran (74.0%) in the five suites; 84,108 subtests
@@ -31,9 +64,8 @@ viewport.html`, is NOT a regression: at `9f8da347` the iframe was a 0-wide
 box (`ed460525` gave it the default object size afterwards), so `50vw *
 0.01` expected 0 and got 0; the real gap - `getBoundingClientRect` ignores
 `transform: scale()` (`shell/bindings/element/views.cpp` applies only the
-translation) - was always there and is measured now. The wide corpus row
-for `b722aa41` was still running when session 19 ended (results land in
-`/tmp/w-b722aa41/` on the WSL box; tally with `wtally.py`). test262 at the
+translation) - was always there and is measured now. The recovered wide corpus row
+for `b722aa41` is above (results in `/tmp/w-b722aa41/`). test262 at the
 same engine: **40,832 of 48,624 (84.0%)**, rows in `docs/test262.md`.
 Same instrument: devbox, 4 jobs, `CTBROWSER_GL_DRIVER=deterministic`.
 

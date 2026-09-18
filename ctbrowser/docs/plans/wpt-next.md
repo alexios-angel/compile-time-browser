@@ -1,5 +1,16 @@
 # WPT — the next round, as briefs
 
+**Resumed 2026-09-18.** Session 19's eight baseline directories finished;
+their recovered results are now in `wpt.md` and `css-conformance.md`:
+wide 2,696 -> 2,860 files PASS, CSS 1,413 -> 1,535. There are 23 CSS
+PASS-to-FAIL files to triage first (16 revert variants, four logical
+margin/padding interpolation files, columns, outline width, scaled
+viewport). The extra encoding sweep was stopped without a complete
+result; it was absent from the prior baseline. The shared devbox lock is
+released for the queued compiler checks. The ten diagnoses are saved,
+but the workflow journal has no synthesizer result, so do not wait for a
+finished plan that was never written. No new JS/VM change in this recovery.
+
 **Updated 2026-09-18, session 19 (HANDOFF - read this first).** Round SEVEN
 is MERGED: K `274c693e`, A3 `46b5f01f`, L2 `274c6b49`, J2 `b722aa41` (ctjs
 gitlink `d2664e9`, in the worktree submodule and the
