@@ -95,6 +95,10 @@ int main() {
     js_expect("BigInt(5)", "5");
     js_expect("BigInt(\"42\")", "42");
     js_expect("BigInt(\"0x10\")", "16");
+    js_expect("BigInt('  +0010  ')", "10");
+    js_expect("BigInt('-0010')", "-10");
+    js_expect("BigInt('0o10')", "8");
+    js_expect("BigInt('0b10')", "2");
     js_expect("BigInt(true)", "1");
     js_expect("typeof BigInt(5)", "bigint");
     js_expect("typeof BigInt", "function");
@@ -177,6 +181,14 @@ int main() {
     throws("BigInt(1.5)", "RangeError");
     throws("BigInt(NaN)", "RangeError");
     throws("BigInt(\"zz\")", "SyntaxError");
+    // StringIntegerLiteral permits signs only on decimal digits, and no separators.
+    for (const char * text :
+         {"-0x1", "+0X1", "-0o1", "+0O1", "-0b1", "+0B1", "1_0", "0xF_F", "_1", "1_"}) {
+        const std::string quoted = "'" + std::string{text} + "'";
+        throws(("BigInt(" + quoted + ")").c_str(), "SyntaxError");
+        throws(("BigInt.asIntN(8, " + quoted + ")").c_str(), "SyntaxError");
+        js_expect("1n == " + quoted, "false");
+    }
     throws("BigInt()", "TypeError");
     throws("BigInt(null)", "TypeError");
     throws("BigInt(Symbol())", "TypeError");

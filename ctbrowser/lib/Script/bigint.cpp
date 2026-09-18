@@ -91,7 +91,13 @@ std::optional<bigint> bigint_from_double(double v) {
 std::optional<bigint> bigint_from_string(std::string_view text) {
     const std::string_view body = trim_js_space(text);
     if (body.empty()) { return bigint{0}; } // BigInt("") and BigInt(" ") are 0n
-    return bigint_from_literal(body);
+    // StringIntegerLiteral has no separators; only decimal digits may carry a sign.
+    if (body.find('_') != std::string_view::npos) { return std::nullopt; }
+    const scanned s = scan_literal(body);
+    if (s.radix == 0 || (s.radix != 10 && (body.front() == '+' || body.front() == '-'))) {
+        return std::nullopt;
+    }
+    return from_digits(s);
 }
 
 std::optional<bigint> bigint_div(const bigint & a, const bigint & b) {
