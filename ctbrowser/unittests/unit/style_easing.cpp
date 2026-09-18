@@ -197,6 +197,12 @@ void test_composition() {
                          context) == "rgb(4, 5, 6) 3px 4px 0px 0px");
     CHECK(composite_text("border-width", "1px 2px", "10px 20px", composite_op::add, context) ==
           "11px 22px");
+    CHECK(composite_text("border-image-slice", "1 2 3 4", "1 2 3 4", composite_op::add, context) ==
+          "2 4 6 8");
+    CHECK(composite_text("border-image-width", "auto 2", "auto 2", composite_op::accumulate,
+                         context) == "auto 4");
+    CHECK(composite_text("background-position", "10% 20%", "10% 20%", composite_op::add, context) ==
+          "20% 40%");
     CHECK(composite_text("background-size", "40px 40px", "60px 60px, 260px 260px",
                          composite_op::add, context) == "100px 100px, 300px 300px");
     // The individual transform properties: a scale multiplies, `none` is 1 1 1.

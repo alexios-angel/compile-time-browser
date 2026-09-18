@@ -1244,7 +1244,7 @@ struct rotation {
             if (x.empty() && y.empty()) { continue; }
             if (k_out++ != 0) { out += ' '; }
             if (x == y) {
-                out += x;
+                out += add_pair(property, x, y, ctx);
                 continue;
             }
             bool item_ok = true;
