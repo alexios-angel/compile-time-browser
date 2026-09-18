@@ -15,6 +15,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local callable holders and negative String latches, 2026-09-18 UTC
+
+Continued clean **414d395e**, following the **18:13:26 AGENT-SYNC closure** and
+its unfinished full-H holder proof. No predecessor edits remained. Both agents'
+commits and unmerged branches were reviewed; the September 7 WIP branch exists
+and is already an ancestor. Parallel agents supplied holder/fixture/induction
+recommendations; two hit service limits without edits. Root completed the code,
+fixtures, gates and commits. No browser source or runtime representation changed.
+
+**6c965f19** composes entry-local callable holders with original class and DOM
+proofs. Exact own slots, closure enclosure, captures, callback uses, implicit
+arguments and same-block source order are checked before rewriting. The existing
+holder rewrite makes direct calls before ordinary closure lifting, but retains
+**every local slot function** for actual invocation and complete typed DOM proof.
+Uncalled slots, even pure ones, refuse. Original filter callbacks survive as plain
+C++ predicates; repeated calls preserve their results. Captures, unknown effects,
+replacement, identity escape, invalid later inputs and missing authority refuse
+transactionally. Public closed-source/global-holder rules remain strict.
+All **172 pre-session fixture entries** remain unchanged; two positive and
+thirteen refusal specimens and twelve transaction controls per provider were
+added. The diagnostic now names an otherwise unclassified rejected operation.
+
+**476c635f** proves original negative canonical String Sub latches such as
+`i -= '-1'`. Direct literals and saved/transported inputs reuse bounded conversion;
+Add still requires a Number stride. CFG/SCF backedges, original property keys,
+changing/repeated producers, canonical spelling and final-index bounds retain
+their checks. Returned children still escape; only unreturned children discharge.
+Both existing oracle source sections remain byte-identical.
+
+Focused devbox evidence: `/tmp/ctcompile-holder-proof/`.
+
+- Native explicit targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`. Builds: **5, 5, 5, then 4 actions**.
+- Exact `ctcompile_exception_recovery`: **1/1 (4.00s; total 4.01s)**.
+- Exact `ctcompile_host_contract`: **1/1 (0.46s; total 0.47s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (60.71s)**,
+  **208 Node/interpreter observations, 8 native executions, 1,410 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (198.14s)**,
+  retaining original W/W+r/W+r+H refusals.
+- Escape explicit targets: `ctjs-translate`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`,
+  `ctcompile-test-type-oracle`, **5 build actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.08s)**.
+- Six selected escape-claims cases: `negative-string-latch`, `sub-negative-latch`,
+  `negative-string`, `add-latch`, `commuted-add-latch`, `negated-stride`.
+  Final **6/6**, zero violations: four passed initially (**0.18s** for the
+  six-case invocation), two corrected cases passed their retry (**0.11s**).
+  New latch oracle: **23 sites / 8 sound / 8 of 14 precision**;
+  sub-negative-latch **15 / 8 / 8 of 8**; negated-stride **17 / 10 / 10 of 10**.
+
+The first native transaction failed **4.09s**; a diagnostic-only retry (**4.01s**)
+identified helper-local cells because a conditional holder use violated the
+existing identity proof. Entry-linear fixtures then reached the ordinary
+closure-lift identity refusal (**4.16s**). Retaining slot functions while reusing
+the holder rewrite fixed it. The escape retry changed only test expectations
+and the new mutation specimen: a constant overwrite before the latch is still a
+fixed step, so the control now actually changes its latch. The existing unary
+String specimen retains its body with a corrected expectation.
+Required `tools/format.sh --check` still reports **26 existing diagnostics in nine
+HEAD-identical files (four browser, five compiler)**; changed C++/Black/Node and
+whitespace checks pass. All **10 source/test hashes** match the devbox. The
+inspected holder output uses ordinary String/vector/optional values and the
+existing ctbrowser DOM API; the native Script/AOT/dispatch gates pass.
+Full CTest/compiler lit, complete DOM suites,
+broad corpus/native matrices, WPT/test262, whole-Bootstrap replay and independent
+dataset lifetime replay were skipped. No bundle gain or full-suite pass is claimed.
+No push.
+
+**Exact next:** full local H still captures M/F, and a class method captures H
+itself; the sibling capture proof currently accepts functions, not that object.
+Original uncalled H slots must receive complete effect/type proof, with no invented
+parameter authority. Global holders also require their script-wrapper publication
+to compose with the class path's inert-entry-declaration requirement. H's original
+Unicode `charAt(0).toLowerCase()` remains. Preserve W/W+r/W+r+H specimens (last
+omits `s`); W still needs Object.entries, destructuring, original s, RegExp/TypeError
+and spread before inheritance. Broader conversion/induction and the part-25
+backlog remain. The application driver, native Bootstrap and overall plan are
+unfinished.
+
 ## Captured dataset-filter callbacks and negative Strings, 2026-09-18 UTC
 
 **aef32da5** resumes the full-H thread found in the **17:40:39 AGENT-SYNC journal**

@@ -139,10 +139,10 @@ callee/new.target. It binds the actual receiver separately at each call. Receive
 observations on this route survive into complete DOM reproof. Exact String
 arguments are collected from every symbol caller before specialization; unknown
 inputs invalidate the whole formal. Original nested closure identities are checked
-before the existing no-match replacement proof runs. Every surviving closure or
-capture still refuses before inlining, as do callee/new.target observations,
-recursion and unvisited source functions. Existing live closure and lexical
-receiver rules remain unchanged.
+before the existing no-match replacement proof runs. A surviving closure needs
+the confined filter-callback proof described below; other closures/captures,
+callee/new.target observations, recursion and unvisited source functions refuse.
+Existing live closure and lexical receiver rules remain unchanged.
 This normalization supplies no constructor/prototype or class-provider proof.
 
 After direct receiver expansion, fresh confined objects with initialized ordinary
@@ -175,7 +175,18 @@ also defer, whether their original call is ordinary or already resolved. Their
 calls survive class rewriting; all global-holder targets retain the stricter
 census because unused slots can be removed earlier. Original helper exception
 CFGs stay intact for the existing URI/JSON normalization and final typed proof.
-This composes unchanged Bootstrap M with `M(shape.read())` in the entry or with
+
+Entry-local callable holders can use the same DOM transaction when every slot
+has an exact capture-free target and all holder reads/calls are ordered in its
+original block. Confined replacement/filter callback premises are checked on the
+original bodies. The holder then becomes direct calls before ordinary closure
+lifting, but **every slot function stays** for complete invocation and typed DOM
+proof. Even a pure uncalled slot refuses; missing arguments are budgeted and
+surplus arguments refuse. Conditional holder uses, captures, replacement and
+identity escape remain outside this rule. Global holders keep their strict
+source census and wrapper requirements.
+
+Entry-local helpers compose unchanged Bootstrap M with `M(shape.read())` or with
 a method as M's only caller. DOM class methods may capture an earlier sibling
 helper through a proved fixed local cell. The helper must capture nothing;
 every captured read must feed only an ordinary call with undefined receiver.
@@ -206,8 +217,8 @@ target and that target does not observe its callee argument. All premises are
 checked before deleting any closure, so child deletion order cannot authorize a
 parent. Nested ordinary helper dependencies remain refused; replacement and
 filter callbacks use the separate original-body proofs above. Full Bootstrap H
-still needs complete holder-slot proof; none of its unused slots bypasses the
-strict census merely because another slot is called.
+still needs local holder/M/F captures and complete unused-slot proof; no slot
+bypasses the complete census merely because another slot is called.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent

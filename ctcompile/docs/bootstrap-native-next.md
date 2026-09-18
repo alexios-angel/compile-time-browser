@@ -1,5 +1,41 @@
 # What native Bootstrap needs next
 
+## Local callable holders and negative String latches, 2026-09-18 UTC
+
+Continued clean **414d395e** from the **18:13:26 AGENT-SYNC closure**; no predecessor
+edits remained. The September 7 WIP branch exists and is already an ancestor.
+**6c965f19** composes entry-local callable holders with original class/DOM proofs.
+Exact identities, source order and callback premises precede direct-call rewriting;
+**every local slot function remains** until complete actual-call and typed DOM proof.
+Original filter callbacks and repeated calls work. Uncalled slots (even pure ones),
+captures, conditional holder uses, replacement and unknown effects refuse.
+All **172 prior fixture entries** are unchanged. Public/global rules stay strict.
+
+**476c635f** proves original canonical negative String Sub latches, including saved
+inputs and CFG/SCF transport. Add concatenation, original keys, changing/repeated
+producers and final bounds retain their checks. Parallel agents supplied proof and
+fixture/induction recommendations; root completed implementation after service limits.
+
+Focused devbox passes: transaction **1/1 (4.00s; total 4.01s)**, host contract
+**1/1 (0.46s; total 0.47s)**, class DOM **1/1 (60.71s): 208 source observations,
+8 native executions, 1,410 refusals**, public class initialization **1/1 (198.14s)**.
+Arrays **1/1 (1.08s)**; six selected escape oracles final **6/6**, zero violations
+(initial four passes/two expectation failures in **0.18s**, two-case retry **0.11s**).
+New latch oracle **23 sites / 8 sound / 8 of 14 precision**. All **10 tested hashes**
+match. Required formatting retains **26 existing diagnostics in nine unchanged files
+(four browser, five compiler)**; changed checks pass. HANDOFF records explicit
+build targets, initial failures and skipped checks. Evidence: `/tmp/ctcompile-holder-proof/`.
+Full/broad suites, whole-Bootstrap and independent dataset lifetime replay were
+skipped. No browser changes, bundle gain or full-suite claim. No push.
+
+**Next:** full H's M/F captures and the class method's H-object capture, then
+complete original unused-slot proof without invented parameter authority. Global
+holders also need wrapper publication to compose with the inert entry declaration.
+H's Unicode normalization and W's Object.entries, destructuring, original s,
+RegExp/TypeError and spread remain before inheritance. Preserve W/W+r/W+r+H
+refusals (last omits s). Broader escape conversions/induction and the part-25
+backlog remain. The application driver, native Bootstrap and overall plan are unfinished.
+
 ## Captured dataset-filter callbacks and negative Strings, 2026-09-18 UTC
 
 Resumed clean **40db7482**, following the **17:40:39 journal** and claims abandoned
