@@ -1,5 +1,46 @@
 # What native Bootstrap needs next
 
+## Captured local H helpers and Boolean Add latches, 2026-09-18 UTC
+
+Continued clean **9b9ca236** from the **18:35:50 AGENT-SYNC closure**; no predecessor
+edits remained. The September 7 WIP exists and is already an ancestor.
+**51d419c2** composes original one-slot H.getDataAttribute with class results and
+fixed sibling M/F captures. Complete identities, source order, implicit arguments
+and captured uses precede direct rewriting. Capture metadata clears before holder
+closure erasure; every slot body remains for actual-call and typed DOM proof.
+Repeated calls and JSON/URI fallback execute. Uncalled slots, replacement,
+escaping identities, callback effects and invalid later keys refuse. All **187
+prior fixture entries** remain unchanged; public/global requirements stay strict.
+
+**9fd098ed** fixes an emitter bug exposed by the repeated call: a discarded opaque
+constructor now uses explicit void discard so Type(v) cannot parse as a declaration.
+The regression checks constructor/destructor effects and upstream compatibility.
+**153a4daa** proves Boolean true Add latches in either operand order, with saved
+inputs and CFG/SCF transport. String concatenation, zero/changing/repeated strides,
+original keys and final bounds keep their checks. A parallel agent supplied the
+escape draft; root completed native work after two agents reached service limits.
+
+Focused devbox passes: transaction **1/1 (4.10s; total 4.11s)**, host contract
+**1/1 (0.46s; total 0.47s)**, class DOM **1/1 (66.81s): 220 source observations,
+8 native executions, 1,530 refusals**, public class initialization **1/1 (198.50s)**.
+Two selected emitter cases **2/2 (0.13s)**; arrays **1/1 (1.10s; total 1.11s)**;
+five selected escape oracles **5/5 (0.16s)**, zero violations. New Boolean latch
+oracle **35 sites / 11 sound / 11 of 21 precision**. All **ten tested hashes** match.
+Required formatting retains **26 existing diagnostics in nine unchanged files
+(four browser, five compiler)**; changed checks pass. HANDOFF records explicit
+targets, initial failures and skipped checks. Evidence: `/tmp/ctcompile-holder-captures/`.
+Full/broad suites, whole-Bootstrap and independent dataset lifetime replay were
+skipped. No browser changes, bundle gain or full-suite claim. No push.
+
+**Next:** the class method's H-object capture, then full H's combined M capture /
+retained filter callback and complete original unused-slot proof without invented
+parameter authority. Global holders also need wrapper publication to compose with
+the inert entry declaration. H's Unicode normalization and W's Object.entries,
+destructuring, original s, RegExp/TypeError and spread remain before inheritance.
+Preserve W/W+r/W+r+H refusals (last omits s). Broader conversion/induction and
+part-25's backlog remain. The application driver, native Bootstrap and the overall
+plan are unfinished.
+
 ## Local callable holders and negative String latches, 2026-09-18 UTC
 
 Continued clean **414d395e** from the **18:13:26 AGENT-SYNC closure**; no predecessor

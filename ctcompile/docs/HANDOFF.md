@@ -15,6 +15,89 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured local H helpers and Boolean Add latches, 2026-09-18 UTC
+
+Continued clean **9b9ca236**, following the **18:35:50 AGENT-SYNC closure** and
+its unfinished full-H capture thread. Both agents' logs and unmerged branches
+were reviewed; the September 7 WIP exists and is already an ancestor. No dirty
+predecessor work remained. Parallel agents supplied a frozen escape draft and
+native fixture/proof recommendations; two hit service limits without edits.
+Root completed native implementation, fixtures, review, gates and small commits.
+No browser source or runtime representation changed.
+
+**51d419c2** lets an entry-local callable holder slot capture fixed sibling
+functions through the existing class-method capture proof. Bootstrap's original
+one-slot H.getDataAttribute expression now composes with a class result, complete
+M and F bodies, repeated calls, and JSON/URI fallback. Exact closure identities,
+source order, implicit arguments and every captured use precede rewriting. Proved
+capture metadata clears before holder closure erasure; every slot body remains
+for actual-call and complete typed DOM proof. Helper replacement, identity escape,
+callback effects, invalid later keys, missing authority and uncalled slots refuse.
+All **187 prior fixture entries** remain unchanged; three positives, nine refusal
+specimens and twelve transaction controls per provider were added.
+
+**153a4daa** proves Boolean true Add latches in either operand order using
+the existing bounded conversion. Saved inputs and CFG/SCF transport retain their
+identity; String concatenation, zero/unknown/changing strides, repeated producers,
+original property keys and final bounds keep their refusals. Returned children
+still escape; only unreturned children discharge. Prior fixture bodies are intact.
+
+**9fd098ed** fixes a shared native C++ statement ambiguity exposed by the
+new repeated-H call. An unused opaque constructor call was printed as Type(v),
+which C++ parses as a declaration. Native statements now explicitly discard the
+value with `(void)`, preserving construction and destruction. The focused
+regression observes destructor effects before the next source call; unmarked
+upstream printing remains unchanged.
+
+Focused evidence: `/tmp/ctcompile-holder-captures/`.
+
+- Explicit first-build targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **11 actions**.
+  The emitter retry built the five native targets: **3 actions**.
+- Exact `ctcompile_exception_recovery`: **1/1 (4.10s; total 4.11s)**.
+- Exact `ctcompile_host_contract`: **1/1 (0.46s; total 0.47s)**.
+- Exact `CTNative/Lowering/Emission/unused-call.mlir` and
+  `Target/Cpp/upstream/call.mlir`: **2/2 (0.13s)**, including compiled execution.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (66.81s)**,
+  **220 Node/interpreter observations, 8 native executions, 1,530 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (198.50s)**,
+  preserving the original W/W+r/W+r+H refusals.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.10s; total 1.11s)**.
+- Five selected escape-claims cases: `primitive-add-latch`, `add-latch`,
+  `commuted-add-latch`, `negative-string-latch`, `primitive-addition`:
+  **5/5 (0.16s)**, zero violations. New primitive-add-latch:
+  **35 observed sites / 11 sound / 11 of 21 precision**.
+
+The first class-DOM execution failed **23.09s** in emitted C++ for a discarded
+JSON constructor. The minimized emitter regression first needed a FileCheck
+LABEL correction (**0.03s**), then failed at precisely the missing explicit
+discard (**0.03s**). Its fix retains every original native fixture. Transaction,
+contract and escape results were not replayed after the emitter-only fix.
+`server.sh start` confirmed the devbox running; resync waited on local filesystem
+I/O before the three-action emitter build. No network-rule change was needed.
+
+Required `tools/format.sh --check` reports **26 existing diagnostics in nine
+HEAD-identical files (four browser, five compiler)**. Changed formatting, Node
+syntax and whitespace checks pass. All **ten tested hashes** match the devbox.
+The emitted H/M/F path uses ordinary C++ values and existing ctbrowser helpers;
+its native Script/AOT/dispatch gates pass. Full CTest/compiler lit, complete DOM,
+broad corpus/native matrices, WPT/test262, whole-Bootstrap replay and independent
+dataset lifetime replay were skipped. No bundle gain or full-suite pass is claimed.
+No push.
+
+**Exact next:** the class method's H-object capture still needs a fixed local
+holder identity proof. Full H's getDataAttributes also combines an M capture with
+its retained filter callback; the reused callee census currently accepts captured
+reads or callback creation separately. Every original unused slot still needs
+complete proof without invented parameter authority. Global holders need wrapper
+publication to compose with the inert entry declaration. Then H's Unicode
+charAt(0).toLowerCase(), W's Object.entries/destructuring/original s/RegExp/TypeError/
+spread, and inheritance. Preserve W/W+r/W+r+H refusals (last omits s). Broader
+conversion/induction and part-25's backlog remain. The application driver, native
+Bootstrap and the overall plan remain unfinished.
+
 ## Local callable holders and negative String latches, 2026-09-18 UTC
 
 Continued clean **414d395e**, following the **18:13:26 AGENT-SYNC closure** and

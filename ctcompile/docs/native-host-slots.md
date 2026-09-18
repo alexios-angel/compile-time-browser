@@ -177,19 +177,22 @@ census because unused slots can be removed earlier. Original helper exception
 CFGs stay intact for the existing URI/JSON normalization and final typed proof.
 
 Entry-local callable holders can use the same DOM transaction when every slot
-has an exact capture-free target and all holder reads/calls are ordered in its
-original block. Confined replacement/filter callback premises are checked on the
-original bodies. The holder then becomes direct calls before ordinary closure
-lifting, but **every slot function stays** for complete invocation and typed DOM
+has an exact target and all holder reads/calls are ordered in its original block.
+Slots may capture fixed sibling helpers through the proof below; other captures
+remain unproved. Confined replacement/filter callback premises are checked on the
+original bodies. Capture metadata is cleared before holder closures are erased.
+The holder then becomes direct calls before ordinary closure lifting, but
+**every slot function stays** for complete invocation and typed DOM
 proof. Even a pure uncalled slot refuses; missing arguments are budgeted and
-surplus arguments refuse. Conditional holder uses, captures, replacement and
+surplus arguments refuse. Conditional holder uses, object captures, replacement and
 identity escape remain outside this rule. Global holders keep their strict
 source census and wrapper requirements.
 
 Entry-local helpers compose unchanged Bootstrap M with `M(shape.read())` or with
-a method as M's only caller. DOM class methods may capture an earlier sibling
-helper through a proved fixed local cell. The helper must capture nothing;
-every captured read must feed only an ordinary call with undefined receiver.
+a method as M's only caller. DOM class methods and local holder slots may capture
+an earlier sibling helper through a proved fixed local cell. The helper must
+capture nothing; every captured read must feed only an ordinary call with
+undefined receiver.
 Its callee may only supply the enclosing identity of an uncaptured replacement
 or single-parameter filter callback whose own implicit arguments are unused.
 Saving the helper's lexical receiver in that callback is inert. The original
@@ -205,6 +208,9 @@ outside this proof. Missing arguments are padded under the
 work budget; surplus arguments refuse. Complete method probes still check every
 unused body before removal. The original calls become direct calls at the same
 source position, and only an unobserved helper closure disappears.
+This composes original H.getDataAttribute with M/F and class results, including
+repeated calls and JSON/URI fallback. Full H still needs its class-method object
+capture, combined capture/filter-callback census and complete unused-slot proof.
 
 `toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
