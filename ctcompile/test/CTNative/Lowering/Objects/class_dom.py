@@ -7,7 +7,7 @@ import re
 import shutil
 
 from CTNative.Browser import native_dom as dom
-from CTNative.Browser.native_dom_json import BOOTSTRAP_M
+from CTNative.Browser.native_dom_json import ATTRIBUTE_HELPERS, BOOTSTRAP_M
 from CTNative.Browser import native_dom_strings as strings
 from CTNative.HostContract import contract as host
 from CTNative.harness import find_compilers, run
@@ -803,6 +803,55 @@ FULL_H = BOOTSTRAP_M + strings.BOOTSTRAP_F + BOOTSTRAP_H + """class Shape {
   return typeof new Shape(element).read() === 'object';
 """
 FILTER_REFUSALS["class_filter_full_h"] = FULL_H
+# Original H slot and M/F bodies, with a class result supplying the source observation.
+H_CAPTURE_CLASS = ATTRIBUTE_HELPERS + CLASS + """  element.setAttribute('data-bs-config',
+    element.getAttribute(shape.read()) === null ? '%7B%7D' : '%');
+  return typeof H.getDataAttribute(element, 'config') === 'object';
+"""
+H_CAPTURE_CASES = {
+    "class_h_captures": (H_CAPTURE_CLASS, "1000"),
+    "class_h_captures_multiple": (
+        H_CAPTURE_CLASS.replace(
+            "  return typeof", "  H.getDataAttribute(element, 'config');\n  return typeof"
+        ),
+        "1000",
+    ),
+    "class_h_captures_fallback": (
+        H_CAPTURE_CLASS.replace("'%7B%7D' : '%'", "'not%20json' : '%7B%7D'").replace(
+            "=== 'object'", "=== 'string'"
+        ),
+        "1000",
+    ),
+}
+H_CAPTURE_REFUSALS = {
+    "class_h_capture_m_replaced": H_CAPTURE_CLASS.replace(
+        "class Shape", "M = function(t) { return t; }; class Shape"
+    ),
+    "class_h_capture_f_replaced": H_CAPTURE_CLASS.replace(
+        "class Shape", "F = function(t) { return t; }; class Shape"
+    ),
+    "class_h_capture_m_escape": H_CAPTURE_CLASS.replace(
+        "(t, e) => M(", "(t, e) => (t.setAttribute('leak', M), M("
+    ).replace("F(e)}`))", "F(e)}`)))"),
+    "class_h_capture_caught_effect": H_CAPTURE_CLASS.replace("return t\n", "return unknown(t)\n"),
+    "class_h_capture_callback_effect": H_CAPTURE_CLASS.replace("t.toLowerCase()", "unknown(t)"),
+    "class_h_capture_later_key": H_CAPTURE_CLASS.replace(
+        "  return typeof", "  H.getDataAttribute(element, 'Config');\n  return typeof"
+    ),
+    "class_h_capture_unused": H_CAPTURE_CLASS.replace(
+        "const H = {", "const H = { unused(t) { return M(t); },"
+    ),
+    "class_h_capture_holder_escape": H_CAPTURE_CLASS.replace(
+        "  return typeof", "  element.setAttribute('leak', H);\n  return typeof"
+    ),
+    "class_h_capture_object": H_CAPTURE_CLASS.replace(
+        "read() { return this.key; }", "read() { return H.getDataAttribute(this.key, 'config'); }"
+    ),
+}
+for cases in (M_CASES, NUMBER_CASES, F_CASES, CLASS_CASES):
+    cases.update(H_CAPTURE_CASES)
+for refusals in (M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS, CLASS_REFUSALS):
+    refusals.update(H_CAPTURE_REFUSALS)
 HOLDER_CLASS = (
     """const holder = {
     keys(t) { return Object.keys(t.dataset).filter("""

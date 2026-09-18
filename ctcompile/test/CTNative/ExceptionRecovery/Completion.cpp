@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 104; ++control) {
+        for (unsigned control = 0; control < 116; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -682,6 +682,48 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     source.insert(source.find("const count"), "holder.keys(element); ");
                 }
             }
+            if (control >= 104) {
+                source = R"js(function guarded(element) {
+                    function M(t) {
+                        if ("true" === t) return !0;
+                        if ("false" === t) return !1;
+                        if (t === Number(t).toString()) return Number(t);
+                        if ("" === t || "null" === t) return null;
+                        if ("string" != typeof t) return t;
+                        try { return JSON.parse(decodeURIComponent(t)) }
+                        catch (e) { return t }
+                    }
+                    function F(t) { return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`) }
+                    const H = { getDataAttribute: (t, e) => M(t.getAttribute(`data-bs-${F(e)}`)) };
+                    class Shape { read() { return 'x'; } }
+                    const shape = new Shape();
+                    element.setAttribute('data-bs-config', element.getAttribute(shape.read()) === null ? '%7B%7D' : '%');
+                    return typeof H.getDataAttribute(element, 'config') === 'object';
+                })js";
+                if (control == 105) {
+                    source.insert(source.find("return typeof"),
+                                  "H.getDataAttribute(element, 'config'); ");
+                }
+                if (control == 106 || control == 107) {
+                    source.insert(source.find("class Shape"),
+                                  control == 106 ? "M = function(t) { return t; }; "
+                                                 : "F = function(t) { return t; }; ");
+                }
+                if (control == 108) {
+                    source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)");
+                }
+                if (control == 109) {
+                    source.insert(source.find("return typeof"),
+                                  "element.setAttribute('leak', H); ");
+                }
+                if (control == 110) {
+                    source.insert(source.find("getDataAttribute:"), "unused(t) { return M(t); }, ");
+                }
+                if (control == 114) {
+                    source.insert(source.find("return typeof"),
+                                  "H.getDataAttribute(element, 'Config'); ");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -711,21 +753,28 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 }
                 if (control != 90 && control != 102) { request.datasetParameters = {0}; }
             }
+            if (control >= 104) {
+                request.datasetParameters.clear();
+                request.initialIntrinsics = {"__ctbrowser_class_defined", "decodeURIComponent"};
+                if (control != 111) { request.initialIntrinsics.push_back("Number"); }
+                if (control != 112) { request.initialIntrinsics.push_back("JSON"); }
+                if (control != 113) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
+            }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
-            auto error = ctnative::prepareDOMEntry(*candidate, request,
-                                                   control == 3 || control == 32 || control == 55 ||
-                                                           control == 69 || control == 81 ||
-                                                           control == 91 || control == 103
-                                                       ? 0
-                                                   : control == 4 || control == 17 ? 1000
-                                                   : control >= 47                 ? 1000000
-                                                                                   : 100000);
+            auto error = ctnative::prepareDOMEntry(
+                *candidate, request,
+                control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
+                        control == 91 || control == 103 || control == 115
+                    ? 0
+                : control == 4 || control == 17 ? 1000
+                : control >= 47                 ? 1000000
+                                                : 100000);
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
-                control != 100) {
+                control != 100 && control != 104 && control != 105) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -743,8 +792,12 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 const ctnative::DOMEntryAnalysis checked(*candidate, request);
                 check(
                     mlir::succeeded(mlir::verify(*candidate)) && checked.proved() &&
-                        (control >= 82 ? request.initialIntrinsics ==
-                                             std::vector<std::string>{"Object", "Array", "String"}
+                        (control >= 104
+                             ? request.initialIntrinsics ==
+                                   std::vector<std::string>{"decodeURIComponent", "Number", "JSON",
+                                                            "__ctbrowser_regexp"}
+                         : control >= 82 ? request.initialIntrinsics ==
+                                               std::vector<std::string>{"Object", "Array", "String"}
                          : control >= 70
                              ? request.initialIntrinsics ==
                                    std::vector<std::string>{"Number", "decodeURIComponent", "JSON",

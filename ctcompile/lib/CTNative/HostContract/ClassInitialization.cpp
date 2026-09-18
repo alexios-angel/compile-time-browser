@@ -27,7 +27,7 @@ struct classInitialization {
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::StringMap<ctjs::StoreGlobalOp> globals;
     llvm::StringMap<bool> closedGlobals;
-    llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> globalHolderReads;
+    llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> holderReads;
     llvm::DenseSet<mlir::Operation *> globalHolderLoads;
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
     llvm::MapVector<mlir::Operation *, CallableObject> localDOMHolders;
@@ -55,7 +55,7 @@ struct classInitialization {
     llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
     llvm::SetVector<mlir::Operation *> capturedHelpers;
-    llvm::SmallVector<ctjs::CreateClosureOp> capturedMethods;
+    llvm::SmallVector<ctjs::CreateClosureOp> capturedClosures;
     llvm::SetVector<mlir::Operation *> dispatchMethods;
     llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
 
@@ -229,6 +229,7 @@ struct classInitialization {
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
                         llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry) {
         auto fn = target(method);
+        const auto constructorValue = constructor ? constructor.getResult() : mlir::Value{};
         if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
             (method.getEnclosingIndicesAttr() &&
              llvm::any_of(method.getEnclosingIndicesAttr().asArrayRef(),
@@ -240,7 +241,7 @@ struct classInitialization {
                 return refuse("class method capture lacks a fixed local cell");
             }
             auto value = sourceValue(cells.lookup(capture));
-            if (value == constructor.getResult()) { continue; }
+            if (value == constructorValue) { continue; }
             auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
             auto helper = target(closure);
             if (!domEntry || !helper || !closure.getUpvalues().empty() ||
@@ -268,7 +269,7 @@ struct classInitialization {
                 return refuse("class method observes or changes its captured identity");
             }
             auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
-            auto helper = value != constructor.getResult()
+            auto helper = value != constructorValue
                               ? target(value.getDefiningOp<ctjs::CreateClosureOp>())
                               : ctjs::FuncOp{};
             for (mlir::OpOperand & selected : load.getResult().getUses()) {
@@ -299,13 +300,13 @@ struct classInitialization {
             captureReads.push_back(load);
             if (helper) { callableCaptures[load] = helper; }
         }
-        if (!method.getUpvalues().empty()) { capturedMethods.push_back(method); }
+        if (!method.getUpvalues().empty()) { capturedClosures.push_back(method); }
         return true;
     }
     ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool domEntry = false) {
         if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
         if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
-            if (auto closure = globalHolderReads.lookup(value)) { return closure; }
+            if (auto closure = holderReads.lookup(value)) { return closure; }
             auto object = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
             auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
             auto publication = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
@@ -321,14 +322,23 @@ struct classInitialization {
                 if (!step() || !ctjs::ordinaryKey(store.getKey())) { return {}; }
                 auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
                 auto fn = target(closure);
-                if (!fn || !closure.getUpvalues().empty()) { return {}; }
+                if (!fn) { return {}; }
                 auto & block = fn.getBody().front();
                 if (domLocal) {
-                    if (!helperCallbacks(fn) || !unusedReceiver(fn) ||
+                    if (closure.getUpvalues().empty()) {
+                        if (fn.getUpvalueCount() != 0 || !helperCallbacks(fn)) { return {}; }
+                    } else {
+                        // Reuse the exact sibling-function proof. A holder has
+                        // no constructor identity or authority for object captures.
+                        llvm::SmallVector<ctjs::GetPropertyOp> unusedReads;
+                        if (!methodCaptures(closure, {}, unusedReads, true)) { return {}; }
+                    }
+                    if (!unusedReceiver(fn) ||
                         !block.getArgument(ctjs::arg_new_target).use_empty()) {
                         return {};
                     }
-                } else if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
+                } else if (!closure.getUpvalues().empty() ||
+                           !block.getArgument(ctjs::arg_receiver).use_empty() ||
                            !block.getArgument(ctjs::arg_new_target).use_empty() ||
                            !block.getArgument(ctjs::arg_callee).use_empty()) {
                     return {};
@@ -377,10 +387,12 @@ struct classInitialization {
                     needsDOMMethodProof = true;
                 }
             }
-            if (publication) {
+            if (publication || domLocal) {
                 for (auto [loaded, closure] : proof->reads) {
-                    globalHolderReads[loaded.getResult()] = closure;
+                    holderReads[loaded.getResult()] = closure;
                 }
+            }
+            if (publication) {
                 for (ctjs::LoadGlobalOp loaded : proof->loads) { globalHolderLoads.insert(loaded); }
                 globalHolders.try_emplace(publication, std::move(*proof));
             } else if (domLocal) {
@@ -1048,13 +1060,16 @@ struct classInitialization {
                      (constructors.contains(fn) || getters.contains(fn) ||
                       (((declaration && fn == entry) || block.getNumArguments() == 3) &&
                        receiverUnused && block.getArgument(ctjs::arg_new_target).use_empty())));
-                accepted &= fn.getUpvalueCount() == 0 || methods.contains(fn);
+                accepted &= fn.getUpvalueCount() == 0 || methods.contains(fn) ||
+                            llvm::any_of(capturedClosures, [&](ctjs::CreateClosureOp closure) {
+                                return target(closure) == fn;
+                            });
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
                 auto fn = target(closure);
                 accepted = fn && fn != entry &&
                            (closure.getUpvalues().empty() ||
-                            llvm::is_contained(capturedMethods, closure)) &&
+                            llvm::is_contained(capturedClosures, closure)) &&
                            (undefined(closure.getEnclosingThis()) || helpers.contains(fn));
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
@@ -1464,6 +1479,13 @@ struct classInitialization {
             (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             function.getBody().takeBody(copy->getBody());
         }
+        // Holder expansion erases its slot closures. Clear their proved capture
+        // metadata first; the retained bodies still own all recorded reads.
+        for (ctjs::CreateClosureOp closure : capturedClosures) {
+            target(closure).setUpvalueCount(0);
+            closure.getUpvaluesMutable().clear();
+            closure.removeEnclosingIndicesAttr();
+        }
         expandHolders();
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
         for (auto [read, target] : getterReads) { reads[target].push_back(read); }
@@ -1539,11 +1561,6 @@ struct classInitialization {
                 root->erase(); // Only roots remain after captured getter expansion.
             }
             read.erase();
-        }
-        for (ctjs::CreateClosureOp method : capturedMethods) {
-            target(method).setUpvalueCount(0);
-            method.getUpvaluesMutable().clear();
-            method.removeEnclosingIndicesAttr();
         }
         for (ctjs::CellGetOp read : cellReads) {
             read.getResult().replaceAllUsesWith(cells.lookup(read.getCell()));

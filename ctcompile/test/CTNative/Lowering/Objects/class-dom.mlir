@@ -39,4 +39,7 @@
 // Entry-local callable holders retain all original slot bodies for the shared
 // DOM invocation and typed proof, including original dataset-filter callbacks.
 // Uncalled slots (even pure ones), effects, callback/holder escape, replacement
-// and invalid later inputs refuse; global holders and local captures stay strict.
+// and invalid later inputs refuse. Local slots can call fixed sibling M/F
+// captures after complete original identity, implicit-argument and typed proof;
+// repeated calls preserve JSON/URI fallbacks. Captured holder objects, unused
+// slots, changing helpers, escaping identities and callback effects refuse.
