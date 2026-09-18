@@ -1297,6 +1297,60 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(powerChild, "%base[%i]", "%base[%power]"), ArrayContentsFailure::UnknownIndex);
     reject("a power snapshot cannot change on the CFG backedge",
            replace(replace(powerChild, power, ""), "  %step =", power + "  %step ="));
+    const auto unitPower = replace(replace(powerChild, "pow %minus, %one", "pow %one, %minus"),
+                                   "binary sub %i, %power", "binary_static add %i, %power");
+    for (const std::string exponent : {"%minus", "%magnitude", "%three"}) {
+        const auto source = replace(unitPower, "pow %one, %minus", "pow %one, " + exponent);
+        run({.what = "positive-one powers retain bounded signed exponent snapshots after shrink",
+             .body = source,
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "positive-one powers release only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    for (const std::string literal :
+         {"#ctjs.number<4751297606873776128>", "#ctjs.number<13974669643728551936>"}) {
+        run({.what = "positive-one powers accept both signed Number domain endpoints",
+             .body = replace(unitPower, "binary sub %left, %magnitude", "constant " + literal),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+    }
+    for (const std::string literal : {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>"}) {
+        for (const std::string exponent : {"%magnitude", "%three"}) {
+            const auto source = replace(
+                replace(replace(powerChild, "binary sub %left, %magnitude", "constant " + literal),
+                        "pow %minus, %one", "pow %minus, " + exponent),
+                "binary sub %i, %power", "binary_static add %i, %one");
+            run({.what = "even and odd zero powers initialize finite loops without losing children",
+                 .body = replace(source, "^header(%a, %zero, %zero", "^header(%a, %power, %zero"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        }
+    }
+    for (const std::string literal :
+         {"#ctjs.string<\"2\">", "#ctjs.bigint<\"2\">", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<18442240474082181120>",
+          "#ctjs.number<9221120237041090560>"}) {
+        reject("positive-one powers require exact bounded finite Number exponents",
+               replace(unitPower, "binary sub %left, %magnitude", "constant " + literal));
+    }
+    reject("a positive-one base cannot bypass an unknown exponent",
+           replace(unitPower, "pow %one, %minus", "pow %one, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("zero to a negative exponent cannot certify a bounded start",
+           replace(replace(unitPower, "pow %one, %minus", "pow %zero, %minus"),
+                   "^header(%a, %zero, %zero", "^header(%a, %power, %zero"));
+    reject("a newly admitted power cannot be recomputed on the CFG backedge",
+           replace(replace(unitPower, "  %power = ctjs.binary pow %one, %minus\n", ""),
+                   "  %step =", "  %power = ctjs.binary pow %one, %minus\n  %step ="));
     const std::string factor = "  %factor = ctjs.unary plus %one\n";
     const std::string product = "  %product = ctjs.binary mul %minus, %factor "
                                 "{storage_test_id = \"product\"}\n";

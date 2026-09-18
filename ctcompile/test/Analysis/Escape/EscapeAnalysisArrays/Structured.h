@@ -882,6 +882,30 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("repeated structured division, remainder and power need independent invariance",
                replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step ="));
     }
+    const std::string makePower = "  %exponent = ctjs.unary neg %magnitude\n"
+                                  "  %unit = ctjs.binary pow %one, %exponent\n";
+    const auto carriedPower =
+        replace(replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n", makePower),
+                "binary sub %i, %d", "binary_static add %i, %d");
+    rows.push_back({.what = "positive-one powers survive reordered structured transport",
+                    .body = carriedPower,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured positive-one powers release only unreturned children",
+                    .body = replace(carriedPower, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    reject("a power result must remain unchanged across structured backedges",
+           replace(carriedPower, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("positive-one powers cannot borrow another structured arm's Number exponent",
+           replace(carriedPower, "  %exponent = ctjs.unary neg %magnitude\n",
+                   "  %exponent = scf.if %flag -> (!ctjs.value) {\n"
+                   "    %negative = ctjs.unary neg %magnitude\n"
+                   "    scf.yield %negative : !ctjs.value\n"
+                   "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+           ArrayContentsFailure::UnsupportedOperation);
     const std::string makeProduct = "  %negative = ctjs.unary neg %magnitude\n"
                                     "  %unit = ctjs.binary mul %negative, %one\n";
     const auto carriedProduct =

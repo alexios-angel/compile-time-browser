@@ -1793,9 +1793,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     const auto negative = left.negativeIntegerNumber ? left.negativeIntegerNumber
                                                                      : boundedNumber(lhs, true);
-                    // ponytail: only zero/one exponents; general powers need a
-                    // proof matching Number's implementation-approximated result.
-                    // Keep the result identity, including the sign of base ** 1.
+                    const auto negativeExponent = right.negativeIntegerNumber
+                                                      ? right.negativeIntegerNumber
+                                                      : boundedNumber(rhs, true);
+                    // ponytail: only exact zero/one identities; general powers
+                    // need Number's implementation-approximated result proof.
+                    // Keep the result identity, including signed zero's parity.
                     if (exponent && *exponent <= 1 && (positive || negative)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber =
@@ -1803,6 +1806,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         if (*exponent == 1 && !positive) {
                             result.negativeIntegerNumber = negative;
                         }
+                    } else if ((positive == 0 && exponent) ||
+                               (positive == 1 && (exponent || negativeExponent))) {
+                        // Zero needs a positive exponent; exponent zero was
+                        // handled above. One still requires a finite Number.
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        result.integerNumber = positive;
                     }
                 }
                 state.values[binary.getResult()] = result;
