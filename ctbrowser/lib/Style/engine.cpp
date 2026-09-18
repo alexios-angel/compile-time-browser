@@ -2075,6 +2075,21 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
         // and still answers `96px` for `1in`.
         const auto folded = [&](std::string text, atom longhand) {
+            const std::string_view name = atoms_->text(longhand);
+            if (name.starts_with("border-") && name.ends_with("-radius")) {
+                // Each axis computes before inheritance; scalar folding cannot
+                // resolve or clamp a pair as a single length.
+                std::vector<std::string> radii;
+                for (const std::string_view part : split_top_level(text, html_whitespace)) {
+                    radii.push_back(
+                        css::non_negative(css::canonical_dimension_text(part, lengths_for(longhand))
+                                              .value_or(std::string{part})));
+                }
+                if (radii.size() == 2) {
+                    return radii[0] == radii[1] ? radii[0] : radii[0] + ' ' + radii[1];
+                }
+                if (radii.size() == 1) { return radii[0]; }
+            }
             if (auto canonical = css::canonical_dimension_text(text, lengths_for(longhand))) {
                 return std::move(*canonical);
             }

@@ -21,6 +21,40 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_elliptical_radius_cascade() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<style>
+        #parent { font-size: 20px; border-radius: 1em 2em / 3px 4%; }
+        #child { font-size: 40px; border-radius: inherit; border-top-left-radius: 7px 8px; }
+        #variable { --r: 1em 2em / calc(1px + 2px) 4%; font-size: 20px;
+                    border-radius: var(--r); }
+        #negative { font-size: 20px; border-top-left-radius: calc(1px - 2px) 2em; }
+        </style><div id="parent"><div id="child"></div></div><div id="variable"></div>
+        <div id="negative"></div>
+        <script>
+        for (const id of ['parent', 'child', 'variable']) {
+            const cs = getComputedStyle(document.getElementById(id));
+            console.log(id + '=' + cs.borderRadius + '|' + cs.borderTopLeftRadius + '|' +
+                        cs.borderBottomLeftRadius);
+        }
+        const p = document.getElementById('parent');
+        p.style.borderRadius = '5px / 6px';
+        console.log('inline=' + getComputedStyle(p).borderRadius);
+        p.style.borderBottomLeftRadius = '9px';
+        console.log('override=' + getComputedStyle(p).borderRadius);
+        console.log('negative=' + getComputedStyle(document.getElementById('negative')).borderTopLeftRadius);
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=20px 40px / 3px 4%|20px 3px|40px 4%"});
+    CHECK_EQ(logged(page, "child="),
+             std::string{"child=7px 40px 20px / 8px 4% 3px|7px 8px|40px 4%"});
+    CHECK_EQ(logged(page, "variable="),
+             std::string{"variable=20px 40px / 3px 4%|20px 3px|40px 4%"});
+    CHECK_EQ(logged(page, "inline="), std::string{"inline=5px / 6px"});
+    CHECK_EQ(logged(page, "override="), std::string{"override=5px 5px 5px 9px / 6px 6px 6px 9px"});
+    CHECK_EQ(logged(page, "negative="), std::string{"negative=0px 40px"});
+}
+
 // CSS-namespace-object-class-string, CSSStyleDeclaration-iterator, escape,
 // cssom-fontfacerule-constructors: the class strings, the iterator and the
 // namespace object's own tag and arities.
@@ -380,6 +414,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_elliptical_radius_cascade();
     test_resolved_colours();
     test_column_rule_widths();
     test_flat_tree_and_pseudo_arguments();
