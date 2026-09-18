@@ -873,6 +873,128 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                                    "#ctjs.number<4751297606873776128>"),
                            "[%one, %x]", "[%one, %x, %one]"),
                    "^header(%a, %zero, %zero", "^header(%a, %magnitude, %zero"));
+    const auto savedNegativeAdd =
+        replace(savedSub, "binary sub %left, %magnitude", "binary sub %zero, %magnitude");
+    for (const std::string opcode : {"binary", "binary_static"}) {
+        for (const std::string operands : {"%minus, %one", "%one, %minus", "%minus, %minus"}) {
+            const std::string sum = "  %negativeSum = ctjs." + opcode + " add " + operands +
+                                    " {storage_test_id = \"negativeSum\"}\n";
+            const bool bothNegative = operands == "%minus, %minus";
+            auto source = bothNegative ? replace(savedSub, "[%one, %x]", "[%one, %one, %x]")
+                                       : savedNegativeAdd;
+            source = replace(replace(source, "  cf.br ^header", sum + "  cf.br ^header"),
+                             "sub %i, %minus", "sub %i, %negativeSum");
+            const char * arrays = bothNegative ? "a:[one,one,x]; seed:[]" : "a:[one,x]; seed:[]";
+            const char * reads = bothNegative ? "a[0]=one; a[2]=x" : "a[0]=one; a[1]=x";
+            run({.what = "negative Add snapshots retain exact children after source shrink",
+                 .body = source,
+                 .arrays = arrays,
+                 .reads = reads,
+                 .exit = "x -> {x}"});
+            run({.what = "negative Add snapshots release only unreturned children",
+                 .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = arrays,
+                 .reads = reads,
+                 .exit = "zero -> {}"},
+                "x");
+        }
+    }
+    const std::string negativeSum =
+        "  %negativeSum = ctjs.binary add %minus, %one {storage_test_id = \"negativeSum\"}\n";
+    const auto negativeAdd =
+        replace(replace(savedNegativeAdd, "  cf.br ^header", negativeSum + "  cf.br ^header"),
+                "sub %i, %minus", "sub %i, %negativeSum");
+    run({.what = "a negative Add snapshot preserves a zero-trip saved child",
+         .body = replace(negativeAdd, "^header(%a, %zero, %zero", "^header(%a, %two, %x"),
+         .arrays = "a:[one,x]; seed:[]",
+         .exit = "x -> {x}"});
+    reject("a negative Add snapshot cannot become an own index",
+           replace(negativeAdd, "%base[%i]", "%base[%negativeSum]"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("a negative Add snapshot cannot initialize an increasing loop",
+           replace(negativeAdd, "^header(%a, %zero, %zero", "^header(%a, %negativeSum, %zero"));
+    reject("a negative Add snapshot cannot supply a positive Add stride",
+           replace(negativeAdd, "binary sub %i, %negativeSum", "binary add %i, %negativeSum"));
+    reject("a repeated negative Add producer needs independent invariance",
+           replace(replace(negativeAdd, negativeSum, ""), "  %step =", negativeSum + "  %step ="));
+    for (const std::string constant :
+         {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<4751297606875873280>"}) {
+        reject("negative Add requires bounded exact Number operands",
+               replace(negativeAdd, negativeSum,
+                       "  %operand = ctjs.constant " + constant + "\n" +
+                           replace(negativeSum, ", %one", ", %operand")));
+    }
+    reject("negative Add cannot borrow an unknown operand",
+           replace(negativeAdd, "add %minus, %one", "add %minus, %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    const auto maximumNegativeAdd = replace(replace(negativeAdd, "binary sub %zero, %magnitude",
+                                                    "constant #ctjs.number<13974669643728551936>"),
+                                            "add %minus, %one", "add %minus, %zero");
+    run({.what = "a negative Add at the bound retains its original result identity",
+         .body = replace(maximumNegativeAdd, "ctjs.return %result", "ctjs.return %negativeSum"),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one",
+         .exit = "negativeSum -> {}"},
+        "x");
+    reject("negative Add still bounds the final exact induction update",
+           replace(maximumNegativeAdd, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    reject("bounded negative Add operands cannot certify an out-of-domain sum",
+           replace(maximumNegativeAdd, "add %minus, %zero", "add %minus, %minus"));
+    for (const std::string operation : {"div", "mod"}) {
+        const auto divisor = operation == "div" ? "%one" : "%two";
+        const std::string makeResult = "  %signedResult = ctjs.binary " + operation + " %minus, " +
+                                       divisor + " {storage_test_id = \"signedResult\"}\n";
+        const auto source =
+            replace(replace(savedSub, "  cf.br ^header", makeResult + "  cf.br ^header"),
+                    "sub %i, %minus", "sub %i, %signedResult");
+        for (const auto & body :
+             {source,
+              replace(source, makeResult,
+                      "  %divisor = ctjs.unary neg " + std::string(divisor) + "\n" +
+                          replace(makeResult, ", " + std::string(divisor), ", %divisor"))}) {
+            const auto signedBody = operation == "div" && body != source
+                                        ? replace(body, "binary sub %i, %signedResult",
+                                                  "binary_static add %i, %signedResult")
+                                        : body;
+            run({.what = "signed division and remainder keep the original snapshot and child",
+                 .body = signedBody,
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "signed division and remainder release only unreturned children",
+                 .body = replace(signedBody, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+        }
+        reject("negative quotients and remainders cannot supply own indices",
+               replace(source, "%base[%i]", "%base[%signedResult]"),
+               ArrayContentsFailure::UnknownIndex);
+        reject("repeated division and remainder need independent invariance",
+               replace(replace(source, makeResult, ""), "  %step =", makeResult + "  %step ="));
+        reject("signed division and remainder require a nonzero divisor",
+               replace(source, ", " + std::string(divisor) + " {storage_test_id",
+                       ", %zero {storage_test_id"));
+        reject("signed division and remainder cannot borrow coercible Strings",
+               replace(source, makeResult,
+                       "  %divisor = ctjs.constant #ctjs.string<\"1\">\n" +
+                           replace(makeResult, ", " + std::string(divisor), ", %divisor")));
+        reject("signed division and remainder cannot borrow an unknown operand",
+               replace(source, ", " + std::string(divisor) + " {storage_test_id",
+                       ", %p {storage_test_id"),
+               ArrayContentsFailure::UnsupportedOperation);
+        if (operation == "div") {
+            run({.what = "a positive Number divided by a negative snapshot keeps a negative stride",
+                 .body = replace(source, "div %minus, %one", "div %one, %minus"),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            reject("signed division needs an integral quotient",
+                   replace(source, "div %minus, %one", "div %minus, %two"));
+        }
+    }
     const std::string factor = "  %factor = ctjs.unary plus %one\n";
     const std::string product = "  %product = ctjs.binary mul %minus, %factor "
                                 "{storage_test_id = \"product\"}\n";

@@ -908,3 +908,78 @@ function static_arguments() {
     return (Shape.arguments === 7) * 1;
 }
 var a = static_arguments();
+
+// Every structured arm keeps the same proved receiver and immutable methods.
+//--- method-branches.js
+function method_branches() {
+    class Shape {
+        constructor(n) { this.n = n; }
+        adjust(n) {
+            if (n > 0) { this.n = this.n + n; }
+            else { this.n = this.n - 1; }
+            return this.n;
+        }
+    }
+    var first = new Shape(1), second = new Shape(5);
+    var left = first.adjust(2), right = second.adjust(-1);
+    return left * 1000 + right * 100 + first.n * 10 + second.n;
+}
+var a = method_branches();
+
+//--- method-loop.js
+function method_loop() {
+    class Shape {
+        constructor(n) { this.n = n; }
+        add(n) { this.n = this.n + n; return this.n; }
+        adjust(count) {
+            for (var i = 0; i < count; i = i + 1) {
+                if (i === 1) { this.add(2); } else { this.add(1); }
+            }
+            return this.n;
+        }
+    }
+    var first = new Shape(1), second = new Shape(5);
+    var left = first.adjust(3), right = second.adjust(0);
+    return left * 1000 + right * 100 + first.n * 10 + second.n;
+}
+var a = method_loop();
+
+// Even uncalled nested effects remain in the complete source census.
+//--- method-branch-ambient.js
+function method_branch_ambient() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(n) { if (n) { Math.abs(n); } return this.n; }
+    }
+    return new Shape().read(0);
+}
+var a = method_branch_ambient();
+
+//--- method-branch-shadow.js
+function method_branch_shadow() {
+    class Shape {
+        constructor() { this.n = 7; }
+        read(n) { if (n) { this.read = n; } return this.n; }
+    }
+    return new Shape().read(0);
+}
+var a = method_branch_shadow();
+
+// Constructors and static getters keep their existing linear-body contract.
+//--- constructor-branch.js
+function constructor_branch() {
+    class Shape { constructor(n) { if (n) { this.n = 7; } else { this.n = 8; } } }
+    return new Shape(1).n;
+}
+var a = constructor_branch();
+
+//--- static-branch.js
+function static_branch() {
+    class Shape {
+        static get Ready() { if (this.Other) { return 7; } return 8; }
+        static get Other() { return 1; }
+    }
+    var instance = new Shape();
+    return Shape.Ready;
+}
+var a = static_branch();

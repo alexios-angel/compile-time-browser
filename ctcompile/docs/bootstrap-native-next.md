@@ -1,6 +1,40 @@
 # What native Bootstrap needs next
 
-## Current boundary: fresh Config defaults, 2026-09-17
+## Current boundary: structured class methods, 2026-09-18
+
+**`9105a656`** admits structured branches and loops in proved ordinary local class
+methods, including mutual method calls, through the existing receiver and complete
+source-effect proofs. Constructors, getter expansion and setup stay linear;
+functions still require one outer block. Unknown regions, ambient calls in nested
+arms and method replacement refuse. No emitter or browser runtime helper was added.
+
+Focused class lit passes **1/1 (103.87s): 78 Node/interpreter observations / 192
+native executions / 156 unprepared / 100 preparation refusals**, plus **16 ordinary
+constructor executions / 20 refusals**, both policies/layouts and GCC/Clang. The
+nested-loop source's first complete budget is **278**. The previous mutual-method
+cycle source remains unchanged and now executes natively.
+
+**`b21653b9`** independently adds exact signed division/remainder snapshots.
+Array CTest passes **1/1 (0.84s)**; three exact escape lit cases pass **3/3 (0.32s)**.
+The new oracle measures **26 sites / 11 sound / zero violations / 11 of 15 precision**.
+Four newly valid historical length controls retain their bodies with corrected
+expectations. Both workflows verified **1,821 local/remote hashes** before docs.
+Pinned formatting retains the known **26 diagnostics in nine unchanged files**;
+stable formatting and changed-file checks pass. Full compiler/browser suites and
+broad corpus/native matrices were not run by this task. No browser source changed.
+
+**Next:** the complete original Config defaults-only probe still returns **a=7**
+in Node/interpreter and imports every function, but refuses **class initialization
+requires complete capture-free source functions**: `_typeCheckConfig$9` still has
+three outer blocks after SCF lifting. Exceptional/iterator method handling,
+throwing `NAME`, inherited `this.constructor` and DOM/default composition remain.
+Full H needs its public UTF-16/Unicode case seam and normalized-key proof; retained
+callbacks and the application driver are also open. Bootstrap **19/574 / 0 of 47
+globals**, Button **4/86 / 22 observations** and Data **7/7** are historical, not
+remeasured. Exact gates and failure recovery: HANDOFF and
+`/tmp/ctcompile-structured-focused/`.
+
+## Previous boundary: fresh Config defaults, 2026-09-17
 
 **`f1450d60`** compiles the isolated original Bootstrap `Default` and `DefaultType`
 empty getter bodies through the existing local class proof. Every getter read,

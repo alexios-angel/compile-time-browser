@@ -895,21 +895,35 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
-std::optional<std::size_t> boundedNumberSum(const ContentsValue & left,
-                                            const ContentsValue & right) {
+void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
+                      ContentsValue & result) {
     const auto a = left.integerNumber ? left.integerNumber : boundedNumber(left.origin());
     const auto b = right.integerNumber ? right.integerNumber : boundedNumber(right.origin());
     // Both original operands must be exact Numbers. Guard before adding so
     // neither dynamic nor static Add can borrow coercion, rounding or wrap.
-    if (a && b && *a <= 4294967295ULL - *b) { return *a + *b; }
     const auto negativeA = left.negativeIntegerNumber ? left.negativeIntegerNumber
                                                       : boundedNumber(left.origin(), true);
     const auto negativeB = right.negativeIntegerNumber ? right.negativeIntegerNumber
                                                        : boundedNumber(right.origin(), true);
-    // Cancellation stays exact and bounded; a negative result is not an index.
-    if (a && negativeB && *a >= *negativeB) { return *a - *negativeB; }
-    if (negativeA && b && *b >= *negativeA) { return *b - *negativeA; }
-    return std::nullopt;
+    // Cancellation stays exact and bounded. Keep negative magnitudes separate
+    // from indices; the original result still carries the sign of zero.
+    if (a && b && *a <= 4294967295ULL - *b) {
+        result.integerNumber = *a + *b;
+    } else if (a && negativeB) {
+        if (*a >= *negativeB) {
+            result.integerNumber = *a - *negativeB;
+        } else {
+            result.negativeIntegerNumber = *negativeB - *a;
+        }
+    } else if (negativeA && b) {
+        if (*b >= *negativeA) {
+            result.integerNumber = *b - *negativeA;
+        } else {
+            result.negativeIntegerNumber = *negativeA - *b;
+        }
+    } else if (negativeA && negativeB && *negativeA <= 4294967295ULL - *negativeB) {
+        result.negativeIntegerNumber = *negativeA + *negativeB;
+    }
 }
 
 } // namespace
@@ -1651,7 +1665,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // C++ temporaries; absence/success of allocation is unproved.
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
-                    result.integerNumber = boundedNumberSum(left, right);
+                    boundedNumberSum(left, right, result);
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
                     const auto original =
@@ -1709,15 +1723,29 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Div ||
                     binary.getKind() == ctjs::BinaryKind::Mod) {
-                    const auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
-                    const auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
+                    auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    const bool remainder = binary.getKind() == ctjs::BinaryKind::Mod;
+                    const bool negative = remainder ? !a : a.has_value() != b.has_value();
+                    if (!a) {
+                        a = left.negativeIntegerNumber ? left.negativeIntegerNumber
+                                                       : boundedNumber(lhs, true);
+                    }
+                    if (!b) {
+                        b = right.negativeIntegerNumber ? right.negativeIntegerNumber
+                                                        : boundedNumber(rhs, true);
+                    }
                     // Bounded integral operands give an exact remainder; division
-                    // also needs zero remainder. Keep the original signed zero.
-                    if (a && b && *b != 0 &&
-                        (binary.getKind() == ctjs::BinaryKind::Mod || *a % *b == 0)) {
+                    // also needs zero remainder. Mod keeps the dividend's sign,
+                    // regardless of divisor sign. Keep the original signed zero.
+                    if (a && b && *b != 0 && (remainder || *a % *b == 0)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber =
-                            binary.getKind() == ctjs::BinaryKind::Mod ? *a % *b : *a / *b;
+                        const auto magnitude = remainder ? *a % *b : *a / *b;
+                        if (negative && magnitude != 0) {
+                            result.negativeIntegerNumber = magnitude;
+                        } else {
+                            result.integerNumber = magnitude;
+                        }
                     }
                 }
                 state.values[binary.getResult()] = result;
@@ -1782,7 +1810,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // saved exact Number facts supply an index; never branch liveness.
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
-                    result.integerNumber = boundedNumberSum(left, right);
+                    boundedNumberSum(left, right, result);
                 }
                 if (binary.getKind() == ctjs::BinaryKind::BitAnd ||
                     binary.getKind() == ctjs::BinaryKind::BitOr ||

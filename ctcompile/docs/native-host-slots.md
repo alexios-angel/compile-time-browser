@@ -62,8 +62,12 @@ passing or returning the receiver and observing a method identity still refuse.
 Every instance method read must feed its own receiver call. Constructors may call
 those immutable methods on the same receiver and must return a primitive constant
 when methods exist. Method writes and replacement return objects remain excluded.
-Every call stays within the supplied source; unresolved bindings, dynamic keys,
-reflection, captured functions and nested regions fail closed.
+Methods may contain structured `if`, `for` and `while` regions; every arm and
+body retains the complete effect and receiver-use census. Mutual method calls
+use the same proof. Every function still requires one outer block. Constructors,
+class setup and static getter expansion remain linear. Every call stays within
+the supplied source; unresolved bindings, dynamic keys, reflection, captured
+functions and other nested regions fail closed.
 
 Local static getters may return closed scalar expressions or fresh empty objects,
 and read other proved getters on the same constructor. The dependency graph must

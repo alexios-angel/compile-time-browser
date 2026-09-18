@@ -2,6 +2,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "ctcompile/Support/CppLiterals.hpp"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -91,6 +92,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (llvm::isa<FrameEnterOp>(o)) { return; }
     if (o->getName().getStringRef() == "ub.poison") {
+        // Lifted control flags already have a native integer/index type.
+        // Preserve it on every edge, including uses by arith operations.
+        const auto type = o->getResult(0).getType();
+        if (llvm::isa<mlir::IndexType>(type)) {
+            // The arith conversion owns index -> size_t, including its users.
+            swap(mlir::arith::ConstantIndexOp::create(b, where, 0));
+            return;
+        }
+        if (llvm::isa<mlir::IntegerType>(type)) {
+            swap(ec::ConstantOp::create(b, where, type, b.getZeroAttr(type)));
+            return;
+        }
         // CFG structuring uses poison for dead carried slots. The
         // lattice joins bottom with the live incoming type, so one
         // poison can feed both string and numeric slots. Choose an
