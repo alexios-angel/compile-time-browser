@@ -201,9 +201,7 @@ void install_symbol(context & cx) {
     cx.define_global("Symbol", value::object(symbol));
 
     // --- BigInt --------------------------------------------------------------
-    // A CONVERSION, like Number and String and unlike Array: `new BigInt(1)` is
-    // a TypeError in the specification because there is no wrapper object to
-    // make. This engine does not box at all, so calling it is the only form.
+    // BigInt converts a primitive; Object(bigint) creates its wrapper.
     object_object * bigint_proto = new_table(cx);
     // thisBigIntValue (21.2.3): the BigInt, or a wrapper's (`Object(1n)`,
     // detail::wrap_primitive) - anything else is a TypeError.
@@ -217,11 +215,16 @@ void install_symbol(context & cx) {
     method(cx, bigint_proto, "toString", 0, [this_bigint](context & c, std::span<value> a) {
         const value self = this_bigint(c, "BigInt.prototype.toString");
         if (!self.is_kind(heap_kind::bigint)) { return value::undefined(); }
-        const int radix = a.empty() || a[0].is_undefined()
-                              ? 10
-                              : std::clamp(static_cast<int>(context::to_number(a[0])), 2, 36);
-        return c.string(
-            bigint_to_string(static_cast<bigint_object *>(self.as_heap())->digits, radix));
+        double radix = 10;
+        if (!arg_at(a, 0).is_undefined() && !to_integer_or_infinity(c, a[0], radix)) {
+            return value::undefined();
+        }
+        if (radix < 2 || radix > 36) {
+            c.throw_error("RangeError", "toString() radix must be between 2 and 36");
+            return value::undefined();
+        }
+        return c.string(bigint_to_string(static_cast<bigint_object *>(self.as_heap())->digits,
+                                         static_cast<int>(radix)));
     });
     method(cx, bigint_proto, "valueOf", 0, [this_bigint](context & c, std::span<value>) {
         return this_bigint(c, "BigInt.prototype.valueOf");
@@ -230,32 +233,24 @@ void install_symbol(context & cx) {
     cx.set_prototype(context::proto_kind::bigint, bigint_proto);
 
     auto * bigint_ctor = cx.allocate<native_object>("BigInt", [](context & c, std::span<value> a) {
-        const value v = arg_at(a, 0);
-        if (v.is_kind(heap_kind::bigint)) { return v; }
-        if (v.is_boolean()) {
-            return value::object(c.allocate<bigint_object>(bigint{v.as_boolean() ? 1 : 0}));
-        }
-        if (v.is_string()) {
-            // A STRING THAT IS NOT AN INTEGER IS A SyntaxError, not NaN -
-            // there is no BigInt NaN to return, so the conversion has to
-            // refuse rather than degrade.
-            const std::optional<bigint> parsed =
-                bigint_from_string(static_cast<string_object *>(v.as_heap())->text);
-            if (!parsed) {
-                c.throw_error("SyntaxError", "Cannot convert this string to a BigInt");
-                return value::undefined();
-            }
-            return value::object(c.allocate<bigint_object>(*parsed));
-        }
-        // A NON-INTEGRAL Number is a RangeError - `BigInt(1.5)` refuses
-        // rather than truncating, because losing the fraction silently is
-        // the failure this type exists to make impossible.
-        const std::optional<bigint> parsed = bigint_from_double(context::to_number(v));
-        if (!parsed) {
-            c.throw_error("RangeError", "Cannot convert a non-integer to a BigInt");
+        value prim = arg_at(a, 0);
+        if (prim.is_object_like() && !c.to_primitive_hint(prim, "number", prim)) {
             return value::undefined();
         }
-        return value::object(c.allocate<bigint_object>(*parsed));
+        if (prim.is_kind(heap_kind::bigint)) { return prim; }
+        bigint converted{};
+        if (prim.is_number()) {
+            // NumberToBigInt permits integers; ToBigInt refuses every Number.
+            const std::optional<bigint> parsed = bigint_from_double(prim.as_number());
+            if (!parsed) {
+                c.throw_error("RangeError", "Cannot convert a non-integer to a BigInt");
+                return value::undefined();
+            }
+            converted = *parsed;
+        } else if (!to_bigint(c, prim, converted)) {
+            return value::undefined();
+        }
+        return value::object(c.allocate<bigint_object>(std::move(converted)));
     });
     // 21.2.2.1-2 BigInt.asIntN / asUintN (bits, bigint): ToIndex(bits), then
     // ToBigInt(bigint) - bigint.hpp's, shared with the BigInt typed arrays
