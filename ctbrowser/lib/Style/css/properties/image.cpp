@@ -25,6 +25,7 @@ namespace {
 struct image_context {
     const length_context * lengths = nullptr; // computed when set; specified otherwise
     std::string_view current_color;
+    bool dark = false;
 };
 
 // The source text of the tokens [begin, end), or nothing when one was
@@ -160,6 +161,12 @@ enum class quantity : std::uint8_t {
     if (ts.tokens.size() == 2 && ts.tokens.front().type == token_type::number &&
         ts.tokens.front().number == 0) {
         return "0deg";
+    }
+    // A color function starts the stops, even if the math evaluator would
+    // preserve it as an unresolved expression.
+    if (!serialize_color(text).empty()) {
+        *ok = false;
+        return {};
     }
     const length_context none;
     const math_answer answer = evaluate_math(text, ctx.lengths != nullptr ? *ctx.lengths : none);
@@ -337,7 +344,8 @@ struct gradient_reader {
                 if (!text) { return false; }
                 const std::string serialized =
                     ctx.lengths != nullptr
-                        ? computed_color(*text, color_context{ctx.current_color, ctx.lengths})
+                        ? computed_color(*text,
+                                         color_context{ctx.current_color, ctx.lengths, ctx.dark})
                         : serialize_color(*text);
                 if (serialized.empty()) { return false; }
                 if (!legacy_color_syntax(*text)) { all_legacy = false; }
@@ -706,6 +714,14 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
     const std::vector<std::vector<std::size_t>> args =
         arguments(ts, item.front() + 1,
                   close - (ts.tokens[close - 1].type == token_type::close_paren ? 1 : 0));
+    if (fn == "url") {
+        const std::optional<std::string_view> text = slice(ts, item.front(), item.back() + 1);
+        if (!text) { return std::nullopt; }
+        bool invalid = false;
+        std::string url =
+            normalize_value_tokens(ts, *text, &invalid, item.front(), item.back() + 1);
+        return invalid ? std::string{} : url;
+    }
     gradient_reader reader{ts, ctx};
     if (fn == "linear-gradient" || fn == "repeating-linear-gradient") {
         return reader.linear(args, fn).value_or(std::string{});
@@ -729,7 +745,7 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
         }
         const std::string colour =
             ctx.lengths != nullptr
-                ? computed_color(*text, color_context{ctx.current_color, ctx.lengths})
+                ? computed_color(*text, color_context{ctx.current_color, ctx.lengths, ctx.dark})
                 : serialize_color(*text);
         if (colour.empty()) { return std::string{}; }
         return "image(" + colour + ")";
@@ -737,14 +753,20 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
     if (fn == "light-dark") {
         if (args.size() != 2) { return std::string{}; }
         std::string out = "light-dark(";
+        std::string selected;
         for (std::size_t i = 0; i < 2; ++i) {
             const std::optional<std::string> one = image_list(ts, args[i], ctx, depth + 1);
             if (!one) { return std::nullopt; }
             if (one->empty()) { return std::string{}; }
-            if (ctx.lengths != nullptr) { return *one; }
-            out += (i == 0 ? "" : ", ") + *one;
+            if (ctx.lengths != nullptr) {
+                if (i == (ctx.dark ? 1u : 0u)) {
+                    selected = *one == "none" ? "image(rgba(0, 0, 0, 0))" : *one;
+                }
+            } else {
+                out += (i == 0 ? "" : ", ") + *one;
+            }
         }
-        return out + ")";
+        return ctx.lengths != nullptr ? selected : out + ")";
     }
     if (fn == "cross-fade") {
         // cross-fade( [ <percentage>? && [ <image> | <color> ] ]# ), written
@@ -775,7 +797,8 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
                 if (!text) { return std::nullopt; }
                 std::string colour =
                     ctx.lengths != nullptr
-                        ? computed_color(*text, color_context{ctx.current_color, ctx.lengths})
+                        ? computed_color(*text,
+                                         color_context{ctx.current_color, ctx.lengths, ctx.dark})
                         : serialize_color(*text);
                 if (colour.empty()) {
                     // Only a single image may use the unmodelled-function fallback.
@@ -847,6 +870,7 @@ std::string computed_image(std::string_view specified, const color_context & ctx
     const length_context fallback;
     ic.lengths = ctx.lengths != nullptr ? ctx.lengths : &fallback;
     ic.current_color = ctx.current_color;
+    ic.dark = ctx.dark;
     return image_list_text(trim(specified, html_whitespace), ic).value_or(std::string{});
 }
 

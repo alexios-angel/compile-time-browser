@@ -21,6 +21,36 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_image_color_scheme() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="target"></div><script>
+        const target = document.getElementById('target');
+        for (const scheme of ['light', 'dark']) {
+            target.style.colorScheme = scheme;
+            target.style.backgroundImage = 'light-dark(image(red), image(blue))';
+            console.log(scheme + '=' + getComputedStyle(target).backgroundImage);
+            target.style.backgroundImage = 'linear-gradient(light-dark(red, blue), white)';
+            console.log(scheme + '-gradient=' + getComputedStyle(target).backgroundImage);
+            target.style.backgroundImage = 'cross-fade(light-dark(red, blue), image(white))';
+            console.log(scheme + '-fade=' + getComputedStyle(target).backgroundImage);
+            target.style.backgroundImage = 'light-dark(image(red), none)';
+            console.log(scheme + '-none=' + getComputedStyle(target).backgroundImage);
+        }
+        </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    for (const std::string scheme : {"light", "dark"}) {
+        const std::string color = scheme == "dark" ? "rgb(0, 0, 255)" : "rgb(255, 0, 0)";
+        CHECK_EQ(logged(page, scheme + "="), scheme + "=image(" + color + ")");
+        CHECK_EQ(logged(page, scheme + "-gradient="),
+                 scheme + "-gradient=linear-gradient(" + color + ", rgb(255, 255, 255))");
+        CHECK_EQ(logged(page, scheme + "-fade="),
+                 scheme + "-fade=cross-fade(" + color + ", image(rgb(255, 255, 255)))");
+        CHECK_EQ(logged(page, scheme + "-none="),
+                 scheme + "-none=" +
+                     (scheme == "dark" ? "image(rgba(0, 0, 0, 0))" : "image(rgb(255, 0, 0))"));
+    }
+}
+
 void test_computed_radial_size_ranges() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<div id="target" style="font-size: 40px"></div><script>
@@ -550,6 +580,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_image_color_scheme();
     test_computed_radial_size_ranges();
     test_computed_layer_size_ranges();
     test_nonnegative_computed_widths();

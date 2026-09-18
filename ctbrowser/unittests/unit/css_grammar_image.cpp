@@ -133,6 +133,7 @@ void test_the_computed_value() {
              "cross-fade(rgb(255, 0, 0) 25%, linear-gradient(rgb(0, 0, 255) 0%, "
              "rgb(0, 128, 0) 100%) 75%)");
     computed("light-dark(image(blue), url(\"b.png\"))", "image(rgb(0, 0, 255))");
+    computed("light-dark(none, none)", "image(rgba(0, 0, 0, 0))");
     computed("none, url(\"http://x/\")", "none, url(\"http://x/\")");
 }
 
