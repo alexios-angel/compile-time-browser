@@ -90,6 +90,16 @@ capture an unused lexical `this`; observing it still refuses. This supplies no
 authority for unresolved browser calls, helper replacement or ambient effects
 inside an uncalled helper.
 
+Fresh local callable holders use the same identity/order proof as DOM source
+preparation. Each slot has one preceding closure store; reads may only call that
+slot on its original holder. Class preparation additionally requires ordinary
+keys, one closure storage use and unobserved receiver, new.target and callee.
+Every slot body, including unused slots, keeps the complete effect census.
+Holder calls are proved before their enclosing direct callers, whose lexical
+receiver may be saved by an unused-this arrow. Holder operations stay intact for
+normal closure lowering. Global holder publication/order and class/DOM provider
+composition remain separate proofs.
+
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only
 constant proved getter reads and inert roots; writes and identity escape still

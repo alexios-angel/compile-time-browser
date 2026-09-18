@@ -15,6 +15,78 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local callable holders and signed String subtraction, 2026-09-18 UTC
+
+Started at clean **46e8ae18**. Its **09:50:04 AGENT-SYNC journal** explicitly
+closed the preceding interruption; September 7 WIP was absent. Continued the
+recorded Config/H boundary with independent escape implementation and native
+proof review. The Config audit agent hit a service limit before editing; root
+completed its recommended extraction.
+
+**b83da7d5** shares DOMSource's existing local callable-holder identity/order
+proof through `analyzeLocalCallableObject` in ClosedCallable. Class preparation
+adds exact callee-use checks, unique closure storage, and non-observation of
+receiver, new.target and callee. Held helpers are checked before their enclosing
+direct callers, so an arrow may save lexical `this` without reading it. Every
+slot body, including unused slots, still receives the complete effect census.
+The class pass leaves holder operations intact for the existing closure lifter.
+Four local method/arrow/branch/argument-order specimens add **32 native
+executions**, both optimization settings, both C++ layouts and GCC/Clang.
+Replacement, alias writes, detached calls, receiver observation, ambient effects
+and global holders remain refusal controls. DOM preparation retains its existing
+behavior and diagnostics; browser source and runtime semantics were not changed.
+
+**6bf2351f** extends the existing canonical decimal String offset proof to negative
+subtraction results and negative left Number snapshots. It preserves original
+result identity, saved lengths, CFG/SCF transport and the bounded magnitude domain;
+noncanonical/coercible alternatives, overflow and changing backedges remain
+unproved. Original formerly refused String bodies are retained as positive checks.
+
+Focused devbox validation only; ten selected input hashes match locally/remotely:
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-tool`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`.
+  Initial three-target build: **34 actions**; caller-order correction: **3**;
+  final seven-target build: **7 actions**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (172.22s)**,
+  **130 source / 324 native / 260 unprepared / 159 preparation refusals**,
+  plus **16 ordinary executions / 20 refusals**, **8 original r executions /
+  4 refusals**, **4 key executions / 6 refusals**, and **11 prepared native
+  refusals**. The local-holder arrow's first complete proof budget is **131**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.92s)**.
+  Dense/induction/structured rows: **585 / 580 / 278**; budget cutoffs:
+  **22,879 / 39,132 / 19,684**.
+- Exact `Analysis/Escape/escape-claims/signed-subtraction.test`: **1/1 (0.12s)**;
+  **34 sites / 18 sound / zero violations / 18 of 20 precision**.
+- Selected existing DOM String fixtures: `helper_object_method`,
+  `helper_object_extracted`, `helper_object_multiple`, `helper_regex_original_h`.
+  **16 Node/interpreter observations**, **8 combined GCC/Clang executions**
+  across both providers, optimization settings and layouts, **24 existing method
+  provenance checks**, **88 existing helper-object refusal checks**. Generated
+  output and linked symbols pass the Script/AOT exclusion. This was a focused
+  invocation of existing helpers, not the full `native-dom-strings.test` case.
+
+The first class run failed **7.48s** on the new arrow caller-order gap, fixed
+before the passing rerun. The temporary DOM harness first lacked Node on bare
+SSH's PATH, then selected Clang 18 without `std::expected`; using lit's configured
+Node and DOM Clang resolved both harness failures. Only the DOM probe was rerun;
+no source changes or broad test replay were needed. Final DOM wrapper exit **0**.
+Required pinned `tools/format.sh --check` retains **26 diagnostics in nine
+HEAD-identical files**. Stable formatter workflow **916/109/105**, changed-file
+pinned formatting, Black, Python syntax, shell syntax and diff checks pass.
+Full CTest/compiler lit, full DOM String case, broad corpus/native matrices,
+WPT and test262 were skipped. Evidence: `/tmp/ctcompile-config-holder/`.
+
+**Exact next:** extend the shared holder proof to original H's global publication
+and cross-function initialization order, then compose class and DOM provider
+contracts. The complete original r/M/F/H/W defaults specimen still returns **a=7**
+in Node/interpreter and refuses class preparation; local SSA holder proof does
+not authorize global H or its DOM effects. Reuse the existing public H/M/F DOM
+helpers. Iterator/destructuring, RegExp/TypeError exits, remaining Config helpers,
+inheritance, full H Unicode keys, retained callbacks and the application driver
+remain open. Whole-Bootstrap/Button/Data counts remain historical.
+
 ## Original class-method r and signed unary literals, 2026-09-18 UTC
 
 Started at clean **07764b25**. Its **09:33:03 AGENT-SYNC journal** closed

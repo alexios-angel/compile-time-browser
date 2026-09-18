@@ -1,5 +1,32 @@
 # What native Bootstrap needs next
 
+## Local callable holders and signed String subtraction, 2026-09-18 UTC
+
+**b83da7d5** shares the existing DOM local-holder proof with class preparation.
+Fixed callable slots with unobserved receiver/callee/new.target now reach the
+existing native closure lifter; four local source fixtures add **32 executions**.
+The complete source effect census and replacement/escape/order refusals remain.
+Independent **6bf2351f** preserves bounded negative Number snapshots from canonical
+String subtraction, including saved lengths and CFG/SCF transport.
+
+Focused checks pass: class lit **1/1 (172.22s), 130 source / 324 native**, array
+CTest **1/1 (0.92s), 585/580/278 rows**, signed-subtraction lit **1/1 (0.12s),
+34 sites / zero violations / 18 of 20 precision**. Four existing DOM fixtures,
+including original F/H writes, pass **16 Node/interpreter observations, 8 combined
+native executions, 24 provenance and 88 refusal checks**. HANDOFF records exact
+build targets, additional class controls, initial failures and configured tools.
+Ten source hashes match the devbox; final DOM wrapper **0**. Pinned formatting
+retains **26 existing diagnostics**; stable **916/109/105**, changed pinned,
+Black, syntax and diff checks pass. Full suites and broad matrices were skipped;
+no browser source or runtime behavior changed. Evidence: `/tmp/ctcompile-config-holder/`.
+
+**Next:** original H's global publication/cross-function initialization order,
+then class/DOM provider composition. Full original r/M/F/H/W still returns **a=7**
+in Node/interpreter and refuses preparation; local holder proof grants no global
+or DOM authority. Iterator/destructuring, RegExp/TypeError, remaining Config,
+inheritance, full H Unicode, retained callbacks and the application driver remain
+open. Historical broad Bootstrap measurements were not replayed.
+
 ## Original class-method r and signed unary literals, 2026-09-18 UTC
 
 **aa5aa952** closes the original class-method `r(null)` boundary by keeping
