@@ -1547,9 +1547,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (unary.getKind() != ctjs::UnaryKind::BitNot) {
                         // Preserve held signed Numbers through Plus/Neg, keeping
                         // negative magnitudes separate from own-index facts.
-                        // Zero stays nonnegative; coercions supply no fact.
+                        // Canonical original Strings share the exact decimal
+                        // conversion used by Sub; zero stays nonnegative.
                         integerNumber = input.integerNumber ? input.integerNumber
                                                             : boundedNumber(input.origin());
+                        if (!integerNumber && input.string()) {
+                            integerNumber = ownArrayIndex(input.origin());
+                        }
                         negativeIntegerNumber = input.negativeIntegerNumber;
                         if (!integerNumber && !negativeIntegerNumber) {
                             negativeIntegerNumber = boundedNumber(input.origin(), true);

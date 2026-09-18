@@ -615,8 +615,18 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
           "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
           "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
           "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
-        reject("structured Neg requires an independently bounded positive Number producer",
-               replace(carriedNegative, "ctjs.binary add %one, %one", "ctjs.constant " + constant));
+        const auto body =
+            replace(carriedNegative, "ctjs.binary add %one, %one", "ctjs.constant " + constant);
+        if (constant == "#ctjs.string<\"1\">") {
+            rows.push_back({.what = "canonical String Neg preserves its structured unit stride",
+                            .body = body,
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+        } else {
+            reject("structured Neg requires an independently bounded positive Number producer",
+                   body);
+        }
     }
     reject("structured Neg of an unknown producer cannot supply a stride",
            replace(carriedNegative, "unary neg %magnitude", "unary neg %p"),
@@ -1074,6 +1084,32 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
             replace(replace(carriedNegative, "  %unit = ctjs.unary neg %magnitude\n",
                             "  %negative = ctjs.unary neg %magnitude\n" + makeSigned),
                     "binary sub %i, %d", "binary " + operation + " %i, %d");
+        const auto carriedString =
+            replace(replace(carriedNegative, "ctjs.binary add %one, %one",
+                            "ctjs.constant #ctjs.string<\"2\">"),
+                    "unary neg %magnitude", "unary " + unary + " %magnitude");
+        const auto stringBody =
+            unary == "plus" ? replace(carriedString, "binary sub %i, %d", "binary add %i, %d")
+                            : carriedString;
+        rows.push_back({.what = "canonical String unary snapshots survive structured transport",
+                        .body = stringBody,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x",
+                        .exit = "x -> {x}"});
+        rows.push_back({.what = "canonical String unary snapshots discharge structured children",
+                        .body = replace(stringBody, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x",
+                        .exit = "zero -> {}"});
+        reject("canonical String unary snapshots cannot change on a structured backedge",
+               replace(stringBody, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("unary String conversion must prove every structured predecessor",
+               replace(stringBody, "  %magnitude = ctjs.constant #ctjs.string<\"2\">\n",
+                       "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
+                       "    %text = ctjs.constant #ctjs.string<\"2\">\n"
+                       "    scf.yield %text : !ctjs.value\n"
+                       "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+               ArrayContentsFailure::UnsupportedOperation);
         const auto carriedLiteral = replace(carriedSigned, "ctjs.unary neg %magnitude",
                                             "ctjs.constant #ctjs.number<13835058055282163712>");
         rows.push_back({.what = "signed unary literals survive reordered structured transport",

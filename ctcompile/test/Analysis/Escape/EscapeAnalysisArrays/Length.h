@@ -1493,8 +1493,10 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
                     retained ? "" : "x");
                 continue;
             }
-            if (literal == "#ctjs.string<\"0\">" && producer == "ctjs.binary sub %input, %zero") {
-                run({.what = "canonical left String subtraction supplies an exact empty length",
+            if (literal == "#ctjs.string<\"0\">" &&
+                (producer == "ctjs.binary sub %input, %zero" ||
+                 producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input")) {
+                run({.what = "canonical String numeric conversion supplies an exact empty length",
                      .body = body,
                      .arrays = "a:[]",
                      .exit = "a -> {a}"});
@@ -1529,6 +1531,15 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
          .arrays = "a:[]",
          .exit = "length -> {}"});
     for (const std::string literal : {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">"}) {
+        if (literal == "#ctjs.string<\"0\">") {
+            run({.what = "canonical String negated zero supplies an exact empty length",
+                 .body = values + "  %input = ctjs.constant " + literal +
+                         "\n  %wanted = ctjs.unary neg %input\n" + read +
+                         "  ctjs.set_property %a[%key], %wanted\n" + done,
+                 .arrays = "a:[]",
+                 .exit = "length -> {}"});
+            continue;
+        }
         run({.what = "negated coercive zero cannot borrow Number length authority",
              .body = values + "  %input = ctjs.constant " + literal +
                      "\n  %wanted = ctjs.unary neg %input\n" + read +
@@ -1938,7 +1949,11 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(unary ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
+        if (unary) {
+            literal.setValueAttr(ctjs::StringAttr::get(&context, "00"));
+            inspect(ArrayContentsFailure::UnknownIndex);
+        }
         literal.setValueAttr(ctjs::BigIntAttr::get(&context, "0"));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(original);

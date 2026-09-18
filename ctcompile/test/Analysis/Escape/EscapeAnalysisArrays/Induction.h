@@ -657,7 +657,7 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(subtract, "sub %i, %minus", "sub %i, %p"));
     reject("a repeated computed negative stride needs an independent invariant proof",
            replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"));
-    reject("Neg of a coercible String does not establish an original Number stride",
+    reject("repeated String Neg still needs an independent invariant proof",
            replace(subtractNegated, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"));
     for (const std::string constant :
          {"#ctjs.number<0>", "#ctjs.number<4607182418800017408>",
@@ -735,8 +735,16 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
           "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
           "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
           "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
-        reject("a computed Neg stride requires a bounded strictly positive Number input",
-               replace(negativeChild, "#ctjs.number<4607182418800017408>", constant));
+        const auto body = replace(negativeChild, "#ctjs.number<4607182418800017408>", constant);
+        if (constant == "#ctjs.string<\"1\">") {
+            run({.what = "canonical String Plus then Neg supplies an exact negative stride",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("a computed Neg stride requires a bounded strictly positive Number input", body);
+        }
     }
     reject("Neg of an unknown producer cannot supply a bounded stride",
            replace(negativeChild, "unary neg %magnitude", "unary neg %p"),
@@ -1562,6 +1570,50 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(maximumProduct, "binary sub %left, %magnitude", "binary sub %zero, %magnitude"));
     for (const std::string unary : {"plus", "neg"}) {
         const std::string operation = unary == "plus" ? "sub" : "add";
+        const std::string stringOperation = unary == "plus" ? "add" : "sub";
+        const std::string makeString = "  %text = ctjs.constant #ctjs.string<\"1\">\n"
+                                       "  %minus = ctjs.unary " +
+                                       unary + " %text\n";
+        const auto stringChild =
+            replace(replace(negativeChild, makeNegativeUnit, makeString), "binary sub %i, %minus",
+                    "binary " + stringOperation + " %i, %minus");
+        const auto savedStringChild =
+            replace(stringChild, "  %minus = ctjs.unary " + unary + " %text\n",
+                    "  %seed = ctjs.create_array [%text] {storage_test_id = \"seed\"}\n"
+                    "  %saved = ctjs.get_property %seed[%zero]\n"
+                    "  ctjs.set_property %seed[%zero], %x\n"
+                    "  %minus = ctjs.unary " +
+                        unary + " %saved\n");
+        for (const auto & source : {stringChild, savedStringChild}) {
+            const bool saved = source == savedStringChild;
+            const char * arrays = saved ? "a:[one,x]; seed:[x]" : "a:[one,x]";
+            const char * reads =
+                saved ? "seed[0]=ctjs.constant; a[0]=one; a[1]=x" : "a[0]=one; a[1]=x";
+            run({.what = "canonical String unary snapshots retain original CFG children",
+                 .body = source,
+                 .arrays = arrays,
+                 .reads = reads,
+                 .exit = "x -> {x}"});
+            run({.what = "canonical String unary snapshots discharge only unreturned children",
+                 .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = arrays,
+                 .reads = reads,
+                 .exit = "zero -> {}"},
+                "x");
+        }
+        for (const std::string text :
+             {"01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
+            reject("unary String snapshots require the existing bounded canonical decimal proof",
+                   replace(stringChild, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">"));
+        }
+        reject("repeated String unary producers need independent invariance",
+               replace(replace(stringChild, "  %minus = ctjs.unary " + unary + " %text\n", ""),
+                       "  %step =", "  %minus = ctjs.unary " + unary + " %text\n  %step ="));
+        if (unary == "neg") {
+            reject("a negated String snapshot is never an own array index",
+                   replace(stringChild, "%base[%i]", "%base[%minus]"),
+                   ArrayContentsFailure::UnknownIndex);
+        }
         const std::string makeSigned = "  %signed = ctjs.unary " + unary + " %minus\n";
         const auto signedChild =
             replace(replace(negativeChild, "  cf.br ^header", makeSigned + "  cf.br ^header"),
@@ -1683,8 +1735,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
               "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>",
               "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
               "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"}) {
-            reject("signed unary strides require an exact nonzero bounded Number producer",
-                   replace(signedChild, "#ctjs.number<4607182418800017408>", constant));
+            const auto body = replace(signedChild, "#ctjs.number<4607182418800017408>", constant);
+            if (constant == "#ctjs.string<\"1\">") {
+                run({.what = "canonical String unary chains preserve their held signed Number",
+                     .body = body,
+                     .arrays = "a:[one,x]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("signed unary strides require an exact nonzero bounded Number producer",
+                       body);
+            }
         }
         reject("signed unary strides still bound their final exact update",
                replace(replace(signedChild, "  %magnitude = ctjs.unary plus %one",
