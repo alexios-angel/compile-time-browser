@@ -42,6 +42,8 @@ void test_computed_layer_size_ranges() {
             console.log(property + '-variable=' + getComputedStyle(p).getPropertyValue(property));
             p.style.setProperty('--size', '-10px calc(10px + 0.5em)');
             console.log(property + '-invalid=' + getComputedStyle(p).getPropertyValue(property));
+            p.style.setProperty('--size', '-10px calc(10px + 20%)');
+            console.log(property + '-invalid-mixed=' + getComputedStyle(p).getPropertyValue(property));
             p.style.setProperty(property, 'calc(10% - 20%) calc(10px - 20%)');
             console.log(property + '-percent=' + getComputedStyle(p).getPropertyValue(property));
         }
@@ -58,6 +60,7 @@ void test_computed_layer_size_ranges() {
         CHECK_EQ(logged(page, property + "-inline="), property + "-inline=0px 30px");
         CHECK_EQ(logged(page, property + "-variable="), property + "-variable=30px 0px");
         CHECK_EQ(logged(page, property + "-invalid="), property + "-invalid=auto");
+        CHECK_EQ(logged(page, property + "-invalid-mixed="), property + "-invalid-mixed=auto");
         CHECK_EQ(logged(page, property + "-percent="), property + "-percent=0% calc(-20% + 10px)");
     }
     CHECK_EQ(logged(page, "random="), std::string{"random=true"});

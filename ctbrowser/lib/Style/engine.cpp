@@ -2044,7 +2044,8 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             // the number 30, which font-style cannot take, and is invalid
             // at computed-value time (attr-all-types). A value that is
             // still a function - `min(10px, 5%)` - is valid as it stands.
-            if (had_var && !css::may_have_math(value)) {
+            if (had_var && (!css::may_have_math(value) || property == "background-size" ||
+                            property == "mask-size")) {
                 // Image and layer sizes are clamped separately below. Validate their
                 // substituted math syntax, not a negative intermediate result.
                 const bool image_components = ascii_iequals_any(
