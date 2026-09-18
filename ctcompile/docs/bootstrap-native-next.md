@@ -1,5 +1,24 @@
 # What native Bootstrap needs next
 
+## Constructor-stored DOM methods, 2026-09-18 UTC
+
+**3a933858** finishes the interrupted original `class_element` method boundary.
+`this.element.classList.toggle` and `getAttribute` now execute as typed C++ calls
+against the existing DOM API. Each zero-parameter method is proved at each actual
+entry-local construction, including unused/transitive bodies. Unread methods are
+erased only after their independent proofs; a marker-writing regression confirms
+proof-only calls never execute. All 45 previous fixture bodies remain unchanged.
+
+**Next:** prove method arguments at original call sites before widening this
+zero-parameter tier; unused formals receive no invented host authority. Complete
+Config W/r/H composition, inheritance, full H Unicode, retained callbacks and the
+application driver remain open. This does not claim whole-Bootstrap startup.
+
+Focused class DOM, class initialization, transaction and parallel primitive-unary
+escape gates passed. [HANDOFF.md](HANDOFF.md) records **3a933858 / d2dc123f**,
+exact measurements and skipped suites; all eleven source/test hashes match.
+Required pinned formatting retains 26 diagnostics in nine unchanged files.
+
 ## Captured local class getters, 2026-09-18 UTC
 
 Resumed clean **1b941768** after the **12:36 AGENT-SYNC failure** explicitly

@@ -15,6 +15,72 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor-stored DOM methods and primitive unary snapshots, 2026-09-18 UTC
+
+Resumed dirty **9586e616** after the **13:02:02 AGENT-SYNC loop failure**:
+two unfinished class DOM test files named the original `class_element` method
+boundary. The September 7 WIP is already merged. Parallel agents recovered tests,
+audited the proof and implemented the independent escape change; root finished
+integration after agent service limits.
+
+**3a933858** proves zero-parameter class methods against each actual entry-local
+construction, including unused and transitive method bodies. Private copies reuse
+the existing closure lift, field normalization and typed DOM validator. Each method
+gets an independent probe; source entry parameters retain their original host
+provenance. Unread method definitions can disappear only after all their bodies
+pass. The final emitted entry is independently reproved and published atomically
+with its contract. Constructor/getter/helper effects and public class preparation
+retain their existing restrictions. An early eligibility check prevents retaining
+pointers into method bodies that normalization replaces.
+
+The original `class_element` now executes natively through `this.element` and
+`Button.NAME`; no original fixture was rewritten. Two new unused-method positives
+also pass, including a write that must never execute. Transitive field replacement,
+fake second instances, detached methods, invalid arguments, dead-branch unknown
+calls and nested constructions remain refused. No runtime or browser code changed.
+
+**d2dc123f** gives original Boolean/null unary Plus/Neg/BitNot results exact
+Number snapshots. Original primitive keys, unknown inputs, repeated producers and
+changing predecessor values keep their refusals. Four old false/null zero-shrink
+bodies now correctly admit; all original test bodies remain intact.
+
+Focused devbox evidence: `/tmp/ctcompile-method-finish/`.
+
+- Built the seven explicit affected targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims` and
+  `ctcompile-test-type-oracle`. Build rounds: **9, 10, 4, 2 actions**.
+- Exact class DOM lit: **1/1 (19.13s)**, **56 Node/interpreter observations,
+  8 combined native executions, 312 refusals**. Both providers, layouts,
+  optimization settings, GCC/Clang and Script/AOT exclusion pass.
+- Exact class initialization lit: **1/1 (200.18s)**.
+- Exact exception recovery: **1/1 (3.57s)**, including 16 class/DOM transaction
+  cases across both providers.
+- Exact arrays CTest: **1/1 (0.99s; total 1.00s)**. Exact `primitive-unary.test` and
+  `signed-bitnot.test`: **2/2 (0.22s), zero soundness violations**. The new unary
+  oracle measures **24 sites / 9 sound / 9 of 13 precision**; signed BitNot
+  measures **32 sites / 14 sound / 14 of 18 precision**. Arrays retain
+  **656 dense / 734 induction / 326 structured rows**.
+
+The initial DOM gate failed **4.16s** because an unused definition blocked the
+existing lift. Subsequent **17.75s** and **19.27s** passes preceded added controls
+and the early eligibility fix. Initial arrays failed **0.99s** only on the four
+newly proved old expectations; their source bodies were preserved. The earlier
+exception check passed **3.69s (total 3.70s)**. All eleven final source/test hashes
+match the devbox and gate wrappers exit zero. All 45 prior class DOM bodies/signatures remain.
+Required pinned formatting retains **26 existing diagnostics in nine unchanged
+files**; changed formatting, Black, Python syntax and diff checks pass. The first
+format scan also saw four transient diagnostics while the child was editing;
+they are absent from the final scan.
+
+**Next boundary:** extend method-argument provenance beyond zero-parameter methods,
+without granting unused method formals host authority. The existing original
+`unused_key_dom_method` still refuses. Complete Config W/r/H composition, inheritance,
+full H Unicode, retained callbacks and the application driver remain open. Full
+CTest/compiler lit, complete DOM suite, broad corpus/native matrices, WPT and
+test262 were skipped; historical Bootstrap coverage was not replayed. Native
+Bootstrap and the overall plan remain unfinished. No push.
+
 ## Captured local class getters, 2026-09-18 UTC
 
 Resumed clean **1b941768** after the **12:36 AGENT-SYNC failure** explicitly

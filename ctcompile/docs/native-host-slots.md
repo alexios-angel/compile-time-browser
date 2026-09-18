@@ -155,9 +155,12 @@ Class/DOM composition now reuses the complete original class proof in that priva
 transaction. The public class pass remains closed-source-only with unused entry
 parameters. A DOM request may instead supply exactly `__ctbrowser_class_defined`;
 its binding is proved before consumption, and mixed intrinsic declarations refuse.
-Only selected-entry parameter uses and unknown entry calls defer to the final DOM
-proof. Original constructor/method/getter/helper bodies, including unused ones,
-retain the unchanged complete census before metadata or functions can disappear.
+Selected-entry parameter uses and unknown entry calls defer to final typed DOM
+proof. Unknown calls in zero-parameter class methods instead require independent
+private probes at every actual entry-local construction. Every method is probed,
+including unused and transitive callers that can replace a receiver field. The
+original constructor/getter/helper effect census remains unchanged. Probe
+eligibility is checked before normalization can replace method bodies.
 
 The existing constructor/method lifter runs under a quadratic IR-size ceiling;
 only freshly proved lifted closures with inert root uses are removed. Input native
@@ -165,10 +168,14 @@ reports cannot authorize erasure. Independent direct-receiver, confined-field an
 typed DOM proofs must all succeed before the source and contract are published.
 The original `class_key` and `class_order` now execute with both DOM providers.
 The captured getter-key case also executes with both providers. The preserved
-`class_element` now passes the `Button.NAME` capture proof and refuses at the
-complete original method effect census. Its `classList.toggle` and `getAttribute`
-calls through `this.element`, including unused method bodies, need a DOM effect
-proof before normalization. The unused DOM-method control remains refused.
+`class_element` now executes its `classList.toggle` and `getAttribute` calls
+through constructor-stored `this.element` and captured `Button.NAME`. Unread
+method definitions may be omitted from other private probes, then from the
+emitted candidate only after all their original bodies pass typed DOM proof.
+A module-wide key-read census and symbol-use check keep that omission conservative;
+proof-only invocations never enter emitted code. Method parameters and construction
+outside the entry remain unsupported by this composition. The original
+`unused_key_dom_method` control retains its parameter-provenance refusal.
 
 Local cells in class setup functions may carry a fixed value when every use is
 ordered in the same block and every write stores the same SSA value. Reads and
