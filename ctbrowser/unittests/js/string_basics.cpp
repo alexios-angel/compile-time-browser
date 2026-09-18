@@ -394,6 +394,63 @@ int main() {
     js_expect("String.fromCharCode.length", "1");
     js_expect("String.raw.length", "1");
 
+    // String statics stop at the first failed conversion, preserving its exception.
+    js_expect(throws("String.fromCodePoint(Symbol())"), "TypeError");
+    js_expect(throws("String.fromCodePoint(Object(Symbol()))"), "TypeError");
+    js_expect(throws("String.fromCodePoint(1n)"), "TypeError");
+    js_expect(R"(String.fromCodePoint({valueOf() {
+        try { throw 0; } catch (e) {}
+        return 65;
+    }}))",
+              "A");
+    js_expect(R"((function () {
+        var error = {}, log = '';
+        var first = {valueOf() { log += 'a'; throw error; }};
+        var later = {valueOf() { log += 'b'; return 66; }};
+        try { String.fromCodePoint(65, first, later); }
+        catch (e) { return e === error && log === 'a'; }
+        return false;
+    })())",
+              "true");
+    js_expect(throws("String.raw(null)"), "TypeError");
+    js_expect(throws("String.raw(undefined)"), "TypeError");
+    js_expect(throws("String.raw({raw: {length: Symbol()}})"), "TypeError");
+    js_expect(throws("String.raw({raw: [Symbol()]})"), "TypeError");
+    js_expect(throws("String.raw({raw: ['a', 'b']}, Symbol())"), "TypeError");
+    js_expect("String.raw({raw: 'ab'}, 7)", "a7b");
+    js_expect("String.raw({raw: []}, Symbol())", "");
+    js_expect("String.raw({raw: ['a']}, Symbol())", "a");
+    js_expect(R"(String.raw({get raw() {
+        try { throw 0; } catch (e) {}
+        return {length: 2, 0: 'a', 1: 'b'};
+    }}, {toString() {
+        try { throw 0; } catch (e) {}
+        return 's';
+    }}))",
+              "asb");
+    js_expect(R"((function () {
+        var error = {}, log = '';
+        var raw = {
+            length: 2,
+            0: {toString() { log += 'a'; throw error; }},
+            get 1() { log += 'b'; return 'b'; }
+        };
+        var substitution = {toString() { log += 's'; return 's'; }};
+        try { String.raw({raw: raw}, substitution); }
+        catch (e) { return e === error && log === 'a'; }
+        return false;
+    })())",
+              "true");
+    js_expect(R"((function () {
+        var error = {}, log = '';
+        var raw = {length: 2, 0: 'a', get 1() { log += 'b'; return 'b'; }};
+        var substitution = {toString() { log += 's'; throw error; }};
+        try { String.raw({raw: raw}, substitution); }
+        catch (e) { return e === error && log === 's'; }
+        return false;
+    })())",
+              "true");
+
     // --- the UTF-16 gap: CURRENT BEHAVIOUR, KNOWN WRONG ---------------------
     //
     // Everything in this block disagrees with V8, and every line says what V8
