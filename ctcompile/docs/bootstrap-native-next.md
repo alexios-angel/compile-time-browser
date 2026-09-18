@@ -1,5 +1,33 @@
 # What native Bootstrap needs next
 
+## Captured Bootstrap F replacement proof, 2026-09-18 UTC
+
+**5b3d9602** resumes the F fixture claim abandoned at **16:59:11**, starting clean
+at **9e60cdfd**. Original vendor-pinned F now works through a class method's fixed
+sibling capture for proved lowercase inputs. The existing no-match replacement
+proof checks original callbacks; all direct callers contribute to String facts,
+and every surviving closure/capture still refuses. Factory identity is declared;
+ordinary nested helpers, unknown/matching inputs, mutation and unused-method
+effects retain their refusals. All **148 old fixture entries** remain unchanged.
+
+Focused passes: transaction **1/1 (3.86s)**, contract **1/1 (0.48s)**, class DOM
+**1/1 (53.78s): 192 source observations, 8 native executions, 1,226 refusals**.
+Public class initialization also passes **1/1 (197.50s)**; all five tested hashes
+match the devbox. Required formatting retains **26 pre-existing diagnostics in
+nine unchanged browser files**; changed checks pass. An authorized IP-rule
+refresh restored SSH; only the compatibility result lost with that connection
+was rerun, with its result saved on the devbox.
+HANDOFF records explicit targets, initial failures and skipped coverage; evidence:
+`/tmp/ctcompile-f-resume/`. Parallel agents supplied audit/recommendations but hit
+service limits without edits. No escape or browser implementation changed.
+Full/broad suites and whole-Bootstrap replay were skipped; no bundle gain claimed.
+
+**Next:** full H's unused holder slots and retained dataset-filter callback, then
+original H Unicode normalization and W's Object.entries/destructuring/s/RegExp/
+TypeError/spread before inheritance. Preserve W/W+r/W+r+H refusals; last omits s.
+Bounded negative canonical String conversion is an unimplemented escape candidate.
+The application driver, native Bootstrap and the overall plan remain unfinished.
+
 ## Captured sibling Bootstrap M, 2026-09-18 UTC
 
 **1b27ab4b** completes the fixtures abandoned at **16:37:28**: a class method can

@@ -15,6 +15,75 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured Bootstrap F replacement proof, 2026-09-18 UTC
+
+**5b3d9602** resumes the original-F thread at clean **9e60cdfd**. The unfinished
+**16:58:03 fixture claim**, abandoned by the **16:59:11 loop failure**, and the
+previous HANDOFF/master 00/24 identified it; no predecessor edits remained.
+September 7 WIP is already an ancestor. Both agents' commits and historical
+unmerged branches were reviewed. Parallel agents supplied a proof audit and
+fixture/escape recommendations, then hit service limits without edits; root
+completed the native work. No escape implementation changed.
+
+Original vendor-pinned **F** now works when called only through a DOM class
+method's fixed sibling capture, including literal, forwarded and distinct
+lowercase inputs. The class census retains helper-local cells and uncaptured
+replacement callbacks for the existing DOM proof. The reserved RegExp factory
+must be declared. Every direct symbol caller contributes to bounded String input
+facts; any unknown input invalidates that formal. Original callback identities
+are checked before the shared no-match fold, and any surviving closure/capture
+refuses before direct inlining. Ordinary nested helpers, matching/live inputs,
+unused matching methods, unknown effects and identity escape still refuse.
+The global-holder census and public closed-source class pass remain strict.
+
+All **148 pre-session fixture entries** are unchanged. Three new positive fixtures
+retain original F; ten mutations refuse. Twelve transaction controls per provider
+check publication and rollback. Local Python/Black, thirteen Node syntax checks,
+twelve new Node observations and changed C++ formatting pass. No browser source,
+new runtime representation or VM dependency was added.
+
+Focused devbox evidence: `/tmp/ctcompile-f-resume/`.
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`.
+  Initial and corrected builds: **8 actions each**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.86s; total 3.87s)**.
+- Exact `ctcompile_host_contract`: **1/1 (0.48s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (53.78s)**,
+  **192 Node/interpreter observations, 8 native executions, 1,226 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (197.50s)**,
+  preserving original W/W+r/W+r+H refusals.
+
+The initial transaction failed **3.89s**: the first deferral admitted ordinary
+nested-helper control 67 and omitted F's local-cell/factory prerequisites.
+Restricting callback uses, retaining cell proof and declaring the factory fixed
+those failures. The corrected class-DOM run then failed **9.72s** because the new
+F fixtures were missing from existing missing-identity bookkeeping. Its test-only
+correction produced the final class-DOM pass; production did not change again.
+The first public compatibility invocation lost its SSH connection after starting;
+its result is unobserved. Azure reported the VM running. The authorized
+`server.sh allow-ip` refresh restored connectivity, and no test process remained.
+Only that compatibility case was restarted, with a devbox log/JSON result and SSH
+keepalive. The already-passing F checks were not replayed for this transport failure.
+
+Required `tools/format.sh --check` reports **26 pre-existing diagnostics in nine
+HEAD-identical browser files**; changed formatting and `git diff --check` pass.
+All **five tested file hashes** match the devbox. Inspected F output uses ordinary
+String/optional values and the existing ctbrowser DOM helper; native symbol checks
+exclude Script/AOT dependencies. Full CTest/compiler lit, complete DOM suites,
+broad corpus/native matrices, WPT/test262, whole-Bootstrap replay and unchanged
+escape tests were skipped. No bundle gain or full-suite pass is claimed. No push.
+
+**Exact next:** compose **full H** without bypassing its unused-slot census.
+`getDataAttributes` creates the retained dataset-filter callback; global holder
+admission still rejects its callee dependency before complete slot/effect proof.
+Original H also retains Unicode `charAt(0).toLowerCase()` normalization. Preserve
+W/W+r/W+r+H specimens (the last omits `s`). W still needs Object.entries,
+destructuring iteration, original s, RegExp/TypeError and spread before inheritance.
+The read-only escape candidate is bounded negative canonical String conversion;
+it has no implementation or measurement from this session. Retained callbacks,
+the application driver and native Bootstrap remain unfinished.
+
 ## Captured sibling Bootstrap M, 2026-09-18 UTC
 
 **1b27ab4b** finishes the interrupted helper-capture thread at **2d72d9b0**.

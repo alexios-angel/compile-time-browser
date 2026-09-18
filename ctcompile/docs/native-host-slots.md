@@ -136,9 +136,13 @@ normalized module and refreshed contract together; refusal preserves both.
 DOM helper expansion also accepts already normalized direct calls to exact private
 capture-free targets with no live closure creation, exact arity and undefined
 callee/new.target. It binds the actual receiver separately at each call. Receiver
-observations on this route survive into complete DOM reproof; callee/new.target
-observations, nested closures/captures, recursion and unvisited source functions
-still refuse. Existing live closure and lexical receiver rules remain unchanged.
+observations on this route survive into complete DOM reproof. Exact String
+arguments are collected from every symbol caller before specialization; unknown
+inputs invalidate the whole formal. Original nested closure identities are checked
+before the existing no-match replacement proof runs. Every surviving closure or
+capture still refuses before inlining, as do callee/new.target observations,
+recursion and unvisited source functions. Existing live closure and lexical
+receiver rules remain unchanged.
 This normalization supplies no constructor/prototype or class-provider proof.
 
 After direct receiver expansion, fresh confined objects with initialized ordinary
@@ -173,9 +177,15 @@ census because unused slots can be removed earlier. Original helper exception
 CFGs stay intact for the existing URI/JSON normalization and final typed proof.
 This composes unchanged Bootstrap M with `M(shape.read())` in the entry or with
 a method as M's only caller. DOM class methods may capture an earlier sibling
-helper through a proved fixed local cell. The helper must capture nothing and
-observe none of its implicit arguments; every captured read must feed only an
-ordinary call with undefined receiver. Missing arguments are padded under the
+helper through a proved fixed local cell. The helper must capture nothing;
+every captured read must feed only an ordinary call with undefined receiver.
+Its callee may only supply the enclosing identity of an uncaptured replacement
+callback whose own implicit arguments are unused. Saving the helper's lexical
+receiver in that callback is inert. The original callback and helper-local cells
+survive for the existing DOM source proof. This admits original Bootstrap F for
+proved lowercase inputs, with the reserved RegExp factory explicitly declared;
+matching or unknown inputs still refuse. Other implicit-argument observations
+remain outside this proof. Missing arguments are padded under the
 work budget; surplus arguments refuse. Complete method probes still check every
 unused body before removal. The original calls become direct calls at the same
 source position, and only an unobserved helper closure disappears.
@@ -189,7 +199,8 @@ getters and other helpers retain their existing stricter census. Lifted helpers
 discard their direct-call callee operand only when it names the exact lifted
 target and that target does not observe its callee argument. All premises are
 checked before deleting any closure, so child deletion order cannot authorize a
-parent. Nested callee dependencies remain refused.
+parent. Nested ordinary helper dependencies remain refused; replacement callbacks
+use the separate original-body/no-match proof above.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent
