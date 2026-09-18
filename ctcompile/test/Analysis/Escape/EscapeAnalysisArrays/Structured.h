@@ -532,6 +532,39 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    replace(source, literal, "#ctjs.null"));
         }
     }
+    for (const std::string literal : {"#ctjs.boolean<false>", "#ctjs.null", "#ctjs.string<\"0\">",
+                                      "#ctjs.string<\"-2\">", "#ctjs.string<\"4294967294\">"}) {
+        const bool subtract =
+            literal != "#ctjs.string<\"-2\">" && literal != "#ctjs.string<\"4294967294\">";
+        const std::string update = subtract ? "sub" : "add";
+        const auto source =
+            replace(original, "    %step = ctjs.binary_static add %i, %one",
+                    "    %literal = ctjs.constant " + literal +
+                        "\n    %converted = ctjs.unary bitnot %literal\n    %step = ctjs.binary " +
+                        update + " %i, %converted");
+        rows.push_back({.what = "structured literal BitNot latches preserve the returned child",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "structured literal BitNot releases only unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        reject("a structured BitNot parameter cannot borrow literal conversion",
+               replace(source, "bitnot %literal", "bitnot %p"));
+        reject("a structured repeated nonliteral BitNot needs independent invariance",
+               replace(source, "    %converted = ctjs.unary bitnot %literal",
+                       "    %computed = ctjs.unary plus %literal\n"
+                       "    %converted = ctjs.unary bitnot %computed"));
+        for (const std::string refused :
+             {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">", "#ctjs.string<\"00\">",
+              "#ctjs.string<\"4294967296\">", "#ctjs.undefined"}) {
+            reject("structured BitNot requires exact bounded nonzero literal conversion",
+                   replace(source, literal, refused));
+        }
+    }
     const std::string makeBoolean =
         "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n";
     const auto boolean = replace(replace(carriedUnit, makeUnit, makeBoolean),

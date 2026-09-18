@@ -929,6 +929,21 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input,
     return std::nullopt;
 }
 
+void boundedNumberComplement(const ContentsValue & input, ContentsValue & result) {
+    const auto positive = boundedConvertedNumber(input);
+    const auto negative = boundedConvertedNumber(input, true);
+    if (!positive && !negative) { return; }
+    // Complement exact ToUint32 bits, then recover the signed Number magnitude
+    // without signed overflow. Facts attach only to the result's identity.
+    const std::uint32_t bits = ~(positive ? static_cast<std::uint32_t>(*positive)
+                                          : 0U - static_cast<std::uint32_t>(*negative));
+    if (bits < 2147483648ULL) {
+        result.integerNumber = bits;
+    } else {
+        result.negativeIntegerNumber = 4294967296ULL - bits;
+    }
+}
+
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
     // Add selects concatenation before Number conversion; even canonical
@@ -1173,13 +1188,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             auto unary = increment.getDefiningOp<ctjs::UnaryOp>();
             auto literal =
                 unary ? unary.getOperand().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            if (literal && (unary.getKind() == ctjs::UnaryKind::Plus ||
-                            unary.getKind() == ctjs::UnaryKind::Neg)) {
-                stride = boundedConvertedNumber(
-                    {literal.getResult(), llvm::isa<ctjs::StringAttr>(literal.getValue())
+            if (literal) {
+                const ContentsValue input{literal.getResult(),
+                                          llvm::isa<ctjs::StringAttr>(literal.getValue())
                                               ? ContentsKind::String
-                                              : ContentsKind::Identity},
-                    subtract != (unary.getKind() == ctjs::UnaryKind::Neg));
+                                              : ContentsKind::Identity};
+                if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+                    ContentsValue result;
+                    boundedNumberComplement(input, result);
+                    stride = subtract ? result.negativeIntegerNumber : result.integerNumber;
+                } else if (unary.getKind() == ctjs::UnaryKind::Plus ||
+                           unary.getKind() == ctjs::UnaryKind::Neg) {
+                    stride = boundedConvertedNumber(
+                        input, subtract != (unary.getKind() == ctjs::UnaryKind::Neg));
+                }
             }
         }
         if (!stride) {
@@ -1603,15 +1625,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // rejects publication, calls and handlers, so that early
                     // exit cannot expose its fresh locals. This is NOT proof
                     // of normal completion or an effect/no-throw contract.
-                    const auto positive = boundedConvertedNumber(input);
-                    const auto negative = boundedConvertedNumber(input, true);
                     if (unary.getKind() != ctjs::UnaryKind::BitNot) {
                         // Preserve held signed Numbers through Plus/Neg, keeping
                         // negative magnitudes separate from own-index facts.
                         // Canonical original Strings share the exact decimal
                         // conversion used by Sub; zero stays nonnegative.
-                        integerNumber = positive;
-                        negativeIntegerNumber = positive ? std::nullopt : negative;
+                        integerNumber = boundedConvertedNumber(input);
+                        negativeIntegerNumber =
+                            integerNumber ? std::nullopt : boundedConvertedNumber(input, true);
                         if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
                             std::swap(integerNumber, negativeIntegerNumber);
                         }
@@ -1619,20 +1640,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
                     } else {
-                        // Complement the exact ToUint32 bits, then recover the
-                        // signed Number magnitude without a signed overflow.
-                        // Canonical original Strings use the same exact decimal
-                        // conversion as Plus/Neg; the result keeps its identity.
-                        if (positive || negative) {
-                            const std::uint32_t bits =
-                                ~(positive ? static_cast<std::uint32_t>(*positive)
-                                           : 0U - static_cast<std::uint32_t>(*negative));
-                            if (bits < 2147483648ULL) {
-                                integerNumber = bits;
-                            } else {
-                                negativeIntegerNumber = 4294967296ULL - bits;
-                            }
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        ContentsValue result;
+                        boundedNumberComplement(input, result);
+                        integerNumber = result.integerNumber;
+                        negativeIntegerNumber = result.negativeIntegerNumber;
+                        if ((integerNumber || negativeIntegerNumber) && !spend()) {
+                            return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
                     }
                     break;

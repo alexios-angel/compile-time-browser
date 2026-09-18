@@ -592,6 +592,47 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    ArrayContentsFailure::MissingElement);
         }
     }
+    for (const std::string literal :
+         {"#ctjs.number<0>", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.string<\"0\">",
+          "#ctjs.number<13835058055282163712>", "#ctjs.string<\"-2\">",
+          "#ctjs.number<4751297606871678976>", "#ctjs.string<\"4294967294\">"}) {
+        const bool subtract = literal == "#ctjs.number<0>" || literal == "#ctjs.boolean<false>" ||
+                              literal == "#ctjs.null" || literal == "#ctjs.string<\"0\">";
+        const std::string update = subtract ? "sub" : "add";
+        const auto source =
+            replace(savedChild, "  %step = ctjs.binary_static add %i, %one",
+                    "  %literal = ctjs.constant " + literal +
+                        "\n  %converted = ctjs.unary bitnot %literal\n  %step = ctjs.binary " +
+                        update + " %i, %converted");
+        run({.what = "original BitNot latches preserve the returned CFG child",
+             .body = source,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "original BitNot latches discharge only unreturned CFG children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+        reject("a BitNot latch cannot borrow an unknown operand's conversion",
+               replace(source, "bitnot %literal", "bitnot %p"));
+        reject("a repeated nonliteral BitNot still requires independent invariance",
+               replace(source, "  %converted = ctjs.unary bitnot %literal",
+                       "  %computed = ctjs.unary plus %literal\n"
+                       "  %converted = ctjs.unary bitnot %computed"));
+        reject("a BitNot latch still requires a positive exact update",
+               replace(source, "binary " + update + " %i, %converted",
+                       "binary " + std::string{subtract ? "add" : "sub"} + " %i, %converted"));
+        reject("a BitNot latch retains own-element bounds",
+               replace(source, "%base[%i]", "%base[%two]"), ArrayContentsFailure::MissingElement);
+        for (const std::string refused : {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">",
+                                          "#ctjs.string<\"00\">", "#ctjs.string<\"4294967296\">",
+                                          "#ctjs.number<4602678819172646912>", "#ctjs.undefined"}) {
+            reject("a BitNot latch requires exact bounded nonzero literal conversion",
+                   replace(source, literal, refused));
+        }
+    }
     const std::string makeBoolean =
         "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n";
     for (const std::string opcode : {"binary_static", "binary"}) {
@@ -1014,15 +1055,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             "x");
         const auto repeated =
             replace(replace(body, operation, ""), "  %step =", operation + "  %step =");
-        if (std::string{kind} == "bitnot") {
-            reject("a repeated primitive BitNot still needs independent invariance", repeated);
-        } else {
-            run({.what = "repeated primitive Plus/Neg uses its original literal stride",
-                 .body = repeated,
-                 .arrays = "a:[one,x]",
-                 .reads = "a[0]=one; a[1]=x",
-                 .exit = "x -> {x}"});
-        }
+        run({.what = "repeated primitive unary uses its original literal stride",
+             .body = repeated,
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("a converted primitive does not turn its original Boolean/null into an index",
                replace(body, "%base[%i]", "%base[%input]"), ArrayContentsFailure::UnknownIndex);
         reject("Undefined unary conversion supplies no bounded Number fact",
@@ -1092,9 +1129,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                  .reads = "a[0]=one; a[1]=x",
                  .exit = "zero -> {}"},
                 "x");
-            reject("a repeated String BitNot still needs independent invariance",
-                   replace(replace(body, "  %minus = ctjs.unary bitnot %operand\n", ""),
-                           "  %step =", "  %minus = ctjs.unary bitnot %operand\n  %step ="));
+            run({.what = "repeated canonical String BitNot uses its original literal stride",
+                 .body = replace(replace(body, "  %minus = ctjs.unary bitnot %operand\n", ""),
+                                 "  %step =", "  %minus = ctjs.unary bitnot %operand\n  %step ="),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
         } else {
             reject("BitNot requires bounded Numbers or canonical original Strings", body);
         }

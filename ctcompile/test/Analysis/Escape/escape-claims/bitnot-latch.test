@@ -1,0 +1,119 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name bitnot-latch
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-bitnot-latch.claims
+
+// Exact original literal complements supply a bounded positive induction step.
+// Result signs and source keys stay separate; returned children remain escaping.
+// IMPORT-LABEL: ctjs.func @numberReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @booleanReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @nullReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @negativeStringReleased$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @unsignedStringReturned$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @zeroStride$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @noncanonical$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @nonliteral$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @outOfBounds$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function numberReleased() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~0) saved = array[i];
+    return 0;
+}
+function booleanReleased() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~false) saved = array[i];
+    return 0;
+}
+function nullReleased() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~null) saved = array[i];
+    return 0;
+}
+function negativeStringReleased() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += ~'-2') saved = array[i];
+    return 0;
+}
+function unsignedStringReturned() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += ~'4294967294') saved = array[i];
+    return saved;
+}
+function zeroStride() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 1; i < array.length; i += ~'-1') saved = array[i];
+    return 0;
+}
+function noncanonical() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~'00') saved = array[i];
+    return 0;
+}
+function nonliteral() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~(i - i)) saved = array[i];
+    return 0;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~false) saved = array[i];
+    return array[false];
+}
+function outOfBounds() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= ~null) saved = array[i + 1];
+    return 0;
+}
+numberReleased();
+booleanReleased();
+nullReleased();
+negativeStringReleased();
+var heldunsignedStringReturned = unsignedStringReturned();
+zeroStride();
+noncanonical();
+nonliteral();
+var heldoriginalKey = originalKey();
+outOfBounds();
