@@ -1,5 +1,28 @@
 # What native Bootstrap needs next
 
+## Transitive class-method arguments, 2026-09-18 UTC
+
+**4ab08f61** continues the clean **2ac4ab0d** handoff: parameterized methods now
+receive original arguments through exact `this.method(...)` chains rooted at
+entry calls on each actual instance. The shared private proof preserves field
+and DOM write order; synthetic unused-body probes supply no argument authority.
+The prior transitive-only specimen executes unchanged, alongside three-hop and
+two-instance cases. Unused formals, uncalled instances, invalid/dead calls and
+recursive dependencies still refuse.
+
+**Next:** original omitted/defaulted arguments in W's `_mergeConfigObj(t, e)`
+and `_typeCheckConfig(t, e = this.constructor.DefaultType)` calls, followed by
+complete W/r/H effects and inheritance. Full H Unicode, retained callbacks and
+the native application driver remain open. Complete W has not been admitted.
+
+Focused class DOM **1/1 (26.74s), 88 source observations / 8 native executions /
+526 refusals**; class initialization **1/1 (202.17s)**; transaction
+**1/1 (3.77s)**. Independent primitive Div/Mod escape work is **ac4cf776**.
+HANDOFF records exact targets, escape retry and skipped coverage. Nine tested
+source hashes match; changed formatting passes, while required full formatting
+retains 26 existing diagnostics in nine unchanged files. Full/broad suites and
+historical whole-Bootstrap replay were skipped; no browser changes or push.
+
 ## Original class-method arguments, 2026-09-18 UTC
 
 **8f322043** finishes the interrupted method-argument draft from the 13:27 loop

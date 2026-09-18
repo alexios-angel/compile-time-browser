@@ -163,13 +163,15 @@ probed, including unused and transitive callers that can replace a receiver fiel
 original constructor/getter/helper effect census remains unchanged. Probe
 eligibility is checked before normalization can replace method bodies.
 
-Parameterized methods require an original direct entry call on each actual
-instance. One private proof retains every such call, its original arguments and
-the field state at that source position. Unused parameterized methods and methods
-called only transitively remain refused; no formal receives invented host
-authority. Missing arguments, bad later calls, uncalled second instances and
-invalid calls in dead branches still fail the complete proof. Transitive argument
-provenance is the next boundary for Bootstrap Config's `_getConfig` chain.
+Parameterized methods require reachability from an original direct entry call
+on each actual instance. The bounded census follows exact `this.method(...)`
+calls through that instance's own method definitions; synthetic unused-body
+probes cannot establish reachability. One private proof retains all original
+calls, arguments and field state in source order. Unused parameterized methods,
+missing arguments, bad later calls, uncalled second instances, recursion and
+invalid calls in dead branches still refuse; no formal receives invented host
+authority. Omitted/defaulted arguments and complete W/r/H composition remain
+the next boundaries for Bootstrap Config's `_getConfig` chain.
 
 The existing constructor/method lifter runs under a quadratic IR-size ceiling;
 only freshly proved lifted closures with inert root uses are removed. Input native

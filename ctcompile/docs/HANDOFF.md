@@ -15,6 +15,70 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Transitive method arguments and primitive division, 2026-09-18 UTC
+
+Started clean at **2ac4ab0d**. The **13:43:50 AGENT-SYNC session closure**
+confirmed the interrupted argument work was committed; this session continued
+its recorded Config transitive-call boundary. September 7 WIP was absent.
+Parallel agents supplied native tests, an escape draft and a proof audit; root
+completed the drafts after agent service limits.
+
+**4ab08f61** proves parameterized methods reached transitively from original
+entry calls on each actual instance. A bounded census follows exact
+`this.method(...)` edges through that instance's definitions. The existing
+shared private proof retains real arguments and field writes in source order.
+Independent zero-parameter probes cannot supply parameter authority. Unused
+formals, uncalled instances, invalid/dead calls and recursive graphs still refuse.
+The previous transitive-only refusal now executes unchanged; all 19 prior positive
+and 42 prior refusal source bodies remain intact. Twelve new transaction checks
+cover both DOM providers. No browser/runtime code or ownership carrier changed.
+
+**ac4cf776** reuses exact primitive Number conversion for Boolean/null division
+and remainder snapshots. Both operand orders, signed results, saved operands,
+CFG/SCF transport and original primitive-key refusals are checked. Zero divisors,
+nonintegral quotients and unknown/changing/repeated operands remain unproved.
+Two old Boolean divisor expectations changed; their source bodies did not.
+
+Focused devbox evidence: `/tmp/ctcompile-transitive-config/`.
+
+- Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference` and
+  `ctcompile-test-exception-recovery`: **7 actions, pass**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.77s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (26.74s)**;
+  **88 Node/interpreter observations, 8 combined native executions, 526 refusals**.
+  Both providers, C++ layouts and optimization settings pass GCC/Clang and
+  Script/AOT exclusion.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`:
+  **1/1 (202.17s)**; **154 source observations, 380 native executions,
+  308 unprepared refusals, 190 preparation refusals**.
+- Built `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims` and `ctcompile-test-type-oracle`:
+  **3 initial / 2 retry actions, pass**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.03s; total 1.04s)**;
+  **656 dense / 796 induction / 342 structured rows**, with
+  **25,381 / 52,692 / 26,991** budget cutoffs. Initial run failed **1.00s**:
+  two stale Boolean expectations and two malformed new repeated-SCF fixtures
+  caused nine assertions. Fixed the expectations and new fixture SSA.
+- Exact `Analysis/Escape/escape-claims/{primitive-division,primitive-product,
+  signed-division}.test`: **3/3 (0.33s), zero violations**. Division/product:
+  each **24 sites, 9 sound, 9 of 13 precision**; signed division:
+  **26 sites, 13 sound, 13 of 15 precision**.
+
+All nine source/test hashes match the devbox. Final native, escape retry and hash
+wrappers exit **0**. Required `tools/format.sh --check` retains **26 existing
+diagnostics in nine HEAD-identical files**; changed pinned formatting, Black,
+Python/Node syntax and diff checks pass. No test was repeated after its final
+focused pass. Full CTest/compiler lit, complete DOM, broad corpus/native matrices,
+WPT/test262 and historical whole-Bootstrap replay were skipped. No push.
+
+**Exact next:** preserve original omitted/defaulted arguments in W's
+`_getConfig → _mergeConfigObj(t, e)` and
+`_typeCheckConfig(t, e = this.constructor.DefaultType)` calls. This session
+proves the transitive prerequisite, not complete W. Full Config W/r/H, its unused
+Error/TypeError and other effect obligations, inheritance, full H Unicode,
+retained callbacks, the application driver and broader primitive escape conversions
+remain open. Native Bootstrap and the overall plan remain unfinished.
+
 ## Original class-method arguments and primitive products, 2026-09-18 UTC
 
 Resumed four dirty files at **47a08427**, abandoned by the **13:27:02 AGENT-SYNC
