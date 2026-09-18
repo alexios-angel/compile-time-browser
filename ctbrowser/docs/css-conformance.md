@@ -11,6 +11,25 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Positive integer animation follow-up — 2026-09-18
+
+Full CSS at `f5a00a58`: **1,592/2,926 files PASS, 70,275 subtests PASS**;
+**+1 file and +52 subtests** since `73833c09`, with zero file or subtest
+losses. The common numeric interpolator now clamps positive integer
+properties to one after rounding. `column-count-interpolation` passes;
+`columns-interpolation` retains the unsupported slash syntax failures.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-break` | 19 / 19 | 470 / 514 |
+| `css/css-multicol` | 27 / 28 | 1,353 / 1,361 |
+
+Other modules are unchanged from the recovery below. The full status row
+and evidence are in `wpt.md` and `/tmp/ctbrowser-resume/positive-integers/`.
+The browser gate passed 233/233 CTests (69.00 seconds), with formatting
+checked. Against `b722aa41`, this session gained 57 files and 1,334 passing
+subtests, with zero losses.
+
 ## CSS recovery — 2026-09-18
 
 Full `css/` replay at `73833c09`: **1,591 of 2,926 runnable files PASS

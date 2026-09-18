@@ -256,7 +256,7 @@ struct numeric_pair {
 // is the bound at every progress past zero, which is what the corpus reads.
 // The bound is the fold's (lib/Style/css/calc/fold.cpp). Then an <integer>
 // rounds half up (§3.2), and the property's own range applies: the table's
-// floor at zero - only when no percentage is left to resolve, since
+// floor at zero (one for positive integers) - only when no percentage is left to resolve, since
 // `calc(-50px + 40%)` cannot be judged before its basis exists - and
 // font-weight's [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
 // ponytail: the one property with a range that is not "non-negative"; give
@@ -273,7 +273,9 @@ struct numeric_pair {
     if (out.is_number && known != nullptr && known->kind == css::value_kind::integer) {
         out.px = std::floor(out.px + 0.5);
     }
-    if (known != nullptr && known->nonnegative && out.px < 0 && !out.has_percent) { out.px = 0; }
+    if (known != nullptr && known->nonnegative && !out.has_percent) {
+        out.px = std::max(out.px, known->kind == css::value_kind::integer ? 1.0 : 0.0);
+    }
     if (property == "font-weight") { out.px = std::clamp(out.px, 1.0, 1000.0); }
     return css::serialize_calc(out);
 }

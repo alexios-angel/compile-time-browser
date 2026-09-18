@@ -1,10 +1,10 @@
 # WPT — the next round, as briefs
 
 **Updated 2026-09-18: resumed session 19 and committed the recovery.**
-Latest browser source is `73833c09`; current compiler history through
-`63a021c1` is merged. The browser gate passed **233/233** (70.77 seconds)
-and formatting passed. Full CSS: **1,535 -> 1,591 files PASS**, **68,941 ->
-70,223 subtests PASS**, zero file or subtest losses. BigInt's focused
+Latest browser source is `f5a00a58`; compiler history through the integration
+commit `b71d8034` is merged. The browser gate passed **233/233** (69.00
+seconds) and formatting passed. Full CSS: **1,535 -> 1,592 files PASS**,
+**68,941 -> 70,275 subtests PASS**, zero file or subtest losses. BigInt's focused
 77-file test262 replay: **63 -> 74 PASS**, **13 -> 2 FAIL**, one SKIP,
 zero lost files. The instrument docs contain measured rows and settings.
 
@@ -18,6 +18,9 @@ Landed source commits:
   keyframes, fallback for shorthands CSSOM retains whole, and inherited
   keyframes using the parent's animated computed value. An initial combined
   replay lost 26 subtests; the correction restores all of them.
+- `f5a00a58`: positive integer animation results clamp to one after
+  rounding, sharing the parser's range convention; +1 file and +52
+  subtests in the full CSS replay against `73833c09`.
 
 The recovered round-seven wide baseline at `b722aa41` is **2,860 files
 PASS / 249,277 subtests PASS**. Only CSS was replayed across that entire
@@ -28,8 +31,8 @@ were not remeasured; do not extrapolate their totals. Full test262 remains
 **Next clear failures:**
 
 - Two of round seven's 23 lost CSS files remain: `columns-interpolation`
-  has four failing count-clamp subtests (`0` instead of `1`) and sixteen
-  failures for `columns: 10 100px / auto`; scaled viewport rectangles
+  has sixteen failures for `columns: 10 100px / auto` (the slash grammar
+  and `column-height`); the count clamp is fixed. Scaled viewport rectangles
   ignore `transform: scale()` in `Shell/bindings/element/views.cpp`.
 - BigInt's two failing files are `constructor-from-string-syntax-errors.js`
   (shared string grammar) and `wrapper-object-ordinary-toprimitive.js`
@@ -38,13 +41,18 @@ were not remeasured; do not extrapolate their totals. Full test262 remains
   axis. The animation changes preserve prior behavior without fixing that
   older gap.
 
-Evidence: `/tmp/ctbrowser-resume/corrected/` holds the final full CSS JSON,
-comparison, browser gate and verified source hashes;
+Evidence: `/tmp/ctbrowser-resume/positive-integers/` holds the final full
+CSS JSON, before/after and session comparisons, browser gate and verified
+source hashes. `/tmp/ctbrowser-resume/corrected/` retains the earlier recovery;
 `/tmp/browser-resume-bigint-{before,after}.json` and
 `/tmp/ctbrowser-resume/final/browser-resume-final-bigint.json` hold the
 focused runtime runs. Agent branches/worktrees/devbox copies created for
-this recovery have been removed. The main checkout was dirty during the
-last check; integrate only after the protocol's locked clean-tree guard.
+this recovery have been removed. The recovery through `9e7b6fdf` was
+integrated into main as `b71d8034` after its locked clean-tree check passed.
+The positive-integer follow-up still needs integration when main is clean.
+The integration changed main's ctjs gitlink to `d2664e9`; its submodule
+worktree was still at `3cb2ef95` immediately afterwards. The compiler owner
+was notified in AGENT-SYNC to align it before an oracle build.
 
 Session 19's old wide sweep finished its eight baseline directories;
 those JSONs are in `/tmp/w-b722aa41/` against `/tmp/w-9f8da347/`.
