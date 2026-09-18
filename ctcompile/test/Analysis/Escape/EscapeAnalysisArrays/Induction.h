@@ -1000,8 +1000,45 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     }
     reject("a coercible left String supplies no negative Sub snapshot",
            replace(subChild, "unary plus %one", "constant #ctjs.string<\"1\">"));
-    reject("a coercible right String supplies no negative Sub snapshot",
-           replace(subChild, "unary plus %two", "constant #ctjs.string<\"2\">"));
+    const auto stringSub = replace(subChild, "unary plus %two", "constant #ctjs.string<\"2\">");
+    const auto savedStringSub =
+        replace(replace(savedSub, "unary plus %one", "get_property %seed[%name]"),
+                "%magnitude = ctjs.get_property %seed[%name]",
+                "%magnitude = ctjs.constant #ctjs.string<\"3\">");
+    for (const auto & source : {stringSub, savedStringSub}) {
+        const char * arrays = source == stringSub ? "a:[one,x]" : "a:[one,x]; seed:[]";
+        run({.what = "canonical String offsets retain negative snapshots after source shrink",
+             .body = source,
+             .arrays = arrays,
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "negative String-offset snapshots discharge only unreturned children",
+             .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+             .arrays = arrays,
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "zero -> {}"},
+            "x");
+    }
+    const auto carriedStringSub =
+        replace(carriedSub, "ctjs.binary add %one, %one", "ctjs.constant #ctjs.string<\"2\">");
+    run({.what = "negative String-offset snapshots preserve simultaneous CFG transport",
+         .body = carriedStringSub,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    reject("a negative String-offset snapshot cannot change on the CFG backedge",
+           replace(carriedStringSub, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    reject("repeated String-offset producers still need independent invariance",
+           replace(replace(stringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
+                   "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="));
+    reject("a negative String-offset snapshot cannot become an own array index",
+           replace(stringSub, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
+    for (const std::string text :
+         {"02", "+2", "-2", "2.0", "2e0", " 2", "0x2", "4294967295", "NaN"}) {
+        reject("negative String offsets require the existing bounded canonical decimal proof",
+               replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"));
+    }
     reject("negative Sub snapshots cannot become own array indices",
            replace(subChild, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     reject("Add cannot use a negative Sub snapshot as its positive stride",
@@ -1058,13 +1095,28 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("repeated negative-left Sub still needs independent invariance",
            replace(replace(negativeLeft, difference, ""), "  %step =", difference + "  %step ="));
     for (const std::string constant :
-         {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
+         {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<4751297606875873280>"}) {
-        reject("negative-left Sub needs bounded exact Number operands",
+        reject("negative-left Sub needs bounded exact Numbers or canonical String offsets",
                replace(negativeLeft, difference,
                        "  %operand = ctjs.constant " + constant + "\n" +
                            replace(difference, "sub %minus, %one", "sub %minus, %operand")));
     }
+    const auto negativeStringLeft =
+        replace(negativeLeft, difference,
+                "  %operand = ctjs.constant #ctjs.string<\"1\">\n" +
+                    replace(difference, "sub %minus, %one", "sub %minus, %operand"));
+    run({.what = "a canonical String offset extends a held negative Number after source shrink",
+         .body = negativeStringLeft,
+         .arrays = "a:[one,one,x]; seed:[]",
+         .reads = "a[0]=one; a[2]=x",
+         .exit = "x -> {x}"});
+    run({.what = "negative-left String offsets release only unreturned children",
+         .body = replace(negativeStringLeft, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,one,x]; seed:[]",
+         .reads = "a[0]=one; a[2]=x",
+         .exit = "zero -> {}"},
+        "x");
     reject("negative-left Sub cannot borrow an unknown operand",
            replace(negativeLeft, "sub %minus, %one", "sub %minus, %p"),
            ArrayContentsFailure::UnsupportedOperation);
@@ -1081,6 +1133,31 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(maximumSub, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     reject("negative-left Sub cannot certify an overflowing magnitude",
            replace(maximumSub, "sub %minus, %zero", "sub %minus, %one"));
+    reject("a canonical String offset cannot overflow a held negative magnitude",
+           replace(replace(maximumSub, "  %other =",
+                           "  %offset = ctjs.constant "
+                           "#ctjs.string<\"1\">\n  %other ="),
+                   "sub %minus, %zero", "sub %minus, %offset"));
+    run({.what = "the largest canonical String offset can reach the exact signed Number boundary",
+         .body = prefix + "  %negative = ctjs.constant #ctjs.number<13830554455654793216>\n"
+                          "  %offset = ctjs.constant #ctjs.string<\"4294967294\">\n"
+                          "  %expected = ctjs.constant #ctjs.number<13974669643728551936>\n"
+                          "  %actual = ctjs.binary sub %negative, %offset "
+                          "{storage_test_id = \"actual\"}\n"
+                          "  %index = ctjs.binary sub %actual, %expected\n"
+                          "  %read = ctjs.get_property %a[%index]\n  ctjs.return %actual\n",
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one",
+         .exit = "actual -> {}"});
+    run({.what = "String zero preserves negative-zero result identity and exact index zero",
+         .body = prefix + "  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n"
+                          "  %offset = ctjs.constant #ctjs.string<\"0\">\n"
+                          "  %actual = ctjs.binary sub %negativeZero, %offset "
+                          "{storage_test_id = \"actual\"}\n"
+                          "  %read = ctjs.get_property %a[%actual]\n  ctjs.return %actual\n",
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one",
+         .exit = "actual -> {}"});
     for (const std::string opcode : {"binary", "binary_static"}) {
         for (const std::string operands : {"%minus, %two", "%two, %minus"}) {
             const std::string cancel = "  %cancelled = ctjs." + opcode + " add " + operands +

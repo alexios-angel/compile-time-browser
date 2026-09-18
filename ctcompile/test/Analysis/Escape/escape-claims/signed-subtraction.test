@@ -3,7 +3,7 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-subtraction
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-subtraction.claims
 
-// Negative left operands preserve Number snapshots, never coercible String facts.
+// Negative Number snapshots also accept the existing canonical String offset proof.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property
@@ -29,6 +29,14 @@
 // IMPORT: ctjs.binary sub
 // IMPORT-LABEL: ctjs.func @coercibleLeft$
 // IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @stringSnapshotReleased$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @stringSnapshotReturned$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary sub
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
@@ -43,10 +51,16 @@
 // CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr confined
 
 //--- source.js
 function snapshotReleased() {
@@ -117,6 +131,26 @@ function coercibleLeft() {
     }
     return 0;
 }
+function stringSnapshotReleased() {
+    var child = {}, array = [child, child], seed = [1], saved = 0;
+    var length = seed.length;
+    seed.length = 0;
+    var step = length - "2";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
+function stringSnapshotReturned() {
+    var child = {}, array = [child, child], seed = [1], saved = 0;
+    var length = seed.length;
+    seed.length = 0;
+    var step = length - "2";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
 snapshotReleased();
 var snapshotRetained = snapshotReturned();
 positiveReleased();
@@ -125,3 +159,5 @@ zeroReleased();
 var zeroRetained = zeroReturned();
 coercibleRight();
 coercibleLeft();
+stringSnapshotReleased();
+var stringRetained = stringSnapshotReturned();

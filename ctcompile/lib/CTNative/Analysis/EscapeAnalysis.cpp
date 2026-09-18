@@ -1707,11 +1707,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (original && offset && *offset <= *original) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         result.integerNumber = *original - *offset;
-                    } else if (original && number && *original < *number) {
-                        // A negative snapshot requires exact Number operands,
-                        // never the coercible String offset accepted above.
+                    } else if (original && offset && *original < *offset) {
+                        // The same exact canonical String conversion can yield
+                        // a negative Number; keep its magnitude out of indices.
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.negativeIntegerNumber = *number - *original;
+                        result.negativeIntegerNumber = *offset - *original;
                     } else if (const auto magnitude = right.negativeIntegerNumber
                                                           ? right.negativeIntegerNumber
                                                           : boundedNumber(rhs, true);
@@ -1722,12 +1722,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                                                          ? left.negativeIntegerNumber
                                                          : boundedNumber(lhs, true);
                                negative) {
-                        // Negative left operands require exact Numbers on both
-                        // sides. Cancellation is bounded; adding magnitudes must
-                        // exclude overflow. The result keeps its original zero.
-                        if (number && *number <= 4294967295ULL - *negative) {
+                        // Negative left Numbers use the same exact offset proof.
+                        // Cancellation is bounded; adding magnitudes must exclude
+                        // overflow. The result keeps its original zero.
+                        if (offset && *offset <= 4294967295ULL - *negative) {
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            result.negativeIntegerNumber = *negative + *number;
+                            result.negativeIntegerNumber = *negative + *offset;
                         } else if (magnitude) {
                             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                             if (*magnitude >= *negative) {

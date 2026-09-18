@@ -753,8 +753,36 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("structured Sub snapshots preserve the zero and positive stride refusals",
                replace(subSnapshot, "binary sub %zero, %magnitude", producer));
     }
-    reject("structured Sub cannot infer a negative snapshot from a coercible String",
-           replace(carriedSub, "binary add %one, %one", "constant #ctjs.string<\"2\">"));
+    const auto stringSub =
+        replace(carriedSub, "binary add %one, %one", "constant #ctjs.string<\"2\">");
+    rows.push_back({.what = "canonical String offsets survive reordered structured transport",
+                    .body = stringSub,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    const auto savedStringSub = replace(subSnapshot, "  %unit = ctjs.binary sub %zero, %magnitude",
+                                        "  %offset = ctjs.constant #ctjs.string<\"2\">\n"
+                                        "  %unit = ctjs.binary sub %magnitude, %offset");
+    rows.push_back({.what = "structured String-offset snapshots survive source length shrink",
+                    .body = savedStringSub,
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured String offsets release only unreturned children",
+                    .body = replace(savedStringSub, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]; seed:[]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    reject("a String-offset snapshot cannot change across structured yields",
+           replace(stringSub, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("a canonical String offset cannot authorize a noncanonical predecessor",
+           replace(stringSub, "  %magnitude = ctjs.constant #ctjs.string<\"2\">\n",
+                   "  %magnitude = scf.if %flag -> (!ctjs.value) {\n"
+                   "    %good = ctjs.constant #ctjs.string<\"2\">\n"
+                   "    scf.yield %good : !ctjs.value\n"
+                   "  } else {\n"
+                   "    %bad = ctjs.constant #ctjs.string<\"02\">\n"
+                   "    scf.yield %bad : !ctjs.value\n  }\n"));
     reject("structured negative Sub snapshots cannot be own indices",
            replace(subSnapshot, "%base[%i]", "%base[%unit]"), ArrayContentsFailure::UnknownIndex);
     reject("repeated structured Sub producers need independent invariance",
@@ -786,6 +814,11 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     }
     reject("negative-left Sub snapshots cannot change across structured yields",
            replace(negativeLeft, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    rows.push_back({.what = "negative-left String offsets retain their structured result",
+                    .body = replace(negativeLeft, "unary neg %one", "constant #ctjs.string<\"1\">"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
     reject("negative-left Sub needs exact Numbers on every structured predecessor",
            replace(negativeLeft, "  %negative = ctjs.unary neg %magnitude\n",
                    "  %negative = scf.if %flag -> (!ctjs.value) {\n"
