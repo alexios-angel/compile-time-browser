@@ -15,6 +15,90 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original class-method r and signed unary literals, 2026-09-18 UTC
+
+Started at clean **07764b25**. Its **09:33:03 AGENT-SYNC journal** closed
+the preceding interruption; no September 7 WIP remained unmerged. Continued the
+recorded original class-method **r** boundary. Independent agents investigated
+escape precision, Config/H composition and prototype soundness; two hit service
+limits, so root completed and gated the frozen escape draft.
+
+**aa5aa952** distinguishes exact String keys, including the empty string, and
+bounded Number keys from unknown keys in the existing prototype-method census.
+It reuses public `ctbrowser::number_to_string`; it adds no emitted platform or
+runtime code. Bootstrap r's numeric `[0]` read no longer blocks the unrelated
+`read` method. Constructor lifting can remove the proved prototype, and the
+existing private-caller scalar proof then folds the original `r(null)` guard.
+The unchanged original class-method specimen now returns **a=7** in Node,
+interpreter and native C++: **4 optimized native executions**, explicit/deduced
+output and GCC/Clang. Unoptimized and unprepared forms remain refused. The
+empty-string IR control adds **4 executions**; negative-zero/name collisions,
+NaN, both infinities, a large finite key and an unknown key retain **6 refusals**.
+Successful output contains no ctbrowser or prototype metadata.
+
+The Number-key proof deliberately remains bounded to `abs(value) < 1e15`.
+Review found that `ctbrowser/lib/Core/number_format.cpp` casts to `int64_t`
+before its range test. The compiler avoids that existing large-value hazard;
+the browser finding is recorded in AGENT-SYNC. No browser file was changed.
+
+**1dd56617** preserves original bounded negative Number literals through unary
+Plus/Neg using the same shared contents transfer as held signed snapshots.
+CFG/SCF transport, original result identity, signed zero, retention and budget
+checks are covered. Coercion, fractional/nonfinite/out-of-domain values and
+changing backedges remain unproved. Two historical `-(-1)` length expectations
+were corrected to retain the unit-length array; their source bodies and the
+stale-solver mutation check remain.
+
+Focused devbox checks only (final wrapper exit **0**, seven selected input
+hashes match locally and remotely):
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`.
+  Initial three-target IR probe: **5 build actions**. Final six-target gate:
+  **6 actions**, followed by **2** after the length-expectation correction.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.93s)**.
+  Dense/induction/structured rows: **585 / 559 / 273**; corresponding budget
+  cutoffs: **22,876 / 37,780 / 19,126**.
+- Selected lit cases: `Analysis/Escape/escape-claims/signed-unary.test` and
+  `CTNative/Lowering/Objects/{class-initialization,constructor-refusals,prototype-scalars}.mlir`:
+  **4/4 (160.75s total)**. Signed-unary oracle: **20 sites / 8 sound / zero
+  violations / 8 of 12 precision**.
+- Class gate: **120 source observations / 292 native executions / 240 unprepared
+  refusals / 149 preparation refusals**, plus **16 ordinary executions / 20
+  refusals**, **8 original r helper executions / 4 refusals**, **4 key-control
+  executions / 6 refusals**, and **11 prepared native refusals**. The branching
+  helper's preparation budget remains **419**. Prototype scalars: **7 source /
+  48 native / 2 refusals**; constructor controls: **11 source / 8 native /
+  18 refusals**.
+
+The first final gate failed SSH reachability before building; authorized
+`server.sh start` and `allow-ip` restored access. The next array run failed
+**1.81s** on nine assertions from the two historical length controls; the new
+CFG/SCF controls passed. Correcting those expectations required no compiler
+change. Native and source bodies stayed unchanged. No browser/runtime semantics
+changed.
+
+Required `tools/format.sh --check` retains **26 diagnostics in nine HEAD-identical
+files**. The same full formatter workflow with installed stable clang-format
+passes **916 C++ / 109 Python / 105 web files**; changed-file pinned formatting,
+Black, Python syntax and `git diff --check` pass. Full CTest/compiler lit, broad
+corpus/native matrices, WPT and test262 were skipped. Evidence:
+`/tmp/ctcompile-class-guards/`.
+
+**Exact next:** compose Config's class proof with original H's callable holder
+and the existing DOM provider. In the saved full r/M/F/H/W IR, H.getDataAttribute
+is an arrow closure (`fn$18`) retaining lexical `this`, stored in H; it is outside the
+class proof's direct-helper set, so the whole-module effect census refuses it.
+Even proving its unused receiver leaves cross-function H identity/order and
+separate class-versus-DOM intrinsic contracts in `ClassInitialization.cpp`,
+`Contract.cpp` and `DOMSource.cpp`. Reuse the existing H/M/F public DOM helpers;
+adding intrinsic names alone does not prove composition. Object.entries and
+destructuring, RegExp/TypeError exits, remaining Config helpers, inheritance,
+full H Unicode keys, retained callbacks and the application driver remain open.
+General Number powers stay outside escape proof. Whole-Bootstrap/Button/Data
+counts remain historical; no broad measurement was repeated.
+
 ## Closed scalar guards and original Bootstrap helpers, 2026-09-18 UTC
 
 Started at clean **66174a17**. The interrupted declaration-borrow/bounded-power

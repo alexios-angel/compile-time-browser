@@ -1,5 +1,37 @@
 # What native Bootstrap needs next
 
+## Original class-method r and signed unary literals, 2026-09-18 UTC
+
+**aa5aa952** closes the original class-method `r(null)` boundary by keeping
+literal Number/empty-String keys distinct from unknown keys in the conservative
+prototype census. The existing constructor lift and scalar caller proof now
+produce **4 native executions**, both C++ layouts and GCC/Clang, **a=7** throughout.
+An empty-string control adds **4 executions**; six collision/dynamic/large-key
+controls refuse. Original source, unoptimized and unprepared controls remain.
+No browser file or emitted runtime dependency was added. Number-key proof stays
+below magnitude **1e15** pending the shared formatter's int64 cast-order fix,
+reported to the browser agent through AGENT-SYNC.
+
+**1dd56617** independently preserves signed unary literal snapshots through the
+shared escape transfer. Exact arrays CTest passes **1/1 (0.93s)**: dense/induction/
+structured **585 / 559 / 273** rows. Signed-unary oracle: **20 sites / 8 sound /
+zero violations / 8 of 12 precision**. Four selected lit cases pass **4/4 (160.75s total)**, including class initialization
+(**120 source / 292 native** plus ordinary/helper/refusal controls), prototype
+scalars (**48 native / 2 refusals**) and constructor controls (**8 native /
+18 refusals**). Seven selected input hashes match the devbox; workflow exit **0**.
+HANDOFF records exact targets, retries, hashes and skipped coverage. Pinned
+formatting retains **26 existing diagnostics**; stable **916/109/105**, changed
+pinned formatting, Black, syntax and diff checks pass. Full suites and broad
+matrices were skipped. Evidence: `/tmp/ctcompile-class-guards/`.
+
+**Next:** Config/H callable-holder identity/order and class/DOM contract
+composition. The full original r/M/F/H/W specimen still refuses preparation;
+H.getDataAttribute's lexical-this arrow is outside the class helper proof.
+Its public DOM implementation already exists. Iterator/destructuring,
+RegExp/TypeError exits, remaining Config helpers, inheritance, full H Unicode,
+retained callbacks and the application driver remain open. Historical broad
+Bootstrap counts were not replayed.
+
 ## Closed scalar guards and original Bootstrap helpers, 2026-09-18 UTC
 
 **b680e2a0** adds complete private-caller scalar facts to the existing guard
