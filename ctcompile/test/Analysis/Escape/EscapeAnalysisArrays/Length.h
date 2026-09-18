@@ -1495,6 +1495,7 @@ inline void checkDenseArrayLength(mlir::MLIRContext & context) {
             }
             if (literal == "#ctjs.string<\"0\">" &&
                 (producer == "ctjs.binary sub %input, %zero" ||
+                 producer == "ctjs.binary mul %input, %zero" ||
                  producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input")) {
                 run({.what = "canonical String numeric conversion supplies an exact empty length",
                      .body = body,

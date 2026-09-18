@@ -1015,6 +1015,29 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x",
                     .exit = "x -> {x}"});
+    const auto stringProduct =
+        replace(carriedProduct, "  %unit = ctjs.binary mul %negative, %one\n",
+                "  %factor = ctjs.constant #ctjs.string<\"1\">\n"
+                "  %unit = ctjs.binary mul %factor, %negative\n");
+    rows.push_back(
+        {.what = "String products preserve signed snapshots through structured transport",
+         .body = stringProduct,
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"});
+    rows.push_back({.what = "structured String products release only unreturned children",
+                    .body = replace(stringProduct, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "zero -> {}"});
+    reject("String products cannot change across structured backedges",
+           replace(stringProduct, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    reject("String products need a canonical factor on every structured predecessor",
+           replace(stringProduct, "  %factor = ctjs.constant #ctjs.string<\"1\">\n",
+                   "  %factor = scf.if %flag -> (!ctjs.value) {\n"
+                   "    scf.yield %one : !ctjs.value\n"
+                   "  } else {\n    scf.yield %p : !ctjs.value\n  }\n"),
+           ArrayContentsFailure::UnsupportedOperation);
     rows.push_back({.what = "a signed product retains its exact final overshoot after growth",
                     .body = replace(replace(carriedProduct, "  ctjs.append %y to %a\n",
                                             "  ctjs.append %y to %a\n  ctjs.append %y to %a\n"),

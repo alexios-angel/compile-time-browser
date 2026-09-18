@@ -1745,6 +1745,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
                     auto a = left.integerNumber ? left.integerNumber : boundedNumber(lhs);
                     auto b = right.integerNumber ? right.integerNumber : boundedNumber(rhs);
+                    if (!a && left.string()) { a = ownArrayIndex(lhs); }
+                    if (!b && right.string()) { b = ownArrayIndex(rhs); }
                     const bool negative = a.has_value() != b.has_value();
                     if (!a) {
                         a = left.negativeIntegerNumber ? left.negativeIntegerNumber
@@ -1754,8 +1756,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         b = right.negativeIntegerNumber ? right.negativeIntegerNumber
                                                         : boundedNumber(rhs, true);
                     }
-                    // Exact Number operands and a bounded product exclude rounding
-                    // and wrap. Zero keeps its original signed value as the origin.
+                    // Canonical Strings convert exactly like Sub's operands.
+                    // A bounded product excludes rounding and wrap; zero keeps
+                    // its original signed value as the origin.
                     if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                         const auto product = *a * *b;
