@@ -1,5 +1,41 @@
 # What native Bootstrap needs next
 
+## Native global helpers and canonical String unary snapshots, 2026-09-18 UTC
+
+Continued clean **c32fee6a**; the prior interruption was explicitly closed by
+AGENT-SYNC at **10:33:17**. **6774a550** closes the four prepared global-holder
+native refusals: class preparation turns capture-free, receiver-blind calls into
+direct private helpers after the complete source/prototype proof. It removes
+unobserved holder storage and unreferenced helper definitions. Host-requested
+holders, unsafe order, replacement, identity/receiver observation, ambient effects
+and surplus arguments refuse. A dispatch/short-call/unused-slot fixture adds
+coverage for private method cloning. **40 native executions added**, with no
+ctbrowser dependency or prototype/home metadata in emitted C++.
+
+**53d6db64** independently proves bounded canonical String unary Plus/Neg snapshots,
+including saved values and CFG/SCF transport. Original sources remain intact;
+noncanonical strings and changing backedges retain refusals.
+
+Focused gates: exact arrays **1/1 (0.94s), 585/628/291 rows**; signed-unary
+**1/1 (0.11s), 26 sites / zero violations / 13 of 15 precision**; class
+**1/1 (191.22s), 146 source / 364 native / 292 unprepared / 176 preparation
+refusals**, plus constructed-method/r/key controls and **11 prepared native
+refusals**. Global-chain first complete budget **418**. Initial six-target build
+**9 actions**, array retry **2**, native cleanup retry **3**; final wrappers **0**,
+nine source hashes match the devbox. HANDOFF records exact targets and failures.
+Pinned formatting retains **26 existing diagnostics in nine unchanged files**;
+stable **916/109/105**, changed pinned, Black, syntax and diff checks pass.
+Full CTest/compiler lit, DOM String cases, broad matrices, WPT and test262 were
+skipped. No browser source/runtime changes. Evidence: `/tmp/ctcompile-global-native/`.
+
+**Next:** jointly prove class initialization and the existing DOM provider for
+original H, using `LowerToEmitC`'s existing `withProvedClone` DOM sequence and
+public H/M/F helpers. Combining intrinsic allow-lists alone is insufficient.
+The complete original r/M/F/H/W defaults specimen remains **a=7** in Node/interpreter
+and refuses preparation. Number/JSON/URI, RegExp/TypeError, iterator/destructuring,
+remaining Config work, inheritance, full H Unicode, retained callbacks and the
+application driver remain open. Whole-Bootstrap/Button/Data counts are historical.
+
 ## Recovered global holders and String-left subtraction, 2026-09-18 UTC
 
 Resumed five dirty predecessor files at **0d85f2d9**, explicitly abandoned by

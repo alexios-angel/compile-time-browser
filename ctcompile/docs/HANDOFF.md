@@ -15,6 +15,80 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native global helpers and canonical String unary snapshots, 2026-09-18 UTC
+
+Started at clean **c32fee6a**. The **10:33:17 AGENT-SYNC journal** closed the
+previous interruption, and September 7 WIP was already merged. Continued its
+exact prepared-global-holder boundary. Independent agents drafted tests and
+escape work and reviewed the native proof; root completed both drafts after
+service limits.
+
+**6774a550** expands proved global callable-holder reads into direct private
+helper calls during class preparation, after the complete source/prototype and
+host-binding checks. Targets have no captures or receiver/new.target/callee
+observations. Missing arguments retain undefined padding; surplus arguments
+refuse. Holders requested through host roots/observations refuse removal.
+Calls and effects stay in order; reads/loads follow private method clones through exit normalization.
+Holder storage and unreferenced helper definitions then disappear. Native output
+uses the existing direct-function lowering, with no global object carrier.
+
+The four original holders now execute natively (**32 added executions**). A new
+loop/return-dispatch specimen covers remapped reads, short calls and an unused
+slot (**8 executions**, result **38**). Both optimization settings, explicit/deduced
+C++ and GCC/Clang pass. Unsafe order, replacement, aliasing, identity, receiver
+and ambient-effect controls remain. The complete original
+r/M/F/H/W defaults specimen still returns **a=7** in Node/interpreter and refuses
+preparation.
+
+**53d6db64** reuses the bounded canonical decimal parser for unary Plus/Neg String
+snapshots. It preserves original result identities, signed magnitudes, saved
+values and CFG/SCF transport. Noncanonical strings, changing backedges and
+negative own indices remain unproved. All six original source-oracle functions
+remain byte-identical; two add retained/noncanonical controls.
+
+Focused devbox checks only; exact evidence: `/tmp/ctcompile-global-native/`.
+
+- Explicit targets: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-escape-analysis-arrays`, `ctcompile-test-escape-claims`,
+  `ctcompile-test-type-oracle`: initial **9 build actions**. Array expectation
+  retry: **2 actions**; the fixture-only native retry needed no build work;
+  native cleanup retry: **3 actions**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.94s)**. Dense/induction/
+  structured rows **585 / 628 / 291**; budget cutoffs **23,079 / 42,090 / 21,009**.
+- Exact `Analysis/Escape/escape-claims/signed-unary.test`: **1/1 (0.11s)**,
+  **26 observed sites / 13 sound / zero violations / 13 of 15 precision**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (191.22s)**;
+  **146 source observations / 364 native executions / 292 unprepared refusals /
+  176 preparation refusals**, plus **16 constructed-method executions / 20 refusals**,
+  **8 original r executions / 4 refusals**, **4 key executions / 6 refusals**, and
+  **11 prepared native refusals**. Global-chain first complete proof budget: **418**.
+
+Both final wrappers exit **0**; nine selected source/test hashes match locally
+and on the devbox. The class execution checks reject any `ctbrowser::` dependency
+or prototype/home metadata in emitted C++.
+
+The initial array check failed **0.93s** on sixteen stale assertions; original
+sources stayed intact, with canonical zero/unit expectations corrected and an
+additional noncanonical stale-solver mutation retained. The first class attempt
+failed **33.78s** because the new fixture lacked the intended dispatch shape;
+the next failed **33.60s** on an unused private helper body. The final cleanup
+removes that definition only after all holder rewrites and empty symbol scans.
+Required pinned `tools/format.sh --check` retains **26 existing diagnostics in
+nine HEAD-identical files**; stable formatter **916 C++ / 109 Python / 105 web**,
+changed-file pinned formatting, Black, syntax and diff checks pass. Full CTest,
+full compiler lit, DOM String tests, broad corpus/native matrices, WPT and
+test262 were skipped. No browser source/runtime changes or push.
+
+**Exact next:** jointly prove class initialization and the existing DOM provider
+for original H. Class preparation currently permits only closed-source-v1 with
+class helper/optional Error; DOM entry/source contracts remain separate. Reuse
+`LowerToEmitC`'s existing `withProvedClone` sequence (URI, DOM helpers, element
+guards, iteration, reproof) and public H/M/F helpers. Merely combining intrinsic
+allow-lists would omit body/effect obligations. Original Number/JSON/URI,
+RegExp/TypeError and iterator/destructuring paths remain open, along with the
+remaining Config work, inheritance, full H Unicode, retained callbacks and the
+application driver. Whole-Bootstrap/Button/Data numbers remain historical.
+
 ## Recovered global holders and String-left subtraction, 2026-09-18 UTC
 
 Resumed **0d85f2d9** with five uncommitted predecessor files. The

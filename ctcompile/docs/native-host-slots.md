@@ -49,7 +49,8 @@ Prepare source with `ctjs-resolve-globals` and `ctjs-lift-to-scf`, fingerprint
 the resulting module, and bind a `closed-source-v1` manifest with
 `initial_intrinsics: ["__ctbrowser_class_defined"]`, empty absent/undefined
 bindings, and no realm receiver declaration. Existing roots/observations remain
-declarations; this pass grants no publication or ownership proof.
+declarations; a global callable holder requested by either cannot be removed.
+This pass grants no publication or ownership proof.
 The manifest may additionally declare `Error` for a local throwing static getter.
 
 ```sh
@@ -107,7 +108,17 @@ stores ordinary own-data writes; this prefix cannot invoke source code, so reads
 through subsequent calls also follow publication. All binding writes and uses of
 every global load are checked. Earlier calls, even unrelated ones, remain outside
 this bounded proof; widening requires a complete caller-order analysis. The global
-holder operations remain intact, and native lowering still refuses them. This
+holder must also be absent from the manifest's roots and observations. After
+all checks, capture-free helpers with unused receiver, new.target and callee
+become direct calls at their original positions. Missing arguments are padded
+with undefined; surplus arguments remain outside this bounded rule. Ordinary
+argument evaluation and helper effects remain in order. Recorded loads and
+property reads follow private method clones through dispatch normalization.
+
+Only then are the holder's slots, global publication, loads and closures removed.
+Unused helper definitions are removed after all holders have been expanded and
+both module and body symbol scans find no references. No global object carrier is
+needed. Normal native admission must still prove each direct function; this
 preparation supplies neither ownership nor DOM effect authority. Class/DOM
 provider composition remains separate work.
 
