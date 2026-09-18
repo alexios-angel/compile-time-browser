@@ -180,12 +180,17 @@ a method as M's only caller. DOM class methods may capture an earlier sibling
 helper through a proved fixed local cell. The helper must capture nothing;
 every captured read must feed only an ordinary call with undefined receiver.
 Its callee may only supply the enclosing identity of an uncaptured replacement
-callback whose own implicit arguments are unused. Saving the helper's lexical
-receiver in that callback is inert. The original callback and helper-local cells
-survive for the existing DOM source proof. This admits original Bootstrap F for
-proved lowercase inputs, with the reserved RegExp factory explicitly declared;
-matching or unknown inputs still refuse. Other implicit-argument observations
-remain outside this proof. Missing arguments are padded under the
+or single-parameter filter callback whose own implicit arguments are unused.
+Saving the helper's lexical receiver in that callback is inert. The original
+callback and helper-local cells survive for the existing DOM source proof.
+This admits original Bootstrap F for proved lowercase inputs, with the reserved
+RegExp factory explicitly declared; matching or unknown inputs still refuse.
+A confined filter callback instead survives direct-helper expansion. After
+checking its original enclosure, expansion rebinds its inert metadata to the
+caller's enclosing function while retaining its source position and branch.
+The complete DOM proof still checks the callback body, Array/String identities,
+dataset authority and every use. Other implicit-argument observations remain
+outside this proof. Missing arguments are padded under the
 work budget; surplus arguments refuse. Complete method probes still check every
 unused body before removal. The original calls become direct calls at the same
 source position, and only an unobserved helper closure disappears.
@@ -199,8 +204,10 @@ getters and other helpers retain their existing stricter census. Lifted helpers
 discard their direct-call callee operand only when it names the exact lifted
 target and that target does not observe its callee argument. All premises are
 checked before deleting any closure, so child deletion order cannot authorize a
-parent. Nested ordinary helper dependencies remain refused; replacement callbacks
-use the separate original-body/no-match proof above.
+parent. Nested ordinary helper dependencies remain refused; replacement and
+filter callbacks use the separate original-body proofs above. Full Bootstrap H
+still needs complete holder-slot proof; none of its unused slots bypasses the
+strict census merely because another slot is called.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent

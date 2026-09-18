@@ -1,5 +1,45 @@
 # What native Bootstrap needs next
 
+## Captured dataset-filter callbacks and negative Strings, 2026-09-18 UTC
+
+Resumed clean **40db7482**, following the **17:40:39 journal** and claims abandoned
+at **17:42:18**. **aef32da5** lands the callback-transport prerequisite for full H:
+Bootstrap's original dataset-filter predicate survives a class method's fixed
+sibling capture as an ordinary native callback. Complete original enclosure,
+implicit-argument, callback-use and typed DOM proofs remain mandatory. Repeated
+calls work; unproved effects and captures still refuse. Full H's holder and
+unused-slot census remains strict. All **161 existing fixture entries** are
+unchanged. **8dbb2abc** is a formatting-only follow-up to the test checker.
+
+**7d9e9f8e** centralizes bounded negative canonical String conversion across numeric
+snapshot proofs. Saved inputs, original property keys, String concatenation and
+CFG/SCF provenance remain intact. Noncanonical spellings, -0, unknown/mutating
+inputs and out-of-bound intermediates stay unproved. A parallel agent supplied
+the frozen escape draft; root completed native fixtures and review after agent
+service limits.
+
+Focused devbox passes: transaction **1/1 (3.96s)**, host contract **1/1 (0.46s)**,
+class DOM **1/1 (58.30s): 200 source observations, 8 native executions,
+1,310 refusals**. Public class initialization **1/1 (199.15s)**. Dataset **1/1 (56.83s)**
+includes 112 source observations and lifetime sanitizer checks.
+Arrays **1/1 (1.07s)**; six selected escape-oracle cases **6/6 (0.21s)** with zero
+violations; new negative-string oracle **35 sites / 11 sound / 11 of 21 precision**.
+All **16 source/test hashes** match the devbox. Required formatting retains **26 existing diagnostics in nine
+unchanged files (four browser, five compiler)**; changed checks pass. HANDOFF
+records explicit targets, initial fixture/expectation failures, formatting
+correction and authorized SSH recovery. Evidence: `/tmp/ctcompile-h-complete/`.
+Full/broad suites and whole-Bootstrap replay were skipped; no bundle gain claimed.
+
+**Next:** prove full H's callable holder and every original unused slot before
+removal. `sourceClosure` still rejects its callback-producing callee dependency;
+`expandGlobalHolders` can erase unused slots before method probes, so callback
+admission alone is insufficient. A local H object capture is also unproved.
+Then address H's original Unicode normalization and W's Object.entries,
+destructuring, s, RegExp/TypeError and spread before inheritance. Preserve
+W/W+r/W+r+H refusals (last omits s). Direct negative-String loop latches still
+need induction certification; broader conversions and the part-25 backlog remain.
+The application driver, native Bootstrap and the overall plan remain unfinished.
+
 ## Captured Bootstrap F replacement proof, 2026-09-18 UTC
 
 **5b3d9602** resumes the F fixture claim abandoned at **16:59:11**, starting clean

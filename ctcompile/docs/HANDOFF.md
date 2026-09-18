@@ -15,6 +15,97 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured dataset-filter callbacks and negative Strings, 2026-09-18 UTC
+
+**aef32da5** resumes the full-H thread found in the **17:40:39 AGENT-SYNC journal**
+and claims abandoned by the **17:42:18 loop failure**, starting clean at
+**40db7482**. Both agents' recent commits and unmerged branches were reviewed;
+the old September 7 WIP branch is absent. Parallel agents audited the proof,
+planned fixtures and implemented escape conversion. The fixture/audit agents hit
+service limits; root completed the native code/tests and integrated the frozen
+escape draft.
+
+The landed native increment preserves **Bootstrap's original dataset-filter
+predicate** through a class method's fixed sibling helper capture. Only a confined,
+capture-free, single-parameter filter callback with unused implicit arguments
+survives direct-helper expansion. Original enclosure checks precede rebinding its
+inert closure metadata to the caller; source position and branch stay intact.
+The existing typed DOM proof still checks callback bodies, uses and intrinsic/
+dataset authority. Repeated calls work. Unknown effects, captures, identity
+escape, implicit arguments and unused-method effects refuse transactionally.
+Full H's holder-slot census remains strict; complete original H is pinned as a
+refusal. No browser implementation or runtime representation changed.
+
+All **161 pre-session fixture entries** remain unchanged. Two positive fixtures
+exercise the original prefix inclusion/exclusion against four dataset keys;
+eight mutations and complete H refuse. Ten new transaction controls per provider
+check publication and rollback, including dataset authority. The shared emission
+checker accepts an explicitly requested callback count; its default and all
+Script/AOT/output checks remain. **8dbb2abc** formats its diagnostic afterward.
+
+**7d9e9f8e** adds bounded canonical negative String conversion (**-1 through
+-4294967295**) to the shared numeric snapshot proof. Unary, subtraction,
+product, division/remainder, unit powers and bitwise operations retain saved
+input and CFG/SCF provenance. Original String property keys and Add concatenation
+remain unchanged; -0, noncanonical spellings, unknown/changing/repeated inputs and
+out-of-bound intermediate results stay unproved. Old test source bodies remain;
+affected expectations now reflect proved conversion.
+
+Focused devbox evidence: `/tmp/ctcompile-h-complete/`.
+
+- Native explicit targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`. Initial build **9 actions**, fixture retry **2**.
+- Exact `ctcompile_exception_recovery`: **1/1 (3.96s; total 3.97s)**.
+- Exact `ctcompile_host_contract`: **1/1 (0.46s; total 0.47s)**.
+- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (58.30s)**,
+  **200 Node/interpreter observations, 8 native executions, 1,310 refusals**.
+- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (199.15s)**,
+  preserving original W/W+r/W+r+H refusals.
+- Exact `CTNative/Browser/native-dom-dataset.test`: **1/1 (56.83s)**,
+  **28 sources, 112 Node/VM observations, 8 GCC/Clang binaries, 432 refusals**,
+  with HTML/SVG and lifetime sanitizer checks.
+- Escape explicit targets: `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`;
+  initial build **3 actions**, expectation retry **2**.
+- Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.07s; total 1.08s)**.
+- Exact escape-claims `negative-string`, `signed-division`, `power-identities`,
+  `signed-bitwise`, `signed-right-shifts`, `signed-subtraction`: **6/6 (0.21s)**,
+  all zero violations. New negative-string oracle: **35 sites / 11 sound /
+  11 of 21 precision**. Other measurements are in the saved log.
+
+Initial native transaction failed **4.77s** because the new fixture used numeric
+strict equality, outside DOM admission; the fixture now uses supported comparisons
+for the same exact count. Class-DOM then failed **19.72s** because the shared test
+checker expected one function; it now explicitly expects the retained callback.
+Production did not change after the initial native build. Initial escape arrays
+failed **1.11s** at two stale negative-String power/product expectations (eight
+assertions); source-preserving expectation fixes produced the pass.
+The native commit command failed to stop after Black rejected one diagnostic
+line; **8dbb2abc** fixes that formatting only. Final changed-file Black/Python/C++
+and diff checks pass. Required repository formatting still reports **26 existing
+diagnostics in nine HEAD-identical files (four browser, five compiler)**.
+Authorized devbox start and allow-ip restored SSH before any tests ran.
+All **16 source/test file hashes** match the devbox. The formatting follow-up
+is AST-identical to the tested helper. Inspected filter output uses ordinary
+String/vector values and a plain C++ predicate; Script/AOT symbol gates pass.
+Full CTest/compiler lit, complete DOM suites, broad corpus/native matrices,
+WPT/test262 and whole-Bootstrap replay were skipped. No bundle gain or full-suite
+pass is claimed. No push.
+
+**Exact next:** full H's callable holder and every original unused slot must reach
+complete effect/type proof before erasure. `ClassInitialization::sourceClosure`
+still rejects its filter-producing callee dependency; `expandGlobalHolders`
+can remove uncalled slots before DOM method probes, so simply allowing callbacks
+there is unsound. Capturing a local H object also remains outside the sibling
+function capture proof. The direct-helper callback transport prerequisite is now
+landed. Original H's Unicode `charAt(0).toLowerCase()` normalization remains.
+Preserve W/W+r/W+r+H specimens (last omits `s`); W still needs Object.entries,
+destructuring, original s, RegExp/TypeError and spread before inheritance.
+Direct negative-String loop latches (for example `i -= '-1'`) still need their
+own induction certification; broader conversions and the part-25 backlog remain.
+The application driver, native Bootstrap and the overall plan are unfinished.
+
 ## Captured Bootstrap F replacement proof, 2026-09-18 UTC
 
 **5b3d9602** resumes the original-F thread at clean **9e60cdfd**. The unfinished
