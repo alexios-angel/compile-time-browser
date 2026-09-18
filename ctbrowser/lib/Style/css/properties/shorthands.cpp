@@ -24,29 +24,30 @@ namespace {
 
 // HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
 enum class shape : std::uint8_t {
-    sides,       // 1-4 values: top, right, bottom, left, in `margin`'s way
-    pair,        // 1-2 values: start/end, x/y or row/column; one sets both
-    radius,      // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
-    place,       // `place-*`: an align value then a justify one, each of several words
-    grid_lines,  // grid-row / grid-column / grid-area: `/`-separated grid lines
-    slash_pair,  // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
-    bar,         // `a || b || c`: each part goes to the longhand that takes it
-    columns,     // width/count and optional `/ column-height`; resets column-wrap
-    flex,        // Flexbox 1 §7.1.1's own defaults
-    font,        // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
-    border,      // `bar` over width/style/color, applied to four sides, plus
-                 // border-image reset to its initial values
-    border_axis, // `border-block` / `border-inline`: `bar` over width/style/
-                 // color applied to the axis's two sides (CSS Logical 1 §4.4)
-    white_space, // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
-                 // || <'text-wrap-mode'> || <'white-space-trim'>`
-    animation,   // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
-                 // first <time> is the duration and the second the delay, an
-                 // easing, a count, and the keywords of direction, fill mode
-                 // and play state before anything is a name
-    all,         // every longhand; CSS-wide keywords only
-    whole,       // a grammar this table does not split: only a CSS-wide keyword
-                 // reaches the longhands, and only one folds back
+    sides,        // 1-4 values: top, right, bottom, left, in `margin`'s way
+    pair,         // 1-2 values: start/end, x/y or row/column; one sets both
+    border_image, // source || slice [ / width? [ / outset ]? ] || repeat
+    radius,       // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
+    place,        // `place-*`: an align value then a justify one, each of several words
+    grid_lines,   // grid-row / grid-column / grid-area: `/`-separated grid lines
+    slash_pair,   // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
+    bar,          // `a || b || c`: each part goes to the longhand that takes it
+    columns,      // width/count and optional `/ column-height`; resets column-wrap
+    flex,         // Flexbox 1 §7.1.1's own defaults
+    font,         // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family
+    border,       // `bar` over width/style/color, applied to four sides, plus
+                  // border-image reset to its initial values
+    border_axis,  // `border-block` / `border-inline`: `bar` over width/style/
+                  // color applied to the axis's two sides (CSS Logical 1 §4.4)
+    white_space,  // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
+                  // || <'text-wrap-mode'> || <'white-space-trim'>`
+    animation,    // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
+                  // first <time> is the duration and the second the delay, an
+                  // easing, a count, and the keywords of direction, fill mode
+                  // and play state before anything is a name
+    all,          // every longhand; CSS-wide keywords only
+    whole,        // a grammar this table does not split: only a CSS-wide keyword
+                  // reaches the longhands, and only one folds back
 };
 
 struct shorthand_syntax {
@@ -78,7 +79,7 @@ constexpr shorthand_syntax table[] = {
      "border-top-style border-right-style border-bottom-style border-left-style", ""},
     {"border-color", shape::sides,
      "border-top-color border-right-color border-bottom-color border-left-color", ""},
-    {"border-image", shape::bar,
+    {"border-image", shape::border_image,
      "border-image-source border-image-slice border-image-width border-image-outset "
      "border-image-repeat",
      "none"},
@@ -325,14 +326,10 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
                 std::vector<std::string> & out) {
     const std::size_t n = e.longhands.size();
     if (parts.empty() || parts.size() > n) { return split::invalid; }
-    // `border-image`'s slice, width and outset are each a list of up to four,
-    // so only its one-part form - `none`, or an image - is divided here.
-    if (e.syntax->name == "border-image" && parts.size() > 1) { return split::whole; }
     out.assign(n, std::string{});
     std::vector<bool> given(n, false);
     bool none_seen = false;
     for (const std::string_view part : parts) {
-        // `border-image`'s `slice / width / outset` is not a list of parts.
         if (part == "/") { return split::whole; }
         std::size_t chosen = n;
         for (const bool typed_pass : {true, false}) {
@@ -679,6 +676,61 @@ bool split_radius(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
+// Each || component is contiguous; a slash can follow only the slice or width.
+bool split_border_image(std::string_view value, std::vector<std::string> & out) {
+    const token_stream ts = tokenize(value);
+    std::string spaced;
+    std::size_t start = 0;
+    int depth = 0;
+    for (const css_token & token : ts.tokens) {
+        if (token.type == token_type::function || token.type == token_type::open_paren) {
+            ++depth;
+        } else if (token.type == token_type::close_paren) {
+            --depth;
+        } else if (depth == 0 && token.type == token_type::delim && ts.text_of(token) == "/") {
+            spaced += value.substr(start, token.text - start);
+            spaced += " / ";
+            start = token.text + token.length;
+        }
+    }
+    spaced += value.substr(start);
+    const auto parts = split_top_level(spaced, html_whitespace);
+    const auto names = longhands_of("border-image");
+    out.clear();
+    for (const std::string_view name : names) { out.emplace_back(initial_of(name)); }
+    std::array<bool, 5> given{};
+    std::size_t i = 0;
+    const auto take = [&](std::size_t slot, std::size_t maximum) {
+        if (given[slot]) { return false; }
+        for (std::size_t count = std::min(maximum, parts.size() - i); count > 0; --count) {
+            const std::string_view text{parts[i].data(),
+                                        static_cast<std::size_t>(parts[i + count - 1].data() +
+                                                                 parts[i + count - 1].size() -
+                                                                 parts[i].data())};
+            const value_check checked = check_declaration(names[slot], text, false);
+            if (!checked.valid || is_wide_keyword(checked.serialized)) { continue; }
+            out[slot] = checked.serialized;
+            given[slot] = true;
+            i += count;
+            return true;
+        }
+        return false;
+    };
+    while (i < parts.size()) {
+        if (take(0, 1) || take(4, 2)) { continue; }
+        if (!take(1, 5)) { return false; }
+        if (i == parts.size() || parts[i] != "/") { continue; }
+        ++i;
+        if (i == parts.size()) { return false; }
+        if (parts[i] != "/" && !take(2, 4)) { return false; }
+        if (i < parts.size() && parts[i] == "/") {
+            ++i;
+            if (!take(3, 4)) { return false; }
+        }
+    }
+    return !parts.empty();
+}
+
 // `container`: the name, then `/` and the type, each checked as its own
 // longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
@@ -712,6 +764,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::sides:
     case shape::pair: return split_positional(e, parts, out);
     case shape::radius: return split_radius(value, out) ? split::ok : split::invalid;
+    case shape::border_image: return split_border_image(value, out) ? split::ok : split::invalid;
     case shape::place: {
         std::string align, justify;
         if (!split_place(e.syntax->name, value, align, justify)) { return split::invalid; }
@@ -766,6 +819,21 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     const std::string h = fold_sides(horizontal);
     const std::string v = fold_sides(vertical);
     return h == v ? h : h + " / " + v;
+}
+
+[[nodiscard]] std::string fold_border_image(std::span<const std::string> v) {
+    std::string out = v[0] == "none" ? "" : v[0];
+    const bool width = v[2] != "1", outset = v[3] != "0";
+    if (v[1] != "100%" || width || outset) {
+        out += (out.empty() ? "" : " ") + v[1];
+        if (width || outset) {
+            out += " /";
+            if (width) { out += " " + v[2]; }
+            if (outset) { out += " / " + v[3]; }
+        }
+    }
+    if (v[4] != "stretch") { out += (out.empty() ? "" : " ") + v[4]; }
+    return out.empty() ? "none" : out;
 }
 
 // `font`, folded: the keywords that are not `normal`, the size, ` / ` and
@@ -880,6 +948,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::whole: return {};
     case shape::sides: return fold_sides(v);
     case shape::radius: return fold_radius(v);
+    case shape::border_image: return fold_border_image(v);
     case shape::pair:
     case shape::place: return v[0] == v[1] ? v[0] : join(v);
     case shape::grid_lines: return fold_grid_lines(v);
@@ -1047,6 +1116,83 @@ bool detail::match_border_radius(std::string_view value, bool shorthand, std::st
         if (!radius_components(value, 2, parts)) { return false; }
         out = parts.front() == parts.back() ? parts.front() : join(parts);
     }
+    return true;
+}
+
+bool detail::match_border_image(std::string_view property, std::string_view value,
+                                std::string & out) {
+    if (property == "border-image") {
+        std::vector<std::string> parts;
+        if (!split_border_image(value, parts)) { return false; }
+        out = fold_border_image(parts);
+        return true;
+    }
+    if (property == "border-image-source") {
+        const token_stream ts = tokenize(value);
+        const scan found = scan_tokens(ts);
+        if (found.significant.empty()) { return false; }
+        const css_token & first = ts.tokens[found.significant.front()];
+        if (first.type == token_type::ident && ascii_iequals(ts.text_of(first), "none") &&
+            found.significant.size() == 1) {
+            out = "none";
+            return true;
+        }
+        if (first.type != token_type::url &&
+            (first.type != token_type::function ||
+             !ascii_iequals_any(
+                 ts.text_of(first),
+                 {"url(", "image(", "image-set(", "-webkit-image-set(", "cross-fade(",
+                  "-webkit-cross-fade(", "element(", "-moz-element(", "paint(", "light-dark(",
+                  "linear-gradient(", "repeating-linear-gradient(", "radial-gradient(",
+                  "repeating-radial-gradient(", "conic-gradient(", "repeating-conic-gradient("}))) {
+            return false;
+        }
+        int depth = 0;
+        for (const std::size_t at : found.significant) {
+            if (depth == 0 && at != found.significant.front()) { return false; }
+            const token_type type = ts.tokens[at].type;
+            if (type == token_type::function || type == token_type::open_paren) { ++depth; }
+            if (type == token_type::close_paren) { --depth; }
+        }
+        if (!match_image_list(ts, found, out)) { out = std::string{value}; }
+        return !out.empty();
+    }
+    auto parts = split_top_level(value, html_whitespace);
+    bool fill = false;
+    if (property == "border-image-slice" && !parts.empty()) {
+        if (ascii_iequals(parts.front(), "fill")) {
+            fill = true;
+            parts.erase(parts.begin());
+        } else if (ascii_iequals(parts.back(), "fill")) {
+            fill = true;
+            parts.pop_back();
+        }
+    }
+    if (parts.empty() || parts.size() > 4) { return false; }
+    const property_syntax & syntax = *find_property(property);
+    std::vector<std::string> values;
+    for (const std::string_view part : parts) {
+        const token_stream ts = tokenize(part);
+        const scan found = scan_tokens(ts);
+        std::string one;
+        if (found.significant.size() == 1) {
+            const css_token & token = ts.tokens[found.significant.front()];
+            if (token.type == token_type::ident &&
+                has_keyword(syntax.keywords, ts.text_of(token))) {
+                one = ascii_lower_copy(ts.text_of(token));
+            } else if (!match_typed(ts, token, syntax, one)) {
+                return false;
+            }
+        } else if (whole_value_is_math(ts, found) &&
+                   math_type_fits(syntax, evaluate_math(part, length_context{}), part)) {
+            one = std::string{part};
+        } else {
+            return false;
+        }
+        values.push_back(std::move(one));
+    }
+    out = fold_sides(values);
+    if (fill) { out += " fill"; }
     return true;
 }
 

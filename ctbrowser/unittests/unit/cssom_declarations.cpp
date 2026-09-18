@@ -10,6 +10,7 @@
 
 #include <string>
 #include <string_view>
+#include <tuple>
 
 using ctbrowser::style::css::declaration_block;
 using ctbrowser::style::css::declaration_priority;
@@ -264,6 +265,98 @@ void test_border_radius() {
              std::string{"border-radius: var(--radius);"});
 }
 
+// css/css-backgrounds/parsing/border-image-*: grouped slice/width/outset and resets.
+void test_border_image() {
+    using ctbrowser::style::css::supports_declaration;
+    for (const auto & [value, expected] :
+         {std::pair{"stretch", "none"},
+          {"none 100% / 1 / 0 stretch", "none"},
+          {"none space space", "space"},
+          {"fill 1 2% 3 4% / auto", "1 2% 3 4% fill / auto"},
+          {"1//1px", "1 / / 1px"},
+          {"round repeat url('image.png') fill 1 2 / 3% / 4px",
+           "url(\"image.png\") 1 2 fill / 3% / 4px round repeat"},
+          {"1 1 1 1 / calc(20px / 2) / 2 2", "1 / calc(10px) / 2"},
+          {"calc(-1) / calc(-2px) / calc(-3)", "calc(-1) / calc(-2px) / calc(-3)"}}) {
+        declaration_block block;
+        CHECK(supports_declaration("border-image", value));
+        CHECK(set_declaration(block, "border-image", value, true));
+        CHECK_EQ(block.size(), std::size_t{5});
+        CHECK_EQ(declaration_value(block, "border-image"), std::string{expected});
+        CHECK_EQ(declaration_priority(block, "border-image-outset"), std::string{"important"});
+        bool removed = false;
+        CHECK_EQ(remove_declaration(block, "border-image", removed), std::string{expected});
+        CHECK(removed && block.empty());
+    }
+    declaration_block block;
+    CHECK(set_declaration(block, "border-image", "fill 1 2% 3 4% / 5% / 6 repeat", false));
+    CHECK_EQ(declaration_value(block, "border-image-source"), std::string{"none"});
+    CHECK_EQ(declaration_value(block, "border-image-slice"), std::string{"1 2% 3 4% fill"});
+    CHECK_EQ(declaration_value(block, "border-image-width"), std::string{"5%"});
+    CHECK_EQ(declaration_value(block, "border-image-outset"), std::string{"6"});
+    CHECK_EQ(declaration_value(block, "border-image-repeat"), std::string{"repeat"});
+    for (const std::string_view invalid : {"auto",
+                                           "none, url(image.png)",
+                                           "stretch repeat round",
+                                           "fill",
+                                           "1 2 3 4 5",
+                                           "1% fill 2%",
+                                           "1 / -2px",
+                                           "-1 / 2px",
+                                           "1 / 1 2 3 4 5",
+                                           "1 / / auto",
+                                           "1 / / 1%",
+                                           "1 / none / 1px",
+                                           "1 / 1px / auto",
+                                           "1 /",
+                                           "1 / /",
+                                           "1 / / / 2",
+                                           "1 none / 2",
+                                           "repeat none round",
+                                           "1 inherit",
+                                           "none none",
+                                           "1px",
+                                           "calc(1deg)"}) {
+        CHECK(!supports_declaration("border-image", invalid));
+        CHECK(!set_declaration(block, "border-image", invalid, false));
+    }
+    CHECK_EQ(declaration_value(block, "border-image-width"), std::string{"5%"});
+    CHECK(set_declaration(block, "border", "solid", false));
+    CHECK_EQ(declaration_value(block, "border-image"), std::string{"none"});
+    CHECK_EQ(round_trip("border-image: initial"), std::string{"border-image: initial;"});
+    CHECK_EQ(round_trip("border-image: var(--image)"), std::string{"border-image: var(--image);"});
+    for (const auto & [name, value, expected] :
+         {std::tuple{"border-image-slice", "fill 1 2 1 2", "1 2 fill"},
+          {"border-image-width", "1px 2% 3 AUTO", "1px 2% 3 auto"},
+          {"border-image-outset", "0 0 0 0", "0"},
+          {"border-image-source", "linear-gradient(red, blue)", "linear-gradient(red, blue)"}}) {
+        block.clear();
+        CHECK(supports_declaration(name, value));
+        CHECK(set_declaration(block, name, value, false));
+        CHECK_EQ(declaration_value(block, name), std::string{expected});
+    }
+    for (const auto & [name, value] : {std::pair{"border-image-slice", "1% fill 2%"},
+                                       {"border-image-slice", "-1"},
+                                       {"border-image-slice", "1px"},
+                                       {"border-image-slice", "fill"},
+                                       {"border-image-slice", "1 2 3 4 5"},
+                                       {"border-image-width", "-1px"},
+                                       {"border-image-width", "-1%"},
+                                       {"border-image-width", "-1"},
+                                       {"border-image-width", "1 2 3 4 5"},
+                                       {"border-image-width", "calc(1deg)"},
+                                       {"border-image-outset", "1%"},
+                                       {"border-image-outset", "calc(1%)"},
+                                       {"border-image-outset", "-1"},
+                                       {"border-image-outset", "auto"},
+                                       {"border-image-source", "auto"},
+                                       {"border-image-source", "none, url(image.png)"},
+                                       {"border-image-source", "url(a)url(b)"}}) {
+        CHECK(!supports_declaration(name, value));
+        CHECK(!set_declaration(block, name, value, false));
+    }
+}
+
 // css/css-multicol/parsing/columns-*: width/count in either order and optional height.
 void test_columns() {
     using ctbrowser::style::css::supports_declaration;
@@ -339,6 +432,7 @@ int main() {
     test_logical_groups();
     test_reads_and_all();
     test_border_radius();
+    test_border_image();
     test_columns();
     REPORT("cssom_declarations");
 }

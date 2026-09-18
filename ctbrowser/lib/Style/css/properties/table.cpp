@@ -155,9 +155,9 @@ constexpr property_syntax table[] = {
     // these five are at their initial values. Nothing paints them.
     {"border-image", k::freeform, "", "none", false, false, true},
     {"border-image-source", k::freeform, "", "none", false, false},
-    {"border-image-slice", k::freeform, "", "100%", false, false},
-    {"border-image-width", k::freeform, "", "1", false, false},
-    {"border-image-outset", k::freeform, "", "0", false, false},
+    {"border-image-slice", k::number_percentage, "", "100%", false, true},
+    {"border-image-width", k::number_length_percentage, "auto", "1", false, true},
+    {"border-image-outset", k::number_length, "", "0", false, true},
     {"border-image-repeat", k::freeform, "", "stretch", false, false},
     {"border-radius", k::freeform, "", "0px", false, true, true},
     // The four per-side shorthands. Named here rather than left out because
