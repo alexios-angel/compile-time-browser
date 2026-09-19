@@ -16,6 +16,18 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-method-leaf": (14, 14),
+    "inherited-method-unused-constructor": (7, 7),
+    "inherited-method-leaf-shadow": (7, 7),
+    "inherited-method-base-shadow": (7, 7),
+    "inherited-method": (7, 7),
+    "inherited-method-chain": (14, 14),
+    "inherited-method-instances": (273, 273),
+    "inherited-method-constructor": (7, 7),
+    "inherited-method-override": (21, 21),
+    "inherited-method-ambient": (7, 7),
+    "inherited-method-getter": (8, 8),
+    "inherited-method-shadow": (9, 9),
     "local-holder-method": (8, 8),
     "local-holder-arrow": (8, 8),
     "local-holder-branches": (82, 82),
@@ -191,6 +203,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-method-leaf",
+    "inherited-method",
+    "inherited-method-chain",
+    "inherited-method-instances",
+    "inherited-method-constructor",
     "inherited-base-instance",
     "inherited-explicit",
     "inherited-order",
@@ -981,7 +998,14 @@ def main():
         diagnostic = {
             "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
-            "inherited-dispatch": "derived class requires receiver-preserving super normalization",
+            "inherited-dispatch": "inherited method overrides require a separate target proof",
+            "inherited-method-unused-constructor": "inherited receiver getters require per-leaf target proof",
+            "inherited-method-leaf-shadow": "class method is observed or shadowed",
+            "inherited-method-base-shadow": "class method is observed or shadowed",
+            "inherited-method-override": "inherited method overrides require a separate target proof",
+            "inherited-method-ambient": "unknown call, binding or reflective effect",
+            "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
+            "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "class method capture is not its constructor or an inert sibling helper",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
@@ -1013,6 +1037,24 @@ def main():
         if name == "inherited-explicit":
             preparation_refusals += check_ancestry_inputs(args, structured, manifest)
             preparation_refusals += check_super_inputs(args, structured, manifest)
+        if name == "inherited-method":
+            # A fresh leaf prototype may precede the base's method producers.
+            # Preparation must insert inherited slots after those definitions.
+            text = structured.read_text()
+            objects = re.findall(r'^ +%\w+ = "ctjs.create_object"\(\)[^\n]+\n', text, re.M)
+            if len(objects) != 2:
+                raise RuntimeError("inherited method control lost its two prototypes")
+            moved = args.work / "inherited-method-hoisted.mlir"
+            moved.write_text(
+                text.replace(objects[1], "").replace(objects[0], objects[1] + objects[0])
+            )
+            prepared = prepare(
+                args,
+                "inherited-method-hoisted",
+                moved,
+                dict(manifest, module_sha256=host.fingerprint(args.opt, moved)),
+                success=True,
+            )
         if name == "bootstrap-r":
             key_checked, key_refused = check_prototype_keys(args, prepared)
         if name == "global-holder-chain":

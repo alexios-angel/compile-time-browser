@@ -34,7 +34,8 @@ struct classInitialization {
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseMap<mlir::Value, ctjs::CallOp> heritage;
     llvm::DenseSet<mlir::Value> baseClasses;
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<std::string>> inheritedMethodKeys;
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
+    llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
@@ -774,8 +775,8 @@ struct classInitialization {
                sourceValue(use.get()) == constructor;
     }
 
-    // ponytail: explicit super statements over field-only local bases. Inherited
-    // methods, fields, replacement returns and default rest/apply need their own proof.
+    // ponytail: explicit super statements over local bases. Fields, replacement
+    // returns and default rest/apply need their own proof.
     bool normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base, const HostContract & contract) {
         auto & original = function.getBody().front();
         if (!llvm::hasSingleElement(base.getBody()) ||
@@ -1198,14 +1199,18 @@ struct classInitialization {
             }
             definitions.push_back(write);
         }
+        llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions;
         if (auto inherited = heritage.lookup(closure.getResult())) {
-            auto base = inheritedMethodKeys.find(sourceValue(inherited.getArgs()[1]));
-            if (base == inheritedMethodKeys.end()) {
+            auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
+            if (base == inheritedMethods.end()) {
                 return refuse("class heritage base setup has not been proved");
             }
-            for (const auto & key : base->second) {
+            baseDefinitions = base->second;
+            for (ctjs::SetPropertyOp definition : baseDefinitions) {
                 if (!step()) { return false; }
-                methodKeys.insert(key);
+                if (!methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
+                    return refuse("inherited method overrides require a separate target proof");
+                }
             }
         }
         llvm::DenseSet<mlir::Operation *> methodHomes;
@@ -1256,17 +1261,28 @@ struct classInitialization {
                 methodProbes.emplace_back(made, definition);
             }
         }
-        if (!definitions.empty() || constructorReads.size() != firstConstructorRead) {
-            for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
-                if (!step() || !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
-                    return refuse(
-                        "class receiver getter or method needs a primitive constructor return");
-                }
-            }
-        }
         if (auto inherited = heritage.lookup(closure.getResult())) {
-            if (!methodKeys.empty() || !staticDefinitions.empty() || !staticReads.empty()) {
+            if (!staticDefinitions.empty() || !staticReads.empty()) {
                 return refuse("derived class requires receiver-preserving super normalization");
+            }
+            // Recheck inherited receiver uses against the final method table:
+            // a base field write must not shadow a method added by the leaf.
+            // ponytail: DOM and receiver-selected getters need per-leaf body
+            // proofs; lexical super and overrides remain separate boundaries.
+            if (domEntry && !methodKeys.empty()) {
+                return refuse("inherited DOM methods require per-leaf body proof");
+            }
+            for (ctjs::SetPropertyOp definition : baseDefinitions) {
+                auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+                llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;
+                const auto before = constructorReads.size();
+                if (!step() || !fieldsOnly(fn.getBody().front().getArgument(ctjs::arg_receiver),
+                                           methodKeys, receiverReads, true)) {
+                    return false;
+                }
+                if (!receiverReads.empty() || constructorReads.size() != before) {
+                    return refuse("inherited receiver getters require per-leaf target proof");
+                }
             }
             auto base =
                 target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
@@ -1275,6 +1291,14 @@ struct classInitialization {
             }
             setup.insert(inherited);
             retainedSetup.insert(inherited.getCallee().getDefiningOp());
+        }
+        if (!definitions.empty() || constructorReads.size() != firstConstructorRead) {
+            for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
+                if (!step() || !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                    return refuse(
+                        "class receiver getter or method needs a primitive constructor return");
+                }
+            }
         }
         auto & entry = function.getBody().front();
         if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
@@ -1293,18 +1317,23 @@ struct classInitialization {
         constructors.insert(function);
         // Keep method definitions on the prototype until constructor lowering.
         // They must already be available when the constructor body runs.
-        if (definitions.empty()) {
+        if (instances.empty()) {
+            setup.insert(attachment);
+            for (ctjs::SetPropertyOp definition : definitions) { setup.insert(definition); }
+        } else if (methodKeys.empty()) {
             setup.insert(attachment);
         } else {
             retainedSetup.insert(attachment);
+            for (ctjs::SetPropertyOp definition : baseDefinitions) {
+                if (!step()) { return false; }
+                inheritedSlots.emplace_back(heritage.lookup(closure.getResult()), definition);
+            }
         }
         setup.insert(home);
         setup.insert(backedge);
-        auto & keys = inheritedMethodKeys[closure.getResult()];
-        for (const auto & key : methodKeys) {
-            if (!step()) { return false; }
-            keys.push_back(key.first().str());
-        }
+        auto & allDefinitions = inheritedMethods[closure.getResult()];
+        allDefinitions = definitions;
+        allDefinitions.append(baseDefinitions);
         return true;
     }
 
@@ -2034,6 +2063,16 @@ struct classInitialization {
         // Complete current-IR checks precede setup erasure. Normalized super
         // bodies exist only on the private candidate; reports grant no authority.
         module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        // The complete source census proved these immutable callable identities.
+        // Reuse them on each constructed leaf's already unobservable prototype;
+        // ordinary method lowering still proves every call and borrowed receiver.
+        // Base completion precedes heritage, so every inherited key and closure
+        // dominates this point even if the leaf prototype was allocated earlier.
+        for (auto [inherited, definition] : inheritedSlots) {
+            mlir::OpBuilder at(inherited);
+            ctjs::SetPropertyOp::create(at, definition.getLoc(), inherited.getArgs()[2],
+                                        definition.getKey(), definition.getValue());
+        }
         for (auto & [function, copy] : normalizedMethods) {
             (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             function.getBody().takeBody(copy->getBody());

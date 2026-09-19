@@ -1,6 +1,144 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/class_initialization.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --fixtures %t --work %t.controls
 
+//--- inherited-method-leaf.js
+function inherited_method_leaf() {
+    class Base { constructor(n) { this.n = n; } read() { return this.n; } }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        twice() { return this.read() * 2; }
+    }
+    return new Derived(7).twice();
+}
+var a = inherited_method_leaf();
+
+//--- inherited-method-unused-constructor.js
+function inherited_method_unused_constructor() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { this.constructor; return this.n; }
+    }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).read();
+}
+var a = inherited_method_unused_constructor();
+
+//--- inherited-method-leaf-shadow.js
+function inherited_method_leaf_shadow() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        unused() { this.leaf = 9; }
+    }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        leaf() { return 1; }
+    }
+    return new Derived(7).read();
+}
+var a = inherited_method_leaf_shadow();
+
+//--- inherited-method-base-shadow.js
+function inherited_method_base_shadow() {
+    class Base { constructor(n) { this.n = n; this.leaf = 9; } read() { return this.n; } }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        leaf() { return 1; }
+    }
+    return new Derived(7).read();
+}
+var a = inherited_method_base_shadow();
+
+//--- inherited-method.js
+function inherited_method() {
+    class Base { constructor(n) { this.n = n; } read() { return this.n; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).read();
+}
+var a = inherited_method();
+
+//--- inherited-method-chain.js
+function inherited_method_chain() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        forward() { return this.read() + this.n; }
+    }
+    class Middle extends Base { constructor(n) { super(n + 1); } }
+    class Derived extends Middle { constructor(n) { super(n); this.n = this.n + 2; } }
+    return new Derived(4).forward();
+}
+var a = inherited_method_chain();
+
+//--- inherited-method-instances.js
+function inherited_method_instances() {
+    class Base { constructor(n) { this.n = n; } read() { return this.n; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    var base = new Base(2), first = new Derived(7), second = new Derived(3);
+    return base.read() * 100 + first.read() * 10 + second.read();
+}
+var a = inherited_method_instances();
+
+//--- inherited-method-constructor.js
+function inherited_method_constructor() {
+    class Base {
+        constructor(n) { this.n = n; this.n = this.read() + 1; }
+        read() { return this.n; }
+    }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(6).read();
+}
+var a = inherited_method_constructor();
+
+//--- inherited-method-override.js
+function inherited_method_override() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        forward() { return this.read() + this.n; }
+    }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 2; }
+    }
+    return new Derived(7).forward();
+}
+var a = inherited_method_override();
+
+//--- inherited-method-ambient.js
+function inherited_method_ambient() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        unused() { return ambient(); }
+    }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).read();
+}
+var a = inherited_method_ambient();
+
+//--- inherited-method-getter.js
+function inherited_method_getter() {
+    class Base {
+        constructor(n) { this.n = n; }
+        static get Ready() { return 1; }
+        read() { return this.n + this.constructor.Ready; }
+    }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).read();
+}
+var a = inherited_method_getter();
+
+//--- inherited-method-shadow.js
+function inherited_method_shadow() {
+    class Base { constructor(n) { this.n = n; } read() { return this.n; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    var instance = new Derived(7);
+    instance.read = function replacement() { return 9; };
+    return instance.read();
+}
+var a = inherited_method_shadow();
+
 // The importer emits an ordinary mutable global call to finish every class.
 // The host must establish that call's identity before a complete use census
 // can discard unobservable descriptor setup. Class syntax alone is no proof.
