@@ -28,6 +28,74 @@ void StructuredCases::mutationRefusals() {
                     .arrays = "a:[zero,zero]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "a -> {a}"});
+    const auto scaledIndex = replace(replace(original, "    %read =",
+                                             "    %position = ctjs.binary mul %i, %one\n"
+                                             "    ctjs.set_property %base[%position], %zero\n"
+                                             "    %read ="),
+                                     "ctjs.return %result", "ctjs.return %a");
+    for (const auto & expression : {"mul %i, %one", "mul %one, %i"}) {
+        rows.push_back({.what = "structured unit scaling preserves current-element overwrites",
+                        .body = replace(scaledIndex, "mul %i, %one", expression),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto scaledVisit =
+        replace(replace(replace(replace(scaledIndex, "  %a =",
+                                        "  %two = ctjs.binary add %one, %one "
+                                        "{storage_test_id = \"two\"}\n  %a ="),
+                                "ctjs.append %y to %a", "ctjs.append %one to %a"),
+                        "mul %i, %one", "mul %i, %two"),
+                "add %i, %one", "add %i, %two");
+    rows.push_back({.what = "structured scaling accepts a single bounded visit",
+                    .body = scaledVisit,
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=zero",
+                    .exit = "a -> {a}"});
+    const auto scaledStart =
+        replace(replace(replace(scaledVisit, "create_array [%x]", "create_array [%one, %one]"),
+                        "ctjs.append %one to %a", "ctjs.append %x to %a"),
+                "%index = %zero", "%index = %one");
+    rows.push_back({.what = "structured scaled starts preserve translated own positions",
+                    .body = scaledStart,
+                    .arrays = "a:[one,one,zero]",
+                    .reads = "a[1]=one",
+                    .exit = "a -> {a}"});
+    const auto reloadedFactor =
+        replace(replace(scaledVisit, "ctjs.append %one to %a", "ctjs.append %two to %a"),
+                "    %position = ctjs.binary mul %i, %two",
+                "    %factor = ctjs.get_property %base[%one]\n"
+                "    %position = ctjs.binary mul %i, %factor");
+    rows.push_back({.what = "structured factors outside the scaled footprint remain invariant",
+                    .body = reloadedFactor,
+                    .arrays = "a:[zero,two]",
+                    .reads = "a[1]=two; a[0]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured scaled overwrites retain previously saved children",
+                    .body = replace(replace(scaledVisit, "  %finalIndex,",
+                                            "  %savedChild = ctjs.get_property %a[%zero]\n"
+                                            "  %finalIndex,"),
+                                    "ctjs.return %a", "ctjs.return %savedChild"),
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=x; a[0]=zero",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "structured zero-trip scaling preserves original contents",
+                    .body = replace(scaledVisit, "%index = %zero", "%index = %two"),
+                    .arrays = "a:[x,one]",
+                    .exit = "a -> {a,x}"});
+    for (const auto & body :
+         {replace(scaledVisit, "add %i, %two", "add %i, %one"),
+          replace(scaledStart, "create_array [%one, %one]", "create_array [%one]"),
+          replace(scaledVisit, "mul %i, %two", "mul %i, %zero"),
+          replace(scaledVisit, "mul %i, %two", "mul %i, %last"),
+          replace(reloadedFactor,
+                  "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="),
+          replace(replace(scaledStart, "ctjs.append %x to %a", "ctjs.append %two to %a"),
+                  "    %position = ctjs.binary mul %i, %two",
+                  "    %factor = ctjs.get_property %base[%two]\n"
+                  "    %position = ctjs.binary mul %i, %factor")}) {
+        reject("structured scaled stores retain bounds, invariance and reload exclusions", body);
+    }
     const std::string fixedOverwrite =
         replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
     rows.push_back({.what = "structured invariant own-index overwrites precede later reads",

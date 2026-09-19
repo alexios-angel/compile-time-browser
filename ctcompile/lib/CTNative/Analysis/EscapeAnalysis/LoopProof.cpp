@@ -195,8 +195,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const std::size_t size = found->second.size();
     const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
     // ponytail: one header/body pair, with writes only to its current,
-    // invariant, Number-offset or exact-quotient own element. Other mutations
-    // need a termination proof.
+    // invariant, Number-offset, scaled or exact-quotient own element. Other
+    // mutations need a termination proof.
     // Primitive kinds and every element still pass the ordinary operation transfers.
     llvm::SmallDenseSet<std::size_t, 4> guardStores;
     struct StoreRange {
@@ -217,8 +217,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
                     const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
                     const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
+                    const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
                     if (expression && expression->getBlock() == body &&
-                        (subtract || divide ||
+                        (subtract || divide || multiply ||
                          (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
                          (addition && addition.getKind() == ctjs::BinaryKind::Add)) &&
                         (fromHeader(expression->getOperand(0)) == index ||
@@ -247,6 +248,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                 return unsupported;
                             }
                             range.stride /= *divisor;
+                        } else if (multiply) {
+                            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                            ContentsValue product;
+                            boundedNumberProduct({index, ContentsKind::NonBigInt, *stride}, *offset,
+                                                 product);
+                            if (!product.integerNumber || *product.integerNumber == 0) {
+                                return unsupported;
+                            }
+                            range.stride = *product.integerNumber;
                         }
                         for (auto [endpoint, position] :
                              {std::pair{*start, &range.first}, std::pair{last, &range.last}}) {
@@ -255,6 +265,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                             const ContentsValue current{index, ContentsKind::NonBigInt, endpoint};
                             if (divide) {
                                 boundedNumberDivision(current, *offset, false, result);
+                            } else if (multiply) {
+                                boundedNumberProduct(current, *offset, result);
                             } else if (subtract) {
                                 boundedNumberDifference(current, *offset, result);
                             } else {

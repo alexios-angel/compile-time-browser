@@ -306,6 +306,87 @@ void InductionCases::overwritesAndTransport() {
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
     }
+    const auto scaledIndex =
+        replace(replace(savedChild, "  %read =",
+                        "  %position = ctjs.binary mul %i, %one\n"
+                        "  ctjs.set_property %base[%position], %zero\n  %read ="),
+                "ctjs.return %result", "ctjs.return %a");
+    for (const auto & expression : {"mul %i, %one", "mul %one, %i"}) {
+        run({.what = "unit scaling preserves every current-index overwrite",
+             .body = replace(scaledIndex, "mul %i, %one", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto scaledVisit = replace(
+        replace(replace(scaledIndex, "[%one, %x]", "[%x, %one]"), "mul %i, %one", "mul %i, %two"),
+        "add %i, %one", "add %i, %two");
+    run({.what = "a nonunit factor admits a single bounded visit",
+         .body = scaledVisit,
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto scaledStart = replace(replace(scaledVisit, "[%x, %one]", "[%one, %one, %x]"),
+                                     "^header(%a, %zero, %zero", "^header(%a, %one, %zero");
+    run({.what = "scaled nonzero starts overwrite their translated own position",
+         .body = scaledStart,
+         .arrays = "a:[one,one,zero]",
+         .reads = "a[1]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto reloadedFactor = replace(replace(scaledVisit, "[%x, %one]", "[%x, %two]"),
+                                        "  %position = ctjs.binary mul %i, %two",
+                                        "  %factor = ctjs.get_property %base[%one]\n"
+                                        "  %position = ctjs.binary mul %i, %factor");
+    run({.what = "a factor outside the scaled footprint remains invariant",
+         .body = reloadedFactor,
+         .arrays = "a:[zero,two]",
+         .reads = "a[1]=two; a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "scaled overwrites preserve a saved child",
+         .body = replace(replace(scaledVisit, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=x; a[0]=zero",
+         .exit = "x -> {x}"});
+    run({.what = "scaled overwrites preserve aliases in unvisited elements",
+         .body = replace(scaledVisit, "[%x, %one]", "[%x, %x]"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "zero-trip scaled overwrites preserve their original elements",
+         .body = replace(scaledVisit, "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+         .arrays = "a:[x,one]",
+         .exit = "a -> {a,x}"});
+    for (const auto & body :
+         {replace(scaledVisit, "add %i, %two", "add %i, %one"),
+          replace(scaledStart, "[%one, %one, %x]", "[%one, %x]"),
+          replace(scaledVisit, "mul %i, %two", "mul %i, %zero"),
+          replace(scaledVisit, "mul %i, %two", "mul %i, %s"),
+          replace(replace(scaledVisit, "  %a =", "  %negative = ctjs.unary neg %two\n  %a ="),
+                  "mul %i, %two", "mul %i, %negative"),
+          replace(
+              replace(scaledVisit, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
+              "mul %i, %two", "mul %i, %text"),
+          replace(replace(scaledVisit, "  %a =",
+                          "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+                  "mul %i, %two", "mul %i, %huge"),
+          replace(replace(reloadedFactor, "[%x, %two]", "[%two, %x]"),
+                  "%factor = ctjs.get_property %base[%one]",
+                  "%factor = ctjs.get_property %base[%zero]"),
+          replace(reloadedFactor, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="),
+          replace(replace(scaledStart, "[%one, %one, %x]", "[%one, %one, %two]"),
+                  "  %position = ctjs.binary mul %i, %two",
+                  "  %factor = ctjs.get_property %base[%two]\n"
+                  "  %position = ctjs.binary mul %i, %factor")}) {
+        run({.what = "scaled stores reject growth, invalid factors and overlapping reloads",
+             .body = body,
+             .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    }
     reversed = replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
          .body = reversed,
