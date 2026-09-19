@@ -15,6 +15,32 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Repository file splits, 2026-09-19 UTC
+
+**76df4a57** atomically merges the browser cleanup after separate area commits.
+Compiler splits landed separately, ending with **7f003cff** for the native DOM
+test drivers and preserved controls. All **92 maintained files** formerly over
+1,000 lines are now split. Seven vendor/upstream files remain untouched.
+Handwritten C++ uses real `.hpp` headers and separately compiled `.cpp` files.
+
+Focused compiler CTests **6/6**, browser CTests **35/35**, class/escape lit **3/3**,
+recorder, citation and the complete native DOM Strings lit passed. DOM Strings measured
+**801 observations / eight binaries / 1,000 source refusals**. Three outdated
+controls were corrected while preserving their source and relevant refusals;
+no compiler admission or runtime behavior was changed. The pinned formatter
+retains 20 baseline diagnostics in six untouched files; changed files pass.
+AGENT-SYNC history is archived under the user's approval. Full suites and broad
+matrices were skipped. [Detailed changes and validation](handoff/2026-09-19-file-splits.md).
+
+All eight devbox source copies match home by checksum. Twelve retired source
+copies remain cache-only; all 49 previously recorded build/tool roots survive.
+The temporary browser worktree was properly removed.
+
+**Next native boundary is unchanged:** B's ordinary `this._getConfig(t)` after
+`super()`, then Qi's lexical home/base lookup. The full Bootstrap path and the
+application driver remain unfinished. The merged class/DOM and citation checks
+also passed.
+
 ## Nearest method overrides and exact quotient overwrites, 2026-09-19 UTC
 
 Resumed clean **171eee2a** and the nearest-override thread claimed by the
