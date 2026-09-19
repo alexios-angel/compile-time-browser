@@ -1420,26 +1420,34 @@ struct DOMSource {
         // No invocation supplies parameter facts. These operations are inert for
         // every value, including Objects and Symbols; conversions and calls are
         // deliberately excluded. Check the original body before retiring it.
-        // ponytail: straight-line uncaptured leaves; branches and helper calls
-        // need their own complete independent body proof.
-        for (mlir::Operation & operation : function.getBody().front()) {
-            if (!step()) { return false; }
+        // Check both arms, including discarded values and constant-dead arms.
+        // checkBody already proved their dominance, completion and shadow frames.
+        // ponytail: uncaptured conditional leaves; loops and helper calls need
+        // their own complete independent body proof.
+        const auto checked = function.walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (operation == function) { return mlir::WalkResult::advance(); }
             if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
-                          ctjs::ReturnOp>(operation)) {
-                continue;
+                          ctjs::ReturnOp, ctjs::TruthyOp, mlir::scf::IfOp, mlir::scf::YieldOp>(
+                    operation)) {
+                return mlir::WalkResult::advance();
             }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                 unary && (unary.getKind() == ctjs::UnaryKind::TypeOf ||
                           unary.getKind() == ctjs::UnaryKind::Not ||
                           unary.getKind() == ctjs::UnaryKind::Void)) {
-                continue;
+                return mlir::WalkResult::advance();
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
                 compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
-                continue;
+                return mlir::WalkResult::advance();
             }
-            return refuse("unused DOM helper body contains an unproved operation");
-        }
+            refuse(("unused DOM helper body contains an unproved operation: " +
+                    function.getSymName() + " / " + operation->getName().getStringRef())
+                       .str());
+            return mlir::WalkResult::interrupt();
+        });
+        if (checked.wasInterrupted()) { return false; }
         expanded.insert(function);
         return true;
     }

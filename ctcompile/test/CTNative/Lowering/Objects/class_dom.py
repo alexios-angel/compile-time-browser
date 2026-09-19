@@ -1767,6 +1767,30 @@ for name, method in {
     FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
         "const H = {", "const H = { " + method + ","
     )
+# Conditional leaves still need proof of every original arm, without calls
+# supplying parameter types or dead-branch pruning hiding an unknown effect.
+for name, expression in {
+    "conditional": "t ? e : t",
+    "nested_conditional": "t ? (e ? typeof t : !e) : void t",
+    "typed_conditional": "typeof t === 'string' ? t : e",
+}.items():
+    FULL_H_CASES["class_h_unused_" + name] = (
+        FULL_H_CALLS.replace(
+            "const H = {", "const H = { unused(t, e) { return " + expression + "; },"
+        ),
+        "1000",
+    )
+for name, expression in {
+    "then_effect": "t ? (e(), t) : e",
+    "else_effect": "t ? e : (e(), t)",
+    "branch_property": "t ? e.value : t",
+    "branch_coercion": "t ? e : +t",
+    "branch_capture": "t ? e : element",
+    "dead_effect": "false ? (e(), t) : t",
+}.items():
+    FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
+        "const H = {", "const H = { unused(t, e) { return " + expression + "; },"
+    )
 FULL_H_CASES["class_h_full_unused_slot"] = (FULL_H_REFUSALS.pop("class_h_full_unused_slot"), "1000")
 FULL_H_CASES["class_h_full_later_key"] = (FULL_H_REFUSALS.pop("class_h_full_later_key"), "0000")
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
