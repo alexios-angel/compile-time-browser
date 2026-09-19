@@ -1166,17 +1166,21 @@ struct classInitialization {
                 auto fn = op->getParentOfType<ctjs::FuncOp>();
                 if (domEntry &&
                     (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) &&
-                    llvm::isa<ctjs::GetPropertyOp>(op) && ctjs::constantKey(key) == "toString") {
-                    // The DOM proof requires the actual Number receiver; this
-                    // is not permission to invoke an arbitrary coercion hook.
+                    (!constant || (llvm::isa<ctjs::GetPropertyOp>(op) &&
+                                   ctjs::constantKey(key) == "toString"))) {
+                    // Keep dynamic reads/writes for the complete typed DOM
+                    // proof of their actual receiver, key and mutation order.
+                    // Class/holder identity uses were checked separately above;
+                    // unused methods still require the same private probes.
                     accepted = true;
                     needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
                 }
             }
-            // Method calls defer only to complete private DOM probes below,
-            // including unused/transitive callers. Exact entry-called helpers
+            // Calls and iterable materialization defer to complete private DOM
+            // probes, including the existing snapshot/iterator identity proof.
+            // Exact entry-called helpers
             // survive into the final proof; other helpers keep the strict census.
-            if (domEntry && llvm::isa<ctjs::CallOp>(op)) {
+            if (domEntry && llvm::isa<ctjs::CallOp, ctjs::IterableOp>(op)) {
                 auto fn = op->getParentOfType<ctjs::FuncOp>();
                 if (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) {
                     accepted = true;

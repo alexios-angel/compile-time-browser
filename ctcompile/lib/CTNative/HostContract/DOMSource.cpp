@@ -709,11 +709,14 @@ struct DOMSource {
         bool dispatch = false;
         const auto walked = function.walk([&](mlir::Operation * operation) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            dispatch |= llvm::isa<mlir::scf::IndexSwitchOp>(operation);
+            dispatch |= llvm::isa<mlir::scf::IndexSwitchOp, mlir::ub::PoisonOp>(operation);
             return mlir::WalkResult::advance();
         });
         if (walked.wasInterrupted()) { return false; }
         if (!dispatch) { return true; }
+
+        // Inactive poison slots need completion proof even without a switch.
+        // Use the same exact continuation proof before helper expansion.
 
         // Keep the original body until every completion path has been copied.
         // A yield supplies the exact values for its continuation; inactive
@@ -943,6 +946,27 @@ struct DOMSource {
                 }
                 Continuation tail{&body, std::next(cursor), operation.getResults(), continuation};
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    auto condition = values.lookupOrDefault(branch.getCondition());
+                    auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
+                    auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                            : mlir::IntegerAttr{};
+                    if (integer && integer.getType().isInteger(1)) {
+                        auto & selected = integer.getValue().isZero() ? branch.getElseRegion()
+                                                                      : branch.getThenRegion();
+                        if (selected.empty() && branch.getNumResults() == 0) {
+                            return self(self, body, tail.next, values, at, continuation, terminal,
+                                        depth + 1);
+                        }
+                        if (!selected.hasOneBlock() || selected.front().getNumArguments()) {
+                            refuse("DOM helper completion has an incomplete selected arm");
+                            return {};
+                        }
+                        // Like a switch, select only a proved completion arm.
+                        // The original-body census still requires every operation
+                        // to be visited on some source path before publication.
+                        return self(self, selected.front(), selected.front().begin(), values, at,
+                                    &tail, terminal, depth + 1);
+                    }
                     // ponytail: duplicate bounded continuations, preserving their
                     // effects in each arm. Large trees stop at the work budget.
                     auto copied =
@@ -1023,7 +1047,16 @@ struct DOMSource {
                         continue;
                     }
                 }
-                at.clone(operation, values);
+                auto * copied = at.clone(operation, values);
+                if (llvm::isa<mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(operation)) {
+                    // Two-way completion switches lower to index casts and
+                    // integer comparisons. Reuse MLIR's exact arithmetic folds.
+                    llvm::SmallVector<mlir::Value> folded;
+                    if (mlir::succeeded(at.tryFold(copied, folded)) && !folded.empty()) {
+                        values.map(operation.getResults(), folded);
+                        copied->erase();
+                    }
+                }
                 ++operationCount;
             }
             refuse("DOM helper completion has no return or yield");

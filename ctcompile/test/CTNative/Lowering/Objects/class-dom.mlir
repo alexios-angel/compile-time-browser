@@ -49,3 +49,8 @@
 // A slot can combine an original M capture and retained filter callback.
 // Direct and class-method calls preserve callback execution and DOM write order;
 // callback effects/escapes, changing helpers, invalid inputs and unused slots refuse.
+// Constructor-only classes compose with a local H slot's original for-of loop,
+// dynamic dataset reads and fresh-result writes, including prefix-stripped keys.
+// Stale/changed/transformed keys, coercion hooks, repeated writers and unused
+// effects refuse. Class-method aliases, repeated iterators and original H's
+// Unicode normalization remain separate proof boundaries.

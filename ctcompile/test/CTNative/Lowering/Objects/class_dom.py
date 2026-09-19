@@ -1057,7 +1057,109 @@ for cases in (FILTER_CASES, M_CASES, NUMBER_CASES):
     cases.update(H_COMBINED_CASES)
 for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
     refusals.update(H_COMBINED_REFUSALS)
+DYNAMIC_BODY = "const keys = Object.keys(t.dataset).filter(" + FILTER_PREDICATE + """);
+      let joined = '';
+      for (let i = 0; i < keys.length; i = i + 1) {
+        const n = keys[i];
+        joined = joined + t.dataset[n] + '|';
+      }
+      return joined;
+"""
+DYNAMIC_INDEXED_BODY = DYNAMIC_BODY
+DYNAMIC_BODY = DYNAMIC_BODY.replace(
+    "for (let i = 0; i < keys.length; i = i + 1) {\n        const n = keys[i];",
+    "for (const n of keys) {",
+)
+DYNAMIC_HELPER = (
+    "function readDataset(t) { "
+    + DYNAMIC_BODY
+    + "}\n"
+    + CLASS
+    + "return readDataset(element) === 'value|' && element.getAttribute(shape.read()) === null;\n"
+)
+DYNAMIC_METHOD = (
+    "class Shape { constructor(t) { this.element = t; } read() { const t = this.element; "
+    + DYNAMIC_BODY
+    + "} } return new Shape(element).read() === 'value|' && element.getAttribute('x') === null;\n"
+)
+DYNAMIC_HOLDER = (
+    "const H = { read(t) { " + DYNAMIC_BODY + "} }; class Shape { read(t) { return H.read(t); } }\n"
+    "const shape = new Shape();\n"
+    "return shape.read(element) === 'value|' && element.getAttribute('x') === null;\n"
+)
+DYNAMIC_CAPTURE = DYNAMIC_HOLDER
+DYNAMIC_HOLDER = (
+    DYNAMIC_HOLDER.replace(
+        "class Shape { read(t) { return H.read(t); } }",
+        "class Shape { constructor() { this.key = 'x'; } }",
+    )
+    .replace("shape.read(element)", "H.read(element)")
+    .replace("element.getAttribute('x')", "element.getAttribute(shape.key)")
+)
+DYNAMIC_OUTPUT = (
+    DYNAMIC_HOLDER.replace("let joined = '';", "const result = {};")
+    .replace("joined = joined + t.dataset[n] + '|';", "result[n] = t.dataset[n];")
+    .replace("return joined;", "return result;")
+    .replace("H.read(element) === 'value|'", "typeof H.read(element) === 'object'")
+)
+DYNAMIC_CASES = {
+    "class_dynamic_holder": (DYNAMIC_HOLDER, "1000"),
+    "class_dynamic_output": (DYNAMIC_OUTPUT, "1000"),
+    "class_dynamic_prefix": (
+        DYNAMIC_OUTPUT.replace("result[n]", "result[n.replace(/^bs/, '')]"),
+        "1000",
+    ),
+}
+DYNAMIC_REFUSALS = {
+    "class_dynamic_repeated": DYNAMIC_HOLDER.replace(
+        "return H.read(element)", "H.read(element); return H.read(element)"
+    ),
+    "class_dynamic_helper": DYNAMIC_HELPER,
+    "class_dynamic_method": DYNAMIC_METHOD,
+    "class_dynamic_capture": DYNAMIC_CAPTURE,
+    "class_dynamic_indexed": DYNAMIC_METHOD.replace(DYNAMIC_BODY, DYNAMIC_INDEXED_BODY),
+    "class_dynamic_stale": DYNAMIC_HOLDER.replace(
+        "let joined", "t.setAttribute('data-bs-later', 'x'); let joined"
+    ),
+    "class_dynamic_changed_keys": DYNAMIC_HOLDER.replace(
+        "let joined", "keys[0] = 'absent'; let joined"
+    ),
+    "class_dynamic_transformed": DYNAMIC_HOLDER.replace("t.dataset[n]", "t.dataset[n + '']"),
+    "class_dynamic_object_key": DYNAMIC_HOLDER.replace("t.dataset[n]", "t.dataset[{}]"),
+    "class_dynamic_prototype": DYNAMIC_OUTPUT.replace("result[n]", "result['__proto__']"),
+    "class_dynamic_two_writers": DYNAMIC_OUTPUT.replace(
+        "result[n] =", "result[n] = null; result[n] ="
+    ),
+    "class_dynamic_later_input": DYNAMIC_HOLDER.replace(
+        "return H.read(element)", "H.read({}); return H.read(element)"
+    ),
+    "class_dynamic_unused": DYNAMIC_HOLDER.replace(
+        "const H = {", "const H = { unused(t) { return t[t]; },"
+    ),
+    "class_dynamic_unused_method": DYNAMIC_METHOD.replace(
+        "read() {", "unused() { return this.element[this.element]; } read() {"
+    ),
+}
+FILTER_CASES.update(DYNAMIC_CASES)
+FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
+# Retain the entire original method as the next boundary, including M, for-of
+# and Unicode key normalization; no unused sibling slot can mask that refusal.
+ORIGINAL_ATTRIBUTES = (
+    BOOTSTRAP_M
+    + "const H = {\n"
+    + BOOTSTRAP_H[
+        BOOTSTRAP_H.index("        getDataAttributes(t)") : BOOTSTRAP_H.index(
+            "        getDataAttribute:"
+        )
+    ]
+    + "}; class Shape { constructor() { this.key = 'x'; } }\n"
+    "const shape = new Shape();\n"
+    "return typeof H.getDataAttributes(element) === 'object' && element.getAttribute(shape.key) === null;\n"
+)
+for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
+    refusals["class_dynamic_original"] = ORIGINAL_ATTRIBUTES
 FILTER_IDENTITIES = ["Object", "Array", "String"]
+DYNAMIC_ITERATION = ["__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"]
 CLASS_CASES.update(FILTER_CASES)
 CLASS_REFUSALS.update(FILTER_REFUSALS)
 CASES = {
@@ -1198,7 +1300,7 @@ def check_oracles(args):
             }.get(name, "")
             observations.append(f"""var {variable} = (() => {{
   const element = observationElement({value});
-  {"element.dataset = {bsConfig: 'a', bsConfigExtra: 'b', bsToggle: 'c', other: 'd'};" if name in FILTER_CASES else ""}
+  {"element.dataset = {bsConfig: 'value', bsConfigExtra: 'value', bsToggle: 'value', other: 'value'};" if name in DYNAMIC_CASES else "element.dataset = {bsConfig: 'a', bsConfigExtra: 'b', bsToggle: 'c', other: 'd'};" if name in FILTER_CASES else ""}
   const other = observationElement('different');
   other.setAttribute('other', 'second');
   let toggles = 0;
@@ -1373,6 +1475,11 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
             cpp, symbol = strings.emitted(args, native, label, callbacks=int(name in FILTER_CASES))
             if name in FILTER_CASES and "ctnative::filter_strings<" not in cpp:
                 raise RuntimeError(f"{label}: native output lost its original filter callback")
+            if (
+                name in ("class_dynamic_output", "class_dynamic_prefix")
+                and "ctnative::assign_json_snapshot_property" not in cpp
+            ):
+                raise RuntimeError(f"{label}: native output lost its snapshot assignment")
             if re.search(r"__ctbrowser_class_defined|__proto__|__home__|invoke_callable", cpp):
                 raise RuntimeError(f"{label}: native entry retained class metadata or dispatch")
             headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
@@ -1524,7 +1631,11 @@ def main():
             if name in FILTER_CASES or name in FILTER_REFUSALS:
                 request["initial_intrinsics"] += FILTER_IDENTITIES
                 request["dataset_parameters"] = [0]
-                if name == "class_filter_full_h":
+                if name in DYNAMIC_CASES or name in DYNAMIC_REFUSALS:
+                    request["initial_intrinsics"] += DYNAMIC_ITERATION
+                if name == "class_dynamic_prefix":
+                    request["initial_intrinsics"] += ["RegExp", "__ctbrowser_regexp"]
+                if name in ("class_filter_full_h", "class_dynamic_original"):
                     request["initial_intrinsics"] += [
                         "Number",
                         "JSON",
@@ -1535,7 +1646,17 @@ def main():
                         "__ctbrowser_iter_next",
                         "__ctbrowser_iter_close",
                     ]
-            steps = 1000000 if name in M_CASES or name in M_REFUSALS else 100000
+                    request["initial_intrinsics"] = list(
+                        dict.fromkeys(request["initial_intrinsics"])
+                    )
+            steps = (
+                1000000
+                if name in M_CASES
+                or name in M_REFUSALS
+                or name in DYNAMIC_CASES
+                or name in DYNAMIC_REFUSALS
+                else 100000
+            )
             classes.prepare(args, f"{name}-{owned}", ir, request, success=False)
             refusals += 1
             if name not in CLASS_CASES:
@@ -1596,7 +1717,9 @@ def main():
                 max_steps=steps,
             )
             if name in FILTER_CASES:
-                for identity in FILTER_IDENTITIES:
+                for identity in FILTER_IDENTITIES + (
+                    DYNAMIC_ITERATION if name in DYNAMIC_CASES else []
+                ):
                     dom.lower(
                         args,
                         ir,
@@ -1690,7 +1813,7 @@ def main():
                     contract,
                     f"{name}-{owned}-{optimize}",
                     optimize=optimize,
-                    max_steps=1000000 if name in M_CASES else 100000,
+                    max_steps=1000000 if name in M_CASES or name in DYNAMIC_CASES else 100000,
                 ),
             )
             for name, owned, ir, contract in prepared

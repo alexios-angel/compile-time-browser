@@ -216,8 +216,15 @@ source position, and only an unobserved helper closure disappears.
 This composes original H.getDataAttribute with M/F and class results, including
 repeated calls and JSON/URI fallback. A bounded slot can also combine original M
 with the dataset filter predicate, including through a captured H class method.
-Full H still needs its dynamic dataset/output keys and complete unused-slot proof;
-those slots cannot borrow parameter authority from a different source invocation.
+Dynamic property operations in DOM entries, methods and retained local helpers
+stay intact for the shared typed DOM proof. Dataset reads require a live member
+key from the same element; fresh-result writes retain their existing key and
+mutation-order proof. Class and holder identity uses remain separately checked.
+A constructor-only class composes with one original for-of loop in a local H
+slot, including prefix-stripped output keys. Source loops use the existing exact
+completion proof even without a completion switch. Generic class-method alias
+checks, repeated iterators, original H's Unicode normalization and unused slots
+remain separate boundaries; slots cannot borrow authority from another invocation.
 
 `toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
@@ -230,8 +237,8 @@ target and that target does not observe its callee argument. All premises are
 checked before deleting any closure, so child deletion order cannot authorize a
 parent. Nested ordinary helper dependencies remain refused; replacement and
 filter callbacks use the separate original-body proofs above. Full Bootstrap H
-still needs its original loop, Unicode normalization and complete unused-slot
-proof; no slot bypasses the census merely because another slot is called.
+still needs its complete Unicode key normalization and unused-slot proof;
+no slot bypasses the census merely because another slot is called.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.
 Unknown calls in zero-parameter class methods instead require independent

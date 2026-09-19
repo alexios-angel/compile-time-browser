@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 140; ++control) {
+        for (unsigned control = 0; control < 149; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -817,6 +817,42 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                    "function(t) { return this; }");
                 }
             }
+            if (control >= 140) {
+                source = R"js(function guarded(element) {
+                    const H = { read(t) {
+                        const result = {};
+                        const keys = Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"));
+                        for (const n of keys) {
+                            result[n] = t.dataset[n];
+                        }
+                        return result;
+                    } };
+                    class Shape { constructor() { this.key = 'x'; } }
+                    const shape = new Shape();
+                    return typeof H.read(element) === 'object' && element.hasAttribute(shape.key);
+                })js";
+                if (control == 141) {
+                    source.insert(source.find("return typeof"), "H.read(element); ");
+                }
+                if (control == 142) {
+                    source.insert(source.find("for (const"),
+                                  "t.setAttribute('data-bs-new', 'x'); ");
+                }
+                if (control == 143) {
+                    source.replace(source.find("t.dataset[n]"), 12, "t.dataset[n + '']");
+                }
+                if (control == 144) { source.replace(source.find("result[n]"), 9, "result[{}]"); }
+                if (control == 145) {
+                    source.insert(source.find("result[n]"), "result[n] = null; ");
+                }
+                if (control == 148) {
+                    const std::string constructor = "constructor() { this.key = 'x'; }";
+                    source.replace(source.find(constructor), constructor.size(),
+                                   constructor + " read(t) { return H.read(t); }");
+                    source.replace(source.find("typeof H.read(element)"), 22,
+                                   "typeof shape.read(element)");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -865,13 +901,23 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 if (control != 137) { request.initialIntrinsics.push_back("JSON"); }
                 if (control != 138) { request.datasetParameters = {0}; }
             }
+            if (control >= 140) {
+                request.initialIntrinsics = {"__ctbrowser_class_defined",
+                                             "Object",
+                                             "Array",
+                                             "String",
+                                             "__ctbrowser_for_of_open",
+                                             "__ctbrowser_iter_next",
+                                             "__ctbrowser_iter_close"};
+                if (control == 146) { request.datasetParameters.clear(); }
+            }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
             auto error = ctnative::prepareDOMEntry(
                 *candidate, request,
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
                         control == 91 || control == 103 || control == 115 || control == 125 ||
-                        control == 139
+                        control == 139 || control == 147
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -881,7 +927,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
                 control != 100 && control != 104 && control != 105 && control != 116 &&
-                control != 117 && control != 128 && control != 129 && control != 130) {
+                control != 117 && control != 128 && control != 129 && control != 130 &&
+                control != 140) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -899,7 +946,12 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 const ctnative::DOMEntryAnalysis checked(*candidate, request);
                 check(
                     mlir::succeeded(mlir::verify(*candidate)) && checked.proved() &&
-                        (control >= 128
+                        (control >= 140 ? request.initialIntrinsics ==
+                                              std::vector<std::string>{"Object", "Array", "String",
+                                                                       "__ctbrowser_for_of_open",
+                                                                       "__ctbrowser_iter_next",
+                                                                       "__ctbrowser_iter_close"}
+                         : control >= 128
                              ? request.initialIntrinsics ==
                                    std::vector<std::string>{"Number", "decodeURIComponent",
                                                             "Object", "Array", "String", "JSON"}
