@@ -567,6 +567,29 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("a dynamic subtract latch cannot borrow the Add proof",
            replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
+    for (const std::string unary : {"plus", "neg", "bitnot"}) {
+        const auto source =
+            replace(carriedUnit, "  %step = ctjs.binary_static add %i, %d",
+                    "  %converted = ctjs.unary " + unary + " %d\n  %step = ctjs.binary " +
+                        (unary == "plus" ? "add" : "sub") + " %i, %converted");
+        for (const auto & body : {source, replace(source, unary + " %d", unary + " %delta")}) {
+            run({.what = "unary latches preserve unchanged CFG operand transport",
+                 .body = body,
+                 .arrays = "a:[one,two,three]",
+                 .reads =
+                     unary == "bitnot" ? "a[0]=one; a[2]=three" : "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
+        }
+        reject("a unary latch operand must retain its identity even at the same Number value",
+               replace(source, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        reject("a unary latch cannot borrow a changing induction operand",
+               replace(source, unary + " %d", unary + " %i"));
+        reject("a nested repeated conversion does not become a saved invariant",
+               replace(source, "  %converted = ctjs.unary " + unary + " %d",
+                       "  %repeated = ctjs.unary plus %d\n  %converted = ctjs.unary " + unary +
+                           " %repeated"));
+    }
     for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         for (const std::string unary : {"plus", "neg"}) {
             const auto source =
@@ -893,9 +916,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a held Neg stride must remain identical across the CFG backedge",
            replace(carriedNegative, "^header(%base, %step, %added, %d",
                    "^header(%base, %step, %added, %one"));
-    reject("a repeated Neg of a computed Number needs independent invariance",
-           replace(replace(negativeChild, "  %minus = ctjs.unary neg %magnitude\n", ""),
-                   "  %step =", "  %minus = ctjs.unary neg %magnitude\n  %step ="));
+    run({.what = "a repeated Neg retains its invariant computed Number operand",
+         .body = replace(replace(negativeChild, "  %minus = ctjs.unary neg %magnitude\n", ""),
+                         "  %step =", "  %minus = ctjs.unary neg %magnitude\n  %step ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("a negative snapshot is not an own array index",
            replace(negativeChild, "%base[%i]", "%base[%minus]"),
            ArrayContentsFailure::UnknownIndex);
@@ -986,9 +1012,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a converted negative String cannot change on the CFG backedge",
            replace(carriedNegativeText, "^header(%base, %step, %added, %d",
                    "^header(%base, %step, %added, %one"));
-    reject("a repeated negative String conversion needs independent invariance",
-           replace(replace(savedNegativeText, "  %minus = ctjs.unary plus %saved\n", ""),
-                   "  %step =", "  %minus = ctjs.unary plus %saved\n  %step ="));
+    run({.what = "a repeated negative String conversion retains its saved primitive operand",
+         .body = replace(replace(savedNegativeText, "  %minus = ctjs.unary plus %saved\n", ""),
+                         "  %step =", "  %minus = ctjs.unary plus %saved\n  %step ="),
+         .arrays = "a:[one,x]; inputs:[x]",
+         .reads = "inputs[0]=ctjs.constant; a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("the original negative String keeps its property key after conversion",
            replace(savedNegativeText, "%base[%i]", "%base[%saved]"),
            ArrayContentsFailure::UnknownIndex);
@@ -1100,9 +1129,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a BitNot snapshot cannot change across the backedge",
            replace(carriedComplement, "^header(%base, %step, %added, %d",
                    "^header(%base, %step, %added, %one"));
-    reject("a repeated BitNot still needs independent invariance",
-           replace(replace(complementChild, "  %minus = ctjs.unary bitnot %operand\n", ""),
-                   "  %step =", "  %minus = ctjs.unary bitnot %operand\n  %step ="));
+    run({.what = "a repeated BitNot retains its saved Number operand",
+         .body = replace(replace(complementChild, "  %minus = ctjs.unary bitnot %operand\n", ""),
+                         "  %step =", "  %minus = ctjs.unary bitnot %operand\n  %step ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("negative BitNot facts are never own indices",
            replace(complementChild, "%base[%i]", "%base[%minus]"),
            ArrayContentsFailure::UnknownIndex);
@@ -2585,9 +2617,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                        "binary " + std::string{unary == "plus" ? "add" : "sub"} + " %i, %signed"));
         reject("a held negative snapshot cannot initialize an increasing loop",
                replace(signedChild, "^header(%a, %zero, %zero", "^header(%a, %minus, %zero"));
-        reject(
-            "repeated signed unary producers need independent invariance",
-            replace(replace(signedChild, makeSigned, ""), "  %step =", makeSigned + "  %step ="));
+        run({.what = "repeated signed unary latches keep invariant negative snapshots",
+             .body = replace(replace(signedChild, makeSigned, ""),
+                             "  %step =", makeSigned + "  %step ="),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("signed unary snapshots cannot borrow an unknown input",
                replace(signedChild, makeSigned, "  %signed = ctjs.unary " + unary + " %p\n"),
                ArrayContentsFailure::UnsupportedOperation);

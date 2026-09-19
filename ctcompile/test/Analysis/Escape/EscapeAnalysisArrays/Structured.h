@@ -514,6 +514,30 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(commuted, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("commuted structured Add still requires its exact induction formal",
            replace(commuted, "add %one, %i", "add %one, %last"));
+    for (const std::string unary : {"plus", "neg", "bitnot"}) {
+        const auto source =
+            replace(carriedUnit, "    %step = ctjs.binary_static add %i, %d",
+                    "    %converted = ctjs.unary " + unary + " %d\n    %step = ctjs.binary " +
+                        (unary == "plus" ? "add" : "sub") + " %i, %converted");
+        rows.push_back({.what = "unary latches preserve reordered structured operand transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = unary == "bitnot" ? "a[0]=x" : "a[0]=x; a[1]=y",
+                        .exit = unary == "bitnot" ? "x -> {x}" : "y -> {y}"});
+        rows.push_back({.what = "invariant unary latches release only unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = unary == "bitnot" ? "a[0]=x" : "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        reject("a structured unary operand cannot change even to the same Number value",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("a structured unary latch cannot borrow a changing induction operand",
+               replace(source, unary + " %d", unary + " %i"));
+        reject("a nested structured conversion is not a saved invariant",
+               replace(source, "    %converted = ctjs.unary " + unary + " %d",
+                       "    %repeated = ctjs.unary plus %d\n    %converted = ctjs.unary " + unary +
+                           " %repeated"));
+    }
     for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         for (const std::string unary : {"plus", "neg"}) {
             const auto source = replace(original, "    %step = ctjs.binary_static add %i, %one",
@@ -713,10 +737,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject("unknown structured String inputs cannot borrow another predecessor's conversion",
            replace(negativeStrings, "scf.yield %right :", "scf.yield %p :"),
            ArrayContentsFailure::UnsupportedOperation);
-    reject("repeated structured negative String producers need independent invariance",
-           replace(replace(negativeStrings,
-                           "    %step =", "    %repeated = ctjs.unary plus %text\n    %step ="),
-                   "sub %i, %d", "sub %i, %repeated"));
+    rows.push_back({.what = "repeated structured unary latches retain each saved String operand",
+                    .body = replace(replace(negativeStrings, "    %step =",
+                                            "    %repeated = ctjs.unary plus %text\n    %step ="),
+                                    "sub %i, %d", "sub %i, %repeated"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "y -> {y}; x -> {x}"});
     const auto directStrings =
         replace(replace(negativeStrings, "  %unit = ctjs.unary plus %text\n", ""), "%delta = %unit",
                 "%delta = %text");
@@ -753,9 +780,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(carriedNegative, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
     const auto directNegative = replace(replace(computedUnit, makeUnit, makeNegative),
                                         "binary_static add %i, %unit", "binary sub %i, %unit");
-    reject("a repeated structured Neg producer cannot borrow a prior iteration",
-           replace(replace(directNegative, "  %unit = ctjs.unary neg %magnitude\n", ""),
-                   "    %step =", "    %unit = ctjs.unary neg %magnitude\n    %step ="));
+    rows.push_back(
+        {.what = "a repeated structured Neg retains its invariant computed operand",
+         .body = replace(replace(directNegative, "  %unit = ctjs.unary neg %magnitude\n", ""),
+                         "    %step =", "    %unit = ctjs.unary neg %magnitude\n    %step ="),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"});
     reject("a structured negative snapshot cannot become an own array index",
            replace(savedNegative, "%base[%i]", "%base[%unit]"), ArrayContentsFailure::UnknownIndex);
     reject("structured Add cannot borrow a negative magnitude as a positive step",
@@ -1624,9 +1655,12 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("signed structured strides cannot borrow the opposite sign",
                replace(carriedSigned, "binary " + operation + " %i, %d",
                        "binary " + std::string{unary == "plus" ? "add" : "sub"} + " %i, %d"));
-        reject("repeated structured signed unary producers need independent invariance",
-               replace(replace(savedSigned, makeSigned, ""),
-                       "    %step =", "  " + makeSigned + "    %step ="));
+        rows.push_back({.what = "repeated structured signed unary latches keep saved operands",
+                        .body = replace(replace(savedSigned, makeSigned, ""),
+                                        "    %step =", "  " + makeSigned + "    %step ="),
+                        .arrays = "a:[x,y]; seed:[]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
         reject("signed structured snapshots cannot borrow an unknown input",
                replace(savedSigned, makeSigned, "  %unit = ctjs.unary " + unary + " %p\n"),
                ArrayContentsFailure::UnsupportedOperation);

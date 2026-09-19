@@ -1142,6 +1142,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!argument || argument.getOwner() != body) { return {}; }
             return intoBody[argument.getArgNumber()];
         };
+        const auto unchanged = [&](mlir::Value value) {
+            auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+            if (!argument || argument.getOwner() != header) { return true; }
+            const mlir::Value next = backedge[argument.getArgNumber()];
+            return next == value || fromHeader(next) == value;
+        };
         auto * step = backedge[index.getArgNumber()].getDefiningOp();
         auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
         auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
@@ -1166,11 +1172,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         mlir::Value increment = step->getOperand(1U - indexOperand);
         if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(increment);
-            argument && argument.getOwner() == header) {
-            const mlir::Value next = backedge[argument.getArgNumber()];
-            if (next != increment && fromHeader(next) != increment) { return unsupported; }
-        }
+        if (!unchanged(increment)) { return unsupported; }
         auto stride = boundedNumber(increment, subtract);
         if (!stride) {
             if (auto literal = increment.getDefiningOp<ctjs::ConstantOp>()) {
@@ -1183,16 +1185,26 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
         }
         if (!stride) {
-            // One unary conversion of an original literal is invariant even
-            // inside the latch. Nonliteral producers still need a held fact.
+            // One unary conversion is invariant when its original operand is
+            // literal or held unchanged. Never borrow a previous iteration's
+            // fact for an operand computed again in the header or body.
             auto unary = increment.getDefiningOp<ctjs::UnaryOp>();
-            auto literal =
-                unary ? unary.getOperand().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            if (literal) {
-                const ContentsValue input{literal.getResult(),
-                                          llvm::isa<ctjs::StringAttr>(literal.getValue())
-                                              ? ContentsKind::String
-                                              : ContentsKind::Identity};
+            if (unary) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                mlir::Value operand = unary.getOperand();
+                if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
+                auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
+                auto * definition = operand.getDefiningOp();
+                if (!unchanged(operand) ||
+                    (!literal && definition &&
+                     (definition->getBlock() == header || definition->getBlock() == body))) {
+                    return unsupported;
+                }
+                const ContentsValue input =
+                    literal ? ContentsValue{operand, llvm::isa<ctjs::StringAttr>(literal.getValue())
+                                                         ? ContentsKind::String
+                                                         : ContentsKind::Identity}
+                            : held(operand);
                 if (unary.getKind() == ctjs::UnaryKind::BitNot) {
                     ContentsValue result;
                     boundedNumberComplement(input, result);
