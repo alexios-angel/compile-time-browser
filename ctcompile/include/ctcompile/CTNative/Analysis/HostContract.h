@@ -116,7 +116,9 @@ enum class HostDOMMethod {
     datasetKeys,
     filterStrings,
     startsWith,
-    removeStringPrefix
+    removeStringPrefix,
+    stringCharAt,
+    stringSlice
 };
 
 struct HostDOMCall {
@@ -135,7 +137,8 @@ struct HostDOMCall {
     [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
     [[nodiscard]] bool returnsString() const {
         return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent ||
-               kind == HostDOMMethod::removeStringPrefix;
+               kind == HostDOMMethod::removeStringPrefix || kind == HostDOMMethod::stringCharAt ||
+               kind == HostDOMMethod::stringSlice;
     }
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&

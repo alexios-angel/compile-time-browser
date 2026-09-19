@@ -54,3 +54,8 @@
 // Stale/changed/transformed keys, coercion hooks, repeated writers and unused
 // effects refuse. Class-method aliases, repeated iterators and original H's
 // Unicode normalization remain separate proof boundaries.
+// charAt(0) and slice(1) preserve UTF-16 code units through public Core converters,
+// including empty/NUL strings, BMP text, pairs and lone surrogates. String results
+// survive DOM writes, and concatenation rejoins surrogate halves. Node/native
+// expectations retain the VM's separately pinned byte-indexing divergence.
+// Other indices/coercions, detached methods, replacement and lowercase still refuse.

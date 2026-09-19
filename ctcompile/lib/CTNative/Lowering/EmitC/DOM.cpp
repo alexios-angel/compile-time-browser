@@ -407,6 +407,32 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         swap(value.getResult(0));
         return true;
     }
+    if (edge.kind == HostDOMMethod::stringCharAt || edge.kind == HostDOMMethod::stringSlice) {
+        const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
+        auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
+                                                at.getStringAttr("ctbrowser::wtf8_to_utf16"),
+                                                mlir::ValueRange{call.getReceiver()});
+        const auto indexType = ec::OpaqueType::get(context, "std::size_t");
+        auto zero = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"));
+        auto one = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1"));
+        llvm::SmallVector<mlir::Value> range{zero, one};
+        if (edge.kind == HostDOMMethod::stringSlice) {
+            auto empty = ec::MemberCallOpaqueOp::create(
+                at, where, mlir::TypeRange{at.getI1Type()}, units.getResult(0),
+                at.getStringAttr("empty"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                mlir::ValueRange{});
+            range = {
+                ec::ConditionalOp::create(at, where, indexType, empty.getResult(0), zero, one)};
+        }
+        auto part = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{unitsType},
+                                                   units.getResult(0), at.getStringAttr("substr"),
+                                                   mlir::ArrayAttr{}, mlir::ArrayAttr{}, range);
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctbrowser::utf16_to_wtf8"), mlir::ValueRange{part.getResult(0)});
+        swap(value.getResult(0));
+        return true;
+    }
     llvm::SmallVector<mlir::Value> arguments;
     if (edge.kind == HostDOMMethod::number) {
         // Earlier replacements update the live call operands. The source
@@ -443,6 +469,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
     case HostDOMMethod::filterStrings:
     case HostDOMMethod::removeStringPrefix:
+    case HostDOMMethod::stringCharAt:
+    case HostDOMMethod::stringSlice:
     case HostDOMMethod::startsWith: llvm_unreachable("String filter handled above");
     case HostDOMMethod::decodeURIComponent:
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");

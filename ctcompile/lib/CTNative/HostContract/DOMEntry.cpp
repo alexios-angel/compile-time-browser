@@ -157,6 +157,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         callback,
         startsWith,
         replacePrefix,
+        charAt,
+        slice,
         regexpFactory,
         prefixRegExp,
         toggle,
@@ -932,6 +934,14 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         provedMethods.emplace_back(read, HostDOMMethod::removeStringPrefix);
                         continue;
                     }
+                    if (suppliedString && hasKind(read.getObject(), Kind::string) &&
+                        (key == "charAt" || key == "slice")) {
+                        values[read.getResult()] = key == "charAt" ? Kind::charAt : Kind::slice;
+                        provedMethods.emplace_back(read, key == "charAt"
+                                                             ? HostDOMMethod::stringCharAt
+                                                             : HostDOMMethod::stringSlice);
+                        continue;
+                    }
                     if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
                         llvm::is_contained(provedDatasetElements, read.getObject())) {
                         values[read.getResult()] = Kind::dataset;
@@ -1095,6 +1105,27 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     if (!method || method.getObject() != invoke.getReceiver()) {
                         refusal = "DOM call does not preserve its proved method receiver";
                         return false;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::charAt) ||
+                        hasKind(invoke.getCallee(), Kind::slice)) {
+                        const bool first = hasKind(invoke.getCallee(), Kind::charAt);
+                        auto literal = arguments.size() == 1
+                                           ? arguments[0].getDefiningOp<ctjs::ConstantOp>()
+                                           : ctjs::ConstantOp{};
+                        auto index = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
+                                             : ctjs::NumberAttr{};
+                        // ponytail: Bootstrap's exact indices avoid general
+                        // ToIntegerOrInfinity; broader slices need that proof.
+                        if (!index || index.getDouble() != (first ? 0 : 1)) {
+                            refusal = "DOM String indexing requires charAt(0) or slice(1)";
+                            return false;
+                        }
+                        provedCalls.push_back(
+                            {invoke,
+                             first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
+                             invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::string;
+                        continue;
                     }
                     if (hasKind(invoke.getCallee(), Kind::replacePrefix) && arguments.size() == 2 &&
                         hasKind(arguments[0], Kind::prefixRegExp) && emptyString(arguments[1])) {
@@ -1343,6 +1374,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             if (!spend()) { return false; }
                             const auto found = typeQueries.find(query);
                             const auto name = ctjs::constantKey(literal);
+                            if (hasKind(query, Kind::optionalString) &&
+                                hasKind(literal, Kind::null)) {
+                                predicates[compare.getResult()] = {query, false};
+                            }
                             if (found != typeQueries.end()) {
                                 const bool json = hasKind(found->second, Kind::json);
                                 if ((!json && (name == "string" || name == "object")) ||

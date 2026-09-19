@@ -2,6 +2,7 @@
 """Compose original class proofs with typed DOM entries and local fields."""
 
 import argparse
+import json
 from pathlib import Path
 import re
 import shutil
@@ -1158,6 +1159,79 @@ ORIGINAL_ATTRIBUTES = (
 )
 for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
     refusals["class_dynamic_original"] = ORIGINAL_ATTRIBUTES
+# The VM still indexes bytes. Pin its known divergence separately from the
+# Node/native UTF-16 contract; all pre-existing differential expectations remain.
+UTF16_CASES, UTF16_VM_BITS, UTF16_EARLY_REFUSALS = {}, {}, {}
+for name, text, first, rest, agrees in (
+    ("empty", "", "", "", True),
+    ("ascii", "ab", "a", "b", True),
+    ("nul", "\0x", "\0", "x", True),
+    ("bmp", "Éx", "É", "x", False),
+    ("dotted", "İx", "İ", "x", False),
+    ("pair", "𐐀x", "\ud801", "\udc00x", False),
+    ("high", "\ud800x", "\ud800", "x", False),
+    ("low", "\udc00x", "\udc00", "x", False),
+    ("ascii_pair", "A𐐀", "A", "𐐀", True),
+):
+    name = "class_utf16_" + name
+    body = (
+        """class Shape { constructor() { this.key = 'x'; } }
+  const shape = new Shape();
+  element.setAttribute(shape.key, """
+        + json.dumps(text)
+        + """);
+  const text = element.getAttribute(shape.key);
+  if (text === null) return false;
+  const first = text.charAt(0);
+  element.setAttribute(shape.key, 'later');
+  const rest = text.slice(1);
+  return first === """
+        + json.dumps(first)
+        + " && rest === "
+        + json.dumps(rest)
+        + """
+    && first + rest === text && element.getAttribute(shape.key) === 'later';
+"""
+    )
+    UTF16_EARLY_REFUSALS[name + "_early"] = body
+    body = (
+        body.replace(
+            "if (text === null) return false;", "let answer = false; if (text !== null) {"
+        ).replace("  return first ===", "  answer = first ===")
+        + "  } return answer;\n"
+    )
+    UTF16_CASES[name] = (body, "1111")
+    UTF16_VM_BITS[name] = "1111" if agrees else "0000"
+UTF16_CASES["class_utf16_reverse_guard"] = (
+    UTF16_CASES["class_utf16_ascii"][0].replace("text !== null", "null !== text"),
+    "1111",
+)
+UTF16_CASES["class_utf16_else_guard"] = (
+    UTF16_CASES["class_utf16_ascii"][0].replace(
+        "if (text !== null) {", "if (text === null) { answer = false; } else {"
+    ),
+    "1111",
+)
+UTF16_REFUSALS = {
+    "class_utf16_" + name: UTF16_CASES["class_utf16_ascii"][0].replace(before, after)
+    for name, before, after in (
+        ("char_index", "charAt(0)", "charAt(1)"),
+        ("char_coercion", "charAt(0)", "charAt('0')"),
+        ("char_missing", "charAt(0)", "charAt()"),
+        ("char_extra", "charAt(0)", "charAt(0, 1)"),
+        ("slice_index", "slice(1)", "slice(0)"),
+        ("slice_extra", "slice(1)", "slice(1, 2)"),
+        ("lowercase", "charAt(0)", "charAt(0).toLowerCase()"),
+        ("nullable", "if (text !== null)", "if (true)"),
+        ("null_arm", "if (text !== null)", "if (text === null)"),
+        ("detached", "text.charAt(0)", "(0, text.charAt)(0)"),
+        ("replaced", "const first =", "String.prototype.charAt = () => 'a'; const first ="),
+        ("effect", "charAt(0)", "charAt(unknown())"),
+    )
+}
+CLASS_CASES.update(UTF16_CASES)
+UTF16_REFUSALS.update(UTF16_EARLY_REFUSALS)
+CLASS_REFUSALS.update(UTF16_REFUSALS)
 FILTER_IDENTITIES = ["Object", "Array", "String"]
 DYNAMIC_ITERATION = ["__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"]
 CLASS_CASES.update(FILTER_CASES)
@@ -1277,9 +1351,11 @@ def source(name, body):
 def check_oracles(args):
     cases = CLASS_CASES | CASES
     declarations = "".join(source(name, body) for name, (body, _) in cases.items())
-    observations, expected = [], []
+    observations, expected, vm_expected = [], [], []
     for name, (_, bits) in cases.items():
-        for value, bit in zip(("null", "''", r"'a\0b'", r"'\u00e9'"), bits):
+        for value, bit, vm_bit in zip(
+            ("null", "''", r"'a\0b'", r"'\u00e9'"), bits, UTF16_VM_BITS.get(name, bits)
+        ):
             variable = f"observation{len(observations):03}"
             effects = {
                 "class_order": "if (element.getAttribute('x') !== 'after' || element.getAttribute('marker') !== 'done') throw new Error('lost class writes');",
@@ -1311,6 +1387,7 @@ def check_oracles(args):
   return result;
 }})();""")
             expected.append(f"{variable}={'true' if bit == '1' else 'false'}\n")
+            vm_expected.append(f"{variable}={'true' if vm_bit == '1' else 'false'}\n")
     oracle = declarations + strings.BOOLEAN_DOUBLE + "\n".join(observations) + "\n"
     path = args.work / "oracle.js"
     path.write_text(oracle)
@@ -1323,7 +1400,7 @@ def check_oracles(args):
         )
     )
     node = run([args.node, str(path)]).stdout
-    if reference != "".join(expected) or node != reference:
+    if reference != "".join(vm_expected) or node != "".join(expected):
         raise RuntimeError(f"class DOM source observations differ: {reference!r}, {node!r}")
     return len(observations)
 
@@ -1473,6 +1550,11 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
                 native = deduced
             cpp, symbol = strings.emitted(args, native, label, callbacks=int(name in FILTER_CASES))
+            if name in UTF16_CASES and any(
+                helper not in cpp
+                for helper in ("ctbrowser::wtf8_to_utf16", "ctbrowser::utf16_to_wtf8")
+            ):
+                raise RuntimeError(f"{label}: native output lost its shared UTF-16 conversion")
             if name in FILTER_CASES and "ctnative::filter_strings<" not in cpp:
                 raise RuntimeError(f"{label}: native output lost its original filter callback")
             if (
@@ -1628,6 +1710,8 @@ def main():
                 + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
                 + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else []),
             )
+            if name in UTF16_CASES or name in UTF16_REFUSALS:
+                request["initial_intrinsics"] += ["String"]
             if name in FILTER_CASES or name in FILTER_REFUSALS:
                 request["initial_intrinsics"] += FILTER_IDENTITIES
                 request["dataset_parameters"] = [0]
@@ -1694,6 +1778,7 @@ def main():
                 or name in NUMBER_CASES
                 or name in F_CASES
                 or name in FILTER_CASES
+                or name in UTF16_CASES
             )
             dom.lower(
                 args,

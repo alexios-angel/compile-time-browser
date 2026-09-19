@@ -226,6 +226,17 @@ completion proof even without a completion switch. Generic class-method alias
 checks, repeated iterators, original H's Unicode normalization and unused slots
 remain separate boundaries; slots cannot borrow authority from another invocation.
 
+With the declared initial `String` identity, a proved primitive String may use
+`charAt(0)` and `slice(1)`. Emission calls the public Core WTF-8/UTF-16 converters
+and slices an owning `std::u16string`; the suffix of an empty input is empty.
+Lone surrogates survive, and existing String concatenation rejoins split pairs.
+A strict null comparison refines an original optional String only in its
+non-null arm, including reversed comparisons and negation. Receiver identity
+and literal indices are checked before emission. Other indices,
+coercions, unrefined nullable inputs and `toLowerCase` remain unsupported. These
+String results grant no dataset-membership or dynamic-assignment-key authority.
+The VM's byte-indexing behavior is recorded separately from Node/native results.
+
 `toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
 requires a probe; deferred helper operations also force the complete method
