@@ -32,6 +32,7 @@
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
@@ -1330,7 +1331,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         const mlir::Value base = origin(array);
         const auto * guardSite = base ? base.getDefiningOp() : nullptr;
         auto invariantFailure = unsupported;
-        bool reloadsGuardElement = false;
+        llvm::SmallDenseSet<std::size_t, 4> guardReloads;
         const auto invariant = [&](auto && self, mlir::Value operand,
                                    unsigned depth) -> std::optional<ContentsValue> {
             if (!spend()) {
@@ -1362,7 +1363,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const auto array = state.arrays.find(base->origin().getDefiningOp());
                 if (array == state.arrays.end()) { return std::nullopt; }
                 // The complete loop census below rejects effects and any writes
-                // when the stride depends on an element that could change.
+                // when a proof operand depends on an element that could change.
                 // Replay still checks every own read and snapshots its value.
                 const auto name = ownObjectKey(key->origin());
                 if (name && name.getValue() == "length") {
@@ -1374,7 +1375,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (!position || *position >= array->second.size()) { return std::nullopt; }
                 // Check every recursive read against the exact allocation, so
                 // a distinct outer array cannot hide a selected guard alias.
-                reloadsGuardElement |= array->first == guardSite;
+                if (array->first == guardSite) { guardReloads.insert(*position); }
                 // Retaining the original element keeps primitive keys intact.
                 return array->second[*position];
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
@@ -1473,25 +1474,28 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // ponytail: one header/body pair, with writes only to its current or
         // invariant own element. Other mutations need a termination proof. Primitive
         // kinds and every element still pass the ordinary operation transfers.
+        llvm::SmallDenseSet<std::size_t, 4> guardStores;
+        bool storesCurrentIndex = false;
         for (mlir::Block * block : {header, body}) {
             for (mlir::Operation & operation : *block) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 if (&operation == block->getTerminator()) { continue; }
                 if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                    if (block != body || reloadsGuardElement) { return unsupported; }
-                    if (fromHeader(store.getKey()) != index) {
+                    if (block != body) { return unsupported; }
+                    if (fromHeader(store.getKey()) == index) {
+                        storesCurrentIndex = true;
+                    } else {
                         const auto key = invariant(invariant, store.getKey(), 0);
                         if (!key) { return invariantFailure; }
                         const auto position = ownArrayIndex(*key);
-                        if (!position || *position >= size || reloadsGuardElement) {
-                            return unsupported;
-                        }
+                        if (!position || *position >= size) { return unsupported; }
+                        guardStores.insert(*position);
                     }
                     // A saved or reloaded receiver must keep the same allocation
                     // across transport, without reading an overwritten element.
                     const auto receiver = invariant(invariant, store.getObject(), 0);
                     if (!receiver) { return invariantFailure; }
-                    if (receiver->origin() != base || reloadsGuardElement) { return unsupported; }
+                    if (receiver->origin() != base) { return unsupported; }
                     continue;
                 }
                 if (!llvm::isa<ctjs::ConstantOp, ctjs::GetPropertyOp, ctjs::CompareOp,
@@ -1500,6 +1504,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     return unsupported;
                 }
             }
+        }
+        // Check after every key and receiver was resolved: a later store can
+        // reveal a reload overlapping an earlier write. Current-index writes
+        // remain conservative; fixed writes must miss every recursive reload.
+        for (const auto position : guardReloads) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            if (storesCurrentIndex || guardStores.contains(position)) { return unsupported; }
         }
         // SCF can eliminate an invariant array parameter. A direct allocation
         // already executed on this exact path needs no backedge transport;

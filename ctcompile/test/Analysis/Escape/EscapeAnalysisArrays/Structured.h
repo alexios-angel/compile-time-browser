@@ -417,6 +417,20 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[one,y]",
                     .reads = "a[0]=one; a[0]=one; a[1]=y; a[0]=one",
                     .exit = "zero -> {}"});
+    const auto disjointIndex =
+        replace(reloaded, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
+    rows.push_back({.what = "structured fixed overwrites preserve a disjoint stride reload",
+                    .body = disjointIndex,
+                    .arrays = "a:[one,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[1]=zero; a[0]=one",
+                    .exit = "zero -> {}"});
+    for (const auto & store : {"%base[%zero]", "%base[%i]"}) {
+        reject("structured overlapping stores cannot prove a reloaded stride",
+               replace(disjointIndex, "%base[%one]", store));
+    }
+    reject("structured later stores invalidate earlier reloads",
+           replace(disjointIndex,
+                   "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
     const auto disjointReload =
         replace(replace(replace(reloaded, "  %finalIndex,",
                                 "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"

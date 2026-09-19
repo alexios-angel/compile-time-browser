@@ -137,10 +137,32 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     run({.what = "invariant overwrite keys cannot extend the guard array",
          .body = replace(fixedOverwrite, "%base[%one], %zero", "%base[%two], %zero"),
          .failure = ArrayContentsFailure::UnsupportedControlFlow});
-    run({.what = "a key reloaded from overwritten storage cannot claim invariance",
+    run({.what = "a key reloaded from a disjoint guard slot remains invariant",
          .body = replace(fixedOverwrite, "  ctjs.set_property %base[%one], %zero",
                          "  %fixed = ctjs.get_property %base[%zero]\n"
                          "  ctjs.set_property %base[%fixed], %zero"),
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero",
+         .exit = "zero -> {}"},
+        "x");
+    const auto disjointIndex =
+        replace(replace(fixedOverwrite,
+                        "  %step =", "  %stride = ctjs.get_property %base[%zero]\n  %step ="),
+                "add %i, %one", "add %i, %stride");
+    run({.what = "a stride reloaded from a disjoint guard slot survives fixed overwrites",
+         .body = disjointIndex,
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[0]=one; a[1]=zero; a[0]=one",
+         .exit = "zero -> {}"},
+        "x");
+    for (const auto & store : {"%base[%zero]", "%base[%i]"}) {
+        run({.what = "an overlapping fixed or current-index store cannot prove its stride",
+             .body = replace(disjointIndex, "%base[%one]", store),
+             .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    }
+    run({.what = "a later write invalidates an earlier disjoint reload proof",
+         .body = replace(disjointIndex,
+                         "  %step =", "  ctjs.set_property %base[%zero], %two\n  %step ="),
          .failure = ArrayContentsFailure::UnsupportedControlFlow});
     const std::string reversed =
         replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
