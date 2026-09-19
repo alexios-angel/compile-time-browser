@@ -115,6 +115,16 @@ function inherited() {
 }
 var a = inherited();
 
+// Explicit super is separate from the default derived rest/apply constructor.
+// The base is completed but never directly constructed.
+//--- inherited-explicit.js
+function inherited_explicit() {
+    class Base { constructor(n) { this.n = n; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).n;
+}
+var a = inherited_explicit();
+
 // B's constructor dispatches through the leaf receiver, while super dispatches
 // through the declaring method's lexical home. Keep the shadowed W method too.
 //--- inherited-dispatch.js

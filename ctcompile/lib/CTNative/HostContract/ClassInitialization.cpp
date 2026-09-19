@@ -32,6 +32,9 @@ struct classInitialization {
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
     llvm::MapVector<mlir::Operation *, CallableObject> localDOMHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
+    llvm::DenseMap<mlir::Value, ctjs::CallOp> heritage;
+    llvm::DenseSet<mlir::Value> baseClasses;
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<std::string>> inheritedMethodKeys;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
@@ -712,8 +715,67 @@ struct classInitialization {
         return true;
     }
 
-    // ponytail: immutable local base methods/getters; inheritance needs a complete
-    // receiver/home proof before widening.
+    bool proveHeritage(const HostContract & contract) {
+        llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
+        for (ctjs::CallOp call : calls) {
+            if (!step()) { return false; }
+            if (call.getArgs().size() != 1) { continue; }
+            auto [at, fresh] = completed.try_emplace(sourceValue(call.getArgs().front()), call);
+            if (!fresh) { at->second = {}; }
+        }
+        const auto walked = module.walk([&](ctjs::CallOp call) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+            if (!load || load.getName() != "__ctbrowser_class_heritage") {
+                return mlir::WalkResult::advance();
+            }
+            if (!llvm::is_contained(contract.initialIntrinsics, load.getName()) ||
+                call.getArgs().size() != 3 || !undefined(call.getReceiver()) ||
+                !call.getResult().use_empty()) {
+                refuse("class heritage needs its declared direct helper and unused result");
+                return mlir::WalkResult::interrupt();
+            }
+            const auto derived = sourceValue(call.getArgs()[0]);
+            const auto base = sourceValue(call.getArgs()[1]);
+            const auto derivedClosure = derived.getDefiningOp<ctjs::CreateClosureOp>();
+            const auto baseClosure = base.getDefiningOp<ctjs::CreateClosureOp>();
+            const auto derivedDone = completed.lookup(derived);
+            const auto baseDone = completed.lookup(base);
+            auto prototype = call.getArgs()[2].getDefiningOp<ctjs::CreateObjectOp>();
+            if (derived == base || !target(derivedClosure) || !target(baseClosure) ||
+                !derivedDone || !baseDone || !prototype ||
+                derivedClosure->getBlock() != call->getBlock() ||
+                baseClosure->getBlock() != call->getBlock() ||
+                derivedDone->getBlock() != call->getBlock() ||
+                baseDone->getBlock() != call->getBlock() ||
+                prototype->getBlock() != call->getBlock() ||
+                !derivedClosure->isBeforeInBlock(call) || !prototype->isBeforeInBlock(call) ||
+                !baseDone->isBeforeInBlock(call) || !call->isBeforeInBlock(derivedDone) ||
+                !heritage.try_emplace(derived, call).second) {
+                refuse("class heritage needs an earlier completed local base and fresh derived "
+                       "prototype");
+                return mlir::WalkResult::interrupt();
+            }
+            // Strict source order rules out cycles. Every base's exact home,
+            // prototype, captures and complete use census still pass examine.
+            baseClasses.insert(base);
+            return mlir::WalkResult::advance();
+        });
+        return !walked.wasInterrupted();
+    }
+
+    bool heritageUse(mlir::OpOperand & use, mlir::Value constructor) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        if (!call || call.getArgs().size() != 3 ||
+            heritage.lookup(sourceValue(call.getArgs()[0])) != call) {
+            return false;
+        }
+        return (use.getOperandNumber() == 2 || use.getOperandNumber() == 3) &&
+               sourceValue(use.get()) == constructor;
+    }
+
+    // ponytail: ordered local ancestry; super construction and inherited dispatch
+    // still require receiver/home normalization before semantic admission.
     bool examine(ctjs::CallOp call, bool domEntry) {
         if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
@@ -736,6 +798,7 @@ struct classInitialization {
             auto * op = use.getOwner();
             if (op == call && use.getOperandNumber() == 2) { continue; }
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (heritageUse(use, closure.getResult())) { continue; }
             if (auto definition = llvm::dyn_cast<ctjs::DefineAccessorOp>(op)) {
                 if (use.getOperandNumber() != 0 || definition->getBlock() != call->getBlock() ||
                     !definition->isBeforeInBlock(call) ||
@@ -788,10 +851,15 @@ struct classInitialization {
         }
         auto prototype = attachment ? attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>()
                                     : ctjs::CreateObjectOp{};
-        if (!prototype || !home || !backedge || instances.empty() ||
+        if (!prototype || !home || !backedge ||
+            (instances.empty() && !baseClasses.contains(closure.getResult())) ||
             prototype->getBlock() != call->getBlock() || home.getValue() != prototype.getResult() ||
             backedge.getObject() != prototype.getResult()) {
             return refuse("class setup needs its exact fresh prototype, constructor and home");
+        }
+        if (auto inherited = heritage.lookup(closure.getResult());
+            inherited && inherited.getArgs()[2] != prototype.getResult()) {
+            return refuse("class heritage prototype differs from its attached prototype");
         }
         const auto firstConstructorRead = constructorReads.size();
         llvm::StringSet<> methodKeys;
@@ -802,6 +870,9 @@ struct classInitialization {
             if ((op == attachment || op == home) && use.getOperandNumber() == 2) { continue; }
             if (op == backedge && use.getOperandNumber() == 0) { continue; }
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (op == heritage.lookup(closure.getResult()) && use.getOperandNumber() == 4) {
+                continue;
+            }
             auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
             if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
                 return refuse("class prototype is observed or mutated outside initialization");
@@ -814,6 +885,16 @@ struct classInitialization {
                 return refuse("class prototype needs unique ordinary method definitions");
             }
             definitions.push_back(write);
+        }
+        if (auto inherited = heritage.lookup(closure.getResult())) {
+            auto base = inheritedMethodKeys.find(sourceValue(inherited.getArgs()[1]));
+            if (base == inheritedMethodKeys.end()) {
+                return refuse("class heritage base setup has not been proved");
+            }
+            for (const auto & key : base->second) {
+                if (!step()) { return false; }
+                methodKeys.insert(key);
+            }
         }
         llvm::DenseSet<mlir::Operation *> methodHomes;
         for (ctjs::SetPropertyOp definition : definitions) {
@@ -872,6 +953,11 @@ struct classInitialization {
             }
         }
         auto & entry = function.getBody().front();
+        if (heritage.count(closure.getResult())) {
+            // An ancestry proof does not establish super completion, receiver
+            // rebinding or constructor effects. Preserve the original body.
+            return refuse("derived class requires receiver-preserving super normalization");
+        }
         if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
             !entry.getArgument(ctjs::arg_callee).use_empty() ||
             !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
@@ -895,6 +981,11 @@ struct classInitialization {
         }
         setup.insert(home);
         setup.insert(backedge);
+        auto & keys = inheritedMethodKeys[closure.getResult()];
+        for (const auto & key : methodKeys) {
+            if (!step()) { return false; }
+            keys.push_back(key.first().str());
+        }
         return true;
     }
 
@@ -1005,6 +1096,9 @@ struct classInitialization {
         }
         for (ctjs::CallOp call : calls) {
             if (!proveCells(call->getParentOfType<ctjs::FuncOp>())) { return false; }
+        }
+        if (!proveHeritage(contract)) { return false; }
+        for (ctjs::CallOp call : calls) {
             if (!examine(call, domEntry)) { return false; }
         }
         const auto recordHelper = [&](mlir::Operation * op) {

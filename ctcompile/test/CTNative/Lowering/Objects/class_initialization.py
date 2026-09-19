@@ -119,6 +119,7 @@ OBSERVATIONS = {
     "prototype-alias": (11, 11),
     "field-initializer": (7, 7),
     "inherited": (7, 7),
+    "inherited-explicit": (7, 7),
     "inherited-dispatch": (118, 118),
     "bootstrap-base": (7, 7),
     "static-getter": (1, 1),
@@ -312,6 +313,55 @@ def prepare(args, name, source, manifest, *, success, options="", diagnostic="")
     ):
         raise RuntimeError(f"{name}: preparation failed without a diagnostic or emitted partial IR")
     return output
+
+
+def check_ancestry_inputs(args, source, manifest):
+    text = source.read_text()
+    load = re.search(
+        r'(%\w+) = "ctjs.load_global"\(\) <\{name = "__ctbrowser_class_heritage"', text
+    )
+    if not load:
+        raise RuntimeError("ancestry control lost its original heritage helper")
+    call = re.search(r'^.*"ctjs.call"\(' + re.escape(load[1]) + r", [^\n]+\n", text, re.M)
+    operands = call[0].split("(", 1)[1].split(")", 1)[0].split(", ")
+    _, _, derived, base, prototype = operands
+    completion = re.search(
+        r'^.*"ctjs.call"\(%\w+, %\w+, ' + re.escape(base) + r"\)[^\n]+\n", text, re.M
+    )
+    if not completion or len(operands) != 5:
+        raise RuntimeError("ancestry control lost its source completion order")
+    cases = {
+        "self": text.replace(call[0], call[0].replace(", " + base + ",", ", " + derived + ",")),
+        "late-base": text.replace(completion[0], "").replace(call[0], call[0] + completion[0]),
+        "duplicate": text.replace(
+            call[0], call[0] + re.sub(r"%\w+ =", "%duplicate_heritage =", call[0], count=1)
+        ),
+        "different-prototype": text.replace(
+            call[0],
+            '    %unattached = "ctjs.create_object"() : () -> !ctjs.value\n'
+            + call[0].replace(", " + prototype + ")", ", %unattached)"),
+        ),
+    }
+    for label, changed in cases.items():
+        path = args.work / f"ancestry-{label}.mlir"
+        path.write_text(changed)
+        prepare(
+            args,
+            f"ancestry-{label}",
+            path,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
+            success=False,
+            diagnostic="class heritage",
+        )
+    prepare(
+        args,
+        "ancestry-undeclared",
+        source,
+        dict(manifest, initial_intrinsics=["__ctbrowser_class_defined"]),
+        success=False,
+        diagnostic="class heritage needs its declared direct helper",
+    )
+    return len(cases) + 1
 
 
 def check_proof_inputs(args, source, manifest, prepared, name):
@@ -801,7 +851,7 @@ def main():
                 # Generic assembly preserves every operation and operand.
                 *(
                     ["--mlir-print-op-generic"]
-                    if name in ("inherited-dispatch", "bootstrap-base")
+                    if name in ("inherited-explicit", "inherited-dispatch", "bootstrap-base")
                     else []
                 ),
                 "-o",
@@ -812,7 +862,7 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        if name in ("inherited", "inherited-dispatch", "bootstrap-base"):
+        if name.startswith("inherited") or name == "bootstrap-base":
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
             manifest["initial_intrinsics"] += [
@@ -822,6 +872,7 @@ def main():
                 "__ctbrowser_super_get",
             ]
         if name.startswith(("static-throw-", "static-error-")) or name in (
+            "bootstrap-base",
             "bootstrap-config-defaults",
             "bootstrap-config-r-defaults",
             "bootstrap-config-r-h-defaults",
@@ -853,9 +904,10 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
-            "inherited": "class inheritance requires proved heritage, receiver and super initialization",
-            "inherited-dispatch": "class inheritance requires proved heritage, receiver and super initialization",
-            "bootstrap-base": "class inheritance requires proved heritage, receiver and super initialization",
+            "inherited": "derived class requires receiver-preserving super normalization",
+            "inherited-explicit": "derived class requires receiver-preserving super normalization",
+            "inherited-dispatch": "derived class requires receiver-preserving super normalization",
+            "bootstrap-base": "class method capture is not its constructor or an inert sibling helper",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -883,6 +935,8 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "inherited-explicit":
+            preparation_refusals += check_ancestry_inputs(args, structured, manifest)
         if name == "bootstrap-r":
             key_checked, key_refused = check_prototype_keys(args, prepared)
         if name == "global-holder-chain":
