@@ -101,4 +101,8 @@
 // Uncalled straight-line leaves prove their original bodies without parameter
 // facts: literals, identity returns, typeof/Not/Void and strict equality are inert.
 // Both live closures and class-retired slots retain this proof; captures, calls,
-// coercions and unknown properties refuse. Complete H still needs general F keys.
+// coercions and unknown properties refuse. Complete H's unknown receivers and
+// iterator bodies still need their independent proof.
+// Confined parameter/local cells retain arbitrary values and branch writes.
+// Uncalled uncaptured nested declarations require complete independent proof;
+// invoked or escaping children, captures and effects in either body still refuse.

@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 189; ++control) {
+        for (unsigned control = 0; control < 201; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -949,7 +949,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                                                 : "t ? e : t";
                 source.replace(source.find("return t;"), 9, "return " + expression + ";");
             }
-            if (control >= 181) {
+            if (control >= 181 && control < 189) {
                 const std::string body =
                     control == 182 ? "if (t) { if (e) return typeof t; return !e; } return void t;"
                     : control == 183 ? "if (t === e) return true; return false;"
@@ -960,8 +960,63 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                      : "if (t) return e; return t;";
                 source.replace(source.find("return t;"), 9, body);
             }
+            if (control >= 189) {
+                const std::string body =
+                    control == 191
+                        ? "let saved = t; function hidden(saved) { return typeof saved; } "
+                          "saved = e; return saved;"
+                    : control == 192 ? "function hidden(t) { unknown(t); } return t;"
+                    : control == 193 ? "function hidden() { return t; } return t;"
+                    : control == 194 ? "function hidden(t) { return t; } return hidden(t);"
+                    : control == 195 ? "function hidden(t) { return t; } return t.value;"
+                    : control == 189 || control == 196
+                        ? "function hidden(t) { return t; } return typeof t;"
+                        : "function hidden(t) { return t; } t = e; "
+                          "if (t) t = !e; else t = typeof e; return t;";
+                source.replace(source.find("return t;"), 9, body);
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
+            if (control >= 189) {
+                ctjs::CreateCellOp cell;
+                candidate->walk([&](ctjs::CreateCellOp found) {
+                    if (!cell && found->getParentOfType<ctjs::FuncOp>()
+                                         .getBody()
+                                         .front()
+                                         .getNumArguments() == ctjs::implicit_arguments + 2) {
+                        cell = found;
+                    }
+                });
+                if (!check(static_cast<bool>(cell),
+                           "unused source body retains a real local cell")) {
+                    return;
+                }
+                auto function = cell->getParentOfType<ctjs::FuncOp>();
+                if (control == 197) {
+                    for (auto read : llvm::make_early_inc_range(cell.getResult().getUsers())) {
+                        if (auto get = llvm::dyn_cast<ctjs::CellGetOp>(read)) {
+                            get->setOperand(0, function.getBody().front().getArgument(
+                                                   ctjs::implicit_arguments));
+                            break;
+                        }
+                    }
+                }
+                if (control == 198 || control == 200) {
+                    mlir::Value replacement = cell.getResult();
+                    if (control == 198) {
+                        replacement =
+                            function.getBody().front().getArgument(ctjs::implicit_arguments);
+                    }
+                    function.walk([&](ctjs::CellSetOp write) {
+                        write->setOperand(control == 198 ? 0 : 1, replacement);
+                    });
+                }
+                if (control == 199) {
+                    function.walk([&](ctjs::ReturnOp returned) {
+                        returned->setOperand(0, cell.getResult());
+                    });
+                }
+            }
             // Input reports cannot bypass any source proof.
             (*candidate)->setAttr("ctnative.supplied", mlir::UnitAttr::get(&context));
             const auto original = printed(*candidate);
@@ -1026,7 +1081,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
                         control == 91 || control == 103 || control == 115 || control == 125 ||
                         control == 139 || control == 147 || control == 153 || control == 164 ||
-                        control == 171 || control == 180 || control == 188
+                        control == 171 || control == 180 || control == 188 || control == 196
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -1042,7 +1097,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 141 && control != 148 && control != 151 && control != 157 &&
                 control != 158 && control != 165 && control != 166 && control != 167 &&
                 control != 172 && control != 173 && control != 174 && control != 181 &&
-                control != 182 && control != 183) {
+                control != 182 && control != 183 && control != 189 && control != 190 &&
+                control != 191) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }

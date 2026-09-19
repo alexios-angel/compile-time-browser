@@ -1978,6 +1978,44 @@ FILTER_IDENTITIES = ["Object", "Array", "String"]
 DYNAMIC_ITERATION = ["__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"]
 CLASS_CASES.update(FILTER_CASES)
 CLASS_REFUSALS.update(FILTER_REFUSALS)
+# Shadowed child names make the frontend box these otherwise local values.
+# Neither the outer helper nor its child is called to manufacture parameter facts.
+UNUSED_CELL_CASES = {
+    "parameter": "function hidden(t) { return t; } const saved = t; t = e; return saved === t;",
+    "branch": "function hidden(t) { return t; } const saved = t; "
+    "if (t) { t = e; t = !t; } else { t = typeof e; } return saved === t;",
+    "local": "function hidden(local) { return local; } let local = t; "
+    "local = e; return typeof local;",
+}
+UNUSED_CELL_REFUSALS = {
+    "invoked_child": "function hidden(t) { return t; } t = e; return hidden(t);",
+    "capture": "function hidden() { return t; } t = e; return t;",
+    "child_effect": "function hidden(t) { return t(); } t = e; return t;",
+    "child_property": "function hidden(t) { return t.value; } t = e; return t;",
+    "outer_effect": "function hidden(t) { return t; } if (false) t = e(); return t;",
+    "child_escape": "function hidden(t) { return t; } t = e; return t ? hidden : t;",
+}
+for name, body in UNUSED_CELL_CASES.items():
+    # Standalone declarations still need class initialization's helper census.
+    CLASS_REFUSALS["class_unused_cell_" + name] = (
+        "function unusedCell(t, e) { " + body + " }\n" + CLASS + READ
+    )
+for name, body in UNUSED_CELL_REFUSALS.items():
+    CLASS_REFUSALS["class_unused_cell_" + name] = (
+        "function unusedCell(t, e) { " + body + " }\n" + CLASS + READ
+    )
+for name, body in (UNUSED_CELL_CASES | UNUSED_CELL_REFUSALS).items():
+    source_body = (
+        "const H = { unused: function unusedCell(t, e) { "
+        + body
+        + " }, read(t) { return t.getAttribute('x'); } };\n"
+        + CLASS
+        + "return H.read(element) === null && element.getAttribute(shape.read()) === null;"
+    )
+    if name in UNUSED_CELL_CASES:
+        CLASS_CASES["class_unused_cell_holder_" + name] = (source_body, "1000")
+    else:
+        CLASS_REFUSALS["class_unused_cell_holder_" + name] = source_body
 CASES = {
     "direct_read": (
         """function directRead(target, key) { return target.getAttribute(key); }
@@ -2454,6 +2492,17 @@ def main():
         check_mutable_helper(ir.read_text())
         if "ctjs.construct" not in ir.read_text() or '"prototype"' not in ir.read_text():
             raise RuntimeError(f"{name}: source lost ordinary class construction")
+        if name.startswith("class_unused_cell_"):
+            helpers = [
+                match[0]
+                for match in FUNCTION.finditer(ir.read_text())
+                if match[1].rsplit("$", 1)[0] == "unusedCell"
+            ]
+            if len(helpers) != 1 or any(
+                operation not in helpers[0]
+                for operation in ("ctjs.create_cell", "ctjs.cell_get", "ctjs.cell_set")
+            ):
+                raise RuntimeError(f"{name}: unused helper lost its original local cell operations")
         for owned in (False, True):
             request = dict(
                 contract,

@@ -1415,7 +1415,10 @@ struct DOMSource {
         return visit(visit, block, 0, frame);
     }
 
-    bool proveUnusedBody(ctjs::FuncOp function) {
+    bool proveUnusedBody(ctjs::FuncOp function, unsigned depth = 0) {
+        if (depth == 64 || !active.insert(function).second) {
+            return refuse("unused DOM helper nesting is recursive or too deep");
+        }
         if (function.getUpvalueCount() != 0 || !normalizeCompletion(function) ||
             !checkBody(function, false)) {
             return false;
@@ -1425,11 +1428,63 @@ struct DOMSource {
         // deliberately excluded. Check the original body before retiring it.
         // Check both arms, including discarded values and constant-dead arms.
         // checkBody already proved their dominance, completion and shadow frames.
-        // ponytail: uncaptured conditional leaves; loops and helper calls need
-        // their own complete independent body proof.
+        // Cells hold arbitrary values, never host facts. Their identities must
+        // remain private, and every operation on every read is still checked.
+        // ponytail: uncaptured conditional bodies; loops and invoked helpers
+        // need their own complete independent body proof.
         const auto checked = function.walk([&](mlir::Operation * operation) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (operation == function) { return mlir::WalkResult::advance(); }
+            if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(operation)) {
+                for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    if (use.getOwner()->getParentOfType<ctjs::FuncOp>() == function &&
+                        ((llvm::isa<ctjs::RootOp>(use.getOwner()) && use.getOperandNumber() == 1) ||
+                         (llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(use.getOwner()) &&
+                          use.getOperandNumber() == 0))) {
+                        continue;
+                    }
+                    refuse("unused DOM helper cell identity escapes its local state");
+                    return mlir::WalkResult::interrupt();
+                }
+                return mlir::WalkResult::advance();
+            }
+            if (llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(operation)) {
+                auto cell = operation->getOperand(0).getDefiningOp<ctjs::CreateCellOp>();
+                if (cell && cell->getParentOfType<ctjs::FuncOp>() == function) {
+                    return mlir::WalkResult::advance();
+                }
+                refuse("unused DOM helper cell access lacks a local cell");
+                return mlir::WalkResult::interrupt();
+            }
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
+                const auto index = static_cast<unsigned>(closure.getFunction());
+                auto target = functions.lookup(index);
+                if (!target || !closure.getUpvalues().empty() || creations.lookup(index) != 1) {
+                    refuse("unused DOM helper child is captured or has ambiguous identity");
+                    return mlir::WalkResult::interrupt();
+                }
+                for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    if (!llvm::isa<ctjs::RootOp>(use.getOwner()) || use.getOperandNumber() != 1) {
+                        refuse("unused DOM helper child is invoked or its identity escapes");
+                        return mlir::WalkResult::interrupt();
+                    }
+                }
+                auto module = function->getParentOfType<mlir::ModuleOp>();
+                if (remaining / 2 < operationCount) {
+                    refuse("DOM helper expansion work budget exhausted");
+                    return mlir::WalkResult::interrupt();
+                }
+                remaining -= 2 * operationCount;
+                if (!mlir::SymbolTable::symbolKnownUseEmpty(target, module.getOperation()) ||
+                    !mlir::SymbolTable::symbolKnownUseEmpty(target, &module.getBodyRegion()) ||
+                    !proveUnusedBody(target, depth + 1)) {
+                    refuse("unused DOM helper child lacks a complete independent body proof");
+                    return mlir::WalkResult::interrupt();
+                }
+                return mlir::WalkResult::advance();
+            }
             if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
                           ctjs::ReturnOp, ctjs::TruthyOp, mlir::scf::IfOp, mlir::scf::YieldOp>(
                     operation)) {
@@ -1451,6 +1506,7 @@ struct DOMSource {
             return mlir::WalkResult::interrupt();
         });
         if (checked.wasInterrupted()) { return false; }
+        active.erase(function);
         expanded.insert(function);
         return true;
     }
