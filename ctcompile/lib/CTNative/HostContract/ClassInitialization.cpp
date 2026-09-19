@@ -58,6 +58,7 @@ struct classInitialization {
     llvm::SetVector<mlir::Operation *> capturedHelpers;
     llvm::SmallVector<ctjs::CreateClosureOp> capturedClosures;
     llvm::SmallVector<ctjs::CreateClosureOp> inertReceiverClosures;
+    llvm::SmallVector<ctjs::CallDirectOp> inertCalleeCalls;
     llvm::SetVector<mlir::Operation *> dispatchMethods;
     llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
 
@@ -1020,18 +1021,26 @@ struct classInitialization {
                 return mlir::WalkResult::advance();
             }
             auto & block = fn.getBody().front();
+            const bool entryLocal = domEntry && op->getParentOfType<ctjs::FuncOp>() == entry &&
+                                    closure->getParentOfType<ctjs::FuncOp>() == entry &&
+                                    callee == closure.getResult();
+            // A local helper can save its receiver in an inert filter callback.
+            // Prove the original callback before examining that receiver use.
+            if (entryLocal && !helperCallbacks(fn)) { return mlir::WalkResult::interrupt(); }
             if (!unusedReceiver(fn) || !block.getArgument(ctjs::arg_new_target).use_empty()) {
                 return mlir::WalkResult::advance();
             }
             helpers.insert(fn);
             helperCalls.insert(op);
-            if (domEntry && op->getParentOfType<ctjs::FuncOp>() == entry &&
-                closure->getParentOfType<ctjs::FuncOp>() == entry &&
-                callee == closure.getResult()) {
+            if (entryLocal) {
                 // This original call survives class rewriting and receives the
                 // complete typed DOM proof. Uncalled holder slots may disappear
                 // during rewriting, so they retain the strict source census.
                 domEntryHelpers.insert(fn);
+                if (direct) {
+                    inertCalleeCalls.push_back(direct);
+                    capturedHelpers.insert(closure);
+                }
             }
             return mlir::WalkResult::advance();
         };
@@ -1696,6 +1705,13 @@ struct classInitialization {
         // The original capture proof checked every implicit argument before any
         // mutation. Only an unobserved sibling closure can disappear here; a
         // remaining entry call still goes through the ordinary closure lift.
+        for (ctjs::CallDirectOp call : inertCalleeCalls) {
+            // Entry-local calls survive method normalization. Their original
+            // callee uses were proved to be only inert callback enclosures.
+            mlir::OpBuilder at(call);
+            call.getCalleeValueMutable().assign(ctjs::ConstantOp::create(
+                at, call.getLoc(), ctjs::UndefinedAttr::get(module.getContext())));
+        }
         for (mlir::Operation * operation : capturedHelpers) {
             auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
             mlir::SymbolTable::setSymbolVisibility(target(closure),

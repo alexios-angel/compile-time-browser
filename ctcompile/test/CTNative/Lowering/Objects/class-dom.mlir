@@ -71,3 +71,7 @@
 // DOM proof without synthetic duplicate iterators. Captured H, stored receivers,
 // aliases, parameters and loop branches preserve dynamic dataset reads; changing
 // cells, callback identity/this, detached methods and repeated iterators refuse.
+// Direct entry helpers prove original callback enclosures before unused receiver
+// checks, matching captured helpers. Argument writes and saved String results
+// retain their order; observed this/callee/new.target, escapes, invalid arguments,
+// replacement, unused helpers, early-return loops and repeated iterators refuse.

@@ -1196,6 +1196,71 @@ DYNAMIC_REFUSALS.update(
         ),
     }
 )
+# Direct entry helpers use the same original callback and receiver census as
+# captured helpers; argument effects and returned snapshots keep source order.
+DYNAMIC_HELPER_METHOD = (
+    "function readDataset(t) { " + DYNAMIC_BODY + "}\n"
+    "class Shape { constructor(t) { this.element = t; } "
+    "read() { return readDataset(this.element); } }\n"
+    "return new Shape(element).read() === 'value|' && element.getAttribute('x') === null;\n"
+)
+DYNAMIC_HELPER_ORDER = DYNAMIC_HELPER.replace(
+    "const keys =", "t.setAttribute('marker', 'helper'); const keys ="
+).replace(
+    "return readDataset(element) === 'value|'",
+    "return readDataset((element.setAttribute('marker', 'argument'), element)) === 'value|' "
+    "&& element.getAttribute('marker') === 'helper'",
+)
+DYNAMIC_CASES.update(
+    {
+        "class_dynamic_helper": (DYNAMIC_REFUSALS.pop("class_dynamic_helper"), "1000"),
+        "class_dynamic_helper_method": (DYNAMIC_HELPER_METHOD, "1000"),
+        "class_dynamic_helper_order": (DYNAMIC_HELPER_ORDER, "1000"),
+        "class_dynamic_helper_snapshot": (
+            DYNAMIC_HELPER.replace(
+                "return readDataset(element)",
+                "const saved = readDataset(element); "
+                "element.setAttribute('data-bs-toggle', 'changed'); return saved",
+            ),
+            "1000",
+        ),
+    }
+)
+DYNAMIC_REFUSALS.update(
+    {
+        "class_dynamic_helper_this": DYNAMIC_HELPER.replace(FILTER_PREDICATE, "t => this"),
+        "class_dynamic_helper_callback_identity": DYNAMIC_HELPER.replace(
+            FILTER_PREDICATE, "function callback(t) { return callback; }"
+        ),
+        "class_dynamic_helper_effect": DYNAMIC_HELPER.replace(FILTER_PREDICATE, "t => unknown(t)"),
+        "class_dynamic_helper_escape": DYNAMIC_HELPER.replace(
+            "return readDataset(element)",
+            "element.setAttribute('leak', readDataset); return readDataset(element)",
+        ),
+        "class_dynamic_helper_replaced": DYNAMIC_HELPER.replace(
+            "return readDataset(element)",
+            "readDataset = function(t) { return ''; }; return readDataset(element)",
+        ),
+        "class_dynamic_helper_invalid": DYNAMIC_HELPER.replace(
+            "readDataset(element)", "readDataset({})"
+        ),
+        "class_dynamic_helper_receiver": DYNAMIC_HELPER.replace(
+            "let joined = '';", "let joined = this;"
+        ),
+        "class_dynamic_helper_new_target": DYNAMIC_HELPER.replace(
+            "let joined = '';", "let joined = new.target;"
+        ),
+        "class_dynamic_helper_unused": DYNAMIC_HELPER.replace(
+            "return readDataset(element) === 'value|' &&", "return"
+        ),
+        "class_dynamic_helper_repeated": DYNAMIC_HELPER.replace(
+            "return readDataset(element)", "readDataset(element); return readDataset(element)"
+        ),
+        "class_dynamic_helper_early": DYNAMIC_HELPER.replace(
+            "const keys =", "if (t.getAttribute('x') !== null) return ''; const keys ="
+        ),
+    }
+)
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
 # Retain the entire original method as the next boundary, including M, for-of
