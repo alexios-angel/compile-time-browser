@@ -252,8 +252,8 @@ instance; parameter aliases and prototype observations remain conservative.
 Original reached methods share a complete proof of their actual calls; only
 uncalled zero-argument methods receive synthetic proof invocations. Source loops
 use the existing exact completion proof even without a completion switch.
-Loop-nested iterators, original H's Unicode normalization and unused slots remain
-separate boundaries; slots cannot borrow authority from another invocation.
+Loop-nested iterators and unused H slots remain separate boundaries; slots cannot
+borrow authority from another invocation.
 Direct helpers called before and after an entry early return share this proof.
 Each conditional arm checks its own frame state; both must reach the same state
 at the join. Missing, repeated or loop-nested frame exits refuse. More complex
@@ -267,9 +267,21 @@ Lone surrogates survive, and existing String concatenation rejoins split pairs.
 A strict null comparison refines an original optional String only in its
 non-null arm, including reversed comparisons and negation. Receiver identity
 and literal indices are checked before emission. Other indices,
-coercions, unrefined nullable inputs and `toLowerCase` remain unsupported. These
-String results grant no dataset-membership or dynamic-assignment-key authority.
-The VM's byte-indexing behavior is recorded separately from Node/native results.
+coercions and unrefined nullable inputs remain unsupported.
+A proved `charAt(0)` result may call `toLowerCase()` with no arguments. Empty
+results remain empty; nonempty results call public Core
+`unicode_lowercase_unit`, using pinned Unicode 17 full lowercase, including
+U+0130 expansion and unchanged lone surrogates. Whole-string and contextual
+casing remain outside this proof. The VM's byte indexing and ASCII casing are
+recorded separately from Node/native results.
+
+The exact `i.charAt(0).toLowerCase() + i.slice(1)` expression may supply an output
+key when both operands use the same proved prefix-stripped snapshot member.
+Only underscore lowercases to underscore, so `__proto__` retains exactly one
+original `bs__proto__` preimage. Ordinary collisions overwrite in source order
+through the existing snapshot assignment helper. Sole-writer and single-traversal
+checks remain; normalization never grants membership in the original dataset.
+The unchanged original `H.getDataAttributes` method, including M, uses this proof.
 
 `toString` requires an actual Number receiver; arbitrary
 coercion hooks remain unsupported. Even a method with only an intrinsic load
@@ -282,7 +294,7 @@ target and that target does not observe its callee argument. All premises are
 checked before deleting any closure, so child deletion order cannot authorize a
 parent. Nested ordinary helper dependencies remain refused; replacement and
 filter callbacks use the separate original-body proofs above. Full Bootstrap H
-still needs its complete Unicode key normalization and unused-slot proof;
+still needs its unused-slot proof and publication boundary;
 no slot bypasses the census merely because another slot is called.
 Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
 results defer to final typed DOM proof, which checks both source branches.

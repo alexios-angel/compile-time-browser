@@ -1,5 +1,44 @@
 # What native Bootstrap needs next
 
+## Original H key normalization and invariant array reloads, 2026-09-19 UTC
+
+Resumed clean **dadadb5c** and its recorded original-H boundary in HANDOFF and
+AGENT-SYNC's **05:48 closure**. September 7 WIP is already an ancestor; no dirty
+predecessor work remained. Three agents worked on Core casing, escape reloads
+and H proof review. Two reached service limits; root completed their work.
+
+**794af039 / eaae9318**, atomically merged as **7361a3e5**, add a pinned Unicode
+17 generator and public Core lowercase for one UTF-16 unit. **b484511f** admits
+the unchanged original `H.getDataAttributes`, including M. A proved `charAt(0)`
+may lowercase through Core; the exact first-unit-plus-tail expression preserves
+separate dataset-key identity and a unique `__proto__` preimage. Ordinary output
+collisions retain ordered overwrites. Whole-string casing and full H remain open.
+
+**17dc99aa** proves repeated dense-array own-element reads in invariant latches.
+Original base/key identity, the read-only loop census, primitive conversions,
+64-layer/work budgets and final-index limits remain checked. Prior source bodies
+are preserved; a genuinely varying key and loop mutation still refuse.
+
+Focused passes: Core **1/1 (0.57s)**; native transaction **1/1 (4.42s)**; host
+contract **1/1 (0.47s)**; class/assignment lit **2/2 (223.05s total)**; arrays
+**1/1 (1.24s)**; four escape oracles **4/4 (0.12s)**. Class: **472 observations,
+8 native executions, 3,448 refusals**. Assignment: **11 sources, 239 observations,
+8 GCC/Clang binaries, lifetime sanitizer, 236 refusals**. Existing VM differences
+are explicit: 40 class byte-index observations and five assignment casing results;
+native agrees with Node. New escape oracle: **33 sites / 15 sound / 15 of 24
+precision**, zero violations. All 19 changed source/test hashes match the devbox.
+Required formatting retains 26 baseline diagnostics in nine unchanged files;
+changed checks pass. Exact commands/failures: HANDOFF and `/tmp/ctcompile-h-lowercase/`.
+
+**Next:** complete original H still refuses at `DOM helper object requires unique
+own callable slots` in the shared closed-callable census. Prove its complete slot
+set and unused bodies, then publication; do not erase unproved siblings. W's
+Object.entries/destructuring/original s/RegExp/TypeError/spread, complex entry
+completion, loop-nested iterators, broader part 25 and the application driver
+remain. Full CTest/compiler lit, broad corpus/native matrices, WPT/test262 and
+whole Bootstrap were skipped. No full-suite or whole-bundle gain is claimed.
+Script/binding semantics are unchanged. Native Bootstrap and the plan remain unfinished.
+
 ## Repeated helpers across entry exits and budgeted invariant depth, 2026-09-19 UTC
 
 **5c912e13** finishes the interrupted conditional-callee thread at **41527341**

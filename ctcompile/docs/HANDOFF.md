@@ -15,6 +15,99 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original H key normalization and invariant array reloads, 2026-09-19 UTC
+
+Resumed clean **dadadb5c**, its HANDOFF promise to handle original H casing, and
+the **05:48 AGENT-SYNC closure**. Both-agent histories and unmerged branches were
+reviewed; September 7 WIP is already an ancestor. No predecessor edits remained.
+Three agents worked on Core casing, dense reloads and H proof review. Two reached
+service limits; root completed the escape draft, native proof and focused gates.
+
+Landed in small commits:
+
+- **794af039** generates pinned Unicode 17 full-lower mappings for one UTF-16
+  unit. **eaae9318** exposes `ctbrowser::unicode_lowercase_unit` and checks all
+  65,536 units against the UCD-derived checksum, including underscore preimage,
+  U+0130 expansion and lone surrogates. The isolated branch landed atomically as
+  **7361a3e5**. This is additive Core functionality; no binding/Script behavior
+  changed. Core source/header/test and the shared generator are journaled.
+- **b484511f** admits unchanged original `H.getDataAttributes` with M. Only a
+  proved `charAt(0)` result may lowercase; empty results remain empty. Output-key
+  proof recognizes lowercase-first-unit plus the unchanged tail of the same
+  prefix-stripped key. The original dataset key remains separate. Only underscore
+  lowercases to underscore, preserving one `__proto__` preimage; ordinary
+  collisions use the existing ordered snapshot assignment helper. Sole-writer,
+  traversal, intrinsic identity, snapshot and effect checks remain.
+- **17dc99aa** admits invariant dense own-element reloads through the shared
+  CFG/SCF proof. Base/key identities, the read-only census, exact primitive
+  conversions, 64-layer/work limits and final-index bounds remain checked.
+  Two old C++ expression rows and three old source oracles retain their bodies.
+
+All **346 prior class/field bodies and 49 assignment bodies** are unchanged.
+Two former class refusals now admit. Nine assignment bodies, 14 normalized-result
+fixtures and seven transaction controls per provider cover collisions, casing,
+empty keys, prototype writes, ownership and refusal rollback. Forty existing
+class byte-index divergences and five assignment casing divergences are pinned;
+Node and native agree. The VM remains the unchanged differential oracle.
+
+Measured focused validation, all devbox work under the shared build lock:
+
+- Core build `ctbrowser-test-core_basics` (**9 actions**), exact CTest
+  `core_basics`: **1/1 (0.57s; total 0.58s)**. Generator reproduction and all-unit
+  mapping validation pass. Isolated-worktree formatter passes using Homebrew
+  clang-format 23.1.1.
+- Native probe targets `ctjs-opt ctjs-translate ctcompile-test-native-reference`
+  (**276 actions**, Core header dependents rebuilt). Original H admits; complete
+  H still refuses at the closed-callable slot census. A direct assignment probe
+  first supplied an inapplicable class identity; the actual fixture manifest is
+  correct. Native gate adds `ctcompile-test-exception-recovery
+  ctcompile-test-host-contract` (**5 actions**). Exact CTests:
+  `ctcompile_exception_recovery` **1/1 (4.42s)** and `ctcompile_host_contract`
+  **1/1 (0.47s)**, with anchored `-R`, `--output-on-failure --no-tests=error`.
+- Generated `build/ctcompile/test` lit selects only
+  `CTNative/Lowering/Objects/class-dom.mlir` and
+  `CTNative/Browser/native-dom-assignment.test`: **2/2 (223.05s total)**.
+  Class: **472 source observations, 8 native executions, 3,448 refusals**.
+  Assignment: **11 sources, 239 observations, 8 GCC/Clang binaries, lifetime
+  ASan/UBSan with leak detection, 236 refusals**, both providers/policies/layouts.
+  Public Core calls, ordinary owning strings/JSON and existing browser helpers
+  appear in inspected output; Script/dynamic-dispatch exclusions pass.
+- Escape build targets `ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`: first **5 actions**,
+  corrected arrays **2 actions**. Exact `ctcompile_escape_analysis_arrays`:
+  **1/1 (1.24s; total 1.25s)**. Four generated-config lit cases
+  `Analysis/Escape/escape-claims/{invariant-reload,nested-invariant-latch,
+  invariant-add-sub-latch,invariant-bitwise-latch}.test`: **4/4 (0.12s)**.
+  Sites / sound / precision: **33 / 15 / 15 of 24**, **35 / 13 / 13 of 23**,
+  **41 / 17 / 17 of 26**, **44 / 19 / 19 of 28**; zero violations, partial,
+  pending or unclaimed sites. Final oracle replay rebuilt no targets.
+- First arrays failed **11 assertions (1.24s total)**: two old expression
+  expectations plus one new SCF fixture's undefined SSA value. The next four
+  oracles had zero soundness violations but failed verdict expectations for old
+  reloads and a constant-key producer. Those bodies were preserved, expectations
+  corrected, and a truly varying-key refusal added. No production change followed.
+- Required shared `tools/format.sh --check` reports **26 baseline diagnostics in
+  nine HEAD-identical files** with pinned clang-format 23.0.0git. Changed
+  C++/Python formatting, source preservation, JS/Python syntax and `git diff
+  --check` pass. All **19 changed source/test hashes** match the devbox. Evidence,
+  exact runnable commands and inspected output: `/tmp/ctcompile-h-lowercase/`.
+
+**Next:** the complete original H object still stops at
+`DOM helper object requires unique own callable slots` in
+`ctcompile/lib/CTNative/Analysis/ClosedCallable.cpp`. Continue its complete slot
+census and independent unused-body proof, then publication. Whole-string/contextual
+casing is outside the new single-unit API. W's Object.entries/destructuring/
+original s/RegExp/TypeError/spread, complex entry completion arithmetic,
+loop-nested iterators, invariant own-length/object-property reloads, broader
+part 25 and the application driver remain. Native Bootstrap and the overall plan
+are unfinished; no whole-bundle admission gain is claimed.
+
+Skipped: full CTest/compiler lit, public-class replay, complete DOM/String
+suites, broad corpus/native matrices, WPT/test262 and whole Bootstrap. These are
+focused passes. Browser compliance measurements remain historical. The temporary
+SSH authorized key and local private key were removed, preserving other keys.
+No push.
+
 ## Repeated helpers across entry exits and budgeted invariant depth, 2026-09-19 UTC
 
 Resumed **41527341** and the two dirty class fixture files from the **05:21/05:25
