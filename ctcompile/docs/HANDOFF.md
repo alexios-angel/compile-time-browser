@@ -15,6 +15,78 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Confined unused local cells, 2026-09-19 UTC
+
+**6c877519** resumes clean **632bfc98** and the original unused-H thread claimed
+at **10:42:50**, explicitly abandoned at **10:44:32** in AGENT-SYNC. Both agents'
+histories and unmerged branches were reviewed; September 7 WIP is already an
+ancestor. Parallel agents supplied native proof review, source fixtures and the
+Part 25 definition-semantics investigation; root completed integration and gates.
+
+Unused bodies now prove confined local cells without assigning types to their
+contents. Every cell identity use must be a same-function root, direct read or
+direct write; returned, stored, captured and unknown cell identities refuse.
+Uncalled nested declarations require unique uncaptured closures, root-only uses,
+no symbol references and recursive proof of every original body. Every arm,
+consumer, completion, frame and implicit argument remains checked, with bounded
+work/depth and recursion refusal. Calls, coercions, properties and effects still
+refuse. Existing source normalization and ordinary native ownership remain.
+
+All **425 prior driver sources** and **18 raw C++ JavaScript bodies** are unchanged.
+Added **three positive and 15 refusal driver bodies**, plus **12 transaction
+controls per provider**, including four refreshed-fingerprint cell forgeries.
+Source fixtures assert that actual cell operations survive import. Standalone
+unused declarations retain class initialization's separate refusal; equivalent
+local-holder fixtures exercise the shared proof used by H.
+
+Focused validation passed:
+
+- Built `ctjs-opt ctjs-translate ctcompile-test-native-reference
+  ctcompile-test-exception-recovery ctcompile-test-host-contract` with
+  `tools/remote-build.sh` under `/tmp/ctbrowser-devbox-build.lock`.
+- On the devbox, `ctest --test-dir projects/compile-time-browser/build
+  --output-on-failure --no-tests=error -R '^ctcompile_exception_recovery$'`:
+  **1/1, 4.61s (4.62s total)**. Separate exact selection
+  `'^ctcompile_host_contract$'`: **1/1, 0.47s (0.48s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'`:
+  **1/1, 283.35s**, **620 Node/interpreter observations**, **eight GCC/Clang
+  executions**, **4,844 refusals**. Four tested file hashes match the devbox;
+  emitted C++ and Script/dispatch/link exclusions pass. Pinned VM UTF-16
+  differences remain unchanged.
+- First build failed only on a new test's `BlockArgument`/`TypedValue` ternary;
+  an explicit `mlir::Value` fixed it. First class run **44.08s** exposed the new
+  standalone fixture boundary above. All source bodies were retained; holder
+  variants were added. Only the class test was retried after fixture changes,
+  with the three native tool targets reporting no rebuild work.
+- `tools/format.sh --check` reported **26 baseline diagnostics in nine
+  HEAD-identical files**. Changed C++ passes pinned clang-format; the Python
+  driver passes `black --check`; all 18 added sources pass Node syntax checks;
+  gate scripts pass `bash -n`; `git diff --check` passes. Docs need no build.
+
+**Next:** unchanged `class_filter_full_h` now refuses at `native DOM class:
+DOM class method body: native DOM source: unused DOM helper body contains an
+unproved operation: fn$7 / ctjs.create_object`. Local cells are proved; the
+original fresh result, iterator and callback still need their complete proof.
+The semantic boundary is missing parameter authority: unused `t` has no DOM
+identity, and unused setters lack proved DOM receivers/String keys. Merely
+allowing allocation or more inert operators cannot supply those facts. Use
+justified facts from the original application call graph; never insert calls,
+guess values or delete unproved siblings. Standalone helper registration remains
+separate. Part 25 still needs real own-data definition semantics/provenance,
+preserving assignment setters, literal `__proto__` and computed-key order.
+The existing class-field `emit_define_own`/`define_own_name` implementation was
+recorded in Part 25 and AGENT-SYNC for coordinated runtime work; it is not a
+trusted definition opcode. No escape code or precision measurement changed.
+W, nested iterators, broader ownership and the application driver remain.
+
+Skipped: full CTest/compiler lit, escape tests, standalone RegExp and broader
+DOM/String suites, separate lifetime matrices, broad corpus/native matrices,
+WPT/test262 and whole Bootstrap. No whole-bundle admission gain, browser/Script
+semantics change or new compliance count is claimed. Evidence:
+`/tmp/ctcompile-h-1047/`. Standard SSH authentication failed; the abandoned 10:42
+session key supplied temporary access and was removed at closure. No push.
+
 ## Unused conditional and early-return bodies, 2026-09-19 UTC
 
 Resumed clean **a76e1a53** and the original unused-H thread claimed at

@@ -1,5 +1,26 @@
 # What native Bootstrap needs next
 
+## Confined unused local cells, 2026-09-19 UTC
+
+**6c877519** proves private local-cell identities and every operation on their
+arbitrary contents, plus recursively proved uncalled uncaptured nested bodies.
+Source fixtures retain real cells, all earlier sources and all effect refusals.
+Focused transaction **1/1 (4.62s total)**, host **1/1 (0.48s total)** and class DOM
+**1/1 (283.35s; 620 observations, eight executions, 4,844 refusals)** pass.
+Four hashes match; changed formatting and generated ownership/Script checks pass.
+The repository formatter still reports 26 baseline diagnostics in nine unchanged
+files. Full suites and broad matrices were skipped; exact commands and initial
+fixture/build failures are in HANDOFF and `/tmp/ctcompile-h-1047/`.
+
+Original full H now refuses at **fn$7 / ctjs.create_object**. Its complete
+fresh-result/iterator/callback proof still lacks genuine parameter authority;
+more inert operations cannot establish unknown DOM receivers or String keys.
+Do not invent calls or remove unproved siblings. Standalone unused declarations
+retain their separate class-initialization census. The original application call
+graph, real own-data definitions, W, nested iterators and the application driver
+remain. No whole-Bootstrap admission gain or browser/Script change is claimed.
+
+
 ## Unused conditional and early-return bodies, 2026-09-19 UTC
 
 **104ab81c** proves every original arm of unused total conditional helpers;
