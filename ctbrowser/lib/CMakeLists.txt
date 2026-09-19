@@ -141,6 +141,12 @@ file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
 "include(CMakeFindDependencyMacro)
 ${CTBROWSER_CONFIG_DEPS}
 include(\"\${CMAKE_CURRENT_LIST_DIR}/ctbrowser-targets.cmake\")
+# Match build-tree aliases while retaining the existing exported target names.
+foreach(subsystem core dom script style layout paint raster shell app)
+  if(NOT TARGET ctbrowser::\${subsystem})
+    add_library(ctbrowser::\${subsystem} ALIAS ctbrowser::ctbrowser-\${subsystem})
+  endif()
+endforeach()
 ")
 install(FILES "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
         DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser")
