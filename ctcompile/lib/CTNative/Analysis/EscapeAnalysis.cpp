@@ -964,6 +964,27 @@ void boundedNumberProduct(const ContentsValue & left, const ContentsValue & righ
     }
 }
 
+void boundedNumberDivision(const ContentsValue & left, const ContentsValue & right, bool remainder,
+                           ContentsValue & result) {
+    auto a = boundedConvertedNumber(left);
+    auto b = boundedConvertedNumber(right);
+    const bool negative = remainder ? !a : a.has_value() != b.has_value();
+    if (!a) { a = boundedConvertedNumber(left, true); }
+    if (!b) { b = boundedConvertedNumber(right, true); }
+    // Original Boolean/null and canonical Strings share unary's exact
+    // conversion. Bounded operands give an exact remainder; division also
+    // needs zero remainder. Mod keeps the dividend's sign, regardless of
+    // divisor sign. Keep the original signed zero.
+    if (a && b && *b != 0 && (remainder || *a % *b == 0)) {
+        const auto magnitude = remainder ? *a % *b : *a / *b;
+        if (negative && magnitude != 0) {
+            result.negativeIntegerNumber = magnitude;
+        } else {
+            result.integerNumber = magnitude;
+        }
+    }
+}
+
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
     // Add selects concatenation before Number conversion; even canonical
@@ -1239,16 +1260,23 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
         }
         if (!stride) {
-            // ponytail: one product of saved primitives; deeper repeated
+            // ponytail: one Mul/Div/Mod of saved primitives; deeper repeated
             // expressions need their own charged invariance proof.
-            auto product = increment.getDefiningOp<ctjs::BinaryOp>();
-            if (product && product.getKind() == ctjs::BinaryKind::Mul) {
+            auto binary = increment.getDefiningOp<ctjs::BinaryOp>();
+            if (binary && (binary.getKind() == ctjs::BinaryKind::Mul ||
+                           binary.getKind() == ctjs::BinaryKind::Div ||
+                           binary.getKind() == ctjs::BinaryKind::Mod)) {
                 if (!spend(2)) { return ArrayContentsFailure::WorkLimit; }
-                const auto left = invariant(product.getLhs());
-                const auto right = invariant(product.getRhs());
+                const auto left = invariant(binary.getLhs());
+                const auto right = invariant(binary.getRhs());
                 if (!left || !right) { return unsupported; }
                 ContentsValue result;
-                boundedNumberProduct(*left, *right, result);
+                if (binary.getKind() == ctjs::BinaryKind::Mul) {
+                    boundedNumberProduct(*left, *right, result);
+                } else {
+                    boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
+                                          result);
+                }
                 stride = subtract ? result.negativeIntegerNumber : result.integerNumber;
             }
         }
@@ -1848,24 +1876,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Div ||
                     binary.getKind() == ctjs::BinaryKind::Mod) {
-                    auto a = boundedConvertedNumber(left);
-                    auto b = boundedConvertedNumber(right);
-                    const bool remainder = binary.getKind() == ctjs::BinaryKind::Mod;
-                    const bool negative = remainder ? !a : a.has_value() != b.has_value();
-                    if (!a) { a = boundedConvertedNumber(left, true); }
-                    if (!b) { b = boundedConvertedNumber(right, true); }
-                    // Original Boolean/null and canonical Strings share unary's
-                    // exact conversion. Bounded operands give an exact remainder;
-                    // division also needs zero remainder. Mod keeps the dividend's
-                    // sign, regardless of divisor sign. Keep the original signed zero.
-                    if (a && b && *b != 0 && (remainder || *a % *b == 0)) {
+                    boundedNumberDivision(left, right, binary.getKind() == ctjs::BinaryKind::Mod,
+                                          result);
+                    if (result.integerNumber || result.negativeIntegerNumber) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        const auto magnitude = remainder ? *a % *b : *a / *b;
-                        if (negative && magnitude != 0) {
-                            result.negativeIntegerNumber = magnitude;
-                        } else {
-                            result.integerNumber = magnitude;
-                        }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Pow) {

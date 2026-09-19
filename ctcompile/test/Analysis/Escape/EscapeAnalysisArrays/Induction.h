@@ -605,6 +605,38 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(invariantProduct, makeUnit,
                            "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
                    "mul %d, %one", "mul %d, %two"));
+    for (const std::string operation : {"div", "mod"}) {
+        const auto source = replace(invariantProduct, "mul %d, %one",
+                                    operation + " %d, " + (operation == "div" ? "%one" : "%two"));
+        for (const auto & body :
+             {source,
+              replace(replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
+                      "binary add %i, %product", "binary sub %i, %product")}) {
+            run({.what = "invariant quotient and remainder preserve signed CFG transport",
+                 .body = body,
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
+        }
+        reject("division operands retain their original backedge identity",
+               replace(source, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        for (const std::string operands : {"%d, %zero", "%p, %one", "%one, %i"}) {
+            reject("division latches need invariant operands and a nonzero divisor",
+                   replace(source, operation + " %d, " + (operation == "div" ? "%one" : "%two"),
+                           operation + " " + operands));
+        }
+        reject("division latches cannot borrow noncanonical primitive conversion",
+               replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
+    }
+    reject("a fractional quotient cannot certify integer induction",
+           replace(invariantProduct, "mul %d, %one", "div %d, %two"));
+    reject("a zero remainder cannot certify termination",
+           replace(invariantProduct, "mul %d, %one", "mod %d, %one"));
+    reject("an invariant quotient still bounds the final index update",
+           replace(replace(replace(invariantProduct, "mul %d, %one", "div %d, %one"), makeUnit,
+                           "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     for (const std::string unary : {"plus", "neg", "bitnot"}) {
         const auto source =
             replace(carriedUnit, "  %step = ctjs.binary_static add %i, %d",
@@ -2033,8 +2065,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("negative quotients and remainders cannot supply own indices",
                replace(source, "%base[%i]", "%base[%signedResult]"),
                ArrayContentsFailure::UnknownIndex);
-        reject("repeated division and remainder need independent invariance",
-               replace(replace(source, makeResult, ""), "  %step =", makeResult + "  %step ="));
+        run({.what = "repeated division and remainder prove their invariant operands",
+             .body =
+                 replace(replace(source, makeResult, ""), "  %step =", makeResult + "  %step ="),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("signed division and remainder require a nonzero divisor",
                replace(source, ", " + std::string(divisor) + " {storage_test_id",
                        ", %zero {storage_test_id"));
@@ -2106,8 +2142,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                ArrayContentsFailure::UnknownIndex);
         const auto repeated = replace(makeResult, operation == "div" ? ", %one" : "%minus,",
                                       operation == "div" ? ", %divisor" : "%text,");
-        reject("repeated primitive division needs independent invariance",
-               replace(replace(primitive, repeated, ""), "  %step =", repeated + "  %step ="));
+        run({.what = "repeated primitive division retains its original operand proof",
+             .body = replace(replace(primitive, repeated, ""), "  %step =", repeated + "  %step ="),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         for (const std::string invalid : {"#ctjs.undefined", "#ctjs.number<9218868437227405312>",
                                           "#ctjs.number<9221120237041090560>"}) {
             reject("nonfinite primitive division cannot borrow exact Boolean evidence",
@@ -2119,10 +2158,13 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    replace(stringRight, "#ctjs.string<\"" + text + "\">",
                            "#ctjs.string<\"" + invalid + "\">"));
         }
-        reject(
-            "a repeated String division or remainder cannot borrow its earlier result",
-            replace(replace(stringRight, "  %signedResult =", "  %unused ="), "  %step =",
-                    replace(makeResult, ", " + std::string(divisor), ", %divisor") + "  %step ="));
+        run({.what = "repeated String division proves its original saved operands",
+             .body = replace(replace(stringRight, "  %signedResult =", "  %unused ="), "  %step =",
+                             replace(makeResult, ", " + std::string(divisor), ", %divisor") +
+                                 "  %step ="),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("signed division and remainder cannot borrow an unknown operand",
                replace(source, ", " + std::string(divisor) + " {storage_test_id",
                        ", %p {storage_test_id"),

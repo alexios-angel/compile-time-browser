@@ -546,6 +546,43 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("structured product strides need exact nonzero primitive conversion",
                replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
     }
+    const auto divisionProduct =
+        replace(invariantProduct, makeUnit,
+                "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n" + makeUnit);
+    for (const std::string operation : {"div", "mod"}) {
+        const auto expression = operation + " %d, " + (operation == "div" ? "%one" : "%two");
+        const auto source = replace(divisionProduct, "mul %d, %one", expression);
+        for (const auto & body :
+             {source,
+              replace(replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
+                      "binary add %i, %product", "binary sub %i, %product")}) {
+            rows.push_back({.what = "invariant division preserves returned structured children",
+                            .body = body,
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+            rows.push_back({.what = "invariant division discharges only unreturned children",
+                            .body = replace(body, "ctjs.return %result", "ctjs.return %zero"),
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "zero -> {}"});
+        }
+        reject("structured division requires original operand transport",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        for (const std::string operands : {"%d, %zero", "%p, %one", "%one, %i"}) {
+            reject("structured division needs unchanged inputs and a nonzero divisor",
+                   replace(source, expression, operation + " " + operands));
+        }
+        reject("a nested division expression is not a saved invariant",
+               replace(source, "    %product = ctjs.binary " + expression,
+                       "    %nested = ctjs.binary div %d, %one\n"
+                       "    %product = ctjs.binary " +
+                           operation + " %nested, %two"));
+    }
+    reject("structured fractional quotients cannot certify integer induction",
+           replace(divisionProduct, "mul %d, %one", "div %d, %two"));
+    reject("structured zero remainders cannot certify termination",
+           replace(divisionProduct, "mul %d, %one", "mod %d, %one"));
     for (const std::string unary : {"plus", "neg", "bitnot"}) {
         const auto source =
             replace(carriedUnit, "    %step = ctjs.binary_static add %i, %d",
@@ -1304,8 +1341,17 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
              .arrays = "a:[x,y]; seed:[]",
              .reads = "a[0]=x; a[1]=y",
              .exit = "zero -> {}"});
-        reject("repeated structured division, remainder and power need independent invariance",
-               replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step ="));
+        const auto repeated =
+            replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step =");
+        if (operation == "pow") {
+            reject("repeated structured power still needs independent invariance", repeated);
+        } else {
+            rows.push_back({.what = "repeated structured division proves invariant operands",
+                            .body = repeated,
+                            .arrays = "a:[x,y]; seed:[]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+        }
     }
     for (const std::string operation : {"div", "mod", "pow"}) {
         const std::string literal = "  %text = ctjs.constant #ctjs.string<\"" +
@@ -1370,12 +1416,16 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("primitive division cannot borrow another predecessor's exact operand",
                replace(source, "scf.yield %one :", "scf.yield %p :"),
                ArrayContentsFailure::UnsupportedOperation);
-        reject(
-            "repeated structured primitive division still needs independent invariance",
-            replace(replace(source, "    %step =",
-                            replace(makeResult, "%unit =", "%repeated =") + "    %step ="),
-                    operation == "div" ? "binary sub %i, %d" : "binary add %i, %d",
-                    operation == "div" ? "binary sub %i, %repeated" : "binary add %i, %repeated"));
+        rows.push_back(
+            {.what = "repeated structured primitive division proves each operand snapshot",
+             .body = replace(replace(source, "    %step =",
+                                     replace(makeResult, "%unit =", "%repeated =") + "    %step ="),
+                             operation == "div" ? "binary sub %i, %d" : "binary add %i, %d",
+                             operation == "div" ? "binary sub %i, %repeated"
+                                                : "binary add %i, %repeated"),
+             .arrays = "a:[x,y] | a:[x,y]",
+             .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+             .exit = "y -> {y}; y -> {y}"});
         const auto zero = replace(
             replace(replace(replace(source, "#ctjs.boolean<true>", "#ctjs.boolean<false>"),
                             "scf.yield %one :",
