@@ -551,6 +551,60 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("structured offset stores reject invalid bounds, mutable values and non-Numbers",
                body);
     }
+    const auto quotientIndex = replace(
+        replace(replace(replace(offsetIndex, "%two = ctjs.binary add %one, %one",
+                                "%two = ctjs.binary add %one, %one {storage_test_id = \"two\"}"),
+                        "[%one, %y, %one, %y]", "[%y, %y, %one, %one]"),
+                "ctjs.binary add %i, %one", "ctjs.binary div %i, %two"),
+        "ctjs.return %result", "ctjs.return %a");
+    rows.push_back({.what = "structured exact quotients overwrite their bounded prefix",
+                    .body = quotientIndex,
+                    .arrays = "a:[zero,zero,one,one]",
+                    .reads = "a[0]=zero; a[2]=one",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured nonzero quotient starts retain their actual positions",
+                    .body = replace(replace(quotientIndex, "[%y, %y, %one, %one]",
+                                            "[%one, %y, %y, %one, %one, %one]"),
+                                    "%index = %zero", "%index = %two"),
+                    .arrays = "a:[one,zero,zero,one,one,one]",
+                    .reads = "a[2]=y; a[4]=one",
+                    .exit = "a -> {a}"});
+    const auto quotientGap = replace(
+        replace(replace(quotientIndex, "[%y, %y, %one, %one]", "[%y, %two, %y, %one, %one]"),
+                "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+        "    %position = ctjs.binary div %i, %two",
+        "    %divisor = ctjs.get_property %base[%one]\n"
+        "    %position = ctjs.binary div %i, %divisor");
+    rows.push_back({.what = "structured quotient footprints preserve reloads between writes",
+                    .body = replace(quotientGap, "    %step = ctjs.binary_static add %i, %two",
+                                    "    %step = ctjs.binary_static add %i, %four"),
+                    .arrays = "a:[zero,two,zero,one,one]",
+                    .reads = "a[1]=two; a[0]=zero; a[1]=two; a[4]=one",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured quotient overwrites preserve saved child identities",
+                    .body = replace(replace(quotientIndex, "  %finalIndex,",
+                                            "  %held = ctjs.get_property %a[%one]\n  %finalIndex,"),
+                                    "ctjs.return %a", "ctjs.return %held"),
+                    .arrays = "a:[zero,zero,one,one]",
+                    .reads = "a[1]=y; a[0]=zero; a[2]=one",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured zero-trip quotient overwrites retain original children",
+                    .body = replace(replace(quotientIndex, "[%y, %y, %one, %one]", "[%y, %y]"),
+                                    "%index = %zero", "%index = %two"),
+                    .arrays = "a:[y,y]",
+                    .exit = "a -> {a,y}"});
+    for (const auto & body :
+         {replace(quotientIndex, "%index = %zero", "%index = %one"),
+          replace(replace(quotientIndex, "[%y, %y, %one, %one]", "[%y, %y, %one]"),
+                  "    %step = ctjs.binary_static add %i, %two",
+                  "    %step = ctjs.binary_static add %i, %one"),
+          replace(quotientIndex, "div %i, %two", "div %i, %zero"),
+          replace(quotientIndex, "div %i, %two", "div %two, %i"), quotientGap,
+          replace(quotientGap,
+                  "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="),
+          replace(quotientIndex, "div %i, %two", "div %i, %last")}) {
+        reject("structured quotient stores require exact division and an invariant divisor", body);
+    }
     const auto disjointReload =
         replace(replace(replace(reloaded, "  %finalIndex,",
                                 "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"

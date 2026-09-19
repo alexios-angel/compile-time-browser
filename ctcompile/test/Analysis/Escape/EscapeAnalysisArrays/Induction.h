@@ -284,6 +284,80 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
     }
+    const auto quotientIndex =
+        replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %x, %one, %one]"),
+                "ctjs.binary add %i, %one", "ctjs.binary div %i, %two");
+    run({.what = "exact index quotients overwrite only their bounded prefix",
+         .body = quotientIndex,
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "nonzero quotient starts preserve their translated positions",
+         .body = replace(
+             replace(quotientIndex, "[%x, %x, %one, %one]", "[%one, %x, %x, %one, %one, %one]"),
+             "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+         .arrays = "a:[one,zero,zero,one,one,one]",
+         .reads = "a[2]=x; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto reloadedDivisor =
+        replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%x, %x, %one, %two]"),
+                "  %position = ctjs.binary div %i, %two",
+                "  %divisor = ctjs.get_property %base[%three]\n"
+                "  %position = ctjs.binary div %i, %divisor");
+    run({.what = "a divisor reload outside the quotient footprint stays invariant",
+         .body = reloadedDivisor,
+         .arrays = "a:[zero,zero,one,two]",
+         .reads = "a[3]=two; a[0]=zero; a[3]=two; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto quotientGap =
+        replace(replace(replace(replace(reloadedDivisor, "[%x, %x, %one, %two]",
+                                        "[%x, %two, %x, %one, %one]"),
+                                "%divisor = ctjs.get_property %base[%three]",
+                                "%divisor = ctjs.get_property %base[%one]"),
+                        "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+                "add %i, %two\n  cf.br", "add %i, %four\n  cf.br");
+    run({.what = "quotient footprints retain their own stride gaps",
+         .body = quotientGap,
+         .arrays = "a:[zero,two,zero,one,one]",
+         .reads = "a[1]=two; a[0]=zero; a[1]=two; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "saved children survive quotient overwrites",
+         .body = replace(replace(quotientIndex, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[1]=x; a[0]=zero; a[2]=one",
+         .exit = "x -> {x}"});
+    run({.what = "zero-trip quotient overwrites retain their original children",
+         .body = replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%x, %x]"),
+                         "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+         .arrays = "a:[x,x]",
+         .exit = "a -> {a,x}"});
+    for (const auto & body :
+         {replace(quotientIndex, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+          replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%x, %x, %one]"),
+                  "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(quotientIndex, "div %i, %two", "div %i, %zero"),
+          replace(quotientIndex, "div %i, %two", "div %two, %i"),
+          replace(replace(quotientIndex, "  %a =", "  %negative = ctjs.unary neg %two\n  %a ="),
+                  "div %i, %two", "div %i, %negative"),
+          replace(replace(quotientIndex,
+                          "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
+                  "div %i, %two", "div %i, %text"),
+          replace(replace(reloadedDivisor, "[%x, %x, %one, %two]", "[%x, %two, %one, %two]"),
+                  "%divisor = ctjs.get_property %base[%three]",
+                  "%divisor = ctjs.get_property %base[%one]"),
+          replace(reloadedDivisor,
+                  "  %step =", "  ctjs.set_property %base[%three], %one\n  %step ="),
+          replace(quotientIndex, "div %i, %two", "div %i, %s")}) {
+        run({.what = "quotient stores require exact division and immutable Number divisors",
+             .body = body,
+             .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    }
     const std::string reversed =
         replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
