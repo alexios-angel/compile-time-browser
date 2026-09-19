@@ -18,6 +18,8 @@ from Target.Cpp.harness import FLAGS
 GET = "M(t.getAttribute('data-bs-config'))"
 LATER = "M(t.getAttribute('data-bs-later'))"
 BODIES = {
+    # Preserve the former refusal: fresh local member reads already forward M's value.
+    "member_read": f"const e = {{}}; e.saved = {GET}; return e.saved;",
     "assign_value": f"const e = {{}}; e.saved = {GET}; return e;",
     "assign_optional": "const e = {}; e.nil = null; e.flag = t.hasAttribute('data-bs-config'); "
     "e.text = t.getAttribute('data-bs-config'); e.number = 42; return e;",
@@ -171,7 +173,6 @@ REFUSALS = {
     "unknown_value": "const e = {}; e.saved = t; return e;",
     "undefined_value": "const e = {}; e.saved = undefined; return e;",
     "cycle": "const e = {}; e.saved = e; return e;",
-    "member_read": f"const e = {{}}; e.saved = {GET}; return e.saved;",
     "target_identity": f"const e = {{}}; e.saved = {GET}; return e === e;",
     "target_capture": f"const e = {{}}; e.saved = {GET}; return () => e;",
     "target_escape": f"const e = {{}}; e.saved = {GET}; t.saved = e; return e;",
@@ -382,7 +383,9 @@ def check_output(args, output, expected):
     actual = output.splitlines()
     assert len(actual) == len(expected), (len(actual), len(expected))
     for index, (value, wanted) in enumerate(zip(actual, expected)):
-        assert value.startswith("object:") and wanted.startswith("object:"), (value, wanted)
+        assert value.split(":", 1)[0] == wanted.split(":", 1)[0], (value, wanted)
+        if not wanted.startswith("object:{"):
+            continue
         # Keep the constructed target's raw key order (and duplicate keys)
         # observable before adapting the public parsed-tree representation.
         keys = [key for key, _ in json.loads(value[7:], object_pairs_hook=list)]
@@ -396,7 +399,8 @@ def check_output(args, output, expected):
             args.node,
             "-e",
             "for (const line of require('fs').readFileSync(0, 'utf8').trimEnd().split('\\n')) "
-            "console.log('object:' + JSON.stringify(JSON.parse(line.slice(7))));",
+            "console.log(line.startsWith('object:') ? 'object:' + "
+            "JSON.stringify(JSON.parse(line.slice(7))) : line);",
         ],
         input_text=output,
     ).stdout.splitlines()
