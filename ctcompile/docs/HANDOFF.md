@@ -15,6 +15,96 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited method targets and bounded offset overwrites, 2026-09-19 UTC
+
+Resumed seven dirty ctcompile paths left by the session explicitly abandoned
+at 14:30:15 in AGENT-SYNC: inherited methods and the frozen Number-offset escape
+draft. Both agents' histories, unmerged branches and current handoffs were read;
+September 7 WIP is already an ancestor. Three agents supplied escape review,
+concrete native defect findings and the authentic Bootstrap continuation; two
+hit service limits and root finished integration. The inherited draft's dominance
+and duplicate constructor-read hazards were fixed before the final gate.
+
+**fb7d6a3d** admits inherited ordinary methods over proved local explicit-super
+chains, including same-receiver calls from base constructors, three-level chains,
+separate base/leaf instances and new nonoverriding leaf methods. It reuses the
+existing immutable prototype and borrowed-receiver lowering. Every original
+method body still passes the complete census. Overrides, lexical super, inherited
+DOM bodies and receiver-selected constructor/getter identities remain refused.
+
+Five new positive sources add **40 native executions**; their observations are
+7, 14, 273, 7 and 14. Twelve new source specimens plus a hoisted-prototype IR
+control cover the boundary. All **173 previous split-file sections** are unchanged.
+The insertion point follows completed base setup, so inherited keys/closures
+always dominate their new slots. Per-leaf checks reject shadowing from inherited
+methods or base constructors and reject even unused constructor reads, avoiding
+duplicate erasure records. Constructor completion is checked after private super
+normalization. No Script/VM dependency or prototype storage is emitted.
+
+**9876bc23** finishes the interrupted bounded Number-offset overwrite proof:
+one-level `i + offset`, `offset + i` and `i - offset` retain the original stride
+and prove both endpoint bounds. Every guard reload must miss every fixed and
+shifted write. Exact replay, saved children, remaining aliases, historical cycles
+and work limits remain. Sixteen source functions plus CFG/SCF controls cover
+signed offsets, gaps, zero trips, mutation, String Add and out-of-bounds writes.
+
+Focused validation on the devbox, serialized by `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`: **1/1, 1.28s
+  (1.29s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(offset-index-overwrite|visited-index-overwrite|disjoint-index-overwrite)[.]test$'`:
+  **3/3, 0.11s**. New oracle **48 sites / seven sound / 7 of 13 confined
+  precision**; existing **31 / 6 / 6 of 7** and **25 / 5 / 5 of 7**. All have
+  zero violations, partial, pending and unclaimed sites.
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+  ctcompile-test-native-reference`; same CTest command with
+  `-R '^ctcompile_host_contract$'`: **1/1, 0.48s (0.49s total)**.
+- `~/.lit-venv/bin/lit -sva -j2 projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-(initialization|dom)[.]mlir$'`:
+  **2/2, 307.87s total**. Initialization: **178 source observations,
+  452 main native executions, 356 unprepared/218 preparation
+  refusals**. Additional 28 native executions/30 refusals and 11 prepared refusals.
+  DOM remains **632 Node/interpreter observations, eight native executions and
+  4,910 refusals**. Individual final case timings were not recorded.
+
+The first narrow probe failed in the new test helper because its required
+`success=True` argument was missing; corrected and synced only that Python file.
+Production builds passed. The corrected narrow probe passed **23 source
+observations / 72 native executions / 46 unprepared and 27 preparation refusals**,
+plus 24 existing executions/24 refusals. Final code/test hashes match the devbox
+(four escape and three native). The generated leaf-method C++ was inspected.
+
+Required `tools/format.sh --check` reports **26 existing diagnostics in nine
+HEAD-identical files** and stops in its C++ phase. Changed C++/Python formatting,
+Python syntax, shell syntax and `git diff --check` pass. No browser/Script edits,
+semantics or new WPT/test262 measurements. Full CTest/compiler lit, standalone
+transaction/lifetime checks, broad native/corpus matrices, WPT/test262 and whole
+Bootstrap were skipped. These focused passes are not a full-suite result.
+Evidence and gate scripts: `/tmp/ctcompile-inherited-1438/`. No push.
+
+**Next native:** select the nearest method definition for a proved override,
+while retaining all shadowed bodies in the complete source census. The existing
+`inherited-method-override` observes 21; it currently refuses. Then prove lexical
+`super` from the declaring method's immutable home and immediate base while
+preserving the final receiver. `inherited-dispatch` observes 118 and preserves
+W's shadowed `_getConfig`: B's constructor selects Qi's override, Qi's super
+selects B, and B's ordinary merge call selects W. Reuse existing constructor
+prototype and method receiver proofs; differing leaf targets may still refuse.
+
+Complete authentic W/B/Qi remains beyond these local sources. W's current source
+fixture stops at helper captures; the DOM route also needs B's captured constructor
+helpers and ordinary static methods, complete H/r/s bodies, configuration,
+selectors, events and Popper. Do not invent H calls or parameter authority, remove
+shadowed methods, or just relax capture checks. Default rest/apply, replacement
+returns, fields, new.target and broader constructor effects remain. Part 25 still
+needs own-data definition provenance and broader ownership/control flow; the
+application driver remains incomplete.
+
+
 ## Explicit super construction and visited-index reloads, 2026-09-19 UTC
 
 Resumed clean **ca62d3e8** and the explicit-super thread in the latest

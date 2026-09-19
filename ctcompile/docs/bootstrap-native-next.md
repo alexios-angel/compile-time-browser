@@ -1,5 +1,50 @@
 # What native Bootstrap needs next
 
+## Inherited method targets and bounded offset overwrites, 2026-09-19 UTC
+
+**fb7d6a3d** admits inherited ordinary methods on local explicit-super chains,
+including constructor calls and new nonoverriding leaf methods. Five new positive
+sources add 40 executions; all earlier source sections remain. Slot insertion
+preserves dominance, unused constructor reads refuse, and inherited bodies cannot
+shadow leaf methods. **9876bc23** adds bounded Number-offset overwrite proofs,
+retaining reload disjointness, exact replay, saved children and cycles.
+
+Focused host **1/1 (0.48s)**; class initialization/DOM lit **2/2 (307.87s total)**:
+**178 observations / 452 main native executions**, with 356
+unprepared/218 preparation refusals. DOM remains 632 observations/eight
+executions/4,910 refusals. Arrays **1/1 (1.29s total)**; escape lit **3/3 (0.11s)**.
+New oracle: **48 sites / seven sound / 7 of 13 confined precision**, zero
+violations/partial/pending/unclaimed. Seven hashes match. Formatter retains
+26 baseline diagnostics in nine unchanged files; changed checks pass.
+
+**Next:** nearest-definition override targets (existing observation 21), then
+lexical-super selection distinct from leaf-this dispatch (existing observation
+118), preserving every shadowed body. Authentic W/B/Qi still needs captured
+constructor helpers/static methods, complete DOM helpers, configuration,
+selectors/events/Popper. Own-data provenance, broader ownership/control flow and
+the application driver remain. Full suites/broad matrices skipped; no
+browser/Script or compliance change. Resume provenance, exact commands, first
+probe's test-helper error and skips: HANDOFF and `/tmp/ctcompile-inherited-1438/`.
+
+**Next native:** select the nearest method definition for a proved override,
+while retaining all shadowed bodies in the complete source census. The existing
+`inherited-method-override` observes 21; it currently refuses. Then prove lexical
+`super` from the declaring method's immutable home and immediate base while
+preserving the final receiver. `inherited-dispatch` observes 118 and preserves
+W's shadowed `_getConfig`: B's constructor selects Qi's override, Qi's super
+selects B, and B's ordinary merge call selects W. Reuse existing constructor
+prototype and method receiver proofs; differing leaf targets may still refuse.
+
+Complete authentic W/B/Qi remains beyond these local sources. W's current source
+fixture stops at helper captures; the DOM route also needs B's captured constructor
+helpers and ordinary static methods, complete H/r/s bodies, configuration,
+selectors, events and Popper. Do not invent H calls or parameter authority, remove
+shadowed methods, or just relax capture checks. Default rest/apply, replacement
+returns, fields, new.target and broader constructor effects remain. Part 25 still
+needs own-data definition provenance and broader ownership/control flow; the
+application driver remains incomplete.
+
+
 ## Explicit super construction and visited-index reloads, 2026-09-19 UTC
 
 **883cac8e** admits explicit `super(...)` statements for field-only local
