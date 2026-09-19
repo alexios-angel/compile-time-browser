@@ -513,8 +513,16 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     for (const std::string mutation :
          {"ctjs.set_property %base[%name], %one", "ctjs.set_property %base[%zero], %one",
           "ctjs.append %one to %base"}) {
-        reject("structured own lengths cannot bypass the complete mutation census",
-               replace(lengthReload, "    %size =", "    " + mutation + "\n    %size ="));
+        const auto body = replace(lengthReload, "    %size =", "    " + mutation + "\n    %size =");
+        if (mutation == "ctjs.set_property %base[%zero], %one") {
+            rows.push_back({.what = "structured own-length strides survive own-element writes",
+                            .body = body,
+                            .arrays = "a:[one,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+        } else {
+            reject("structured own lengths cannot bypass the complete mutation census", body);
+        }
     }
     reject("a structured lookalike key cannot become an own length",
            replace(lengthReload, "%name = ctjs.constant #ctjs.string<\"length\">",
@@ -607,16 +615,22 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(stringIndex, "%text[%zero]", "%text[%i]"));
     reject("String character conversion cannot turn String Add into Number Add",
            replace(stringIndex, "add %i, %unit", "add %i, %character"));
-    reject("String index proof cannot bypass loop mutation",
-           replace(stringIndex, "    %character =",
-                   "    ctjs.set_property %base[%zero], %one\n    %character ="));
+    rows.push_back({.what = "structured String indices survive invariant own-element writes",
+                    .body = replace(stringIndex, "    %character =",
+                                    "    ctjs.set_property %base[%zero], %one\n    %character ="),
+                    .arrays = "a:[one,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("String length requires its original exact key",
            replace(stringLength, "%text[%name]", "%text[%zero]"));
     reject("computed Strings cannot borrow literal length provenance",
            replace(stringLength, "ctjs.constant #ctjs.string<\"a\">", "ctjs.unary typeof %one"));
-    reject("String length cannot bypass loop writes",
-           replace(stringLength,
-                   "    %unit =", "    ctjs.set_property %base[%zero], %one\n    %unit ="));
+    rows.push_back({.what = "structured String lengths survive invariant own-element writes",
+                    .body = replace(stringLength, "    %unit =",
+                                    "    ctjs.set_property %base[%zero], %one\n    %unit ="),
+                    .arrays = "a:[one,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("structured induction refuses a computed negative start",
            replace(computedStart, "unary plus %zero", "unary neg %one"));
     reject("structured induction cannot convert a String start into a Number proof",
@@ -2206,6 +2220,26 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[zero,zero]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "a -> {a}"});
+    const std::string fixedOverwrite =
+        replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
+    rows.push_back({.what = "structured invariant own-index overwrites precede later reads",
+                    .body = fixedOverwrite,
+                    .arrays = "a:[x,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "structured invariant overwrites retain other returned children",
+                    .body = replace(fixedOverwrite, "%base[%one], %zero", "%base[%zero], %zero"),
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject(
+        "structured invariant overwrite keys must name an existing own index",
+        replace(replace(fixedOverwrite, "  %a =", "  %fixed = ctjs.binary add %one, %one\n  %a ="),
+                "%base[%one], %zero", "%base[%fixed], %zero"));
+    reject("structured keys cannot reload overwritten guard elements",
+           replace(fixedOverwrite, "    ctjs.set_property %base[%one], %zero",
+                   "    %fixed = ctjs.get_property %base[%zero]\n"
+                   "    ctjs.set_property %base[%fixed], %zero"));
     reject("structured element-dependent strides cannot survive overwrites",
            replace(reloaded, "    %unit =", "    ctjs.set_property %base[%i], %zero\n    %unit ="));
     reject("structured header stores can reach outside the guarded own elements",
@@ -2317,8 +2351,12 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                            "  %b = ctjs.create_array [%x]\n"),
                    "%read = ctjs.get_property %a", "%read = ctjs.get_property %b"),
            ArrayContentsFailure::MissingElement);
-    reject("direct array induction cannot hide a mutation",
-           replace(direct, "    %read =", "    ctjs.set_property %a[%zero], %y\n    %read ="));
+    rows.push_back(
+        {.what = "direct array induction permits invariant own-element writes",
+         .body = replace(direct, "    %read =", "    ctjs.set_property %a[%zero], %y\n    %read ="),
+         .arrays = "a:[y,y]",
+         .reads = "a[0]=y; a[1]=y",
+         .exit = "y -> {y}"});
     reject("direct array length cannot certify another shorter array",
            replace(replace(direct, "  %finalIndex,", "  %b = ctjs.create_array []\n  %finalIndex,"),
                    "%read = ctjs.get_property %a", "%read = ctjs.get_property %b"),

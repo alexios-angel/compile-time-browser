@@ -1465,17 +1465,27 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!number || (start && start != number)) { return unsupported; }
             start = number;
         }
-        // ponytail: one header/body pair, with writes only to its current own
-        // element. Other mutations need their own termination proof. Primitive
+        auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
+        if (found == state.arrays.end() || found->second.size() > 4294967295ULL) {
+            return unsupported;
+        }
+        const std::size_t size = found->second.size();
+        // ponytail: one header/body pair, with writes only to its current or
+        // invariant own element. Other mutations need a termination proof. Primitive
         // kinds and every element still pass the ordinary operation transfers.
         for (mlir::Block * block : {header, body}) {
             for (mlir::Operation & operation : *block) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 if (&operation == block->getTerminator()) { continue; }
                 if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                    if (block != body || reloadsGuardElement ||
-                        fromHeader(store.getKey()) != index) {
-                        return unsupported;
+                    if (block != body || reloadsGuardElement) { return unsupported; }
+                    if (fromHeader(store.getKey()) != index) {
+                        const auto key = invariant(invariant, store.getKey(), 0);
+                        if (!key) { return invariantFailure; }
+                        const auto position = ownArrayIndex(*key);
+                        if (!position || *position >= size || reloadsGuardElement) {
+                            return unsupported;
+                        }
                     }
                     // A saved or reloaded receiver must keep the same allocation
                     // across transport, without reading an overwritten element.
@@ -1498,12 +1508,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                             directArray->getBlock() == body)) {
             return unsupported;
         }
-        auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
-        if (found == state.arrays.end() || found->second.size() > 4294967295ULL) {
-            return unsupported;
-        }
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-        const std::size_t size = found->second.size();
         // A zero-trip loop preserves its original index. Otherwise find the last
         // visited index relative to the start, and bound its final update before
         // addition; overshooting length must stay in the exact Number range.

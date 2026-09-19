@@ -113,6 +113,35 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                      "ctjs.return %result", "ctjs.return %a"),
          .arrays = "a:[one,x]",
          .exit = "a -> {a,x}"});
+    const std::string fixedOverwrite =
+        replace(savedChild, "  %read =", "  ctjs.set_property %base[%one], %zero\n  %read =");
+    run({.what = "invariant own-index overwrites release the replaced child",
+         .body = fixedOverwrite,
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "invariant overwrites preserve a different returned child",
+         .body = replace(fixedOverwrite, "%base[%one], %zero", "%base[%zero], %zero"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "saved String own indices remain invariant during overwrites",
+         .body = replace(replace(fixedOverwrite,
+                                 "  %a =", "  %fixed = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+                         "%base[%one], %zero", "%base[%fixed], %zero"),
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "invariant overwrite keys cannot extend the guard array",
+         .body = replace(fixedOverwrite, "%base[%one], %zero", "%base[%two], %zero"),
+         .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    run({.what = "a key reloaded from overwritten storage cannot claim invariance",
+         .body = replace(fixedOverwrite, "  ctjs.set_property %base[%one], %zero",
+                         "  %fixed = ctjs.get_property %base[%zero]\n"
+                         "  ctjs.set_property %base[%fixed], %zero"),
+         .failure = ArrayContentsFailure::UnsupportedControlFlow});
     const std::string reversed =
         replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
@@ -598,8 +627,16 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     for (const std::string mutation :
          {"ctjs.set_property %base[%name], %one", "ctjs.set_property %base[%zero], %one",
           "ctjs.append %one to %base"}) {
-        reject("an invariant length cannot bypass the complete loop mutation census",
-               replace(lengthReload, "  %size =", "  " + mutation + "\n  %size ="));
+        const auto body = replace(lengthReload, "  %size =", "  " + mutation + "\n  %size =");
+        if (mutation == "ctjs.set_property %base[%zero], %one") {
+            run({.what = "own-length strides remain invariant across existing-element writes",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("an invariant length cannot bypass the complete loop mutation census", body);
+        }
     }
     reject("a misspelled length is not an own length",
            replace(lengthReload, "%name = ctjs.constant #ctjs.string<\"length\">",
@@ -718,15 +755,22 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(stringIndex, "%text[%zero]", "%text[%i]"));
     reject("String character conversion cannot turn String Add into Number Add",
            replace(stringIndex, "add %i, %unit", "add %i, %character"));
-    reject("String index proof cannot bypass loop mutation",
-           replace(stringIndex,
-                   "  %character =", "  ctjs.set_property %base[%zero], %one\n  %character ="));
+    run({.what = "String index strides survive invariant own-element overwrites",
+         .body = replace(stringIndex, "  %character =",
+                         "  ctjs.set_property %base[%zero], %one\n  %character ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("String length requires its original exact key",
            replace(stringLength, "%text[%name]", "%text[%zero]"));
     reject("computed Strings cannot borrow literal length provenance",
            replace(stringLength, "ctjs.constant #ctjs.string<\"a\">", "ctjs.unary typeof %one"));
-    reject("String length cannot bypass loop writes",
-           replace(stringLength, "  %unit =", "  ctjs.set_property %base[%zero], %one\n  %unit ="));
+    run({.what = "String length strides survive invariant own-element overwrites",
+         .body = replace(stringLength,
+                         "  %unit =", "  ctjs.set_property %base[%zero], %one\n  %unit ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     const auto heldStringLength =
         replace(replace(computedUnitChild, makeUnit,
                         "  %text = ctjs.constant #ctjs.string<\"a\">\n"

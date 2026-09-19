@@ -1,0 +1,69 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-element-overwrite
+// RUN: FileCheck %s < %t/escape-claims-invariant-element-overwrite.claims
+
+// Fixed own-element stores preserve the original length and exact saved values.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function fixedIndex() {
+    var child = {}, array = [child, 0];
+    for (var i = 0; i < array.length; i++) array[0] = 0;
+    return array;
+}
+function savedKey() {
+    var child = {}, array = [0, child], key = "1", alias = array;
+    for (var i = 0; i < array.length; i++) alias[key] = 0;
+    return array;
+}
+function reloadedKey() {
+    var child = {}, array = [child], keys = [0];
+    for (var i = 0; i < array.length; i++) array[keys[0]] = 0;
+    return array;
+}
+function savedChild() {
+    var child = {}, array = [child], saved = array[0];
+    for (var i = 0; i < array.length; i++) array[0] = 0;
+    return saved;
+}
+function changingKey() {
+    var child = {}, array = [child, 0], key = 1;
+    for (var i = 0; i < array.length; i++) {
+        array[key] = 0;
+        key = 0;
+    }
+    return array;
+}
+function growingStore() {
+    var child = {}, array = [child];
+    for (var i = 0; i < array.length; i++) array[1] = 0;
+    return array;
+}
+function zeroTrip() {
+    var child = {}, array = [child];
+    for (var i = array.length; i < array.length; i++) array[0] = 0;
+    return array;
+}
+function transientCycle() {
+    var child = {}, array = [child];
+    for (var i = 0; i < array.length; i++) {
+        array[0] = array;
+        array[0] = 0;
+    }
+    return array;
+}
+function remainingAlias() {
+    var child = {}, array = [child, child];
+    for (var i = 0; i < array.length; i++) array[0] = 0;
+    return array;
+}
+fixedIndex(); savedKey(); reloadedKey(); savedChild(); changingKey();
+growingStore(); zeroTrip(); transientCycle(); remainingAlias();
