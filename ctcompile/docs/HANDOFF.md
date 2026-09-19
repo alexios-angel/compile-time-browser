@@ -15,6 +15,103 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ordered class ancestry and disjoint overwrite reloads, 2026-09-19 UTC
+
+Resumed clean **7725dc25** and the W/B/Qi plus disjoint-index threads explicitly
+abandoned at 13:15:53 in AGENT-SYNC. Both agents' histories and unmerged branches
+were read; September 7 WIP is absent and already recorded as merged. Three agents
+supplied ancestry/fixture reviews and an escape draft; two hit service limits.
+Root completed the draft, integrated the native work and ran focused gates.
+
+**95120020** proves ordered local heritage edges: an earlier completed base,
+a later derived completion, unique local constructor identities, and the exact
+fresh attached prototype. Bases can pass setup validation without direct
+construction. Receiver-use checks include method names from the proved base setup;
+these names do not select inherited targets or establish the final receiver.
+Self/repeated heritage, reordered base completion, a different prototype and an
+undeclared helper are pinned by five refusal controls.
+
+This advances **structural validation only**. Every derived class still refuses
+before rewriting: the original default-derived and three-level dispatch sources,
+and a new explicit-super source, reach `derived class requires receiver-preserving
+super normalization`. The complete original Bootstrap W/B fixture instead reaches
+`class method capture is not its constructor or an inert sibling helper` in W;
+its manifest now also declares the original Error getter. No original JavaScript
+statements were removed: all 163 earlier split-file bodies remain. No inheritance
+execution, generated browser API, or whole-Bootstrap admission was added.
+
+**0943b287** completes the interrupted disjoint-index escape draft. It gathers
+all guard-array slots reloaded by strides, keys and receivers, then checks them
+against every fixed-index store after the complete loop census. Overlap and
+current-index writes remain conservative. Exact replay retains saved children,
+remaining aliases and historical cycles. One historical key-reload body was
+preserved and promoted; four CFG/four SCF controls and eight source functions
+cover the extension. **c0924d11** strengthens the later-key-reload control by
+actually changing its index, so the returned child must remain reachable.
+
+Focused devbox validation, serialized by `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`: **1/1, 1.27s
+  (1.28s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(disjoint-index-overwrite|invariant-element-overwrite|disjoint-element-reload)[.]test$'`:
+  **3/3, 0.11s**. New oracle initially **25 sites / 5 sound / 5 of 8 precision**;
+  existing oracles **28 / 5 / 5 of 7** and **45 / 12 / 12 of 21**.
+- After the one-line test refinement, only `disjoint-index-overwrite.test` was
+  synced and selected with the same lit command: **1/1, 0.11s; 25 sites / 5 sound /
+  5 of 7 precision**. Every oracle has zero violations, partial, pending and
+  unclaimed sites. This precision change is test data, not another analysis gain.
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+  ctcompile-test-native-reference`; same CTest command with
+  `-R '^ctcompile_host_contract$'`: final **1/1, 0.49s**.
+- `~/.lit-venv/bin/lit -sva -j2 projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-(initialization|dom)[.]mlir$'`:
+  **2/2, 303.86s total**. Class initialization: **157 source observations,
+  380 main native executions, 314 unprepared/198 preparation refusals**;
+  additional **28 native executions / 30 refusals**, plus **11 prepared refusals**.
+  DOM classes: **632 Node/interpreter observations, eight combined native
+  executions, 4,910 refusals**. No individual final case timings were recorded.
+
+The first native case failed **137.06s** on the inherited receiver's missing base
+method names; the second failed **137.60s** on the Bootstrap fixture's stale
+expected diagnostic. Direct probes confirmed both boundaries. The first required
+the inherited-name census; the second only corrected the expectation to the actual
+captured-helper refusal. Source bodies stayed intact. Both builds and host runs
+passed; the earlier host measurement was 0.48s. The final replay synced only the
+changed Python expectation, reusing the successful production build.
+
+All seven final code/test hashes match the devbox (four escape, three native).
+Required `tools/format.sh --check` completes with the same **26 baseline
+diagnostics in nine HEAD-identical files**; changed C++/Python formatting, Python
+and new JavaScript syntax/execution, gate shell syntax and whitespace checks pass.
+An independent final review found no blocking issue and confirmed that no derived
+class can reach rewriting. Evidence and exact gate scripts:
+`/tmp/ctcompile-inheritance-1324/`.
+
+**Next native:** normalize the original explicit-super constructor on a private
+candidate. Prove the super guard cell and one ordered base call, preserve argument
+and effect order, map the base body onto the same final receiver/new.target, and
+handle bind-this, field initialization and derived completion. A first slice can
+refuse replacement-object returns and fields; default derived constructors also
+need their original rest/apply proof. Keep leaf `this` dispatch distinct from
+lexical `super` target selection. Do not remove the current refusal merely because
+ancestry or inherited method names were recorded. The original W/B source still
+needs its captured helpers and complete bodies proved under the appropriate DOM
+provider; do not invent H calls or parameter facts or erase shadowed W methods.
+Configuration, selectors, events, Popper and the application driver remain.
+Part 25 still needs own-data definition provenance and broader control flow and
+ownership. Current-index stores disjoint from the actually visited induction
+range are a separate escape continuation; this change handles fixed stores.
+
+Full CTest/compiler lit, standalone transaction/lifetime checks, broad native
+and corpus matrices, WPT/test262 and whole Bootstrap were skipped. Focused passes
+are not full-suite or compliance measurements. Browser/Script sources and behavior
+are unchanged. No push; the plan remains unfinished.
+
+
 ## Inheritance helper declarations and invariant overwrites, 2026-09-19 UTC
 
 Resumed clean **57d8d421** and the W/B/Qi thread in the latest handoff and

@@ -1,5 +1,46 @@
 # What native Bootstrap needs next
 
+## Ordered class ancestry and disjoint overwrite reloads, 2026-09-19 UTC
+
+**95120020** proves ordered local heritage edges: an earlier completed base,
+a later derived completion, unique local constructor identities, and the exact
+fresh attached prototype. Bases can pass setup validation without direct
+construction. Receiver-use checks include method names from the proved base setup;
+these names do not select inherited targets or establish the final receiver.
+Self/repeated heritage, reordered base completion, a different prototype and an
+undeclared helper are pinned by five refusal controls.
+
+This advances **structural validation only**. Every derived class still refuses
+before rewriting: the original default-derived and three-level dispatch sources,
+and a new explicit-super source, reach `derived class requires receiver-preserving
+super normalization`. The complete original Bootstrap W/B fixture instead reaches
+`class method capture is not its constructor or an inert sibling helper` in W;
+its manifest now also declares the original Error getter. No original JavaScript
+statements were removed: all 163 earlier split-file bodies remain. No inheritance
+execution, generated browser API, or whole-Bootstrap admission was added.
+
+**Next native:** normalize the original explicit-super constructor on a private
+candidate. Prove the super guard cell and one ordered base call, preserve argument
+and effect order, map the base body onto the same final receiver/new.target, and
+handle bind-this, field initialization and derived completion. A first slice can
+refuse replacement-object returns and fields; default derived constructors also
+need their original rest/apply proof. Keep leaf `this` dispatch distinct from
+lexical `super` target selection. Do not remove the current refusal merely because
+ancestry or inherited method names were recorded. The original W/B source still
+needs its captured helpers and complete bodies proved under the appropriate DOM
+provider; do not invent H calls or parameter facts or erase shadowed W methods.
+Configuration, selectors, events, Popper and the application driver remain.
+Part 25 still needs own-data definition provenance and broader control flow and
+ownership. Current-index stores disjoint from the actually visited induction
+range are a separate escape continuation; this change handles fixed stores.
+
+Focused host 1/1 and class-initialization/DOM lit 2/2 (303.86s total) pass.
+Parallel 0943b287/c0924d11 complete disjoint-index overwrite proofs and the stronger
+changed-key control; arrays 1/1 and selected escape lit 3/3 plus final 1/1 pass.
+Exact commands, counts, initial failures and skipped coverage are in HANDOFF.
+Full suites and broad matrices were skipped; no browser/Script change.
+
+
 ## Inheritance helper declarations and invariant overwrites, 2026-09-19 UTC
 
 **1d0c953a** declares the mutable helpers emitted by original inheritance:
