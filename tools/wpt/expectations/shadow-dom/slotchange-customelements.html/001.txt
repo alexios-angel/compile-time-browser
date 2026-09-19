@@ -1,2 +1,0 @@
-shadow-dom/slotchange-customelements.html	FAIL
-shadow-dom/slotchange-customelements.html	SUBTEST	FAIL	"slotchange must fire on initialization of custom elements with slotted children"

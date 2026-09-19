@@ -1,4 +1,0 @@
-encoding/textdecoder-byte-order-marks.any.js	FAIL
-encoding/textdecoder-byte-order-marks.any.js	SUBTEST	FAIL	"Byte-order marks: utf-16be"
-encoding/textdecoder-byte-order-marks.any.js	SUBTEST	FAIL	"Byte-order marks: utf-16le"
-encoding/textdecoder-byte-order-marks.any.js	SUBTEST	FAIL	"Byte-order marks: utf-8"

@@ -1,1 +1,0 @@
-selection/select-end-of-line-image.tentative.html	SKIP	testdriver: needs WebDriver input injection

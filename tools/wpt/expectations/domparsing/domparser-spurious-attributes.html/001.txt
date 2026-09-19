@@ -1,2 +1,0 @@
-domparsing/domparser-spurious-attributes.html	FAIL
-domparsing/domparser-spurious-attributes.html	SUBTEST	FAIL	"Using \">\" and \"\\r\" in an attribute creates no unexpected attributes."

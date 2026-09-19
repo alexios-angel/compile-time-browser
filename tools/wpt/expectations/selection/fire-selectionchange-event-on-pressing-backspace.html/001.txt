@@ -1,1 +1,0 @@
-selection/fire-selectionchange-event-on-pressing-backspace.html	SKIP	testdriver: needs WebDriver input injection

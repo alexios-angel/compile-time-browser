@@ -1,7 +1,0 @@
-domparsing/DOMParser-parseFromString-stylesheets.html	FAIL
-domparsing/DOMParser-parseFromString-stylesheets.html	SUBTEST	FAIL	"DOMParser-created document should expose multiple style elements in styleSheets"
-domparsing/DOMParser-parseFromString-stylesheets.html	SUBTEST	FAIL	"DOMParser-created document should have accessible styleSheets collection with one style element"
-domparsing/DOMParser-parseFromString-stylesheets.html	SUBTEST	FAIL	"DOMParser-created document styleSheets should contain CSSStyleSheet objects"
-domparsing/DOMParser-parseFromString-stylesheets.html	SUBTEST	FAIL	"DOMParser-created document styleSheets should have accessible cssRules"
-domparsing/DOMParser-parseFromString-stylesheets.html	SUBTEST	FAIL	"DOMParser-created document with full HTML structure should have accessible styleSheets"
-domparsing/DOMParser-parseFromString-stylesheets.html	SUBTEST	FAIL	"DOMParser-created document without style elements should have empty styleSheets collection"

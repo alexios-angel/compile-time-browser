@@ -1,1 +1,0 @@
-selection/selection-range-after-textcontrol-removed.html	SKIP	variant: the driver opens a file and has no query string

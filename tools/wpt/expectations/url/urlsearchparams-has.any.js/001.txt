@@ -1,5 +1,0 @@
-url/urlsearchparams-has.any.js	FAIL
-url/urlsearchparams-has.any.js	SUBTEST	FAIL	"Has basics"
-url/urlsearchparams-has.any.js	SUBTEST	FAIL	"Two-argument has() respects undefined as second arg"
-url/urlsearchparams-has.any.js	SUBTEST	FAIL	"Two-argument has()"
-url/urlsearchparams-has.any.js	SUBTEST	FAIL	"has() following delete()"

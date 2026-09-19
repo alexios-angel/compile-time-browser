@@ -1,2 +1,0 @@
-selection/script-and-style-elements.html	FAIL
-selection/script-and-style-elements.html	SUBTEST	FAIL	"Selection: STYLE and SCRIPT elements should be included in Selection.toString() if they are display!=none"

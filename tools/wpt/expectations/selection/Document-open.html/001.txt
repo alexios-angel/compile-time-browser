@@ -1,2 +1,0 @@
-selection/Document-open.html	FAIL
-selection/Document-open.html	SUBTEST	FAIL	"Selection must not be replaced with a new object after document.open()"

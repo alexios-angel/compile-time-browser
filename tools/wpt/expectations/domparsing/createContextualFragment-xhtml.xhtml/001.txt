@@ -1,5 +1,0 @@
-domparsing/createContextualFragment-xhtml.xhtml	FAIL
-domparsing/createContextualFragment-xhtml.xhtml	SUBTEST	FAIL	"<html>, <head> and <body> in a different namespace must not be special"
-domparsing/createContextualFragment-xhtml.xhtml	SUBTEST	FAIL	"A <body> element must be stripped, preserving its children"
-domparsing/createContextualFragment-xhtml.xhtml	SUBTEST	FAIL	"Stripping must recurse through nested <html> elements"
-domparsing/createContextualFragment-xhtml.xhtml	SUBTEST	FAIL	"The <head> and <body> nested inside a stray <html> element must be stripped too"

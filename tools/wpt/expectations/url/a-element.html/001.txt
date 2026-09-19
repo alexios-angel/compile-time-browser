@@ -1,1 +1,0 @@
-url/a-element.html	SKIP	variant: the driver opens a file and has no query string

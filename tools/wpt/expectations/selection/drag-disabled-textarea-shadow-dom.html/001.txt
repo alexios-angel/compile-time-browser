@@ -1,1 +1,0 @@
-selection/drag-disabled-textarea-shadow-dom.html	SKIP	testdriver: needs WebDriver input injection

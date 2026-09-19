@@ -1,1 +1,0 @@
-selection/selection-range-in-shadow-after-the-shadow-removed.tentative.html	SKIP	variant: the driver opens a file and has no query string

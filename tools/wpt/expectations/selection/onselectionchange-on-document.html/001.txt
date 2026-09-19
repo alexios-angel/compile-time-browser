@@ -1,2 +1,0 @@
-selection/onselectionchange-on-document.html	FAIL
-selection/onselectionchange-on-document.html	SUBTEST	FAIL	"selectionchange event on document fires"

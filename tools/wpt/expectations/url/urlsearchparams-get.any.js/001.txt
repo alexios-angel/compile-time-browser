@@ -1,3 +1,0 @@
-url/urlsearchparams-get.any.js	FAIL
-url/urlsearchparams-get.any.js	SUBTEST	FAIL	"Get basics"
-url/urlsearchparams-get.any.js	SUBTEST	FAIL	"More get() basics"

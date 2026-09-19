@@ -1,7 +1,0 @@
-encoding/api-replacement-encodings.any.js	FAIL
-encoding/api-replacement-encodings.any.js	SUBTEST	FAIL	"Label for \"replacement\" should be rejected by API: csiso2022kr"
-encoding/api-replacement-encodings.any.js	SUBTEST	FAIL	"Label for \"replacement\" should be rejected by API: hz-gb-2312"
-encoding/api-replacement-encodings.any.js	SUBTEST	FAIL	"Label for \"replacement\" should be rejected by API: iso-2022-cn"
-encoding/api-replacement-encodings.any.js	SUBTEST	FAIL	"Label for \"replacement\" should be rejected by API: iso-2022-cn-ext"
-encoding/api-replacement-encodings.any.js	SUBTEST	FAIL	"Label for \"replacement\" should be rejected by API: iso-2022-kr"
-encoding/api-replacement-encodings.any.js	SUBTEST	FAIL	"Label for \"replacement\" should be rejected by API: replacement"

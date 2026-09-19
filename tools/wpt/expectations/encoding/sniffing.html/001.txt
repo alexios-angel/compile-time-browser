@@ -1,2 +1,0 @@
-encoding/sniffing.html	FAIL
-encoding/sniffing.html	SUBTEST	FAIL	"No (UTF-8) sniffing allowed"

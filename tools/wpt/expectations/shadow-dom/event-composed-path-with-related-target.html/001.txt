@@ -1,8 +1,0 @@
-shadow-dom/event-composed-path-with-related-target.html	FAIL
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget which is identical to target. Event should be dispatched and should stop at the shadow root."
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget. Event should be dispatched at every slots. relatedTarget should be correctly retargeted."
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget. Event should be dispatched at every slots."
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget. Event should stop at the shadow root"
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget. relatedTarget is a shadow-including ancestor of target."
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget. target and relaterTarget share the same shadow-including ancestor. Both are in shadow trees."
-shadow-dom/event-composed-path-with-related-target.html	SUBTEST	FAIL	"Event path for an event with a relatedTarget. target is assigned to a slot."

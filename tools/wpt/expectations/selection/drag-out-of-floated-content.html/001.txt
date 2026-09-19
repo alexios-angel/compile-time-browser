@@ -1,1 +1,0 @@
-selection/drag-out-of-floated-content.html	SKIP	testdriver: needs WebDriver input injection

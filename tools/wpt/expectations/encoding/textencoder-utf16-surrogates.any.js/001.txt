@@ -1,8 +1,0 @@
-encoding/textencoder-utf16-surrogates.any.js	FAIL
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString default"
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString handling: lone surrogate lead"
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString handling: lone surrogate trail"
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString handling: properly encoded MUSICAL SYMBOL G CLEF (U+1D11E)"
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString handling: swapped surrogate pair"
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString handling: unmatched surrogate lead"
-encoding/textencoder-utf16-surrogates.any.js	SUBTEST	FAIL	"USVString handling: unmatched surrogate trail"

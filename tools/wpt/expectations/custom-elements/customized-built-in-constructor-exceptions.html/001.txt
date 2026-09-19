@@ -1,3 +1,0 @@
-custom-elements/customized-built-in-constructor-exceptions.html	FAIL
-custom-elements/customized-built-in-constructor-exceptions.html	SUBTEST	FAIL	"Appending children in customized built-in constructor should work"
-custom-elements/customized-built-in-constructor-exceptions.html	SUBTEST	FAIL	"Make sure customized <input> element that sets attributes doesnt crash"

@@ -1,1 +1,0 @@
-shadow-dom/restyle-on-disconnected-child-after-attach-crash.html	SKIP	not a testharness test

@@ -1,1 +1,0 @@
-selection/drag-selection-extend-to-user-select-none.html	SKIP	testdriver: needs WebDriver input injection

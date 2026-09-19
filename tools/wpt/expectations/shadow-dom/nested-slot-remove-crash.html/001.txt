@@ -1,1 +1,0 @@
-shadow-dom/nested-slot-remove-crash.html	SKIP	not a testharness test

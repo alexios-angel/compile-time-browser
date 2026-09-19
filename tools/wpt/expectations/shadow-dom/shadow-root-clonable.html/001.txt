@@ -1,6 +1,0 @@
-shadow-dom/shadow-root-clonable.html	HARNESS_ERROR
-shadow-dom/shadow-root-clonable.html	SUBTEST	FAIL	"attachShadow with clonable: true"
-shadow-dom/shadow-root-clonable.html	SUBTEST	FAIL	"attachShadow with clonable: undefined"
-shadow-dom/shadow-root-clonable.html	SUBTEST	FAIL	"declarative shadow roots can opt in to clonable with shadowrootclonable"
-shadow-dom/shadow-root-clonable.html	SUBTEST	FAIL	"declarative shadow roots do *not* get clonable: true automatically"
-shadow-dom/shadow-root-clonable.html	SUBTEST	FAIL	"declarative shadow roots inside templates do *not* get cloned automatically"

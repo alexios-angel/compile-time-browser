@@ -1,3 +1,0 @@
-custom-elements/Document-createElementNS.html	FAIL
-custom-elements/Document-createElementNS.html	SUBTEST	FAIL	"autonomous: document.createElementNS should create custom elements with prefixes."
-custom-elements/Document-createElementNS.html	SUBTEST	FAIL	"autonomous: document.createElementNS with undefined options value should be upgraded."

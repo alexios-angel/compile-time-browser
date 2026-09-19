@@ -1,1 +1,0 @@
-selection/collapse-common-ancestor-3.html	SKIP	reftest: needs a reference render, not a harness result

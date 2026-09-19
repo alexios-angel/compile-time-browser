@@ -1,5 +1,0 @@
-url/url-searchparams.any.js	FAIL
-url/url-searchparams.any.js	SUBTEST	FAIL	"URL.searchParams and URL.search setters, update propagation"
-url/url-searchparams.any.js	SUBTEST	FAIL	"URL.searchParams getter"
-url/url-searchparams.any.js	SUBTEST	FAIL	"URL.searchParams setter, invalid values"
-url/url-searchparams.any.js	SUBTEST	FAIL	"URL.searchParams updating, clearing"

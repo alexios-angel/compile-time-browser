@@ -1,5 +1,0 @@
-encoding/textdecoder-arguments.any.js	FAIL
-encoding/textdecoder-arguments.any.js	SUBTEST	FAIL	"TextDecoder decode() with array buffer detached during arg conversion"
-encoding/textdecoder-arguments.any.js	SUBTEST	FAIL	"TextDecoder decode() with explicit undefined"
-encoding/textdecoder-arguments.any.js	SUBTEST	FAIL	"TextDecoder decode() with undefined and options"
-encoding/textdecoder-arguments.any.js	SUBTEST	FAIL	"TextDecoder decode() with undefined and undefined"

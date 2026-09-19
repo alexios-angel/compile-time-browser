@@ -1,2 +1,0 @@
-shadow-dom/inserting-fragment-under-shadow-host.html	HARNESS_ERROR
-shadow-dom/inserting-fragment-under-shadow-host.html	SUBTEST	TIMEOUT	"This tests inserting a document fragment with a mixture of elements and text nodes, which should dispatch a `slotchange` event."

@@ -1,3 +1,0 @@
-shadow-dom/innerHTML-setter.xhtml	FAIL
-shadow-dom/innerHTML-setter.xhtml	SUBTEST	FAIL	"InnerHTML behavior on custom element in default 'foo' namespace"
-shadow-dom/innerHTML-setter.xhtml	SUBTEST	FAIL	"InnerHTML behavior with prefixes on custom element"

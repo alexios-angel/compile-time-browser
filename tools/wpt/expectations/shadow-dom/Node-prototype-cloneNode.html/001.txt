@@ -1,3 +1,0 @@
-shadow-dom/Node-prototype-cloneNode.html	FAIL
-shadow-dom/Node-prototype-cloneNode.html	SUBTEST	FAIL	"cloneNode on a shadow root in closed mode must throw a NotSupportedError"
-shadow-dom/Node-prototype-cloneNode.html	SUBTEST	FAIL	"cloneNode on a shadow root in open mode must throw a NotSupportedError"

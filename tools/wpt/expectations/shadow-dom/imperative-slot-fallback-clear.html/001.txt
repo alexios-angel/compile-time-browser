@@ -1,3 +1,0 @@
-shadow-dom/imperative-slot-fallback-clear.html	FAIL
-shadow-dom/imperative-slot-fallback-clear.html	SUBTEST	FAIL	"Element fallback should be cleared in a subsequent layout"
-shadow-dom/imperative-slot-fallback-clear.html	SUBTEST	FAIL	"Text node fallback should be cleared in a subsequently layout"

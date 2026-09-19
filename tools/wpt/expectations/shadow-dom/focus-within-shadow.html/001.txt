@@ -1,2 +1,0 @@
-shadow-dom/focus-within-shadow.html	FAIL
-shadow-dom/focus-within-shadow.html	SUBTEST	FAIL	"Don't clear focus within shadow root if light DOM children are cleared"

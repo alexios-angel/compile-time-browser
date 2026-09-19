@@ -1,3 +1,0 @@
-domparsing/innerhtml-08.html	FAIL
-domparsing/innerhtml-08.html	SUBTEST	FAIL	"innerHTML on html element with trailing comment (no explicit head)"
-domparsing/innerhtml-08.html	SUBTEST	FAIL	"innerHTML on html element with trailing comment"

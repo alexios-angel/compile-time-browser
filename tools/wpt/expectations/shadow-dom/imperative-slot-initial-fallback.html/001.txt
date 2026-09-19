@@ -1,3 +1,0 @@
-shadow-dom/imperative-slot-initial-fallback.html	FAIL
-shadow-dom/imperative-slot-initial-fallback.html	SUBTEST	FAIL	"Unassigned imperative slot can render element as the initial fallback"
-shadow-dom/imperative-slot-initial-fallback.html	SUBTEST	FAIL	"Unassigned imperative slot can render text node as the initial fallback"

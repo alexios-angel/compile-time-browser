@@ -1,2 +1,0 @@
-url/url-statics-parse.any.js	FAIL
-url/url-statics-parse.any.js	SUBTEST	FAIL	"URL.parse(undefined, aaa:b)"

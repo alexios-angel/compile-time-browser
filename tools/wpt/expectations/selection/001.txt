@@ -1,0 +1,165 @@
+selection/Document-open.html	FAIL
+selection/Document-open.html	SUBTEST	FAIL	"Selection must not be replaced with a new object after document.open()"
+selection/addRange-00.html	HARNESS_ERROR
+selection/addRange-04.html	HARNESS_ERROR
+selection/addRange-08.html	HARNESS_ERROR
+selection/addRange-12.html	HARNESS_ERROR
+selection/addRange-16.html	HARNESS_ERROR
+selection/addRange-20.html	HARNESS_ERROR
+selection/addRange-24.html	HARNESS_ERROR
+selection/addRange-28.html	HARNESS_ERROR
+selection/addRange-32.html	HARNESS_ERROR
+selection/addRange-36.html	HARNESS_ERROR
+selection/addRange-40.html	HARNESS_ERROR
+selection/addRange-44.html	HARNESS_ERROR
+selection/addRange-48.html	HARNESS_ERROR
+selection/addRange-52.html	HARNESS_ERROR
+selection/addRange-56.html	HARNESS_ERROR
+selection/addRange.htm	FAIL
+selection/addRange.htm	SUBTEST	FAIL	"Selection: Add a range to the selection"
+selection/addRange.tentative.html	FAIL
+selection/addRange.tentative.html	SUBTEST	FAIL	"Selection: Add a range to the selection"
+selection/anchor-removal.html	SKIP	testdriver: needs WebDriver input injection
+selection/canvas-click.html	SKIP	testdriver: needs WebDriver input injection
+selection/canvas-drag.html	SKIP	testdriver: needs WebDriver input injection
+selection/caret-position-should-be-correct-while-moveup-movedown.html	FAIL
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with line granularity for vertical-lr div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with line granularity for vertical-lr div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with line granularity for vertical-rl div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with line granularity for vertical-rl div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with paragraph granularity for vertical-lr div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with paragraph granularity for vertical-lr div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with paragraph granularity for vertical-rl div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move left with paragraph granularity for vertical-rl div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with line granularity for vertical-lr div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with line granularity for vertical-lr div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with line granularity for vertical-rl div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with line granularity for vertical-rl div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with paragraph granularity for vertical-lr div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with paragraph granularity for vertical-lr div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with paragraph granularity for vertical-rl div when selection was bottom to top"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in move right with paragraph granularity for vertical-rl div when selection was top to bottom"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving down horizontal div when selection was left to right with line granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving down horizontal div when selection was left to right with paragraph granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving down horizontal div when selection was right to left with line granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving down horizontal div when selection was right to left with paragraph granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving up horizontal div when selection was left to right with line granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving up horizontal div when selection was left to right with paragraph granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving up horizontal div when selection was right to left with line granularity"
+selection/caret-position-should-be-correct-while-moveup-movedown.html	SUBTEST	FAIL	"Caret position should be correct in moving up horizontal div when selection was right to left with paragraph granularity"
+selection/collapse-00.html	HARNESS_ERROR
+selection/collapse-15.html	HARNESS_ERROR
+selection/collapse-30.html	HARNESS_ERROR
+selection/collapse-45.html	HARNESS_ERROR
+selection/collapse-common-ancestor-1.html	SKIP	reftest: needs a reference render, not a harness result
+selection/collapse-common-ancestor-2.html	SKIP	reftest: needs a reference render, not a harness result
+selection/collapse-common-ancestor-3.html	SKIP	reftest: needs a reference render, not a harness result
+selection/collapse.htm	FAIL
+selection/collapse.htm	SUBTEST	FAIL	"Selection: Collapse the selection using collapse()"
+selection/collapseToStartEnd.html	HARNESS_ERROR
+selection/deleteFromDocument-HTMLDetails.html	HARNESS_ERROR
+selection/deleteFromDocument.html	HARNESS_ERROR
+selection/drag-disabled-textarea-shadow-dom.html	SKIP	testdriver: needs WebDriver input injection
+selection/drag-out-of-floated-content.html	SKIP	testdriver: needs WebDriver input injection
+selection/drag-selection-contenteditable-to-out-of-flow-user-select-none.html	SKIP	testdriver: needs WebDriver input injection
+selection/drag-selection-extend-to-user-select-none.html	SKIP	testdriver: needs WebDriver input injection
+selection/extend-00.html	HARNESS_ERROR
+selection/extend-20.html	HARNESS_ERROR
+selection/extend-40.html	HARNESS_ERROR
+selection/extend-exception.html	FAIL
+selection/extend-exception.html	SUBTEST	FAIL	"InvalidStateError exception is thrown for extend() when no ranges are present in Selection"
+selection/extend-selection-backward-on-input.html	FAIL
+selection/extend-selection-backward-on-input.html	SUBTEST	FAIL	"Should not crash if block node is in an inline node and block_flow is a pseudo node"
+selection/extend-selection-in-shadow-tree.html	SKIP	testdriver: needs WebDriver input injection
+selection/fire-selectionchange-event-on-deleting-single-character-inside-inline-element.html	SKIP	testdriver: needs WebDriver input injection
+selection/fire-selectionchange-event-on-pressing-backspace.html	SKIP	testdriver: needs WebDriver input injection
+selection/fire-selectionchange-event-on-textcontrol-element-on-pressing-backspace.html	SKIP	testdriver: needs WebDriver input injection
+selection/getRangeAt.html	HARNESS_ERROR
+selection/getSelection.html	FAIL
+selection/getSelection.html	SUBTEST	FAIL	"Selection's range must initially be null"
+selection/getSelection.html	SUBTEST	FAIL	"document.getSelection() === document.getSelection()"
+selection/getSelection.html	SUBTEST	FAIL	"document.getSelection() instanceof Selection in an iframe immediately after appendChild"
+selection/getSelection.html	SUBTEST	FAIL	"document.getSelection() instanceof Selection in an iframe onload"
+selection/getSelection.html	SUBTEST	FAIL	"document.getSelection() instanceof Selection"
+selection/getSelection.html	SUBTEST	FAIL	"getSelection() inside and outside iframe must return different objects immediately after appendChild"
+selection/getSelection.html	SUBTEST	FAIL	"getSelection() inside and outside iframe must return different objects onload"
+selection/getSelection.html	SUBTEST	FAIL	"getSelection() on HTML document with null defaultView must be null inside an iframe immediately after appendChild"
+selection/getSelection.html	SUBTEST	FAIL	"getSelection() on HTML document with null defaultView must be null inside an iframe onload"
+selection/getSelection.html	SUBTEST	FAIL	"getSelection() on HTML document with null defaultView must be null"
+selection/getSelection.html	SUBTEST	FAIL	"getSelection() on XML document with null defaultView must be null"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() === document.getSelection() in an iframe immediately after appendChild"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() === document.getSelection() in an iframe onload"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() === document.getSelection()"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() === window.getSelection()"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() instanceof Selection in an iframe immediately after appendChild"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() instanceof Selection in an iframe onload"
+selection/getSelection.html	SUBTEST	FAIL	"window.getSelection() instanceof Selection"
+selection/isCollapsed.html	HARNESS_ERROR
+selection/modify-extend-word-trailing-inline-block.tentative.html	FAIL
+selection/modify-extend-word-trailing-inline-block.tentative.html	SUBTEST	FAIL	"Selection.modify: Extending a word towards the end of a line ended by an inline-block."
+selection/modify-line-flex-column.tentative.html	HARNESS_ERROR
+selection/modify-line-flex-row.tentative.html	HARNESS_ERROR
+selection/modify-line-grid-basic.tentative.html	HARNESS_ERROR
+selection/modify.tentative.html	HARNESS_ERROR
+selection/move-by-word-korean.html	SKIP	testdriver: needs WebDriver input injection
+selection/move-by-word-with-symbol.html	SKIP	testdriver: needs WebDriver input injection
+selection/move-paragraph-cross-editing-boundary.tentative.html	HARNESS_ERROR
+selection/move-paragraphboundary-cross-editing-boundary.tentative.html	HARNESS_ERROR
+selection/move-selection-range-into-different-root.tentative.html	FAIL
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with selectNode"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with selectNodeContents"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with setEnd"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with setEndAfter"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with setEndBefore"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with setStart"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with setStartAfter"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a document fragment with setStartBefore"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with selectNode"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with selectNodeContents"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with setEnd"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with setEndAfter"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with setEndBefore"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with setStart"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with setStartAfter"
+selection/move-selection-range-into-different-root.tentative.html	SUBTEST	FAIL	"Set selection range into a sub-document with setStartBefore"
+selection/onselectionchange-on-document.html	FAIL
+selection/onselectionchange-on-document.html	SUBTEST	FAIL	"selectionchange event on document fires"
+selection/onselectstart-on-key-in-contenteditable.html	SKIP	variant: the driver opens a file and has no query string
+selection/removeAllRanges.html	HARNESS_ERROR
+selection/removeRange.html	HARNESS_ERROR
+selection/script-and-style-elements.html	FAIL
+selection/script-and-style-elements.html	SUBTEST	FAIL	"Selection: STYLE and SCRIPT elements should be included in Selection.toString() if they are display!=none"
+selection/select-end-of-line-image.tentative.html	SKIP	testdriver: needs WebDriver input injection
+selection/selectAllChildren.html	HARNESS_ERROR
+selection/selection-direction-on-double-click.tentative.html	SKIP	testdriver: needs WebDriver input injection
+selection/selection-direction-on-single-click.html	SKIP	testdriver: needs WebDriver input injection
+selection/selection-direction-on-triple-click.tentative.html	SKIP	testdriver: needs WebDriver input injection
+selection/selection-focused-element-becomes-nonfocusable.html	SKIP	testdriver: needs WebDriver input injection
+selection/selection-incremental-change-repaint.html	SKIP	reftest: needs a reference render, not a harness result
+selection/selection-modify-extend-word-generated-content.html	FAIL
+selection/selection-modify-extend-word-generated-content.html	SUBTEST	FAIL	"extending selection from middle of first word of the middle line shouldn't extend the range to the previous line"
+selection/selection-modify-extend-word-generated-content.html	SUBTEST	FAIL	"extending selection from middle of last word of the middle line shouldn't extend the range to the next line"
+selection/selection-nested-video.html	HARNESS_ERROR
+selection/selection-nested-video.html	SUBTEST	TIMEOUT	"selection have the same anchor and focus nodes because b and c are in different tree scopes."
+selection/selection-range-after-editinghost-removed.html	FAIL
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after it's removed"
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after it's replaced with itself (.replaceChild)"
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after it's replaced with itself (.replaceWith)"
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after its parent is removed"
+selection/selection-range-after-textcontrol-removed.html	SKIP	variant: the driver opens a file and has no query string
+selection/selection-range-in-shadow-after-the-shadow-removed.tentative.html	SKIP	variant: the driver opens a file and has no query string
+selection/selection-select-all-move-input-crash.html	SKIP	not a testharness test
+selection/selection-shadow-dom-crash-print.html	SKIP	not a testharness test
+selection/setBaseAndExtent.html	HARNESS_ERROR
+selection/stringifier.tentative.html	FAIL
+selection/stringifier.tentative.html	SUBTEST	FAIL	"Selection: stringifier"
+selection/stringifier_editable_element.tentative.html	SKIP	testdriver: needs WebDriver input injection
+selection/test-iframe.html	SKIP	not a testharness test
+selection/toString-ff-bug-001.html	FAIL
+selection/toString-ff-bug-001.html	SUBTEST	FAIL	"Can serialize a range which starts at the end of an element"
+selection/toString-user-select-none.html	FAIL
+selection/toString-user-select-none.html	SUBTEST	FAIL	"Selection.toString() excludes basic user-select: none content"
+selection/toString-user-select-none.html	SUBTEST	FAIL	"Selection.toString() excludes nested user-select: none content"
+selection/toString-user-select-none.html	SUBTEST	FAIL	"Selection.toString() includes selectable children in unselectable container"
+selection/type.html	HARNESS_ERROR
+selection/user-select-on-input-and-contenteditable.html	SKIP	testdriver: needs WebDriver input injection

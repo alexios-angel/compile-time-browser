@@ -1,2 +1,0 @@
-shadow-dom/host-with-namespace.xhtml	FAIL
-shadow-dom/host-with-namespace.xhtml	SUBTEST	FAIL	"Test attachShadow with a namespaced element"

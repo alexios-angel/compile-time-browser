@@ -1,6 +1,0 @@
-custom-elements/disconnected-callbacks.html	FAIL
-custom-elements/disconnected-callbacks.html	SUBTEST	FAIL	"Removing a custom element from a detached shadow tree that belongs to an HTML document fetched by XHR must not enqueue and invoke disconnectedCallback"
-custom-elements/disconnected-callbacks.html	SUBTEST	FAIL	"Removing a custom element from a shadow tree in an HTML document fetched by XHR must enqueue and invoke disconnectedCallback"
-custom-elements/disconnected-callbacks.html	SUBTEST	FAIL	"Removing a custom element from an HTML document fetched by XHR must enqueue and invoke disconnectedCallback"
-custom-elements/disconnected-callbacks.html	SUBTEST	FAIL	"Removing an ancestor of custom element from an HTML document fetched by XHR must enqueue and invoke disconnectedCallback"
-custom-elements/disconnected-callbacks.html	SUBTEST	FAIL	"Removing the shadow host of a custom element from aan HTML document fetched by XHR must enqueue and invoke disconnectedCallback"

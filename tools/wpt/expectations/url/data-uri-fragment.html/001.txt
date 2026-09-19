@@ -1,2 +1,0 @@
-url/data-uri-fragment.html	SUBTEST	TIMEOUT	"Data URI parsing of fragments"
-url/data-uri-fragment.html	TIMEOUT

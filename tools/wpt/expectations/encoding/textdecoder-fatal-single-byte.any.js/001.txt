@@ -1,1 +1,0 @@
-encoding/textdecoder-fatal-single-byte.any.js	SKIP	variant: the driver opens a file and has no query string

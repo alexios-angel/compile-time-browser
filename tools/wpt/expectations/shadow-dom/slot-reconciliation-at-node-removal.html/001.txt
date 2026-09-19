@@ -1,2 +1,0 @@
-shadow-dom/slot-reconciliation-at-node-removal.html	FAIL
-shadow-dom/slot-reconciliation-at-node-removal.html	SUBTEST	FAIL	"Slot reconciliation: assignedNodes should be empty when slot is removed from shadow tree"

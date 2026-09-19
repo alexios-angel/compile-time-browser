@@ -1,1 +1,0 @@
-shadow-dom/imperative-slot-assign-not-slotable-crash.html	SKIP	not a testharness test

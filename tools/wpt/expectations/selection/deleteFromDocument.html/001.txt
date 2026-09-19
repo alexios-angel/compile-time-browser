@@ -1,1 +1,0 @@
-selection/deleteFromDocument.html	HARNESS_ERROR

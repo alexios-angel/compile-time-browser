@@ -1,2 +1,0 @@
-domparsing/DOMParser-parseFromString-xml-doctype.html	FAIL
-domparsing/DOMParser-parseFromString-xml-doctype.html	SUBTEST	FAIL	"Doctype parsing of System Id must fail on ommitted value"

@@ -1,2 +1,0 @@
-domparsing/innerhtml-07.html	FAIL
-domparsing/innerhtml-07.html	SUBTEST	FAIL	"innerHTML and string conversion: null."

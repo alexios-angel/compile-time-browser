@@ -1,1 +1,0 @@
-shadow-dom/touch-event-retargeting-leak.html	SKIP	testdriver: needs WebDriver input injection

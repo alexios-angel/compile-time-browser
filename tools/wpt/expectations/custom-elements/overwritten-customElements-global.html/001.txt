@@ -1,2 +1,0 @@
-custom-elements/overwritten-customElements-global.html	FAIL
-custom-elements/overwritten-customElements-global.html	SUBTEST	FAIL	"Custom elements can still be created after `window.customElements` is overwritten."

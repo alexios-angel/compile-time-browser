@@ -1,3 +1,0 @@
-url/urlsearchparams-getall.any.js	FAIL
-url/urlsearchparams-getall.any.js	SUBTEST	FAIL	"getAll() basics"
-url/urlsearchparams-getall.any.js	SUBTEST	FAIL	"getAll() multiples"

@@ -1,5 +1,0 @@
-encoding/textdecoder-ignorebom.any.js	FAIL
-encoding/textdecoder-ignorebom.any.js	SUBTEST	FAIL	"BOM is ignored if ignoreBOM option is specified: utf-16be"
-encoding/textdecoder-ignorebom.any.js	SUBTEST	FAIL	"BOM is ignored if ignoreBOM option is specified: utf-16le"
-encoding/textdecoder-ignorebom.any.js	SUBTEST	FAIL	"BOM is ignored if ignoreBOM option is specified: utf-8"
-encoding/textdecoder-ignorebom.any.js	SUBTEST	FAIL	"The ignoreBOM attribute of TextDecoder"

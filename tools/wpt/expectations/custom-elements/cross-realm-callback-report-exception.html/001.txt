@@ -1,6 +1,0 @@
-custom-elements/cross-realm-callback-report-exception.html	FAIL
-custom-elements/cross-realm-callback-report-exception.html	SUBTEST	FAIL	"adoptedCallback"
-custom-elements/cross-realm-callback-report-exception.html	SUBTEST	FAIL	"attributeChangedCallback"
-custom-elements/cross-realm-callback-report-exception.html	SUBTEST	FAIL	"connectedCallback"
-custom-elements/cross-realm-callback-report-exception.html	SUBTEST	FAIL	"constructor"
-custom-elements/cross-realm-callback-report-exception.html	SUBTEST	FAIL	"disconnectedCallback"

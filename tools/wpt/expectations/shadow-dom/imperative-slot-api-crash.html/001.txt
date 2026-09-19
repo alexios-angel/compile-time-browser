@@ -1,1 +1,0 @@
-shadow-dom/imperative-slot-api-crash.html	SKIP	not a testharness test

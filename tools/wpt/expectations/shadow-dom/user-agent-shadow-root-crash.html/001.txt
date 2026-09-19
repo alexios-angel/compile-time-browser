@@ -1,1 +1,0 @@
-shadow-dom/user-agent-shadow-root-crash.html	SKIP	not a testharness test

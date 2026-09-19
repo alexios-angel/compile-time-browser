@@ -1,5 +1,0 @@
-url/urlsearchparams-append.any.js	FAIL
-url/urlsearchparams-append.any.js	SUBTEST	FAIL	"Append empty strings"
-url/urlsearchparams-append.any.js	SUBTEST	FAIL	"Append multiple"
-url/urlsearchparams-append.any.js	SUBTEST	FAIL	"Append null"
-url/urlsearchparams-append.any.js	SUBTEST	FAIL	"Append same name"

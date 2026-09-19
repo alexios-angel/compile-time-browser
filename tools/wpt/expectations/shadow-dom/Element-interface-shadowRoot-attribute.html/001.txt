@@ -1,2 +1,0 @@
-shadow-dom/Element-interface-shadowRoot-attribute.html	FAIL
-shadow-dom/Element-interface-shadowRoot-attribute.html	SUBTEST	FAIL	"shadowRoot must be defined on Element prototype"

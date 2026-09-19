@@ -1,2 +1,0 @@
-selection/addRange.htm	FAIL
-selection/addRange.htm	SUBTEST	FAIL	"Selection: Add a range to the selection"

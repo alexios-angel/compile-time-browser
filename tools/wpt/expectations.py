@@ -10,11 +10,7 @@ def parse_expectations(path: Path):
     if not path.exists():
         return set()
     lines = path.read_text(encoding="utf-8").splitlines()
-    parts = [
-        path.parent / line.removeprefix(INCLUDE)
-        for line in lines
-        if line.startswith(INCLUDE)
-    ]
+    parts = [path.parent / line.removeprefix(INCLUDE) for line in lines if line.startswith(INCLUDE)]
     for part in parts:
         lines.extend(part.read_text(encoding="utf-8").splitlines())
     return {line for line in lines if line and not line.startswith("#")}
@@ -26,7 +22,7 @@ def write_expectations(path: Path, header, lines, *, split=False):
         return
     groups = defaultdict(list)
     for line in lines:
-        suite = "/".join(line.split("\t", 1)[0].split("/")[:2])
+        suite = "/".join(Path(line.split("\t", 1)[0]).parent.parts[:2]) or "root"
         groups[suite].append(line)
     directory = path.with_suffix("")
     previous = set(directory.rglob("*.txt")) if directory.exists() else set()
@@ -40,9 +36,7 @@ def write_expectations(path: Path, header, lines, *, split=False):
         for offset in range(0, len(rows), 900):
             part = directory / relative / f"{offset // 900 + 1:03d}.txt"
             part.parent.mkdir(parents=True, exist_ok=True)
-            part.write_text(
-                "\n".join(rows[offset : offset + 900]) + "\n", encoding="utf-8"
-            )
+            part.write_text("\n".join(rows[offset : offset + 900]) + "\n", encoding="utf-8")
             written.add(part)
             includes.append(INCLUDE + part.relative_to(path.parent).as_posix())
     path.write_text("\n".join(header + includes) + "\n", encoding="utf-8")

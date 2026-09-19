@@ -1,3 +1,0 @@
-shadow-dom/offsetTop-offsetLeft-across-shadow-boundaries.html	FAIL
-shadow-dom/offsetTop-offsetLeft-across-shadow-boundaries.html	SUBTEST	FAIL	"Verifies that HTMLElement.offsetTop accounts for shadow boundaries when nested in multiple shadow roots."
-shadow-dom/offsetTop-offsetLeft-across-shadow-boundaries.html	SUBTEST	FAIL	"Verifies that HTMLElement.offsetTop accounts for shadow boundaries."

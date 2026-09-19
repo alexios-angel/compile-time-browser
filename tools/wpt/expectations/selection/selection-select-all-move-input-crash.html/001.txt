@@ -1,1 +1,0 @@
-selection/selection-select-all-move-input-crash.html	SKIP	not a testharness test

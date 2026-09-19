@@ -1,4 +1,0 @@
-encoding/remove-only-one-bom.html	FAIL
-encoding/remove-only-one-bom.html	SUBTEST	FAIL	"Should have removed only one BOM from frame 0"
-encoding/remove-only-one-bom.html	SUBTEST	FAIL	"Should have removed only one BOM from frame 1"
-encoding/remove-only-one-bom.html	SUBTEST	FAIL	"Should have removed only one BOM from frame 2"

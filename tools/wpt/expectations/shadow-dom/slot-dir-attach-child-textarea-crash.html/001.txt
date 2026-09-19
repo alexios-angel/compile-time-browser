@@ -1,1 +1,0 @@
-shadow-dom/slot-dir-attach-child-textarea-crash.html	SKIP	not a testharness test

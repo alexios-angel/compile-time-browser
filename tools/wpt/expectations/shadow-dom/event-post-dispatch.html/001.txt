@@ -1,3 +1,0 @@
-shadow-dom/event-post-dispatch.html	FAIL
-shadow-dom/event-post-dispatch.html	SUBTEST	FAIL	"Event properties post dispatch when target get moved out of the shadow tree by event listener"
-shadow-dom/event-post-dispatch.html	SUBTEST	FAIL	"Event properties post dispatch with relatedTarget in the same shadow tree. (composed: true)"

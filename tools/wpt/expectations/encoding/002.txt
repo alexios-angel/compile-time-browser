@@ -1,0 +1,16 @@
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-32 with BOM should decode as UTF-16LE"
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-32 with no BOM should decode as UTF-8"
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-32be with BOM should decode as UTF-8"
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-32be with no BOM should decode as UTF-8"
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-32le with BOM should decode as UTF-16LE"
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-32le with no BOM should decode as UTF-8"
+encoding/unsupported-encodings.any.js	SUBTEST	FAIL	"utf-7 should not be supported"
+encoding/utf-32-from-win1252.html	FAIL
+encoding/utf-32-from-win1252.html	SUBTEST	FAIL	"Expect resources/utf-32-big-endian-bom.html to parse as windows-1252"
+encoding/utf-32-from-win1252.html	SUBTEST	FAIL	"Expect resources/utf-32-big-endian-nobom.html to parse as windows-1252"
+encoding/utf-32-from-win1252.html	SUBTEST	FAIL	"Expect resources/utf-32-little-endian-bom.html to parse as UTF-16LE"
+encoding/utf-32-from-win1252.html	SUBTEST	FAIL	"Expect resources/utf-32-little-endian-bom.xml to parse as UTF-16LE"
+encoding/utf-32-from-win1252.html	SUBTEST	FAIL	"Expect resources/utf-32-little-endian-nobom.html to parse as windows-1252"
+encoding/utf-32.html	FAIL
+encoding/utf-32.html	SUBTEST	FAIL	"Expect resources/utf-32-little-endian-bom.html to parse as UTF-16LE"
+encoding/utf-32.html	SUBTEST	FAIL	"Expect resources/utf-32-little-endian-bom.xml to parse as UTF-16LE"
