@@ -15,6 +15,91 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Full H instance methods and object-reload prerequisite, 2026-09-19 UTC
+
+**6bca7b94** finishes the interrupted receiver-proof thread at **61f627fb**:
+three dirty files from the **07:05 session**, explicitly abandoned by the
+**07:07:11 AGENT-SYNC exit**. Complete original H/M/F now runs inside instance
+methods when every H slot has actual calls, including constructor-stored DOM
+receivers and fixed fresh-result aliases. Method stability ignores only a direct
+fresh allocation distinct from the prototype/instance; all unknown aliases,
+formals and real receiver writes still count. Constructor proof is unchanged.
+
+All **361 prior source bodies** and **16 raw C++ JavaScript bodies** are preserved.
+Twelve added bodies and six new transaction controls per provider cover the
+boundary, including a local that changes from fresh to the real instance. The
+old transaction control 148 now admits without changing its source. No browser
+or Script semantics changed.
+
+Focused passes: transaction **1/1 (4.35s; total 4.36s)**, host contract
+**1/1 (0.51s; total 0.52s)**, and selected class DOM / class entry / constructor
+refusals lit **3/3 (186.36s total)**. Class DOM: **492 observations, eight
+GCC/Clang executions, 3,746 refusals**. All four changed source/test hashes match
+the devbox; emitted C++ uses public Core/DOM helpers and ordinary owners, and
+Script/dispatch exclusions pass. Required formatting retains **26 baseline
+diagnostics in nine unchanged files**; changed checks pass. Exact commands,
+first failed expectation and evidence: repository HANDOFF and
+`/tmp/ctcompile-prototype-final/`.
+
+**Next:** the unchanged `class_filter_full_h` calls only `H.getDataAttribute`;
+its uncalled original slots still refuse at `DOM direct helper contains an
+unproved closure or capture`. Prove their bodies independently before publication;
+do not erase unproved siblings or insert calls into the specimen. Part 25's
+object reloads need real literal own-data definition semantics/provenance first:
+ordinary-object assignment currently cannot seed a safe contents snapshot.
+This prerequisite is rechecked at the top of part 25 and journaled for Claude.
+W operations, nested iterators, complex entry completion, broader part 25 and
+the application driver remain. Full suites, broad matrices, WPT/test262 and
+whole Bootstrap were skipped; no whole-bundle or escape-precision gain is claimed.
+
+The native draft needed no production correction. One agent finished fixture
+review; receiver and escape auditors reported their findings before service
+limits, and root verified them and completed the gates. Both-agent histories
+and unmerged branches were reviewed; September 7 WIP is already an ancestor.
+The independent escape audit produced no code change: `CreateObjectOp` seeds
+empty snapshots, `CopyPropsOp` cannot introduce unknown entries, and ordinary
+`SetPropertyOp` refuses because inherited setters can retain values. Adding an
+invariant object-read case alone would be unreachable admission code. Coordinate
+literal definition semantics with Claude without changing assignment setters.
+
+Exact focused validation, all devbox operations under
+`/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference
+  ctcompile-test-exception-recovery ctcompile-test-host-contract`: passed;
+  two incremental actions on each of two runs. The inherited Methods.cpp build
+  was already current; verified source hashes match.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_exception_recovery$'`: first failed four
+  assertions in **5.28s total**, solely because unchanged control 148 now admits.
+  Its expectation moved to the existing positive proof/contract checks; the
+  new controls already passed. Retry **1/1 (4.35s; total 4.36s)**.
+- The same exact CTest command with `-R '^ctcompile_host_contract$'`:
+  **1/1 (0.51s; total 0.52s)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/(class-dom|class-entry|constructor-refusals)[.]mlir$'`:
+  **3/3 (186.36s)**. Besides the class DOM counts above, class entry has
+  **two preparations / four observations / 26 refusals**; constructor controls
+  have **11 observations / eight native executions / 18 refusals**. Existing
+  pinned VM differences remain unchanged. The complete-H method source emits
+  ordinary `element_ref`, owning strings/vectors/JSON and existing platform calls.
+- The original unused-slot fixture was probed separately with the same generated
+  tools and its real intrinsic manifest; its exact diagnostic is recorded above.
+  `verify.sh` compares all four changed source/test hashes and exports inspected
+  C++ to `full-h-method.cpp` beside the gate logs.
+- Required `tools/format.sh --check` reports the same **26 diagnostics / nine
+  HEAD-identical files** with pinned clang-format 23.0.0git. Changed C++/Python
+  formatting, Python/added-JS syntax, source preservation and `git diff --check`
+  pass. Documentation needs no build or CTest.
+
+Skipped: full CTest/compiler lit, escape builds/oracles, complete DOM/String/
+assignment suites, separate lifetime matrices, broad corpus/native matrices,
+WPT/test262 and whole Bootstrap. These are focused results. No escape code or
+precision changed. Browser compliance measurements remain historical. Devbox
+start and IP allow-list refresh restored access; the predecessor temporary SSH
+key was removed from the devbox and local disk, preserving other keys. No push.
+Native Bootstrap and the overall plan remain unfinished.
+
 ## Full H entry calls and invariant array lengths, 2026-09-19 UTC
 
 Resumed **59d28a62** and five dirty ctcompile paths from the **06:19 H-slot /

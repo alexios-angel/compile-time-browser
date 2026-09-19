@@ -1,5 +1,42 @@
 # What native Bootstrap needs next
 
+## Full H instance methods and object-reload prerequisite, 2026-09-19 UTC
+
+**6bca7b94** finishes the interrupted receiver-proof thread at **61f627fb**:
+three dirty files from the **07:05 session**, explicitly abandoned by the
+**07:07:11 AGENT-SYNC exit**. Complete original H/M/F now runs inside instance
+methods when every H slot has actual calls, including constructor-stored DOM
+receivers and fixed fresh-result aliases. Method stability ignores only a direct
+fresh allocation distinct from the prototype/instance; all unknown aliases,
+formals and real receiver writes still count. Constructor proof is unchanged.
+
+All **361 prior source bodies** and **16 raw C++ JavaScript bodies** are preserved.
+Twelve added bodies and six new transaction controls per provider cover the
+boundary, including a local that changes from fresh to the real instance. The
+old transaction control 148 now admits without changing its source. No browser
+or Script semantics changed.
+
+Focused passes: transaction **1/1 (4.35s; total 4.36s)**, host contract
+**1/1 (0.51s; total 0.52s)**, and selected class DOM / class entry / constructor
+refusals lit **3/3 (186.36s total)**. Class DOM: **492 observations, eight
+GCC/Clang executions, 3,746 refusals**. All four changed source/test hashes match
+the devbox; emitted C++ uses public Core/DOM helpers and ordinary owners, and
+Script/dispatch exclusions pass. Required formatting retains **26 baseline
+diagnostics in nine unchanged files**; changed checks pass. Exact commands,
+first failed expectation and evidence: repository HANDOFF and
+`/tmp/ctcompile-prototype-final/`.
+
+**Next:** the unchanged `class_filter_full_h` calls only `H.getDataAttribute`;
+its uncalled original slots still refuse at `DOM direct helper contains an
+unproved closure or capture`. Prove their bodies independently before publication;
+do not erase unproved siblings or insert calls into the specimen. Part 25's
+object reloads need real literal own-data definition semantics/provenance first:
+ordinary-object assignment currently cannot seed a safe contents snapshot.
+This prerequisite is rechecked at the top of part 25 and journaled for Claude.
+W operations, nested iterators, complex entry completion, broader part 25 and
+the application driver remain. Full suites, broad matrices, WPT/test262 and
+whole Bootstrap were skipped; no whole-bundle or escape-precision gain is claimed.
+
 ## Full H entry calls and invariant array lengths, 2026-09-19 UTC
 
 Resumed **59d28a62** and the five dirty files from the **06:19 H-slot/own-length

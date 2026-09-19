@@ -110,10 +110,14 @@ For typed DOM preparation, each direct sibling's complete String-argument
 census runs before expansion reaches their shared callees. This admits original
 H/M/F with all four H slots invoked from the entry, including distinct literal
 keys. Unknown or matching F inputs still poison its complete no-match proof;
-unused slots still need independent body proof. H inside a class method remains
-blocked by the conservative whole-module dynamic-write census in closure lifting;
-its later callable-slot error describes an unlifted class prototype. No receiver
-alias or slot-stability premise is supplied by this argument normalization.
+unused slots still need independent body proof. Complete H also works inside
+instance methods when every slot has actual calls. Closure lifting separately
+excludes writes whose receiver is a direct fresh allocation distinct from the
+prototype or constructed instance; unknown aliases and formals still count.
+Constructor-stored DOM fields and fixed fresh-result aliases retain their original
+receiver proofs. The unchanged `class_filter_full_h` still has uncalled original
+slots and refuses their unproved closure/capture. No alias or slot-stability
+premise is supplied by String argument normalization.
 
 Global callable holders additionally require a unique publication from the closed
 script entry, after every fixed callable slot is initialized. Before publication,
