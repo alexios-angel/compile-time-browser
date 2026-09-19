@@ -1,5 +1,53 @@
 # What native Bootstrap needs next
 
+## Class dataset loops and invariant powers, 2026-09-19 UTC
+
+Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC closure**. The latest
+work was committed; September 7 WIP is already an ancestor. Three parallel agents
+supplied the escape implementation and class/casing findings before service
+limits; root completed diagnosis, integration and focused validation.
+
+**023bbf5e** admits the original `class_dynamic_method` and
+`class_dynamic_capture` bodies. Fixed method cells may be read through later
+loops/completion switches while writes and captures stay ordered. The shared
+constructor census distinguishes closed instances from unrelated SSA values;
+all formal parameters and prototype observations retain conservative checks.
+Already-called methods use the complete original-call proof, avoiding a synthetic
+second iterator. Unused methods still require their own proof. Receiver aliases,
+actual parameters and loop branches are checked. All **290 previous source
+specimens are unchanged**; **12 new bodies** cover successes and refusals.
+
+**0e8a9705** shares the existing bounded scalar power transfer with one original
+invariant Pow latch. Both operands must retain their original primitive snapshots;
+only the existing exact zero/unit identities are admitted. Changing/nested inputs,
+noncanonical conversions, zero strides, original property keys and final bounds
+retain their checks. Existing expression bodies remain unchanged.
+
+Focused passes: arrays **1/1 (1.21s; total 1.22s)** and four selected escape
+oracles **4/4 (0.14s)**. New oracle: **34 observed sites / 8 sound / 8 of 22
+precision**, zero violations, partial, pending or unclaimed sites. Native
+transaction **1/1 (4.43s; total 4.44s)**, host contract **1/1 (0.48s; total
+0.49s)**, class DOM **1/1 (117.31s)**: **348 source observations, 8 combined native
+executions, 2,594 refusals**. The 20 existing VM byte-index divergences remain
+explicit; native agrees with Node. Public class, constructor refusals and borrowed
+argument refusals **3/3 (200.59s)**. Source/binary Script and dispatch exclusions
+pass. Final eight source/test hashes match the devbox. Required formatting retains
+**26 existing diagnostics in nine unchanged files**; changed checks pass.
+Evidence: `/tmp/ctcompile-class-loop/`.
+
+**Next:** full original H still stops at Unicode `toLowerCase` and normalized-key
+collision/prototype proof. No correct public casing implementation exists; keep
+Script's intentionally ASCII behavior unchanged. `class_dynamic_helper` still
+stops at the class census's unsupported `ctjs.call_direct`. Loops behind early
+returns and actual repeated iterators still require one top-level-iterator proof.
+Unused H slots, global wrapper publication and W's Object.entries/destructuring/
+original s/RegExp/TypeError/spread remain before inheritance. Nested/recomputed
+induction and broader part-25 work remain. Full H, W/W+r/W+r+H, native Bootstrap,
+the application driver and the whole plan are unfinished. No whole-bundle
+admission gain or full-suite pass is claimed.
+
+Exact commands, probe outcomes and skipped coverage are recorded in ctcompile/docs/HANDOFF.md.
+
 ## Confined class callbacks and invariant division, 2026-09-19 UTC
 
 Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC closure**. Both agents'

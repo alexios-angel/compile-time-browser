@@ -15,6 +15,83 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Class dataset loops and invariant powers, 2026-09-19 UTC
+
+Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC closure**. The latest
+work was committed; September 7 WIP is already an ancestor. Three parallel agents
+supplied the escape implementation and class/casing findings before service
+limits; root completed diagnosis, integration and focused validation.
+
+**023bbf5e** admits the original `class_dynamic_method` and
+`class_dynamic_capture` bodies. Fixed method cells may be read through later
+loops/completion switches while writes and captures stay ordered. The shared
+constructor census distinguishes closed instances from unrelated SSA values;
+all formal parameters and prototype observations retain conservative checks.
+Already-called methods use the complete original-call proof, avoiding a synthetic
+second iterator. Unused methods still require their own proof. Receiver aliases,
+actual parameters and loop branches are checked. All **290 previous source
+specimens are unchanged**; **12 new bodies** cover successes and refusals.
+
+**0e8a9705** shares the existing bounded scalar power transfer with one original
+invariant Pow latch. Both operands must retain their original primitive snapshots;
+only the existing exact zero/unit identities are admitted. Changing/nested inputs,
+noncanonical conversions, zero strides, original property keys and final bounds
+retain their checks. Existing expression bodies remain unchanged.
+
+Focused passes: arrays **1/1 (1.21s; total 1.22s)** and four selected escape
+oracles **4/4 (0.14s)**. New oracle: **34 observed sites / 8 sound / 8 of 22
+precision**, zero violations, partial, pending or unclaimed sites. Native
+transaction **1/1 (4.43s; total 4.44s)**, host contract **1/1 (0.48s; total
+0.49s)**, class DOM **1/1 (117.31s)**: **348 source observations, 8 combined native
+executions, 2,594 refusals**. The 20 existing VM byte-index divergences remain
+explicit; native agrees with Node. Public class, constructor refusals and borrowed
+argument refusals **3/3 (200.59s)**. Source/binary Script and dispatch exclusions
+pass. Final eight source/test hashes match the devbox. Required formatting retains
+**26 existing diagnostics in nine unchanged files**; changed checks pass.
+Evidence: `/tmp/ctcompile-class-loop/`.
+
+**Next:** full original H still stops at Unicode `toLowerCase` and normalized-key
+collision/prototype proof. No correct public casing implementation exists; keep
+Script's intentionally ASCII behavior unchanged. `class_dynamic_helper` still
+stops at the class census's unsupported `ctjs.call_direct`. Loops behind early
+returns and actual repeated iterators still require one top-level-iterator proof.
+Unused H slots, global wrapper publication and W's Object.entries/destructuring/
+original s/RegExp/TypeError/spread remain before inheritance. Nested/recomputed
+induction and broader part-25 work remain. Full H, W/W+r/W+r+H, native Bootstrap,
+the application driver and the whole plan are unfinished. No whole-bundle
+admission gain or full-suite pass is claimed.
+
+Exact validation and limits:
+
+- Native build targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`. Exact CTests: `ctcompile_exception_recovery`
+  and `ctcompile_host_contract`. Lit through `build/ctcompile/test`:
+  `CTNative/Lowering/Objects/{class-dom,class-initialization,constructor-refusals,object-argument-refusals}.mlir`.
+- Escape build targets: `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`. Exact CTest:
+  `ctcompile_escape_analysis_arrays`. Lit:
+  `Analysis/Escape/escape-claims/{invariant-power-latch,invariant-division-latch,primitive-power,unit-power}.test`.
+- Native probe sequence: fixed-cell reads exposed a retained prototype method
+  definition; the constructor's module-wide key census was the cause. A discarded
+  callee-bookkeeping experiment and diagnostic edits left `DOMPreparation.cpp`
+  byte-identical to HEAD. Scoping the method census then exposed synthetic
+  duplicate iterators, fixed by reusing original calls. No failed focused test
+  expectation was rewritten. The two old dynamic-method/capture bodies moved
+  unchanged to positives; every other prior fixture entry remains unchanged.
+- Logs: `probe-gate.log`, `callee-probe.log`, `diagnostic.log`, `alias-probe.log`,
+  `original-call-probe.log`, `escape-gate.log`, `native-gate.log`, `evidence.log`
+  and `final-format.log`. The final sync rebuilt only a production comment that
+  names the existing conservative alias ceiling; no logic changed after the
+  passing native gate. Twelve new JS syntax checks and changed C++/Python
+  formatting pass. `tools/format.sh --check` retains the historical 26 diagnostics
+  in nine HEAD-identical files; `git diff --check` passes.
+- Full CTest/compiler lit, complete DOM/String suites, broad corpus/native
+  matrices, WPT/test262, whole Bootstrap and independent dataset lifetime
+  replays were skipped. Browser compliance counts remain historical. No browser
+  implementation or Script semantics changed. Temporary task SSH access was
+  removed after verification, preserving other keys. No push.
+
 ## Confined class callbacks and invariant division, 2026-09-19 UTC
 
 Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC closure**. Both agents'
