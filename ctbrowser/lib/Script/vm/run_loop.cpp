@@ -152,6 +152,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_RECORD_STEP();
 
         VM_DISPATCH_BEGIN
+        // clang-format off
         VM_CASE(load_const) do {
             reg(in.a) = vm_proto->constants[in.bx()];
             break;
@@ -614,144 +615,8 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_CASE(call_method)
         VM_CASE(call_computed)
         VM_CASE(call_receiver) do {
-            {
-                value callee = reg(in.a);
-                value receiver = value::undefined();
-                // THE LOOKUP CAN THROW - a getter, a proxy trap, or a nullish
-                // receiver - and a throw has already unwound to its handler by
-                // the time it returns. Calling `undefined` after that would
-                // throw a SECOND TypeError from the landing site.
-                const std::size_t unwound = unwinds_;
-                if (in.code == op::call_receiver) {
-                    // The callee was resolved elsewhere (up the prototype chain, for
-                    // `super`) and the receiver is passed explicitly.
-                    receiver = reg(in.c);
-                } else if (in.code == op::call_method) {
-                    receiver = reg(in.a);
-                    // Through the SAME lookup as get_prop, so `s.split(...)` and
-                    // `var f = s.split; f(...)` find the same function.
-                    callee = lookup_property(receiver, vm_proto->names[in.c]);
-                } else if (in.code == op::call_computed) {
-                    receiver = reg(in.a);
-                    callee = lookup_index(receiver, reg(in.c));
-                }
-                if (unwinds_ != unwound) { break; }
-                const std::size_t arg_base = base + in.a + 1;
-                if (callee.is_kind(heap_kind::native)) {
-                    auto * nat = static_cast<native_object *>(callee.as_heap());
-                    // A HEAP PAST ITS THRESHOLD COLLECTS HERE TOO. A loop whose
-                    // only calls are natives - `nodeList[j]` through a native
-                    // proxy trap, 250 million times - never reaches invoke's
-                    // safepoint and grew to the 4 GB cap (std::bad_alloc,
-                    // dom/nodes/NodeList-static-length-getter-tampered-*).
-                    // Not a stress point: the ABI's stress pins count
-                    // collections at invoke and the tick only.
-                    if (!gc_stress_ && live_objects_ >= collect_threshold_) [[unlikely]] {
-                        // The callee may exist only here (a trap made it) and the
-                        // receiver is a C++ local until the call.
-                        const rooted keep_callee{*this, callee};
-                        const rooted keep_receiver{*this, receiver};
-                        (void)collect_if_due();
-                    }
-                    // COPIED, not spanned into the register stack. A native may call
-                    // back into script - an event listener dispatching another
-                    // event - and that grows registers_, which would leave a span
-                    // into it dangling. One small vector per native call is the
-                    // price of natives being allowed to re-enter the VM at all.
-                    std::vector<value> args{
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base + in.b)};
-                    const value saved_this = current_this_;
-                    current_this_ = receiver;
-                    const value produced = [&] {
-                        const native_scope pinned{*this};
-                        return nat->fn(*this, args);
-                    }();
-                    current_this_ = saved_this;
-                    // A throw the native's `call` parked is thrown HERE, at
-                    // its call site - see context::call.
-                    if (rethrow_pending()) { break; }
-                    reg(in.a) = produced;
-                    break;
-                }
-                if (!callee.is_kind(heap_kind::function)) {
-                    {
-                        std::string what = describe_callee(
-                            (*vm_proto),
-                            in.code == op::call_method ? vm_proto->names[in.c]
-                            : in.code == op::call_computed
-                                ? to_string(reg(in.c))
-                                : callee_origin((*vm_proto), vm_frame->ip - 1, in.a),
-                            callee);
-                        // WHAT IT WAS CALLED ON. "`replace` is undefined" reads the
-                        // same whether the method is missing from a real object or
-                        // the object itself is undefined, and those are different
-                        // bugs in different places.
-                        if (in.code == op::call_method || in.code == op::call_computed) {
-                            what += ", on " + std::string{type_of(receiver)};
-                            if (receiver.is_nullish()) {
-                                what += " (" + to_string(receiver) + ")";
-                                // WHICH undefined. "`get` is undefined, on
-                                // undefined" names the method and says nothing
-                                // about the object, and the object is the bug -
-                                // `get` is fine, whatever should have had it is
-                                // missing. A method call keeps its receiver in the
-                                // callee's own register, so the walk that names a
-                                // plain call's callee names the receiver too.
-                                const std::string from =
-                                    callee_origin((*vm_proto), vm_frame->ip - 1, in.a);
-                                if (!from.empty()) { what += " from `" + from + "`"; }
-                            }
-                        }
-                        throw_error("TypeError", std::move(what));
-                    }
-                    break;
-                }
-                auto * fnobj = static_cast<closure_object *>(callee.as_heap());
-                const function_proto & target = *fnobj->proto;
-                // CALLING A GENERATOR RUNS NOTHING. It hands back an object over a
-                // (*vm_frame) that has not started; the first instruction runs on the
-                // first `.next()`.
-                if (target.is_generator) {
-                    std::vector<value> args{
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base + in.b)};
-                    reg(in.a) = make_generator(fnobj, receiver, args);
-                    break;
-                }
-                // The callee's (*vm_frame) starts where its arguments already are, so no
-                // copying is needed to pass them.
-                const std::size_t new_base = arg_base;
-                const std::size_t needed = new_base + target.frame_size + 8u;
-                if (registers_.size() < needed) { registers_.resize(needed, value::undefined()); }
-                for (std::size_t i = in.b; i < target.param_count; ++i) {
-                    registers_[new_base + i] = value::undefined(); // missing args
-                }
-                // A COMPILED BODY, IF THIS FUNCTION HAS ONE - asked in the one
-                // place that asks, so that every other entry into a function
-                // gets the same answer. See script/dispatch.hpp.
-                //
-                // AFTER the argument fill, so `argv` is what the callee's row
-                // promises: the window with its missing parameters already
-                // undefined. BEFORE the depth guard, because ct_aot_enter owns
-                // that guard for a compiled frame.
-                if (value produced = value::undefined();
-                    enter_compiled(*this, target, callee, registers_.data() + new_base, new_base,
-                                   in.b, receiver, /*constructing*/ false, produced)) {
-                    reg(in.a) = produced;
-                    break;
-                }
-                if (frames_.size() > 512) {
-                    raise("call stack exhausted");
-                    break;
-                }
-                call_frame entered{&target, 0,     new_base, in.a,
-                                   in.b,    fnobj, receiver, handlers_.size()};
-                entered.new_target = pending_new_target_;
-                pending_new_target_ = value::undefined();
-                frames_.push_back(entered);
-                break;
-            }
+            execute_call(in, vm_frame, vm_proto, base);
+            break;
         }
         while (0);
         VM_NEXT;
@@ -849,118 +714,8 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
         VM_CASE(await_value) do {
-            {
-                // A settled promise carries its value in `__value`; anything else
-                // awaits to itself. A REJECTED promise throws, which is what makes
-                // `try { await f() } catch` work.
-                const value awaited_raw = reg(in.b);
-                // EVERY AWAIT SUSPENDS THE FRAME (27.7.5.3 Await: PerformPromiseThen
-                // on a promise resolved with the value, so the continuation is
-                // a job even when the value is already settled - `await 1`
-                // runs the rest of the body after the microtasks queued before
-                // it, which is what every ordering test and every
-                // MutationObserver callback relies on). There is one stack and
-                // the event loop is above it, so `await` cannot block: the frame
-                // is lifted out, the caller is handed a promise, and the frame
-                // comes back when the awaited one settles - from its handler
-                // list when it is pending, from a job queued now when it is
-                // not. A SCRIPT'S TOP LEVEL is the exception it always was:
-                // `return await x` in a classic script (no closure, no caller
-                // to hand a promise to) reads a settled value straight out -
-                // and when the value is a PENDING promise it runs the queue
-                // first, since the jobs that settle it are the ones an async
-                // callee just queued. Draining re-enters the VM, so the
-                // frame and its window are re-derived afterwards.
-                const bool top_level = vm_frame->closure == nullptr;
-                // 27.7.5.3 step 2, PromiseResolve(%Promise%, value): an object
-                // that is not a promise is resolved INTO one - which is where a
-                // thenable's `then` is called (NewPromiseResolveThenableJob), so
-                // `await { then(_, reject) { reject(e) } }` throws e. A promise
-                // is awaited as itself and a primitive keeps the fast path below.
-                if (awaited_raw.is_object_like() && pending_promise_factory_ && promise_settler_ &&
-                    !(awaited_raw.is_object() &&
-                      static_cast<object_object *>(awaited_raw.as_heap())->find("__settled") !=
-                          nullptr)) {
-                    // The object stays rooted through the register until the
-                    // wrapper is in it; the wrapper is rooted by the register
-                    // from then on, and resolving allocates the thenable job.
-                    const rooted keep{*this, awaited_raw};
-                    reg(in.b) = pending_promise_factory_(*this);
-                    promise_settler_(*this, reg(in.b), awaited_raw, false);
-                    if (failed_) { break; }
-                    vm_frame = &frames_.back();
-                    base = vm_frame->base;
-                }
-                const value awaited = reg(in.b);
-                if (top_level && is_pending_promise(awaited)) {
-                    drain_microtasks();
-                    if (failed_) { break; }
-                    vm_frame = &frames_.back();
-                    base = vm_frame->base;
-                }
-                const bool suspends = is_pending_promise(awaited) || !top_level;
-                if (suspends && pending_promise_factory_ && promise_settler_) {
-                    if (vm_frame->async_promise.is_undefined()) {
-                        vm_frame->async_promise = pending_promise_factory_(*this);
-                    }
-                    const value promise = vm_frame->async_promise;
-                    // AN ASYNC GENERATOR'S FRAME IS ALREADY A COROUTINE - the one
-                    // its `.next()` resumes - so the await parks THAT object rather
-                    // than making a second one the generator would never see.
-                    // `awaiting` keeps the request queue from resuming it until
-                    // the awaited promise does.
-                    coroutine_object * saved = vm_frame->generator;
-                    if (saved != nullptr) {
-                        saved->awaiting = true;
-                        saved->running = false;
-                    } else {
-                        saved = allocate<coroutine_object>();
-                    }
-                    const std::uint16_t slot = vm_frame->result_reg;
-                    suspend_frame(saved, in.a);
-                    if (is_pending_promise(awaited)) {
-                        attach_resume(awaited, value::object(saved));
-                    } else {
-                        // Settled, or not a promise at all: resume in a job
-                        // with the value (or throw the rejection there).
-                        value with = awaited;
-                        bool rejected = false;
-                        if (awaited.is_object()) {
-                            auto * obj = static_cast<object_object *>(awaited.as_heap());
-                            if (value * state = obj->find("__rejected");
-                                state != nullptr && truthy(*state)) {
-                                rejected = true;
-                            }
-                            if (value * settled = obj->find("__value")) {
-                                with = *settled;
-                                // An await IS a PerformPromiseThen (27.7.5.3
-                                // step 3): a rejection awaited is a handled one.
-                                mark_promise_handled(awaited);
-                            }
-                        }
-                        queue_microtask(await_job(),
-                                        {value::object(saved), with, value::boolean(rejected)});
-                    }
-                    suspended_ = true;
-                    if (frames_.size() <= stop_depth) { return promise; }
-                    registers_[frames_.back().base + slot] = promise;
-                    break;
-                }
-                reg(in.a) = awaited;
-                if (awaited.is_object()) {
-                    auto * obj = static_cast<object_object *>(awaited.as_heap());
-                    if (obj->find("__settled") != nullptr) { mark_promise_handled(awaited); }
-                    if (value * state = obj->find("__rejected");
-                        state != nullptr && truthy(*state)) {
-                        thrown_ = obj->find("__value") != nullptr ? *obj->find("__value")
-                                                                  : value::undefined();
-                        if (!unwind_to_handler()) { raise("uncaught rejection"); }
-                        break;
-                    }
-                    if (value * settled = obj->find("__value")) { reg(in.a) = *settled; }
-                }
-                break;
-            }
+            if (const auto produced = execute_await(in, vm_frame, base, stop_depth)) { return *produced; }
+            break;
         }
         while (0);
         VM_NEXT;
@@ -1103,102 +858,8 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         VM_NEXT;
 
         VM_CASE(construct) do {
-            {
-                const value callee = reg(in.a);
-                // A PROXY GOES THE LONG WAY ROUND. The inline path exists to avoid
-                // a nested interpreter loop, and a construct trap needs one - so
-                // this hands over to the general form rather than duplicating it.
-                if (callee.is_kind(heap_kind::proxy)) {
-                    const std::size_t arg_base = base + in.a + 1;
-                    std::vector<value> args{
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base + in.b)};
-                    reg(in.a) = construct(callee, args);
-                    break;
-                }
-                // A NATIVE GOES THE LONG WAY TOO, for the same reason as a proxy:
-                // the inline path exists to avoid a nested interpreter loop, which
-                // only a JavaScript body needs, and a second copy of the native
-                // case is a second chance to disagree about `new Number(5)`.
-                if (callee.is_kind(heap_kind::native)) {
-                    const std::size_t arg_base = base + in.a + 1;
-                    std::vector<value> args{
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
-                        registers_.begin() + static_cast<std::ptrdiff_t>(arg_base + in.b)};
-                    reg(in.a) = construct(callee, args);
-                    break;
-                }
-                // The instance's prototype comes from the constructor's own
-                // `prototype` property, which is what makes a method defined on the
-                // class reachable from every instance.
-                auto * instance = allocate<object_object>();
-                if (callee.is_object()) {
-                    if (value * proto =
-                            static_cast<object_object *>(callee.as_heap())->find("prototype")) {
-                        instance->prototype = *proto;
-                    }
-                } else if (callee.is_kind(heap_kind::function)) {
-                    instance->prototype = ensure_prototype(callee);
-                }
-                const value self = value::object(instance);
-                // ROOTED FOR THE SAME REASON context::construct roots its own:
-                // the instance is in a C++ local while field initialisers run
-                // user JavaScript, and it stays in one until the frame that
-                // carries it as a receiver is pushed. reg(in.a) still holds the
-                // CALLEE at this point, so nothing else refers to it.
-                const rooted keep_instance{*this, self};
-                run_field_initialisers(callee, self);
-                const std::size_t arg_base = base + in.a + 1;
-
-                if (!callee.is_kind(heap_kind::function)) {
-                    // THE MESSAGE IS SHARED, so a compiled `new` on a
-                    // non-constructor cannot spell it differently. The origin
-                    // is the backwards scan, which only an interpreted frame
-                    // has an ip for.
-                    new_callee_type_error(
-                        (*vm_proto), callee_origin((*vm_proto), vm_frame->ip - 1, in.a), callee);
-                    break;
-                }
-                auto * fnobj = static_cast<closure_object *>(callee.as_heap());
-                const function_proto & target = *fnobj->proto;
-                const std::size_t new_base = arg_base;
-                const std::size_t needed = new_base + target.frame_size + 8u;
-                if (registers_.size() < needed) { registers_.resize(needed, value::undefined()); }
-                for (std::size_t i = in.b; i < target.param_count; ++i) {
-                    registers_[new_base + i] = value::undefined();
-                }
-                if (frames_.size() > 512) {
-                    raise("call stack exhausted");
-                    break;
-                }
-                // `new` ASKS FOR A COMPILED BODY TOO, and passes `constructing`,
-                // which is what makes a constructor returning a primitive
-                // evaluate to its receiver (ct_aot_return_value).
-                //
-                // IT MUST HAND OVER new.target: the interpreted path below sets
-                // fresh.new_target directly, but ct_aot_enter can only read it
-                // from pending_new_target_.
-                //
-                // SET AND RESTORED rather than set and cleared: op::construct
-                // never consumes the flag on its own path, and ct_aot_enter
-                // clears it once the frame is pushed. Restoring keeps the
-                // interpreted path's behaviour identical either way.
-                const value saved_new_target = pending_new_target_;
-                pending_new_target_ = callee;
-                if (value produced = value::undefined();
-                    enter_compiled(*this, target, callee, registers_.data() + new_base, new_base,
-                                   in.b, self, /*constructing*/ true, produced)) {
-                    pending_new_target_ = saved_new_target;
-                    reg(in.a) = produced.is_object_like() ? produced : self;
-                    break;
-                }
-                pending_new_target_ = saved_new_target;
-                call_frame fresh{&target, 0, new_base, in.a, in.b, fnobj, self, handlers_.size()};
-                fresh.constructing = true;
-                fresh.new_target = callee;
-                frames_.push_back(fresh);
-                break;
-            }
+            execute_construct(in, vm_frame, vm_proto, base);
+            break;
         }
         while (0);
         VM_NEXT;
@@ -1282,6 +943,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         }
         while (0);
         VM_NEXT;
+        // clang-format on
         VM_DISPATCH_END
     }
 #if VM_COMPUTED_GOTO
