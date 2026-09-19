@@ -1132,6 +1132,57 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             }
         }
     }
+    for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
+                                ctnative::HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 6; ++control) {
+            std::string source = R"js(function guarded(element) {
+                function F(t) { return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); }
+                const H = {
+                    first(t, key) { return t.getAttribute(F(key)); },
+                    second(t, key) { return t.getAttribute(F(key)); }
+                };
+                class Shape { constructor() { this.key = 'x'; } }
+                const shape = new Shape();
+                const saved = H.first(element, 'x');
+                return saved === H.second(element, 'x') && element.getAttribute(shape.key) === null;
+            })js";
+            if (control == 1) {
+                source.replace(source.find("H.second(element, 'x')"), 22, "H.second(element, 'X')");
+            }
+            if (control == 2) {
+                source.replace(source.find("H.second(element, 'x')"), 22,
+                               "H.second(element, element.getAttribute('key'))");
+            }
+            if (control == 3) { source.insert(source.find("return saved"), "element.unknown(); "); }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            const auto original = printed(*candidate);
+            ctnative::HostContract request;
+            request.provider = provider;
+            request.entry = guarded(*candidate).getSymName().str();
+            request.elementParameters = {0};
+            request.initialIntrinsics = {"__ctbrowser_class_defined"};
+            if (control != 4) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
+            request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+            const auto before = request;
+            auto error = ctnative::prepareDOMEntry(*candidate, request, control == 5 ? 0 : 1000000);
+            if (control) {
+                check(static_cast<bool>(error), "every sibling input and effect needs proof");
+                llvm::consumeError(std::move(error));
+                check(printed(*candidate) == original &&
+                          request.moduleSha256 == before.moduleSha256 &&
+                          request.initialIntrinsics == before.initialIntrinsics &&
+                          request.elementParameters == before.elementParameters &&
+                          request.provider == before.provider && request.entry == before.entry,
+                      "sibling-call refusal preserves the original source and contract");
+            } else {
+                if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+                const ctnative::DOMEntryAnalysis proof(*candidate, request);
+                check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                      "sibling actuals jointly prove their original shared String helper");
+            }
+        }
+    }
     using ctnative::lowering_detail::inspectSingleInvocationRegion;
     using ctnative::lowering_detail::normalizeDOMURI;
     auto module = import(context, R"js(

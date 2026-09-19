@@ -1469,6 +1469,90 @@ ORIGINAL_ATTRIBUTES = (
 )
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, DYNAMIC_CASES):
     cases["class_dynamic_original"] = (ORIGINAL_ATTRIBUTES, "1000")
+# Every original H slot has actual arguments. The earlier FULL_H specimen keeps
+# its uncalled, parameterized slots and remains a separate proof boundary.
+FULL_H_CALLS = (
+    BOOTSTRAP_M
+    + strings.BOOTSTRAP_F
+    + BOOTSTRAP_H
+    + """class Shape { constructor() { this.key = 'x'; } }
+  const shape = new Shape();
+  const dataset = H.getDataAttributes(element);
+  H.setDataAttribute(element, 'config', '%7B%7D');
+  const saved = H.getDataAttribute(element, 'config');
+  H.removeDataAttribute(element, 'config');
+  const removed = H.getDataAttribute(element, 'config');
+  return typeof dataset === 'object' && typeof saved === 'object' &&
+    typeof removed === 'object' && element.getAttribute('data-bs-config') === null &&
+    element.getAttribute(shape.key) === null;
+"""
+)
+FULL_H_CASES = {
+    "class_h_full_calls": (FULL_H_CALLS, "1000"),
+    "class_h_full_distinct_keys": (
+        FULL_H_CALLS.replace(
+            "H.setDataAttribute(element, 'config'", "H.setDataAttribute(element, 'toggle'"
+        ).replace(
+            "const saved = H.getDataAttribute(element, 'config'",
+            "const saved = H.getDataAttribute(element, 'toggle'",
+        ),
+        "1000",
+    ),
+    "class_h_full_method": (
+        FULL_H_CALLS.replace(
+            "class Shape { constructor() { this.key = 'x'; } }\n  const shape = new Shape();",
+            "class Shape { read(element) {",
+        ).replace(
+            "element.getAttribute(shape.key) === null;",
+            "element.getAttribute('x') === null; } }\n  return new Shape().read(element);",
+        ),
+        "1000",
+    ),
+}
+FULL_H_REFUSALS = {
+    "class_h_full_duplicate_slot": FULL_H_CALLS.replace(
+        "const H = {", "const H = { getDataAttribute(t, e) { return null; },"
+    ),
+    "class_h_full_accessor_slot": FULL_H_CALLS.replace(
+        "const H = {", "const H = { get unused() { return 'safe'; },"
+    ),
+    "class_h_full_proto_slot": FULL_H_CALLS.replace(
+        "const H = {", "const H = { __proto__() { return 'safe'; },"
+    ),
+    "class_h_full_scalar_slot": FULL_H_CALLS.replace("const H = {", "const H = { unused: 1,"),
+    "class_h_full_unused_slot": FULL_H_CALLS.replace(
+        "const H = {", "const H = { unused() { return 'safe'; },"
+    ),
+    "class_h_full_unused_effect": FULL_H_CALLS.replace(
+        "const H = {", "const H = { unused() { return unknown(); },"
+    ),
+    "class_h_full_slot_replaced": FULL_H_CALLS.replace(
+        "  const dataset =", "  H.getDataAttribute = (t, e) => null;\n  const dataset ="
+    ),
+    "class_h_full_slot_deleted": FULL_H_CALLS.replace(
+        "  const dataset =", "  delete H.getDataAttribute;\n  const dataset ="
+    ),
+    "class_h_full_slot_detached": FULL_H_CALLS.replace(
+        "  const saved = H.getDataAttribute(element, 'config');",
+        "  const read = H.getDataAttribute;\n  const saved = read(element, 'config');",
+    ),
+    "class_h_full_holder_escape": FULL_H_CALLS.replace(
+        "  const dataset =", "  element.setAttribute('leak', H);\n  const dataset ="
+    ),
+    "class_h_full_later_key": FULL_H_CALLS.replace(
+        "H.removeDataAttribute(element, 'config')", "H.removeDataAttribute(element, 'Config')"
+    ),
+    "class_h_full_later_target": FULL_H_CALLS.replace(
+        "H.removeDataAttribute(element, 'config')", "H.removeDataAttribute({}, 'config')"
+    ),
+}
+# Dynamic writes in H still conservatively block prototype-method stability.
+# Keep this complete original body for the next receiver-alias proof.
+FULL_H_REFUSALS["class_h_full_method"] = FULL_H_CASES.pop("class_h_full_method")[0]
+for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
+    cases.update(FULL_H_CASES)
+for refusals in (CLASS_REFUSALS, FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS):
+    refusals.update(FULL_H_REFUSALS)
 # The VM still indexes bytes. Pin its known divergence separately from the
 # Node/native UTF-16 contract; all pre-existing differential expectations remain.
 UTF16_CASES, UTF16_VM_BITS = {}, {}
@@ -2114,7 +2198,11 @@ def main():
                     request["initial_intrinsics"] += DYNAMIC_ITERATION
                 if name == "class_dynamic_prefix":
                     request["initial_intrinsics"] += ["RegExp", "__ctbrowser_regexp"]
-                if name in ("class_filter_full_h", "class_dynamic_original"):
+                if (
+                    name in ("class_filter_full_h", "class_dynamic_original")
+                    or name in FULL_H_CASES
+                    or name in FULL_H_REFUSALS
+                ):
                     request["initial_intrinsics"] += [
                         "Number",
                         "JSON",

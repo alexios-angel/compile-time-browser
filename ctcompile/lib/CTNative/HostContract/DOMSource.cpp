@@ -1452,10 +1452,17 @@ struct DOMSource {
             if (depth + callDepth.lookup(call) >= 63) {
                 return refuse("DOM helper call tree is recursive or too deep");
             }
+            if (!bindConstantArguments({}, target)) { return false; }
+        }
+        // Bind every sibling's complete call census before expanding a shared
+        // callee. Otherwise an unvisited sibling's formal hides its actual
+        // String inputs from that callee's existing all-use proof.
+        for (ctjs::CallDirectOp call : directCalls) {
+            auto target = call.getTarget();
             // The symbol is already the direct-call contract. This normalization
             // proves no new source dispatch: it binds each actual receiver and
             // retains every operation for the complete DOM entry reproof.
-            if (!bindConstantArguments({}, target) || !expand(target, depth + 1, false, true) ||
+            if (!expand(target, depth + 1, false, true) ||
                 !inlineCall(function, target, call, call.getArgs(), call.getReceiver(),
                             call.getCalleeValue(), {}, depth)) {
                 return false;

@@ -61,6 +61,10 @@
 // Original H keeps dataset keys separate from normalized output keys; collisions
 // overwrite in order and __proto__ has one source preimage. Whole-string casing,
 // other indices/coercions, detached methods and replacement still refuse.
+// Complete original H admits when every slot has original entry calls. Sibling
+// String arguments bind before shared F specialization; distinct literal keys
+// retain their union, and any matching or unknown later key still refuses.
+// H inside a class method retains the prototype-write census boundary.
 // Direct class methods retain the original filter predicate and its lexical-this
 // enclosure when that callback never reads this. Constructor fields, actual
 // parameters, early-return branches and repeated calls retain their source order.
