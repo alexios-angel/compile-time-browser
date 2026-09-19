@@ -897,6 +897,18 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
+std::optional<std::size_t> ownArrayIndex(const ContentsValue & key) {
+    if (!key.origin()) { return std::nullopt; }
+    if (key.integerNumber && *key.integerNumber < 4294967295ULL) { return key.integerNumber; }
+    // A saved ASCII digit is already a canonical String property key. Keep its
+    // original String identity; this does not supply a Number fact or coerce it.
+    if (key.string() && key.asciiCharacter && *key.asciiCharacter >= '0' &&
+        *key.asciiCharacter <= '9') {
+        return *key.asciiCharacter - '0';
+    }
+    return ownArrayIndex(key.origin());
+}
+
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result) {
     if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }
@@ -935,12 +947,7 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input,
     if (!origin) { return std::nullopt; }
     if (auto number = boundedNumber(origin, negate)) { return number; }
     if (input.string()) {
-        if (input.asciiCharacter) {
-            const auto character = *input.asciiCharacter;
-            if (!negate && character >= '0' && character <= '9') { return character - '0'; }
-            return std::nullopt;
-        }
-        if (!negate) { return ownArrayIndex(origin); }
+        if (!negate) { return ownArrayIndex(input); }
         auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
         auto string =
             literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
@@ -1359,10 +1366,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     result.integerNumber = array->second.size();
                     return result;
                 }
-                auto position = ownArrayIndex(key->origin());
-                if (key->integerNumber && *key->integerNumber < 4294967295ULL) {
-                    position = key->integerNumber;
-                }
+                const auto position = ownArrayIndex(*key);
                 if (!position || *position >= array->second.size()) { return std::nullopt; }
                 // Retaining the original element keeps primitive keys intact.
                 return array->second[*position];
@@ -2251,10 +2255,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         continue;
                     }
                 }
-                auto index = key ? ownArrayIndex(key) : std::nullopt;
-                if (keyValue.integerNumber && *keyValue.integerNumber < 4294967295ULL) {
-                    index = keyValue.integerNumber;
-                }
+                const auto index = ownArrayIndex(keyValue);
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or
                 // consult a prototype setter; literal append has neither behavior.

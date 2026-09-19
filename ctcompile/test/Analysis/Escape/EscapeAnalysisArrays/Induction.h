@@ -528,6 +528,56 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,x]",
          .reads = "a[0]=one; a[1]=x",
          .exit = "x -> {x}"});
+    const auto stringArrayReload =
+        replace(replace(stringIndex, "#ctjs.string<\"1\">", "#ctjs.string<\"0\">"),
+                "ctjs.unary plus %character", "ctjs.get_property %base[%character]");
+    run({.what = "indexed digit snapshots are canonical own-array keys in invariant reloads",
+         .body = stringArrayReload,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[0]=one; a[1]=x; a[0]=one",
+         .exit = "x -> {x}"});
+    run({.what = "digit-key invariant reloads discharge only discarded children",
+         .body = replace(stringArrayReload, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[0]=one; a[1]=x; a[0]=one",
+         .exit = "zero -> {}"},
+        "x");
+    for (const std::string text : {" ", "x", "9"}) {
+        reject("indexed String keys require an existing canonical own-array element",
+               replace(stringArrayReload, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("digit-key reloads still require an invariant original String index",
+           replace(stringArrayReload, "%text[%zero]", "%text[%i]"));
+    reject("digit-key reloads cannot bypass the read-only loop census",
+           replace(stringArrayReload,
+                   "  %unit =", "  ctjs.set_property %base[%character], %one\n  %unit ="));
+    reject(
+        "an indexed digit String cannot become a Number key for another String",
+        replace(stringIndex, "ctjs.unary plus %character", "ctjs.get_property %text[%character]"));
+    const std::string digitKey = prefix + "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+                                          "  ctjs.set_property %a[%zero], %x\n"
+                                          "  %text = ctjs.constant #ctjs.string<\"0\">\n"
+                                          "  %character = ctjs.get_property %text[%zero]\n"
+                                          "  %saved = ctjs.get_property %a[%character]\n"
+                                          "  ctjs.set_property %a[%character], %zero\n"
+                                          "  ctjs.return %saved\n";
+    run({.what = "saved digit keys preserve child identity across own-array overwrite",
+         .body = digitKey,
+         .arrays = "a:[zero,two,three]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"});
+    run({.what = "digit-key overwrites discharge an unreturned saved child",
+         .body = replace(digitKey, "ctjs.return %saved", "ctjs.return %zero"),
+         .arrays = "a:[zero,two,three]",
+         .reads = "a[0]=x",
+         .exit = "zero -> {}"},
+        "x");
+    reject("digit-key replay cannot use a numeric whitespace conversion",
+           replace(digitKey, "#ctjs.string<\"0\">", "#ctjs.string<\" \">"),
+           ArrayContentsFailure::UnknownIndex);
+    reject("digit-key replay retains the ordinary own-element bound",
+           replace(digitKey, "#ctjs.string<\"0\">", "#ctjs.string<\"9\">"),
+           ArrayContentsFailure::MissingElement);
     for (const std::string key : {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
                                   "#ctjs.boolean<false>", "#ctjs.number<4607182418800017408>"}) {
         reject("String reads require an in-range original Number key",

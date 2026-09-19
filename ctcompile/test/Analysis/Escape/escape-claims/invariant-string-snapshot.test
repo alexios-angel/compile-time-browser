@@ -1,0 +1,50 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-string-snapshot
+// RUN: FileCheck %s < %t/escape-claims-invariant-string-snapshot.claims
+
+// Saved digit Strings are canonical own-array keys, not Number facts.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function released() {
+    var child = {}, array = [child], digit = '0'[0], saved = array[digit];
+    array[digit] = 0; return 0;
+}
+function retained() {
+    var child = {}, array = [child], digit = '0'[0], saved = array[digit];
+    array[digit] = 0; return saved;
+}
+function invariant() {
+    var child = {}, array = [1, child], text = '0', saved = 0;
+    for (var i = 0; i < array.length; i += array[text[0]]) saved = array[i];
+    return 0;
+}
+function invariantRetained() {
+    var child = {}, array = [1, child], text = '0', saved = 0;
+    for (var i = 0; i < array.length; i += array[text[0]]) saved = array[i];
+    return saved;
+}
+function savedKey() {
+    var child = {}, array = [child], text = '0', digit = text[0];
+    text = '9'; array[digit] = 0; return 0;
+}
+function whitespace() {
+    var child = {}, array = [child], digit = ' '[0];
+    array[digit] = 0; return 0;
+}
+function missing() {
+    var child = {}, array = [child], digit = '9'[0];
+    array[digit] = 0; return 0;
+}
+function stringKey() {
+    var child = {}, array = [child], digit = '0'['0'];
+    array[digit] = 0; return 0;
+}
+released(); retained(); invariant(); invariantRetained(); savedKey(); whitespace(); missing(); stringKey();

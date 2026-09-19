@@ -506,6 +506,32 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    const auto stringArrayReload =
+        replace(replace(replace(stringIndex, "[%x]", "[%one]"), "#ctjs.string<\"1\">",
+                        "#ctjs.string<\"0\">"),
+                "ctjs.unary plus %character", "ctjs.get_property %base[%character]");
+    rows.push_back({.what = "structured digit snapshots select exact invariant own-array keys",
+                    .body = stringArrayReload,
+                    .arrays = "a:[one,y]",
+                    .reads = "a[0]=one; a[0]=one; a[1]=y; a[0]=one",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured digit-key reloads discharge only discarded children",
+                    .body = replace(stringArrayReload, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[one,y]",
+                    .reads = "a[0]=one; a[0]=one; a[1]=y; a[0]=one",
+                    .exit = "zero -> {}"});
+    for (const std::string text : {" ", "x", "9"}) {
+        reject("structured digit keys require an existing canonical own-array element",
+               replace(stringArrayReload, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("structured digit keys cannot borrow a changing String index",
+           replace(stringArrayReload, "%text[%zero]", "%text[%i]"));
+    reject("structured digit-key reloads cannot bypass the read-only loop census",
+           replace(stringArrayReload,
+                   "    %unit =", "    ctjs.set_property %base[%character], %one\n    %unit ="));
+    reject(
+        "structured digit snapshots remain String keys when indexing another String",
+        replace(stringIndex, "ctjs.unary plus %character", "ctjs.get_property %text[%character]"));
     for (const std::string key : {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
                                   "#ctjs.boolean<false>", "#ctjs.number<4607182418800017408>"}) {
         reject("String reads require an in-range original Number key",
