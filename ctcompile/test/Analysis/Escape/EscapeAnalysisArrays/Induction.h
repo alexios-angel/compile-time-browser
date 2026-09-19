@@ -448,6 +448,43 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(reloaded, "%base[%zero]", "%base[%i]"));
     reject("an invariant reload cannot overlook loop mutation",
            replace(reloaded, "  %unit =", "  ctjs.set_property %base[%zero], %two\n  %unit ="));
+    const auto lengthReload = replace(replace(savedChild, "  %step =",
+                                              "  %name = ctjs.constant #ctjs.string<\"length\">\n"
+                                              "  %size = ctjs.get_property %base[%name]\n"
+                                              "  %unit = ctjs.binary sub %size, %one\n  %step ="),
+                                      "add %i, %one", "add %i, %unit");
+    run({.what = "an invariant own-length reload preserves the returned child",
+         .body = lengthReload,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "an invariant own-length reload discharges only discarded children",
+         .body = replace(lengthReload, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "the original header length can independently supply the latch stride",
+         .body = replace(savedChild, "add %i, %one", "add %i, %length"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one",
+         .exit = "one -> {}"},
+        "x");
+    for (const std::string mutation :
+         {"ctjs.set_property %base[%name], %one", "ctjs.set_property %base[%zero], %one",
+          "ctjs.append %one to %base"}) {
+        reject("an invariant length cannot bypass the complete loop mutation census",
+               replace(lengthReload, "  %size =", "  " + mutation + "\n  %size ="));
+    }
+    reject("a misspelled length is not an own length",
+           replace(lengthReload, "%name = ctjs.constant #ctjs.string<\"length\">",
+                   "%name = ctjs.constant #ctjs.string<\"Length\">"));
+    reject("an own-length result cannot certify a zero stride",
+           replace(lengthReload, "binary sub %size, %one", "binary sub %size, %two"));
+    reject("an own-length reload must preserve the final-index bound",
+           replace(lengthReload, "  %unit = ctjs.binary sub %size, %one",
+                   "  %max = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                   "  %unit = ctjs.binary add %size, %max"));
     reject("a negative computed start has no bounded Number certificate",
            replace(computed, "binary sub %one, %one", "binary sub %zero, %one"));
     reject("even an untaken predecessor must independently supply a bounded Number",

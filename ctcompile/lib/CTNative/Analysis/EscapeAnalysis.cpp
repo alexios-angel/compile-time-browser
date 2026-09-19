@@ -1314,16 +1314,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const auto key = self(self, load->getOperand(1), depth + 1);
                 if (!base || !key || !base->origin() || !key->origin()) { return std::nullopt; }
                 const auto array = state.arrays.find(base->origin().getDefiningOp());
+                if (array == state.arrays.end()) { return std::nullopt; }
+                // The complete loop census below rejects mutations and effects.
+                // Replay still checks every own read and snapshots its value.
+                const auto name = ownObjectKey(key->origin());
+                if (name && name.getValue() == "length") {
+                    if (array->second.size() > 4294967295ULL) { return std::nullopt; }
+                    result.integerNumber = array->second.size();
+                    return result;
+                }
                 auto position = ownArrayIndex(key->origin());
                 if (key->integerNumber && *key->integerNumber < 4294967295ULL) {
                     position = key->integerNumber;
                 }
-                if (array == state.arrays.end() || !position || *position >= array->second.size()) {
-                    return std::nullopt;
-                }
-                // The complete loop census below rejects all mutations and
-                // effects. Replay still checks every actual own-element read;
-                // retaining the original element keeps primitive keys intact.
+                if (!position || *position >= array->second.size()) { return std::nullopt; }
+                // Retaining the original element keeps primitive keys intact.
                 return array->second[*position];
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
                 if (unary.getKind() != ctjs::UnaryKind::Plus &&

@@ -1,0 +1,76 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-length-reload
+// RUN: FileCheck %s < %t/escape-claims-invariant-length-reload.claims
+
+// Exact own lengths retain original base/key identities and the read-only loop
+// census. Neither a converted property key nor mutable base supplies a snapshot.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function lengthReleased() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += array.length) saved = array[i];
+    return 0;
+}
+function lengthRetained() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += array.length) saved = array[i];
+    return saved;
+}
+function nestedLength() {
+    var child = {}, array = [child], inputs = [[1]], saved = 0;
+    for (var i = 0; i < array.length; i += inputs[0].length) saved = array[i];
+    return 0;
+}
+function arithmeticLength() {
+    var child = {}, array = [child], inputs = [1, 2], saved = 0;
+    for (var i = 0; i < array.length; i += inputs.length - 1) saved = array[i];
+    return 0;
+}
+function loadedLengthKey() {
+    var child = {}, array = [child], keys = ['length'], saved = 0;
+    for (var i = 0; i < array.length; i += array[keys[0]]) saved = array[i];
+    return 0;
+}
+function mutatedLength() {
+    var child = {}, array = [child], inputs = [1, 2], saved = 0;
+    for (var i = 0; i < array.length; i += inputs.length) {
+        saved = array[i];
+        inputs.length = 1;
+    }
+    return 0;
+}
+function changedBase() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += inputs.length) {
+        saved = array[i];
+        inputs = [1, 2];
+    }
+    return 0;
+}
+function convertedLengthKey() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += array[+'length']) saved = array[i];
+    return 0;
+}
+function stringLength() {
+    var child = {}, array = [child], input = 'a', saved = 0;
+    for (var i = 0; i < array.length; i += input.length) saved = array[i];
+    return 0;
+}
+function objectLength() {
+    var child = {}, array = [child], input = {length: 1}, saved = 0;
+    for (var i = 0; i < array.length; i += input.length) saved = array[i];
+    return 0;
+}
+lengthReleased(); lengthRetained(); nestedLength(); arithmeticLength(); loadedLengthKey();
+mutatedLength(); changedBase(); convertedLengthKey(); stringLength(); objectLength();

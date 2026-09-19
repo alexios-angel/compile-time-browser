@@ -429,6 +429,42 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject(
         "structured reload cannot overlook loop mutation",
         replace(reloaded, "    %unit =", "    ctjs.set_property %base[%zero], %zero\n    %unit ="));
+    const auto lengthReload =
+        replace(replace(original, "    %step =",
+                        "    %name = ctjs.constant #ctjs.string<\"length\">\n"
+                        "    %size = ctjs.get_property %base[%name]\n"
+                        "    %unit = ctjs.binary sub %size, %one\n    %step ="),
+                "add %i, %one", "add %i, %unit");
+    rows.push_back({.what = "a structured own-length reload preserves the returned child",
+                    .body = lengthReload,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "a structured own-length reload releases discarded children",
+                    .body = replace(lengthReload, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "structured length strides retain the visited child's identity",
+                    .body = replace(lengthReload, "binary sub %size, %one", "unary plus %size"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    for (const std::string mutation :
+         {"ctjs.set_property %base[%name], %one", "ctjs.set_property %base[%zero], %one",
+          "ctjs.append %one to %base"}) {
+        reject("structured own lengths cannot bypass the complete mutation census",
+               replace(lengthReload, "    %size =", "    " + mutation + "\n    %size ="));
+    }
+    reject("a structured lookalike key cannot become an own length",
+           replace(lengthReload, "%name = ctjs.constant #ctjs.string<\"length\">",
+                   "%name = ctjs.constant #ctjs.string<\"length \">"));
+    reject("a structured own-length result cannot certify a zero stride",
+           replace(lengthReload, "binary sub %size, %one", "binary sub %size, %size"));
+    reject("a structured own-length reload must preserve the final-index bound",
+           replace(lengthReload, "    %unit = ctjs.binary sub %size, %one",
+                   "    %max = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                   "    %unit = ctjs.binary add %size, %max"));
     reject("structured induction refuses a computed negative start",
            replace(computedStart, "unary plus %zero", "unary neg %one"));
     reject("structured induction cannot convert a String start into a Number proof",
