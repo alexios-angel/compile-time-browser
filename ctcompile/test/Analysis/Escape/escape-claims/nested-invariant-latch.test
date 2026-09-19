@@ -1,0 +1,138 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name nested-invariant-latch
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-nested-invariant-latch.claims
+
+// Two pure operation layers retain original snapshots, Number conversion and
+// child escape. Changing/reloaded/deeper operands and unbounded results refuse.
+// IMPORT-LABEL: ctjs.func @mixedPositive$
+// IMPORT: ctjs.binary mod
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @signedUnary$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.unary neg
+// IMPORT-LABEL: ctjs.func @bothSides$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @savedInput$
+// IMPORT: ctjs.binary div
+// IMPORT: ctjs.binary pow
+// IMPORT-LABEL: ctjs.func @changing$
+// IMPORT: ctjs.binary pow
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @repeatedRead$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @deep$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @concatenated$
+// IMPORT: ctjs.binary add
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @noncanonical$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @overflow$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary mul
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function mixedPositive() {
+    var child = {}, array = [child], saved = 0, base = 3;
+    for (var i = 0; i < array.length; i += (base % 2) * true) saved = array[i];
+    return 0;
+}
+function signedUnary() {
+    var child = {}, array = [child], saved = 0, base = 2 - 1;
+    for (var i = 0; i < array.length; i -= -(+base)) saved = array[i];
+    return saved;
+}
+function bothSides() {
+    var child = {}, array = [child], saved = 0, left = true, right = '1';
+    for (var i = 0; i < array.length; i += (+left) * (+right)) saved = array[i];
+    return 0;
+}
+function savedInput() {
+    var child = {}, array = [child], inputs = ['-1'], base = inputs[0], saved = 0;
+    inputs[0] = child;
+    for (var i = 0; i < array.length; i -= (base / true) ** true) saved = array[i];
+    return 0;
+}
+function changing() {
+    var child = {}, array = [child], saved = 0, base = 1;
+    for (var i = 0; i < array.length; i += (base ** true) * true) {
+        saved = array[i];
+        base = base + 1;
+    }
+    return 0;
+}
+function repeatedRead() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += (+inputs[0]) * true) saved = array[i];
+    return 0;
+}
+function deep() {
+    var child = {}, array = [child], saved = 0, base = 1;
+    for (var i = 0; i < array.length; i += +(+ (+base))) saved = array[i];
+    return 0;
+}
+function concatenated() {
+    var child = {}, array = [child], saved = 0, base = '1';
+    for (var i = 0; i < array.length; i += +(base + 0)) saved = array[i];
+    return 0;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = 0, base = true;
+    for (var i = 0; i < array.length; i += (+base) * true) saved = array[i];
+    return array[base];
+}
+function noncanonical() {
+    var child = {}, array = [child], saved = 0, base = '01';
+    for (var i = 0; i < array.length; i += +(+base)) saved = array[i];
+    return 0;
+}
+function overflow() {
+    var child = {}, array = [child, child], saved = 0, base = 4294967295;
+    for (var i = 1; i < array.length; i += (+base) * true) saved = array[i];
+    return 0;
+}
+mixedPositive();
+var heldSignedUnary = signedUnary();
+bothSides();
+savedInput();
+changing();
+repeatedRead();
+deep();
+concatenated();
+var heldOriginalKey = originalKey();
+noncanonical();
+overflow();

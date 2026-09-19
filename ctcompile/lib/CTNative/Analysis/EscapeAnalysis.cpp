@@ -1216,19 +1216,69 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             const mlir::Value next = backedge[argument.getArgNumber()];
             return next == value || fromHeader(next) == value;
         };
-        const auto invariant = [&](mlir::Value operand) -> std::optional<ContentsValue> {
-            if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
-            auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
-            auto * definition = operand.getDefiningOp();
-            if (!unchanged(operand) ||
-                (!literal && definition &&
-                 (definition->getBlock() == header || definition->getBlock() == body))) {
+        auto invariantFailure = unsupported;
+        const auto invariant = [&](auto && self, mlir::Value operand,
+                                   unsigned depth) -> std::optional<ContentsValue> {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            return literal ? ContentsValue{operand, llvm::isa<ctjs::StringAttr>(literal.getValue())
-                                                        ? ContentsKind::String
-                                                        : ContentsKind::Identity}
-                           : held(operand);
+            if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
+            if (!unchanged(operand)) { return std::nullopt; }
+            auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
+            if (literal) {
+                return ContentsValue{operand, llvm::isa<ctjs::StringAttr>(literal.getValue())
+                                                  ? ContentsKind::String
+                                                  : ContentsKind::Identity};
+            }
+            auto * definition = operand.getDefiningOp();
+            if (!definition ||
+                (definition->getBlock() != header && definition->getBlock() != body)) {
+                return held(operand);
+            }
+            // ponytail: two operation layers; deeper expressions need an explicit
+            // proof budget. Repeated reads never borrow a previous snapshot.
+            if (depth == 2) { return std::nullopt; }
+            ContentsValue result{operand, ContentsKind::NonBigInt};
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
+                if (unary.getKind() != ctjs::UnaryKind::Plus &&
+                    unary.getKind() != ctjs::UnaryKind::Neg &&
+                    unary.getKind() != ctjs::UnaryKind::BitNot) {
+                    return std::nullopt;
+                }
+                const auto input = self(self, unary.getOperand(), depth + 1);
+                if (!input) { return std::nullopt; }
+                if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+                    boundedNumberComplement(*input, result);
+                } else {
+                    result.integerNumber = boundedConvertedNumber(*input);
+                    if (!result.integerNumber) {
+                        result.negativeIntegerNumber = boundedConvertedNumber(*input, true);
+                    }
+                    if (unary.getKind() == ctjs::UnaryKind::Neg && result.integerNumber != 0) {
+                        std::swap(result.integerNumber, result.negativeIntegerNumber);
+                    }
+                }
+            } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
+                       binary && (binary.getKind() == ctjs::BinaryKind::Mul ||
+                                  binary.getKind() == ctjs::BinaryKind::Div ||
+                                  binary.getKind() == ctjs::BinaryKind::Mod ||
+                                  binary.getKind() == ctjs::BinaryKind::Pow)) {
+                const auto left = self(self, binary.getLhs(), depth + 1);
+                const auto right = self(self, binary.getRhs(), depth + 1);
+                if (!left || !right) { return std::nullopt; }
+                if (binary.getKind() == ctjs::BinaryKind::Mul) {
+                    boundedNumberProduct(*left, *right, result);
+                } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
+                    boundedNumberPower(*left, *right, result);
+                } else {
+                    boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
+                                          result);
+                }
+            } else {
+                return std::nullopt;
+            }
+            return result;
         };
         auto * step = backedge[index.getArgNumber()].getDefiningOp();
         auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
@@ -1250,77 +1300,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // A held positive step must survive every backedge unchanged. Read a body
         // formal through its actual header operand before the body has executed.
         // Add excludes String concatenation; Sub converts a bounded negative primitive.
-        // Original primitive constants are invariant; other producers need a held fact.
-        mlir::Value increment = step->getOperand(1U - indexOperand);
-        if (mlir::Value forwarded = fromHeader(increment)) { increment = forwarded; }
-        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-        if (!unchanged(increment)) { return unsupported; }
-        auto stride = boundedNumber(increment, subtract);
-        if (!stride) {
-            if (auto literal = increment.getDefiningOp<ctjs::ConstantOp>()) {
-                const bool string = llvm::isa<ctjs::StringAttr>(literal.getValue());
-                if (subtract || !string) {
-                    stride = boundedConvertedNumber(
-                        {increment, string ? ContentsKind::String : ContentsKind::Identity},
-                        subtract);
-                }
-            }
-        }
-        if (!stride) {
-            // One unary conversion is invariant when its original operand is
-            // literal or held unchanged. Never borrow a previous iteration's
-            // fact for an operand computed again in the header or body.
-            auto unary = increment.getDefiningOp<ctjs::UnaryOp>();
-            if (unary) {
-                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-                const auto input = invariant(unary.getOperand());
-                if (!input) { return unsupported; }
-                if (unary.getKind() == ctjs::UnaryKind::BitNot) {
-                    ContentsValue result;
-                    boundedNumberComplement(*input, result);
-                    stride = subtract ? result.negativeIntegerNumber : result.integerNumber;
-                } else if (unary.getKind() == ctjs::UnaryKind::Plus ||
-                           unary.getKind() == ctjs::UnaryKind::Neg) {
-                    stride = boundedConvertedNumber(
-                        *input, subtract != (unary.getKind() == ctjs::UnaryKind::Neg));
-                }
-            }
-        }
-        if (!stride) {
-            // ponytail: one Mul/Div/Mod/Pow of saved primitives; deeper repeated
-            // expressions need their own charged invariance proof.
-            auto binary = increment.getDefiningOp<ctjs::BinaryOp>();
-            if (binary && (binary.getKind() == ctjs::BinaryKind::Mul ||
-                           binary.getKind() == ctjs::BinaryKind::Div ||
-                           binary.getKind() == ctjs::BinaryKind::Mod ||
-                           binary.getKind() == ctjs::BinaryKind::Pow)) {
-                if (!spend(2)) { return ArrayContentsFailure::WorkLimit; }
-                const auto left = invariant(binary.getLhs());
-                const auto right = invariant(binary.getRhs());
-                if (!left || !right) { return unsupported; }
-                ContentsValue result;
-                if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                    boundedNumberProduct(*left, *right, result);
-                } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
-                    boundedNumberPower(*left, *right, result);
-                } else {
-                    boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
-                                          result);
-                }
-                stride = subtract ? result.negativeIntegerNumber : result.integerNumber;
-            }
-        }
-        if (!stride) {
-            // Repeated producers need their own invariant proof; a prior
-            // iteration's saved fact cannot certify a header/body computation.
-            auto * definition = increment.getDefiningOp();
-            if (definition &&
-                (definition->getBlock() == header || definition->getBlock() == body)) {
-                return unsupported;
-            }
-            const ContentsValue value = held(increment);
-            if (subtract || !value.string()) { stride = boundedConvertedNumber(value, subtract); }
-        }
+        const auto value = invariant(invariant, step->getOperand(1U - indexOperand), 0);
+        if (!value) { return invariantFailure; }
+        const auto stride =
+            subtract || !value->string() ? boundedConvertedNumber(*value, subtract) : std::nullopt;
         if (!stride || *stride == 0) { return unsupported; }
         // Initialization may be a saved length or an exact arithmetic result.
         // The original input and its transported snapshot must independently

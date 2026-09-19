@@ -588,10 +588,13 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("both product operands need independently invariant bounded values",
                replace(invariantProduct, "mul %d, %one", "mul " + operands));
     }
-    reject("a repeated nested product cannot borrow an earlier scalar snapshot",
-           replace(invariantProduct, "  %product = ctjs.binary mul %d, %one",
-                   "  %nested = ctjs.binary mul %d, %one\n"
-                   "  %product = ctjs.binary mul %nested, %one"));
+    run({.what = "a nested product proves each original invariant operand",
+         .body = replace(invariantProduct, "  %product = ctjs.binary mul %d, %one",
+                         "  %nested = ctjs.binary mul %d, %one\n"
+                         "  %product = ctjs.binary mul %nested, %one"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
     for (const std::string literal : {"#ctjs.number<0>", "#ctjs.string<\"01\">",
                                       "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>"}) {
         reject("product latches require exact nonzero primitive conversion",
@@ -660,10 +663,13 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("power latches require invariant exact operands and a positive stride",
                replace(invariantPower, "pow %d, %one", "pow " + operands));
     }
-    reject("a nested power cannot borrow a previous iteration's scalar result",
-           replace(invariantPower, "  %product = ctjs.binary pow %d, %one",
-                   "  %nested = ctjs.binary pow %d, %one\n"
-                   "  %product = ctjs.binary pow %nested, %one"));
+    run({.what = "a nested power proves its original unchanged base",
+         .body = replace(invariantPower, "  %product = ctjs.binary pow %d, %one",
+                         "  %nested = ctjs.binary pow %d, %one\n"
+                         "  %product = ctjs.binary pow %nested, %one"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
     for (const std::string literal :
          {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">", "#ctjs.undefined",
           "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>"}) {
@@ -692,11 +698,52 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                        "^header(%base, %step, %added, %one"));
         reject("a unary latch cannot borrow a changing induction operand",
                replace(source, unary + " %d", unary + " %i"));
-        reject("a nested repeated conversion does not become a saved invariant",
-               replace(source, "  %converted = ctjs.unary " + unary + " %d",
-                       "  %repeated = ctjs.unary plus %d\n  %converted = ctjs.unary " + unary +
-                           " %repeated"));
+        run({.what = "nested unary conversions prove the original saved primitive",
+             .body = replace(source, "  %converted = ctjs.unary " + unary + " %d",
+                             "  %repeated = ctjs.unary plus %d\n  %converted = ctjs.unary " +
+                                 unary + " %repeated"),
+             .arrays = "a:[one,two,three]",
+             .reads = unary == "bitnot" ? "a[0]=one; a[2]=three" : "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
     }
+    const auto nested = replace(savedChild, "  %step = ctjs.binary_static add %i, %one",
+                                "  %inner = ctjs.unary plus %one\n"
+                                "  %stride = ctjs.binary mul %inner, %one\n"
+                                "  %step = ctjs.binary add %i, %stride");
+    for (const std::string expression :
+         {"ctjs.unary plus %one", "ctjs.unary neg %one", "ctjs.unary bitnot %zero",
+          "ctjs.binary mul %one, %one", "ctjs.binary div %one, %one", "ctjs.binary mod %one, %two",
+          "ctjs.binary pow %one, %two"}) {
+        auto source = replace(nested, "ctjs.unary plus %one", expression);
+        if (expression == "ctjs.unary neg %one" || expression == "ctjs.unary bitnot %zero") {
+            source = replace(source, "binary add %i, %stride", "binary sub %i, %stride");
+        }
+        for (const auto & body :
+             {source, replace(source, "binary mul %inner, %one", "binary mul %one, %inner")}) {
+            run({.what = "mixed nested invariant operations preserve returned CFG children",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+            run({.what = "nested invariant operations discharge only unreturned CFG children",
+                 .body = replace(body, "ctjs.return %result", "ctjs.return %zero"),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "zero -> {}"},
+                "x");
+        }
+    }
+    for (const std::string expression :
+         {"ctjs.unary plus %i", "ctjs.unary plus %p", "ctjs.get_property %base[%zero]",
+          "ctjs.binary add %one, %zero", "ctjs.binary sub %one, %zero",
+          "ctjs.binary div %one, %two", "ctjs.binary div %one, %zero", "ctjs.binary pow %two, %two",
+          "ctjs.binary mul %one, %zero"}) {
+        reject("nested induction requires exact invariant operations and a positive stride",
+               replace(nested, "ctjs.unary plus %one", expression));
+    }
+    reject("nested induction stops after two charged operation layers",
+           replace(nested, "  %inner = ctjs.unary plus %one",
+                   "  %deeper = ctjs.unary plus %one\n  %inner = ctjs.unary plus %deeper"));
     for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         for (const std::string unary : {"plus", "neg"}) {
             const auto source =
@@ -747,10 +794,13 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             "x");
         reject("a BitNot latch cannot borrow an unknown operand's conversion",
                replace(source, "bitnot %literal", "bitnot %p"));
-        reject("a repeated nonliteral BitNot still requires independent invariance",
-               replace(source, "  %converted = ctjs.unary bitnot %literal",
-                       "  %computed = ctjs.unary plus %literal\n"
-                       "  %converted = ctjs.unary bitnot %computed"));
+        run({.what = "nested BitNot proves its original literal conversion",
+             .body = replace(source, "  %converted = ctjs.unary bitnot %literal",
+                             "  %computed = ctjs.unary plus %literal\n"
+                             "  %converted = ctjs.unary bitnot %computed"),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("a BitNot latch still requires a positive exact update",
                replace(source, "binary " + update + " %i, %converted",
                        "binary " + std::string{subtract ? "add" : "sub"} + " %i, %converted"));

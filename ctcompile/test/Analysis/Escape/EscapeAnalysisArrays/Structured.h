@@ -537,10 +537,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("both structured product operands need invariant bounded values",
                replace(invariantProduct, "mul %d, %one", "mul " + operands));
     }
-    reject("a nested structured product is not a saved invariant",
-           replace(invariantProduct, "    %product = ctjs.binary mul %d, %one",
-                   "    %nested = ctjs.binary mul %d, %one\n"
-                   "    %product = ctjs.binary mul %one, %nested"));
+    rows.push_back({.what = "nested structured products prove original saved operands",
+                    .body = replace(invariantProduct, "    %product = ctjs.binary mul %d, %one",
+                                    "    %nested = ctjs.binary mul %d, %one\n"
+                                    "    %product = ctjs.binary mul %one, %nested"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     for (const std::string literal :
          {"#ctjs.number<0>", "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
         reject("structured product strides need exact nonzero primitive conversion",
@@ -573,11 +576,19 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
             reject("structured division needs unchanged inputs and a nonzero divisor",
                    replace(source, expression, operation + " " + operands));
         }
-        reject("a nested division expression is not a saved invariant",
-               replace(source, "    %product = ctjs.binary " + expression,
-                       "    %nested = ctjs.binary div %d, %one\n"
-                       "    %product = ctjs.binary " +
-                           operation + " %nested, %two"));
+        const auto nested = replace(source, "    %product = ctjs.binary " + expression,
+                                    "    %nested = ctjs.binary div %d, %one\n"
+                                    "    %product = ctjs.binary " +
+                                        operation + " %nested, %two");
+        if (operation == "div") {
+            reject("a nested fractional quotient cannot certify integer induction", nested);
+        } else {
+            rows.push_back({.what = "nested division and remainder preserve exact signed values",
+                            .body = nested,
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+        }
     }
     reject("structured fractional quotients cannot certify integer induction",
            replace(divisionProduct, "mul %d, %one", "div %d, %two"));
@@ -608,10 +619,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("structured powers need unchanged exact operands and a positive stride",
                replace(invariantPower, "pow %d, %one", "pow " + operands));
     }
-    reject("a nested structured power exponent needs its own invariant proof",
-           replace(invariantPower, "    %product = ctjs.binary pow %d, %one",
-                   "    %nested = ctjs.binary pow %d, %one\n"
-                   "    %product = ctjs.binary pow %one, %nested"));
+    rows.push_back({.what = "nested structured powers prove their original invariant exponent",
+                    .body = replace(invariantPower, "    %product = ctjs.binary pow %d, %one",
+                                    "    %nested = ctjs.binary pow %d, %one\n"
+                                    "    %product = ctjs.binary pow %one, %nested"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("a structured power cannot borrow noncanonical primitive conversion",
            replace(invariantPower, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
     reject("an invariant structured power still bounds the final index update",
@@ -637,11 +651,44 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
         reject("a structured unary latch cannot borrow a changing induction operand",
                replace(source, unary + " %d", unary + " %i"));
-        reject("a nested structured conversion is not a saved invariant",
-               replace(source, "    %converted = ctjs.unary " + unary + " %d",
-                       "    %repeated = ctjs.unary plus %d\n    %converted = ctjs.unary " + unary +
-                           " %repeated"));
+        rows.push_back({.what = "nested structured unary conversions preserve saved primitives",
+                        .body = replace(source, "    %converted = ctjs.unary " + unary + " %d",
+                                        "    %repeated = ctjs.unary plus %d\n"
+                                        "    %converted = ctjs.unary " +
+                                            unary + " %repeated"),
+                        .arrays = "a:[x,y]",
+                        .reads = unary == "bitnot" ? "a[0]=x" : "a[0]=x; a[1]=y",
+                        .exit = unary == "bitnot" ? "x -> {x}" : "y -> {y}"});
     }
+    const auto nested = replace(invariantProduct, "    %product = ctjs.binary mul %d, %one",
+                                "    %inner = ctjs.unary plus %d\n"
+                                "    %product = ctjs.binary mul %inner, %one");
+    for (const std::string expression : {"ctjs.unary plus %d", "ctjs.binary mul %d, %one",
+                                         "ctjs.binary div %d, %one", "ctjs.binary pow %d, %one"}) {
+        const auto source = replace(nested, "ctjs.unary plus %d", expression);
+        rows.push_back({.what = "mixed nested operations retain reordered structured snapshots",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "nested structured operations release only unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        reject("nested operands retain their original structured backedge identity",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    }
+    for (const std::string expression :
+         {"ctjs.unary plus %i", "ctjs.unary plus %p", "ctjs.get_property %base[%zero]",
+          "ctjs.binary add %d, %zero", "ctjs.binary sub %d, %zero", "ctjs.binary div %d, %zero",
+          "ctjs.binary mul %d, %zero"}) {
+        reject("nested structured induction needs exact invariant operations and a positive stride",
+               replace(nested, "ctjs.unary plus %d", expression));
+    }
+    reject("nested structured induction stops after two charged operation layers",
+           replace(nested, "    %inner = ctjs.unary plus %d",
+                   "    %deeper = ctjs.unary plus %d\n    %inner = ctjs.unary plus %deeper"));
     for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         for (const std::string unary : {"plus", "neg"}) {
             const auto source = replace(original, "    %step = ctjs.binary_static add %i, %one",
@@ -682,10 +729,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                         .exit = "zero -> {}"});
         reject("a structured BitNot parameter cannot borrow literal conversion",
                replace(source, "bitnot %literal", "bitnot %p"));
-        reject("a structured repeated nonliteral BitNot needs independent invariance",
-               replace(source, "    %converted = ctjs.unary bitnot %literal",
-                       "    %computed = ctjs.unary plus %literal\n"
-                       "    %converted = ctjs.unary bitnot %computed"));
+        rows.push_back({.what = "nested structured BitNot proves its original literal conversion",
+                        .body = replace(source, "    %converted = ctjs.unary bitnot %literal",
+                                        "    %computed = ctjs.unary plus %literal\n"
+                                        "    %converted = ctjs.unary bitnot %computed"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
         for (const std::string refused :
              {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">", "#ctjs.string<\"00\">",
               "#ctjs.string<\"4294967296\">", "#ctjs.undefined"}) {
