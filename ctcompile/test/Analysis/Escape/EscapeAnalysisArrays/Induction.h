@@ -760,9 +760,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,two,three]",
          .reads = "a[0]=one; a[1]=two; a[2]=three",
          .exit = "added -> {}"});
-    reject("bitwise latches do not expand the two-layer proof limit",
-           replace(nestedBits, "  %inner = ctjs.binary sub %d, %zero",
-                   "  %deep = ctjs.unary plus %d\n  %inner = ctjs.binary sub %deep, %zero"));
+    run({.what = "deeper bitwise latches retain the original invariant operand",
+         .body = replace(nestedBits, "  %inner = ctjs.binary sub %d, %zero",
+                         "  %deep = ctjs.unary plus %d\n  %inner = ctjs.binary sub %deep, %zero"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
     reject("a repeated property read cannot borrow its previous bitwise operand snapshot",
            replace(nestedBits, "ctjs.binary sub %d, %zero", "ctjs.get_property %base[%zero]"));
     reject("a zero bitwise stride does not certify termination",
@@ -875,9 +878,31 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("nested induction requires exact invariant operations and a positive stride",
                replace(nested, "ctjs.unary plus %one", expression));
     }
-    reject("nested induction stops after two charged operation layers",
-           replace(nested, "  %inner = ctjs.unary plus %one",
-                   "  %deeper = ctjs.unary plus %one\n  %inner = ctjs.unary plus %deeper"));
+    run({.what = "deeper invariant induction retains the returned child",
+         .body = replace(nested, "  %inner = ctjs.unary plus %one",
+                         "  %deeper = ctjs.unary plus %one\n  %inner = ctjs.unary plus %deeper"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    std::string chain, previous = "%one";
+    for (unsigned depth = 1; depth <= 63; ++depth) {
+        const auto next = "%deep" + std::to_string(depth);
+        chain += "  " + next + " = ctjs.unary plus " + previous + "\n";
+        previous = next;
+        if (depth != 62 && depth != 63) { continue; }
+        const auto body = replace(nested, "  %inner = ctjs.unary plus %one\n",
+                                  chain + "  %inner = ctjs.unary plus " + previous + "\n");
+        // The inner conversion and outer multiply add two more layers.
+        if (depth == 63) {
+            reject("deep invariant induction stops at its stack ceiling", body);
+        } else {
+            run({.what = "the last permitted invariant layer preserves child ownership",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        }
+    }
     for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         for (const std::string unary : {"plus", "neg"}) {
             const auto source =

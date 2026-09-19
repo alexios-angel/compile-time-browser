@@ -3,8 +3,8 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name nested-invariant-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-nested-invariant-latch.claims
 
-// Two pure operation layers retain original snapshots, Number conversion and
-// child escape. Changing/reloaded/deeper operands and unbounded results refuse.
+// Budgeted pure operation layers retain original snapshots, Number conversion
+// and child escape. Changing/reloaded operands and unbounded results refuse.
 // IMPORT-LABEL: ctjs.func @mixedPositive$
 // IMPORT: ctjs.binary mod
 // IMPORT: ctjs.binary mul
@@ -54,8 +54,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored

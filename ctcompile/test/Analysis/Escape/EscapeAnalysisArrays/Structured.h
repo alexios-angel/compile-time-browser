@@ -672,9 +672,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
-    reject("structured bitwise latches retain the two-layer limit",
-           replace(nestedBits, "    %inner = ctjs.binary sub %d, %zero",
-                   "    %deep = ctjs.unary plus %d\n    %inner = ctjs.binary sub %deep, %zero"));
+    rows.push_back({.what = "deeper structured bitwise latches preserve returned children",
+                    .body = replace(nestedBits, "    %inner = ctjs.binary sub %d, %zero",
+                                    "    %deep = ctjs.unary plus %d\n"
+                                    "    %inner = ctjs.binary sub %deep, %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("structured bitwise latches cannot borrow a repeated property read",
            replace(nestedBits, "ctjs.binary sub %d, %zero", "ctjs.get_property %base[%zero]"));
     reject("structured bitwise latches cannot certify a zero stride",
@@ -779,9 +783,21 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("nested structured induction needs exact invariant operations and a positive stride",
                replace(nested, "ctjs.unary plus %d", expression));
     }
-    reject("nested structured induction stops after two charged operation layers",
-           replace(nested, "    %inner = ctjs.unary plus %d",
-                   "    %deeper = ctjs.unary plus %d\n    %inner = ctjs.unary plus %deeper"));
+    const auto deeper =
+        replace(nested, "    %inner = ctjs.unary plus %d",
+                "    %deeper = ctjs.unary plus %d\n    %inner = ctjs.unary plus %deeper");
+    rows.push_back({.what = "deeper structured induction retains the returned child",
+                    .body = deeper,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "deeper structured induction releases only unreturned children",
+                    .body = replace(deeper, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    reject("deeper structured induction cannot borrow a replaced snapshot",
+           replace(deeper, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
     for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         for (const std::string unary : {"plus", "neg"}) {
             const auto source = replace(original, "    %step = ctjs.binary_static add %i, %one",

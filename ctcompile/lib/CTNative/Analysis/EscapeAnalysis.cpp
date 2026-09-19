@@ -1305,9 +1305,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 (definition->getBlock() != header && definition->getBlock() != body)) {
                 return held(operand);
             }
-            // ponytail: two operation layers; deeper expressions need an explicit
-            // proof budget. Repeated reads never borrow a previous snapshot.
-            if (depth == 2) { return std::nullopt; }
+            // Every visited value spends the shared proof budget. Keep a stack
+            // ceiling; repeated reads never borrow a previous snapshot.
+            if (depth == 64) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
                 if (unary.getKind() != ctjs::UnaryKind::Plus &&
