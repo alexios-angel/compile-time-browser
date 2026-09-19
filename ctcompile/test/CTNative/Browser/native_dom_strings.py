@@ -2,6 +2,7 @@
 """Gate copied optional String DOM reads against source and the public DOM/Core API."""
 
 import argparse
+import json
 from pathlib import Path
 import re
 import shutil
@@ -567,7 +568,7 @@ HELPER_CASES = {
         "1000",
     ),
 }
-# Preserve Bootstrap's complete helper, including the never-invoked callback.
+# Preserve Bootstrap's complete helper, including its replacement callback.
 BOOTSTRAP_F = """    function F(t) {
         return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
     }
@@ -1457,6 +1458,19 @@ for case in ("names", "consumers", "chain"):
             REGEXP_REFUSALS[f"regex_captured_{case}_{kind}_{order}"] = REGEXP_CASES[
                 f"helper_regex_captured_{case}"
             ][0].replace(before, after, 1)
+# Preserve every original matching source, including its return type and effects.
+REGEXP_MATCHING = {
+    name: (
+        REGEXP_REFUSALS.pop(name),
+        (
+            "null"
+            if name in {"regex_matching", "regex_mixed_matching", "regex_mixed_matching_first"}
+            else "true"
+        ),
+    )
+    for name in tuple(REGEXP_REFUSALS)
+    if "matching" in name
+}
 HELPER_REFUSALS.update(REGEXP_REFUSALS)
 REFUSALS.update(HELPER_REFUSALS)
 HOST_REFUSALS = {
@@ -2121,9 +2135,11 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
                     dict(checked, provider=provider),
                     f"{prefix}-provenance-{name}-{provider}-{optimize}",
                     optimize=optimize,
-                    success=False,
+                    success=name in ("mixed-arguments", "second-matching"),
                 )
-                if "error: native DOM source:" not in diagnostic:
+                if name in ("mixed-arguments", "second-matching"):
+                    emitted(args, diagnostic, f"{prefix}-{name}")
+                elif "error: native DOM source:" not in diagnostic:
                     raise RuntimeError(f"replacement {name}: wrong refusal\n{diagnostic}")
     for budget in (0, 32, 64):
         diagnostic = dom.lower(
@@ -2132,6 +2148,125 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
         if "budget exhausted" not in diagnostic:
             raise RuntimeError(f"replacement budget {budget}: wrong refusal\n{diagnostic}")
     return 4 * len(variants) + 3
+
+
+def check_regexp_matching(args):
+    cases = dict(REGEXP_MATCHING)
+    if args.regexp_only:
+        cases.update({name: (body, "true") for name, (body, _) in REGEXP_CASES.items()})
+    prepared, observations = [], []
+    keys = (
+        "data-bs-config",
+        "data-bs-toggle",
+        "data-bs--config",
+        "data-bs--toggle",
+        "data-bs-direct",
+    )
+    declarations = []
+    for index, (name, (body, expected)) in enumerate(cases.items()):
+        source = f"function {name}(element) {{ {body} }}\n"
+        declarations.append(source)
+        observations.append(
+            f"var observation{index:03} = (() => {{ const element = observationElement(null); "
+            f"const result = {name}(element); return JSON.stringify([result, "
+            + ", ".join(f"element.getAttribute('{key}')" for key in keys)
+            + "]); })();"
+        )
+        ir, contract = dom.prepare(args, name, source, 1, entry_name=name)
+        prepared.append((name, ir, contract))
+    oracle = args.work / "regexp-oracle.js"
+    source = BOOLEAN_DOUBLE + "".join(declarations) + "\n".join(observations)
+    oracle.write_text(source)
+    reference = run([args.reference, str(oracle)]).stdout
+    oracle.write_text(
+        source
+        + "\n"
+        + "\n".join(f"console.log(observation{index:03});" for index in range(len(cases)))
+    )
+    node = run([args.node, str(oracle)]).stdout
+    expected_reference = "".join(
+        f'observation{index:03}="{quote_from_bytes(line.encode())}"\n'
+        for index, line in enumerate(node.splitlines())
+    )
+    if reference != expected_reference:
+        raise RuntimeError(
+            f"original replacement source observations differ: {reference!r}, {node!r}"
+        )
+    results = [json.loads(line) for line in node.splitlines()]
+    if len(results) != len(cases):
+        raise RuntimeError("original replacement oracle omitted source observations")
+    for (name, (_, expected)), result in zip(cases.items(), results):
+        if result[0] != (None if expected == "null" else True):
+            raise RuntimeError(f"{name}: original replacement return changed: {result}")
+    includes, libraries = dom.link_options(args)
+    compilers = find_compilers()
+    compilers[1] = args.clang
+    for optimize in (False, True):
+        headers, bodies, checks = set(), [], []
+        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            owned = "session" in provider
+            for (name, ir, contract), result in zip(prepared, results):
+                label = f"{name}_{owned}_{optimize}"
+                native = dom.lower(
+                    args, ir, dict(contract, provider=provider), label, optimize=optimize
+                )
+                cpp, symbol = emitted(args, native, label)
+                headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
+                body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
+                bodies.append(f"namespace {label} {{\n{body}\n}}\n")
+                setup = (
+                    f"{label}::{symbol}_session session; auto & doc = session.document();"
+                    if owned
+                    else "ctbrowser::atom_table owner; ctbrowser::document doc{owner};"
+                )
+                call = "session.invoke(element)" if owned else f"{label}::{symbol}(element)"
+                check = f'{{ {setup} auto & atoms = doc.atoms(); auto node = doc.create_element(atoms.intern("div")); ctbrowser::element_ref element{{&doc, node}}; '
+                check += f"assert({call} == {'std::nullopt' if result[0] is None else 'true'});"
+                for key, value in zip(keys, result[1:]):
+                    if value is None:
+                        check += f'assert(!doc.read().has_attribute(node, atoms.intern("{key}")));'
+                    else:
+                        check += f'assert(doc.read().attribute_value(node, atoms.intern("{key}")) == std::string_view({numbers.cpp_string(value)}, {len(value.encode())}));'
+                checks.append(check + "}")
+        path = args.work / f"regexp-{optimize}.cpp"
+        path.write_text(
+            "\n".join(sorted(headers))
+            + "\n#include <cassert>\n"
+            + "\n".join(bodies)
+            + "\nint main() {\n"
+            + "\n".join(checks)
+            + "\n}\n"
+        )
+        for index, compiler in enumerate(compilers):
+            binary = path.with_suffix(f".{index}")
+            run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
+            if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
+                raise RuntimeError("original replacement output links Script/AOT")
+            run([str(binary)])
+    refusals = 0
+    if args.regexp_only:
+        for name, body in REGEXP_REFUSALS.items():
+            ir, contract = dom.prepare(
+                args, name, f"function invalid(element) {{ {body} }}\n", 1, entry_name="invalid"
+            )
+            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+                diagnostic = dom.lower(
+                    args, ir, dict(contract, provider=provider), name + provider, success=False
+                )
+                if "DOM" not in diagnostic:
+                    raise RuntimeError(f"{name}: missing DOM refusal")
+                refusals += 1
+        _, ir, contract = next(row for row in prepared if row[0] == "helper_regex_original")
+        refusals += regexp_provenance_checks(args, ir, contract)
+        for prefix, source in (
+            ("replacement-mixed", REGEXP_MIXED_SOURCE),
+            ("replacement-captured", REGEXP_CAPTURED_SOURCE),
+        ):
+            ir, contract = dom.prepare(args, prefix, source, 1, entry_name="invalid")
+            refusals += regexp_provenance_checks(args, ir, contract, prefix=prefix)
+    print(
+        f"native DOM replacement: {len(cases)} original Node/VM observations, 4 GCC/Clang executions, {refusals} source/provenance/budget checks"
+    )
 
 
 def main():
@@ -2144,11 +2279,15 @@ def main():
     for name in ("build", "include", "work"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--nm", default=shutil.which("nm"))
+    parser.add_argument("--regexp-only", action="store_true")
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     if not args.nm:
         raise RuntimeError("native DOM String gate requires nm")
+    check_regexp_matching(args)
+    if args.regexp_only:
+        return
     numbers.check_oracles(args)
     uri.check_oracles(args)
     nullable_uri.check_oracles(args)

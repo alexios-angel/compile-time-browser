@@ -1,4 +1,5 @@
 #include "Analysis.h"
+#include "ctbrowser/core/algorithms.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -207,7 +208,44 @@ struct DOMSource {
         return true;
     }
 
-    bool foldNoMatchReplacements(ctjs::FuncOp function) {
+    bool lowercaseReplacement(ctjs::FuncOp function) {
+        auto & body = function.getBody().front();
+        if (body.getNumArguments() != ctjs::implicit_arguments + 1) { return false; }
+        auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.back());
+        auto concat =
+            returned ? returned.getValue().getDefiningOp<ctjs::BinaryOp>() : ctjs::BinaryOp{};
+        if (!concat || (concat.getKind() != ctjs::BinaryKind::Concat &&
+                        concat.getKind() != ctjs::BinaryKind::Add)) {
+            return false;
+        }
+        auto prefix = concat.getLhs().getDefiningOp<ctjs::ConstantOp>();
+        auto text =
+            prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+        auto call = concat.getRhs().getDefiningOp<ctjs::CallOp>();
+        auto read =
+            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+        if (!text || text.getValue() != "-" || !call || !read || !call.getArgs().empty() ||
+            call.getReceiver() != body.getArgument(ctjs::implicit_arguments) ||
+            read.getObject() != call.getReceiver() ||
+            ctjs::constantKey(read.getKey()) != "toLowerCase") {
+            return false;
+        }
+        // Prove the entire original callback, including discarded operations.
+        // Its input is one matched ASCII uppercase unit; no coercion or script
+        // reentry is needed for the initial lowercase method or concatenation.
+        for (mlir::Operation & operation : body) {
+            if (!step()) { return false; }
+            if (&operation == read || &operation == call || &operation == concat ||
+                llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                          ctjs::ReturnOp>(operation)) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool foldConstantReplacements(ctjs::FuncOp function) {
         auto & block = function.getBody().front();
         llvm::SmallVector<ctjs::CallOp> calls(block.getOps<ctjs::CallOp>());
         for (ctjs::CallOp call : calls) {
@@ -261,7 +299,6 @@ struct DOMSource {
                                c <= static_cast<unsigned char>(pattern[3]);
                 }
             }
-            if (matches) { continue; }
             auto target = functions.lookup(static_cast<unsigned>(callback.getFunction()));
             if (!target || target == function || target.getUpvalueCount() != 0 ||
                 creations.lookup(static_cast<unsigned>(callback.getFunction())) != 1) {
@@ -289,13 +326,65 @@ struct DOMSource {
             if (!target.getBody().front().getOps<ctjs::CreateClosureOp>().empty()) {
                 return refuse("DOM replacement callback contains an unproved callable");
             }
+            if (matches &&
+                (pattern != "[A-Z]" || flags.getValue() != "g" || !lowercaseReplacement(target))) {
+                if (!reason.empty()) { return false; }
+                continue;
+            }
             // The isolated provider fixes the complete initial String/RegExp
             // prototype chains (including @@replace, exec and flag accessors)
             // and the reserved literal factory binding.
             // The residual source must still pass complete DOM reproof, which
             // forbids mutation and script reentry. Fresh literal state cannot
-            // escape, and this no-match execution never invokes the callback.
-            call.getResult().replaceAllUsesWith(call.getReceiver());
+            // escape. Matching inputs require the complete callback proof above;
+            // the original all-call census supplies every possible input here.
+            mlir::Value result = call.getReceiver();
+            if (matches) {
+                mlir::OpBuilder at(call);
+                bool first = true;
+                for (ctjs::StringAttr value : values) {
+                    if (!step()) { return false; }
+                    std::string output;
+                    for (char c : value.getValue()) {
+                        if (!step()) { return false; }
+                        if (c >= 'A' && c <= 'Z') {
+                            output += '-';
+                            output += ctbrowser::ascii_lower(c);
+                        } else {
+                            output += c;
+                        }
+                    }
+                    auto normalized = ctjs::ConstantOp::create(
+                        at, call.getLoc(), ctjs::StringAttr::get(call.getContext(), output));
+                    ++operationCount;
+                    if (first) {
+                        result = normalized.getResult();
+                        first = false;
+                        continue;
+                    }
+                    for (unsigned operation = 0; operation < 6; ++operation) {
+                        if (!step()) { return false; }
+                    }
+                    auto input = ctjs::ConstantOp::create(at, call.getLoc(), value);
+                    auto equal = ctjs::CompareOp::create(at, call.getLoc(), call.getType(),
+                                                         ctjs::CompareKind::StrictEq,
+                                                         call.getReceiver(), input.getResult());
+                    auto condition = ctjs::TruthyOp::create(at, call.getLoc(), at.getI1Type(),
+                                                            equal.getResult());
+                    auto branch = mlir::scf::IfOp::create(at, call.getLoc(), call->getResultTypes(),
+                                                          condition.getResult());
+                    for (auto [region, selected] :
+                         llvm::zip(branch->getRegions(),
+                                   llvm::ArrayRef<mlir::Value>{normalized.getResult(), result})) {
+                        auto & arm = region.emplaceBlock();
+                        mlir::OpBuilder nested(&arm, arm.begin());
+                        mlir::scf::YieldOp::create(nested, call.getLoc(), selected);
+                    }
+                    operationCount += 6;
+                    result = branch.getResult(0);
+                }
+            }
+            call.getResult().replaceAllUsesWith(result);
             call.erase();
             for (ctjs::RootOp root : roots) { root.erase(); }
             read.erase();
@@ -1452,9 +1541,9 @@ struct DOMSource {
             }
             if (!captured && !resolveCell(cell)) { return false; }
         }
-        if (!foldNoMatchReplacements(function)) { return false; }
+        if (!foldConstantReplacements(function)) { return false; }
         // Enclosing identities were checked on the original body above. Only
-        // the no-match proof may remove replacement callbacks. Only confined,
+        // the complete replacement proof may remove callbacks. Only confined,
         // capture-free filter callbacks may survive direct helper expansion.
         if (directReceiver && !checkBody(function, entry, true)) { return false; }
         llvm::SmallVector<ctjs::CallDirectOp> directCalls;

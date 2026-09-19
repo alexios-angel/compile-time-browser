@@ -1012,12 +1012,13 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
-                control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
-                control != 93 && control != 121 && control != 100 && control != 104 &&
-                control != 105 && control != 116 && control != 117 && control != 128 &&
-                control != 129 && control != 130 && control != 140 && control != 141 &&
-                control != 148 && control != 151 && control != 157 && control != 158 &&
-                control != 165 && control != 166 && control != 167) {
+                control != 60 && control != 70 && control != 71 && control != 72 && control != 73 &&
+                control != 77 && control != 82 && control != 92 && control != 93 &&
+                control != 121 && control != 100 && control != 104 && control != 105 &&
+                control != 114 && control != 116 && control != 117 && control != 122 &&
+                control != 128 && control != 129 && control != 130 && control != 140 &&
+                control != 141 && control != 148 && control != 151 && control != 157 &&
+                control != 158 && control != 165 && control != 166 && control != 167) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -1178,7 +1179,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     }
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 6; ++control) {
+        for (unsigned control = 0; control < 12; ++control) {
             std::string source = R"js(function guarded(element) {
                 function F(t) { return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); }
                 const H = {
@@ -1198,6 +1199,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                "H.second(element, element.getAttribute('key'))");
             }
             if (control == 3) { source.insert(source.find("return saved"), "element.unknown(); "); }
+            if (control >= 6) {
+                source.replace(source.find("H.first(element, 'x')"), 21, "H.first(element, 'ÉAZ')");
+            }
+            if (control == 7) {
+                source.replace(source.find("t.toLowerCase()"), 15, "t.toUpperCase()");
+            }
+            if (control == 8) { source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)"); }
+            if (control == 9) { source.replace(source.find("t.toLowerCase()"), 15, "t.length"); }
+            if (control == 10) {
+                source.replace(source.find("t.toLowerCase()"), 15, "arguments[0]");
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             const auto original = printed(*candidate);
@@ -1209,8 +1221,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control != 4) { request.initialIntrinsics.push_back("__ctbrowser_regexp"); }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
-            auto error = ctnative::prepareDOMEntry(*candidate, request, control == 5 ? 0 : 1000000);
-            if (control) {
+            auto error = ctnative::prepareDOMEntry(*candidate, request,
+                                                   control == 5 || control == 11 ? 0 : 1000000);
+            if (control != 0 && control != 1 && control != 6) {
                 check(static_cast<bool>(error), "every sibling input and effect needs proof");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&

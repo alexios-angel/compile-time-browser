@@ -730,6 +730,54 @@ F_REFUSALS = {
     ),
     "class_f_escape": F_CLASS.replace("read(key) { return F(key); }", "read(key) { return F; }"),
 }
+# Keep original observations when their complete matching-input census admits.
+for name, bits in (
+    ("class_f_matching", "0000"),
+    ("class_f_matching_later", "0000"),
+    ("class_f_matching_first", "1000"),
+    ("class_f_unused_matching", "1000"),
+):
+    F_CASES[name] = (F_REFUSALS.pop(name), bits)
+F_CASES.update(
+    {
+        "class_f_ascii_matches": (
+            F_CLASS.replace(
+                "return shape.read('config') === 'config'",
+                "return shape.read('Config') === '-config' && "
+                "shape.read('AAZ') === '-a-a-z' && "
+                "shape.read('bsConfigExtra') === 'bs-config-extra' && "
+                "shape.read('Config') === '-config'",
+            ),
+            "1000",
+        ),
+        "class_f_unicode_matches": (
+            F_CLASS.replace(
+                "shape.read('config') === 'config'", "shape.read('ÉA𐐀Zé') === 'É-a𐐀-zé'"
+            ),
+            "1000",
+        ),
+        "class_f_unicode_nonmatches": (
+            F_CLASS.replace("shape.read('config') === 'config'", "shape.read('Éİ𐐀é') === 'Éİ𐐀é'"),
+            "1000",
+        ),
+    }
+)
+F_REFUSALS.update(
+    {
+        "class_f_matching_callback_effect": F_CASES["class_f_matching"][0].replace(
+            "t.toLowerCase()", "unknown(t)"
+        ),
+        "class_f_matching_callback_changed": F_CASES["class_f_matching"][0].replace(
+            "t.toLowerCase()", "t.toUpperCase()"
+        ),
+        "class_f_matching_lowercase_replaced": F_CASES["class_f_matching"][0].replace(
+            "  const shape", "  String.prototype.toLowerCase = () => 'changed';\n  const shape"
+        ),
+        "class_f_matching_unknown_later": F_REFUSALS["class_f_unknown_later"].replace(
+            "shape.read('config');", "shape.read('Config');"
+        ),
+    }
+)
 CLASS_CASES.update(F_CASES)
 CLASS_REFUSALS.update(F_REFUSALS)
 FILTER_PREDICATE = 't => t.startsWith("bs") && !t.startsWith("bsConfig")'
@@ -849,6 +897,10 @@ H_CAPTURE_REFUSALS = {
         "read() { return this.key; }", "read() { return H.getDataAttribute(this.key, 'config'); }"
     ),
 }
+H_CAPTURE_CASES["class_h_capture_later_key"] = (
+    H_CAPTURE_REFUSALS.pop("class_h_capture_later_key"),
+    "1000",
+)
 # The class method is the original H slot's only caller.
 H_OBJECT_CLASS = ATTRIBUTE_HELPERS + """class Shape {
     constructor(element) { this.element = element; }
@@ -1651,6 +1703,7 @@ for name, method in {
         "const H = {", "const H = { " + method + ","
     )
 FULL_H_CASES["class_h_full_unused_slot"] = (FULL_H_REFUSALS.pop("class_h_full_unused_slot"), "1000")
+FULL_H_CASES["class_h_full_later_key"] = (FULL_H_REFUSALS.pop("class_h_full_later_key"), "0000")
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
     cases.update(FULL_H_CASES)
 for refusals in (CLASS_REFUSALS, FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS):
@@ -2296,7 +2349,11 @@ def main():
                 + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
                 + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else []),
             )
-            if name in UTF16_CASES or name in UTF16_REFUSALS:
+            if (
+                name in UTF16_CASES
+                or name in UTF16_REFUSALS
+                or name == "class_f_matching_lowercase_replaced"
+            ):
                 request["initial_intrinsics"] += ["String"]
             if name in FILTER_CASES or name in FILTER_REFUSALS:
                 request["initial_intrinsics"] += FILTER_IDENTITIES

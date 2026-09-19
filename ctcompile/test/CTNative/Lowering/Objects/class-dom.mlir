@@ -31,8 +31,9 @@
 // covers Number, JSON and URI fallback through that capture; changing helper
 // bindings, escaped identities and unused-method effects still refuse.
 // Original captured F retains its nested replacement callback until the shared
-// no-match proof checks all direct-call String inputs. Matching/unknown inputs,
-// unused matching methods, callback effects and helper identity escapes refuse.
+// proof checks every direct-call String input. Known matching inputs preserve
+// repeated ASCII normalization and untouched Unicode. Unknown inputs, changed
+// callbacks/builtins, callback effects and helper identity escapes still refuse.
 // Captured dataset filters preserve the original Bootstrap predicate and each
 // call's callback enclosure. Escapes, implicit arguments and unknown effects
 // refuse; full original H retains its unused-holder-slot boundary.
@@ -63,7 +64,7 @@
 // other indices/coercions, detached methods and replacement still refuse.
 // Complete original H admits when every slot has original entry calls. Sibling
 // String arguments bind before shared F specialization; distinct literal keys
-// retain their union, and any matching or unknown later key still refuses.
+// retain their union, including matching keys. Unknown later keys still refuse.
 // Complete H also runs inside original instance methods. Fresh result literals,
 // including fixed local aliases, cannot overwrite prototype methods; constructor
 // fields retain their original DOM receiver. Real prototype/instance aliases,
