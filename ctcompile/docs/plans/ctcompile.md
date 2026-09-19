@@ -262,7 +262,7 @@ The following sections retain the complete original text and measurements.
 <a id="four-things-mlir-22-wanted-that-the-policys-snippets-do-not-show"></a>
 - [Four things MLIR 22 wanted that the policy's snippets do not show](ctcompile/02-eight-silent-defects-in-it-and-the-shape-they-share.md#four-things-mlir-22-wanted-that-the-policys-snippets-do-not-show)
 <a id="one-deviation-with-its-reason-in-the-file-1"></a>
-- [One deviation, with its reason in the file](ctcompile/02-eight-silent-defects-in-it-and-the-shape-they-share.md#one-deviation-with-its-reason-in-the-file)
+- [One deviation, with its reason in the file](ctcompile/02-eight-silent-defects-in-it-and-the-shape-they-share.md#one-deviation-with-its-reason-in-the-file-1)
 <a id="the-verifier-worth-reading"></a>
 - [The verifier worth reading](ctcompile/02-eight-silent-defects-in-it-and-the-shape-they-share.md#the-verifier-worth-reading)
 <a id="phase-9-bytecode-into-ctjs-mlir"></a>
