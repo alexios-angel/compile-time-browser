@@ -14,6 +14,10 @@ namespace ctcompile::ctnative::host_detail {
 
 inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_defined";
 
+// Complete original Bootstrap F callback; callers still prove enclosure, uses,
+// intrinsic identity and the actual replacement receiver.
+bool isLowercaseReplacement(ctjs::FuncOp function, llvm::function_ref<bool()> step);
+
 using CapturedMapOrigin = std::pair<mlir::Value, mlir::Operation *>;
 
 struct CapturedMapEntry {

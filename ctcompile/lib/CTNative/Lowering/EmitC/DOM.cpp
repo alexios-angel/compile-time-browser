@@ -397,6 +397,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         swap(value.getResult(0));
         return true;
     }
+    if (edge.kind == HostDOMMethod::replaceUppercase) {
+        auto callback = edge.callback;
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctnative::replace_uppercase<" + names.lookup(callback.getSymName()) +
+                             ">"),
+            mlir::ValueRange{call.getReceiver()});
+        swap(value.getResult(0));
+        return true;
+    }
     if (edge.kind == HostDOMMethod::filterStrings) {
         auto callback = edge.callback;
         auto value = callWithConstValueOperands(
@@ -495,6 +505,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         break;
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
     case HostDOMMethod::filterStrings:
+    case HostDOMMethod::replaceUppercase:
     case HostDOMMethod::removeStringPrefix:
     case HostDOMMethod::stringCharAt:
     case HostDOMMethod::stringSlice:

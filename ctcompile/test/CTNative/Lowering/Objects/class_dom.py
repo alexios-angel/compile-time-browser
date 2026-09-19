@@ -1508,6 +1508,71 @@ DYNAMIC_REFUSALS.update(
         ),
     }
 )
+# Dataset keys are Strings, but their contents are unknown during compilation.
+# Keep the entire original F, including the callback, in every specimen.
+F_DATASET = strings.BOOTSTRAP_F + DYNAMIC_HOLDER.replace(
+    "joined = joined + t.dataset[n] + '|';", "joined = joined + F(n) + '|';"
+).replace("=== 'value|'", "=== 'bs-toggle|'")
+F_DATASET_CASES = {
+    "class_f_dataset_key": (F_DATASET, "1000"),
+    "class_f_dataset_value": (
+        F_DATASET.replace("F(n)", "F(t.dataset[n])").replace("=== 'bs-toggle|'", "=== 'value|'"),
+        "1000",
+    ),
+    "class_f_dataset_matches": (
+        F_DATASET.replace("F(n)", "F(n + 'AAZÉ𐐀')").replace(
+            "=== 'bs-toggle|'", "=== 'bs-toggle-a-a-zÉ𐐀|'"
+        ),
+        "1000",
+    ),
+    "class_f_dataset_saved": (
+        F_DATASET.replace(
+            "joined = joined + F(n) + '|';",
+            "const saved = F(n); t.setAttribute('marker', saved); "
+            "joined = joined + saved + '|';",
+        ).replace(
+            "return H.read(element) === 'bs-toggle|'",
+            "return H.read(element) === 'bs-toggle|' && "
+            "element.getAttribute('marker') === 'bs-toggle'",
+        ),
+        "1000",
+    ),
+}
+F_DATASET_REFUSALS = {
+    "class_f_dataset_later_nullable": F_DATASET.replace(
+        "return H.read(element)",
+        "const saved = H.read(element); F(element.getAttribute('x')); return saved",
+    ),
+    "class_f_dataset_later_object": F_DATASET.replace(
+        "return H.read(element)", "const saved = H.read(element); F({}); return saved"
+    ),
+    "class_f_dataset_callback_changed": F_DATASET.replace("t.toLowerCase()", "t.toUpperCase()"),
+    "class_f_dataset_callback_discarded_effect": F_DATASET.replace(
+        "t => `-${t.toLowerCase()}`", "t => { unknown(t); return `-${t.toLowerCase()}`; }"
+    ),
+    "class_f_dataset_callback_offset": F_DATASET.replace(
+        "t => `-${t.toLowerCase()}`", "(t, index) => `-${t.toLowerCase()}${index}`"
+    ),
+    "class_f_dataset_lowercase_replaced": F_DATASET.replace(
+        "const shape =", "String.prototype.toLowerCase = () => 'changed'; const shape ="
+    ),
+    "class_f_dataset_pattern_changed": F_DATASET.replace("/[A-Z]/g", "/[a-z]/g"),
+    "class_f_dataset_flags_changed": F_DATASET.replace("/[A-Z]/g", "/[A-Z]/gi"),
+}
+# Mutation inside a traversal still needs the existing backedge alias proof.
+F_DATASET_REFUSALS["class_f_dataset_saved"] = F_DATASET_CASES.pop("class_f_dataset_saved")[0]
+F_DATASET_CASES["class_f_saved_after_loop"] = (
+    F_DATASET.replace(
+        "return H.read(element) === 'bs-toggle|'",
+        "const saved = H.read(element); element.setAttribute('marker', saved); "
+        "return saved === 'bs-toggle|' && element.getAttribute('marker') === saved",
+    ),
+    "1000",
+)
+F_CASES.update(F_DATASET_CASES)
+F_REFUSALS.update(F_DATASET_REFUSALS)
+DYNAMIC_CASES.update(F_DATASET_CASES)
+DYNAMIC_REFUSALS.update(F_DATASET_REFUSALS)
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
 # Preserve the entire original method, including M, for-of and Unicode key
@@ -2188,7 +2253,14 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 deduced = args.work / f"{label}.mlir"
                 run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
                 native = deduced
-            cpp, symbol = strings.emitted(args, native, label, callbacks=int(name in FILTER_CASES))
+            cpp, symbol = strings.emitted(
+                args,
+                native,
+                label,
+                callbacks=int(name in FILTER_CASES) + int(name in F_DATASET_CASES),
+            )
+            if name in F_DATASET_CASES and "ctnative::replace_uppercase<" not in cpp:
+                raise RuntimeError(f"{label}: native output lost its original replacement callback")
             if name in UTF16_CASES and any(
                 helper not in cpp
                 for helper in ("ctbrowser::wtf8_to_utf16", "ctbrowser::utf16_to_wtf8")
@@ -2355,6 +2427,8 @@ def main():
                 or name == "class_f_matching_lowercase_replaced"
             ):
                 request["initial_intrinsics"] += ["String"]
+            if name in F_DATASET_CASES or name in F_DATASET_REFUSALS:
+                request["initial_intrinsics"] += ["RegExp"]
             if name in FILTER_CASES or name in FILTER_REFUSALS:
                 request["initial_intrinsics"] += FILTER_IDENTITIES
                 request["dataset_parameters"] = [0]

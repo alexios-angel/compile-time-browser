@@ -2139,8 +2139,10 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
                 )
                 if name in ("mixed-arguments", "second-matching"):
                     emitted(args, diagnostic, f"{prefix}-{name}")
-                elif "error: native DOM source:" not in diagnostic:
-                    raise RuntimeError(f"replacement {name}: wrong refusal\n{diagnostic}")
+                else:
+                    stage = "entry" if name in ("factory", "matching", "flags") else "source"
+                    if f"error: native DOM {stage}:" not in diagnostic:
+                        raise RuntimeError(f"replacement {name}: wrong refusal\n{diagnostic}")
     for budget in (0, 32, 64):
         diagnostic = dom.lower(
             args, ir, contract, f"{prefix}-budget-{budget}", max_steps=budget, success=False

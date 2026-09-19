@@ -2,7 +2,9 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
 
 namespace ctcompile::ctnative {
@@ -224,6 +226,37 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         mlir::OpBuilder at(body, body->end());
         if (frame) { ctjs::FrameExitOp::create(at, open.getLoc(), frame.getContext()); }
         ctjs::ReturnOp::create(at, open.getLoc(), snapshot);
+        // A callback created only in the removed suffix has no identity in
+        // this temporary prefix. The original candidate retains its whole body
+        // and every invocation for the final DOM proof before publication.
+        llvm::DenseSet<unsigned> prefixCallbacks;
+        unsigned prefixOperations = 0;
+        const auto callbacks = prefix->walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            ++prefixOperations;
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+                closure && closure.getFunction() >= 0) {
+                prefixCallbacks.insert(static_cast<unsigned>(closure.getFunction()));
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (callbacks.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
+        for (auto function : llvm::make_early_inc_range(prefix->getOps<ctjs::FuncOp>())) {
+            if (!spend()) { return error("DOM iteration work budget exhausted"); }
+            const auto index = functionIndex(function);
+            if (!index || *index == 0 || function.getSymName() == contract.entry ||
+                prefixCallbacks.contains(*index)) {
+                continue;
+            }
+            if (remaining / 2 < prefixOperations) {
+                return error("DOM iteration work budget exhausted");
+            }
+            remaining -= 2 * prefixOperations;
+            if (mlir::SymbolTable::symbolKnownUseEmpty(function, prefix->getOperation()) &&
+                mlir::SymbolTable::symbolKnownUseEmpty(function, &prefix->getBodyRegion())) {
+                function.erase();
+            }
+        }
         HostContract prefixContract = contract;
         const auto chargeFingerprint = prefix->walk([&](mlir::Operation * operation) {
             for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {

@@ -117,6 +117,7 @@ enum class HostDOMMethod {
     filterStrings,
     startsWith,
     removeStringPrefix,
+    replaceUppercase,
     stringCharAt,
     stringSlice,
     stringLowercaseUnit
@@ -138,7 +139,8 @@ struct HostDOMCall {
     [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
     [[nodiscard]] bool returnsString() const {
         return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent ||
-               kind == HostDOMMethod::removeStringPrefix || kind == HostDOMMethod::stringCharAt ||
+               kind == HostDOMMethod::removeStringPrefix ||
+               kind == HostDOMMethod::replaceUppercase || kind == HostDOMMethod::stringCharAt ||
                kind == HostDOMMethod::stringSlice || kind == HostDOMMethod::stringLowercaseUnit;
     }
     [[nodiscard]] bool returnsBoolean() const {

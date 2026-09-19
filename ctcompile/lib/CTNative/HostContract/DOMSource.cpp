@@ -15,6 +15,46 @@
 #include <optional>
 
 namespace ctcompile::ctnative {
+
+bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_ref<bool()> step) {
+    if (!function.getBody().hasOneBlock() || function.getUpvalueCount() != 0) { return false; }
+    auto & body = function.getBody().front();
+    if (body.empty() || body.getNumArguments() != ctjs::implicit_arguments + 1) { return false; }
+    for (auto argument : body.getArguments().take_front(ctjs::implicit_arguments)) {
+        if (!step() || !argument.use_empty()) { return false; }
+    }
+    auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.back());
+    auto concat = returned ? returned.getValue().getDefiningOp<ctjs::BinaryOp>() : ctjs::BinaryOp{};
+    if (!concat || (concat.getKind() != ctjs::BinaryKind::Concat &&
+                    concat.getKind() != ctjs::BinaryKind::Add)) {
+        return false;
+    }
+    auto prefix = concat.getLhs().getDefiningOp<ctjs::ConstantOp>();
+    auto text = prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+    auto call = concat.getRhs().getDefiningOp<ctjs::CallOp>();
+    auto read =
+        call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+    if (!text || text.getValue() != "-" || !call || !read || !call.getArgs().empty() ||
+        call.getReceiver() != body.getArgument(ctjs::implicit_arguments) ||
+        read.getObject() != call.getReceiver() ||
+        ctjs::constantKey(read.getKey()) != "toLowerCase") {
+        return false;
+    }
+    // Prove the entire original callback, including discarded operations.
+    // Its input is one matched ASCII uppercase unit; no coercion or script
+    // reentry is needed for the initial lowercase method or concatenation.
+    for (mlir::Operation & operation : body) {
+        if (!step()) { return false; }
+        if (&operation == read || &operation == call || &operation == concat ||
+            llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                      ctjs::ReturnOp>(operation)) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 namespace {
 
 // This only normalizes a private candidate. The complete DOM analysis must
@@ -94,6 +134,30 @@ struct DOMSource {
                 read.getObject() != call.getReceiver() ||
                 ctjs::constantKey(read.getKey()) != "filter" ||
                 call->getBlock() != closure->getBlock() || !closure->isBeforeInBlock(call)) {
+                return false;
+            }
+            invoked = true;
+        }
+        return invoked;
+    }
+
+    bool confinedReplacementCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
+        if (!target || !closure.getUpvalues().empty() ||
+            creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
+            !host_detail::isLowercaseReplacement(target, [&] { return step(); })) {
+            return false;
+        }
+        bool invoked = false;
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            if (!call || use.getOperandNumber() != 3 || call.getArgs().size() != 2 || !read ||
+                read.getObject() != call.getReceiver() ||
+                ctjs::constantKey(read.getKey()) != "replace" ||
+                !precedesInStructuredBody(closure, call)) {
                 return false;
             }
             invoked = true;
@@ -208,43 +272,6 @@ struct DOMSource {
         return true;
     }
 
-    bool lowercaseReplacement(ctjs::FuncOp function) {
-        auto & body = function.getBody().front();
-        if (body.getNumArguments() != ctjs::implicit_arguments + 1) { return false; }
-        auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.back());
-        auto concat =
-            returned ? returned.getValue().getDefiningOp<ctjs::BinaryOp>() : ctjs::BinaryOp{};
-        if (!concat || (concat.getKind() != ctjs::BinaryKind::Concat &&
-                        concat.getKind() != ctjs::BinaryKind::Add)) {
-            return false;
-        }
-        auto prefix = concat.getLhs().getDefiningOp<ctjs::ConstantOp>();
-        auto text =
-            prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
-        auto call = concat.getRhs().getDefiningOp<ctjs::CallOp>();
-        auto read =
-            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (!text || text.getValue() != "-" || !call || !read || !call.getArgs().empty() ||
-            call.getReceiver() != body.getArgument(ctjs::implicit_arguments) ||
-            read.getObject() != call.getReceiver() ||
-            ctjs::constantKey(read.getKey()) != "toLowerCase") {
-            return false;
-        }
-        // Prove the entire original callback, including discarded operations.
-        // Its input is one matched ASCII uppercase unit; no coercion or script
-        // reentry is needed for the initial lowercase method or concatenation.
-        for (mlir::Operation & operation : body) {
-            if (!step()) { return false; }
-            if (&operation == read || &operation == call || &operation == concat ||
-                llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
-                          ctjs::ReturnOp>(operation)) {
-                continue;
-            }
-            return false;
-        }
-        return true;
-    }
-
     bool foldConstantReplacements(ctjs::FuncOp function) {
         auto & block = function.getBody().front();
         llvm::SmallVector<ctjs::CallOp> calls(block.getOps<ctjs::CallOp>());
@@ -326,8 +353,8 @@ struct DOMSource {
             if (!target.getBody().front().getOps<ctjs::CreateClosureOp>().empty()) {
                 return refuse("DOM replacement callback contains an unproved callable");
             }
-            if (matches &&
-                (pattern != "[A-Z]" || flags.getValue() != "g" || !lowercaseReplacement(target))) {
+            if (matches && (pattern != "[A-Z]" || flags.getValue() != "g" ||
+                            !host_detail::isLowercaseReplacement(target, [&] { return step(); }))) {
                 if (!reason.empty()) { return false; }
                 continue;
             }
@@ -1336,7 +1363,7 @@ struct DOMSource {
                 } else {
                     values.insert(operation.getResults().begin(), operation.getResults().end());
                 }
-                // A capture-free filter callback stays in its selected source
+                // A proved capture-free callback stays in its selected source
                 // arm. Other callable/capture definitions still require the
                 // entry block; repeated loop-local identities are not proved.
                 auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
@@ -1347,7 +1374,8 @@ struct DOMSource {
                             ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
                             : ctjs::FuncOp{};
                     if ((closure && (!target || closure->getParentOfType<mlir::scf::WhileOp>() ||
-                                     !confinedFilterCallback(closure, target))) ||
+                                     (!confinedFilterCallback(closure, target) &&
+                                      !confinedReplacementCallback(closure, target)))) ||
                         llvm::isa<ctjs::CreateCellOp>(operation) ||
                         (object && !dataObject(object))) {
                         return refuse("DOM helper branch contains an unproved local identity");
@@ -1360,7 +1388,8 @@ struct DOMSource {
                             ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
                             : ctjs::FuncOp{};
                     if (llvm::isa<ctjs::LoadUpvalueOp>(operation) ||
-                        (closure && (!target || !confinedFilterCallback(closure, target)))) {
+                        (closure && (!target || (!confinedFilterCallback(closure, target) &&
+                                                 !confinedReplacementCallback(closure, target))))) {
                         return refuse("DOM direct helper contains an unproved closure or capture");
                     }
                 }
@@ -1479,8 +1508,11 @@ struct DOMSource {
                     auto * cloned = at.clone(operation, mapping);
                     if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
                         closure &&
-                        confinedFilterCallback(closure, functions.lookup(static_cast<unsigned>(
-                                                            closure.getFunction())))) {
+                        (confinedFilterCallback(closure, functions.lookup(static_cast<unsigned>(
+                                                             closure.getFunction()))) ||
+                         confinedReplacementCallback(
+                             closure,
+                             functions.lookup(static_cast<unsigned>(closure.getFunction()))))) {
                         // The original enclosure and unused implicit arguments
                         // were proved before cloning. Preserve this callback in
                         // its source arm with the caller's inert enclosure.
@@ -1544,7 +1576,7 @@ struct DOMSource {
         if (!foldConstantReplacements(function)) { return false; }
         // Enclosing identities were checked on the original body above. Only
         // the complete replacement proof may remove callbacks. Only confined,
-        // capture-free filter callbacks may survive direct helper expansion.
+        // capture-free callbacks may survive direct helper expansion.
         if (directReceiver && !checkBody(function, entry, true)) { return false; }
         llvm::SmallVector<ctjs::CallDirectOp> directCalls;
         const auto collected = function.walk([&](mlir::Operation * operation) {
@@ -1686,10 +1718,11 @@ struct DOMSource {
                 if (held) { continue; }
                 auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
                 if (!target) { return refuse("DOM helper closure target is missing"); }
-                if (confinedFilterCallback(closure, target)) {
+                if (confinedFilterCallback(closure, target) ||
+                    confinedReplacementCallback(closure, target)) {
                     if (!expand(target, depth + 1)) { return false; }
                     // Preserve both source identities. Complete DOM reproof must
-                    // establish the Array method, callback body and every use.
+                    // establish the intrinsic method, callback body and every use.
                     retainedCallbacks.insert(target);
                     closure = {};
                     progress = true;

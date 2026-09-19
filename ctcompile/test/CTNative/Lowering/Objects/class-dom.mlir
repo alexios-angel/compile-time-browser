@@ -34,6 +34,10 @@
 // proof checks every direct-call String input. Known matching inputs preserve
 // repeated ASCII normalization and untouched Unicode. Unknown inputs, changed
 // callbacks/builtins, callback effects and helper identity escapes still refuse.
+// Original F also accepts dynamic Strings from proved dataset keys/values.
+// Repeated ASCII matches preserve non-ASCII text, and saved converted keys survive
+// DOM writes. Nullable/object calls, changed callbacks, observed offsets, discarded
+// effects and intrinsic mutation still refuse across the complete call census.
 // Captured dataset filters preserve the original Bootstrap predicate and each
 // call's callback enclosure. Escapes, implicit arguments and unknown effects
 // refuse; full original H retains its unused-holder-slot boundary.

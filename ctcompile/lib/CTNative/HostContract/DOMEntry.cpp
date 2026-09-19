@@ -155,6 +155,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         stringVector,
         filterStrings,
         callback,
+        replacementCallback,
         startsWith,
         replacePrefix,
         charAt,
@@ -162,6 +163,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         lowercaseUnit,
         regexpFactory,
         prefixRegExp,
+        uppercaseRegExp,
         toggle,
         attribute,
         getAttribute,
@@ -238,10 +240,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         }
     }
     llvm::DenseSet<mlir::Operation *> prefixCallbacks;
+    llvm::DenseSet<mlir::Operation *> replacementCallbacks;
+    for (ctjs::FuncOp callback : callbackFunctions) {
+        if (host_detail::isLowercaseReplacement(callback, spend)) {
+            replacementCallbacks.insert(callback);
+        }
+        if (budgetExhausted) { return; }
+    }
     auto functions = callbackFunctions;
     functions.push_back(target);
     for (ctjs::FuncOp function : functions) {
         const bool callbackBody = function != target;
+        const bool replacementBody = replacementCallbacks.contains(function);
         auto & block = function.getBody().front();
         llvm::DenseMap<mlir::Value, Kind> values;
         llvm::DenseSet<mlir::Value> increasingIndices;
@@ -257,6 +267,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         llvm::DenseSet<mlir::Value> prefixRequired, prefixSnapshots;
         llvm::DenseMap<mlir::Value, ctjs::GetPropertyOp> strippedAssignmentKeys;
         llvm::DenseMap<mlir::Value, mlir::Value> firstUnits, stringTails, loweredFirstUnits;
+        if (replacementBody) {
+            auto input = block.getArgument(ctjs::implicit_arguments);
+            firstUnits[input] = input;
+        }
         struct Predicate {
             mlir::Value optional;
             bool stringOnTrue;
@@ -294,7 +308,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (!spend()) { return false; }
                 // Pure callbacks observe only their String argument. No implicit
                 // receiver, allocation, global, capture, callback or browser effect.
-                if (callbackBody &&
+                if (callbackBody && !(replacementBody && llvm::isa<ctjs::BinaryOp>(operation)) &&
                     !llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
                                ctjs::RootOp, ctjs::ReturnOp, ctjs::GetPropertyOp, ctjs::CallOp,
                                ctjs::TruthyOp, ctjs::UnaryOp, mlir::scf::IfOp, mlir::scf::YieldOp>(
@@ -799,8 +813,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     continue;
                 }
                 if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                    if (callbackBody && !hasKind(result.getValue(), Kind::boolean)) {
-                        refusal = "DOM filter callback must return a proved Boolean";
+                    if (callbackBody && !hasKind(result.getValue(),
+                                                 replacementBody ? Kind::string : Kind::boolean)) {
+                        refusal = "DOM callback must return its proved scalar kind";
                         return false;
                     }
                     if (depth || frame ||
@@ -825,8 +840,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
                     auto callback =
                         indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
-                    if (closure.getFunctionAttr().getInt() < 0 || !suppliedArray ||
-                        !suppliedString || !callback || !closure.getUpvalues().empty() ||
+                    const bool replacement = replacementCallbacks.contains(callback);
+                    if (closure.getFunctionAttr().getInt() < 0 ||
+                        (replacement ? !suppliedRegExp : !suppliedArray) || !suppliedString ||
+                        !callback || !closure.getUpvalues().empty() ||
                         closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
                         (closure.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
                          !hasKind(closure.getEnclosingThis(), Kind::undefined))) {
@@ -839,7 +856,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         if (!spend()) { return false; }
                         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
                         auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                        if (!call || use.getOperandNumber() != 2 || call.getArgs().size() != 1 ||
+                        if (!call || use.getOperandNumber() != (replacement ? 3u : 2u) ||
+                            call.getArgs().size() != (replacement ? 2u : 1u) ||
                             !dominance.properlyDominates(closure.getOperation(),
                                                          call.getOperation())) {
                             refusal = "DOM filter callback escapes its exact local invocation";
@@ -851,7 +869,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         refusal = "DOM filter callback has no source invocation";
                         return false;
                     }
-                    values[closure.getResult()] = Kind::callback;
+                    values[closure.getResult()] =
+                        replacement ? Kind::replacementCallback : Kind::callback;
                     provedClosures.emplace_back(closure, callback);
                     usedCallbacks.insert(callback);
                     continue;
@@ -1055,9 +1074,13 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
                     auto arguments = invoke.getArgs();
                     if (hasKind(invoke.getCallee(), Kind::regexpFactory)) {
+                        const bool uppercase = arguments.size() == 2 &&
+                                               ctjs::constantKey(arguments[0]) == "[A-Z]" &&
+                                               ctjs::constantKey(arguments[1]) == "g";
                         if (!hasKind(invoke.getReceiver(), Kind::undefined) ||
-                            arguments.size() != 2 || ctjs::constantKey(arguments[0]) != "^bs" ||
-                            !emptyString(arguments[1])) {
+                            arguments.size() != 2 ||
+                            (!uppercase && (ctjs::constantKey(arguments[0]) != "^bs" ||
+                                            !emptyString(arguments[1])))) {
                             refusal = "DOM prefix removal requires the original /^bs/ literal";
                             return false;
                         }
@@ -1077,7 +1100,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             refusal = "DOM prefix RegExp requires one confined replacement";
                             return false;
                         }
-                        values[invoke.getResult()] = Kind::prefixRegExp;
+                        values[invoke.getResult()] =
+                            uppercase ? Kind::uppercaseRegExp : Kind::prefixRegExp;
                         provedPrefixRegExps.push_back(invoke);
                         continue;
                     }
@@ -1158,6 +1182,19 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             {invoke, HostDOMMethod::stringLowercaseUnit, invoke.getReceiver()});
                         loweredFirstUnits[invoke.getResult()] =
                             firstUnits.lookup(invoke.getReceiver());
+                        values[invoke.getResult()] = Kind::string;
+                        continue;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::replacePrefix) && arguments.size() == 2 &&
+                        hasKind(arguments[0], Kind::uppercaseRegExp) &&
+                        hasKind(arguments[1], Kind::replacementCallback)) {
+                        auto closure = arguments[1].getDefiningOp<ctjs::CreateClosureOp>();
+                        auto callback =
+                            indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
+                        // Every callback use is this exact pattern; its argument is
+                        // one ASCII uppercase unit, never an arbitrary String.
+                        provedCalls.push_back({invoke, HostDOMMethod::replaceUppercase,
+                                               invoke.getReceiver(), callback});
                         values[invoke.getResult()] = Kind::string;
                         continue;
                     }

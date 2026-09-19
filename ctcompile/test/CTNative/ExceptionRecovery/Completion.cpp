@@ -1240,6 +1240,100 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             }
         }
     }
+    for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
+                                ctnative::HostContract::Provider::ctbrowserDOMSession}) {
+        for (unsigned control = 0; control < 8; ++control) {
+            std::string source = R"js(function guarded(element) {
+                function F(t) { return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`); }
+                var result = '';
+                for (const key of Object.keys(element.dataset)) result = result + F(key);
+                return result;
+            })js";
+            if (control == 1) {
+                source.replace(source.find("t.toLowerCase()"), 15, "t.toUpperCase()");
+            }
+            if (control == 2) {
+                source.insert(source.find("return result;"), "F(element.getAttribute('key')); ");
+            }
+            if (control == 3) {
+                source.insert(source.find("var result"), "String.prototype.toLowerCase = F; ");
+            }
+            if (control == 6) { source.replace(source.find("/[A-Z]/g"), 8, "/[A-Z]/i"); }
+            if (control == 7) {
+                source.replace(source.find("t => `-${t.toLowerCase()}`"), 26,
+                               "t => { unknown(t); return `-${t.toLowerCase()}`; }");
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            const auto original = printed(*candidate);
+            ctnative::HostContract request;
+            request.provider = provider;
+            request.entry = guarded(*candidate).getSymName().str();
+            request.elementParameters = request.datasetParameters = {0};
+            request.initialIntrinsics = {"Object",
+                                         "Array",
+                                         "RegExp",
+                                         "__ctbrowser_regexp",
+                                         "__ctbrowser_for_of_open",
+                                         "__ctbrowser_iter_next",
+                                         "__ctbrowser_iter_close"};
+            if (control != 4) { request.initialIntrinsics.push_back("String"); }
+            request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+            const auto before = request;
+            auto error = ctnative::prepareDOMEntry(*candidate, request, control == 5 ? 0 : 1000000);
+            if (control) {
+                check(static_cast<bool>(error), "dynamic replacement requires its complete proof");
+                llvm::consumeError(std::move(error));
+                check(printed(*candidate) == original &&
+                          request.moduleSha256 == before.moduleSha256 &&
+                          request.initialIntrinsics == before.initialIntrinsics &&
+                          request.elementParameters == before.elementParameters &&
+                          request.datasetParameters == before.datasetParameters &&
+                          request.provider == before.provider && request.entry == before.entry,
+                      "dynamic replacement refusal preserves source and contract");
+            } else {
+                if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+                const ctnative::DOMEntryAnalysis proof(*candidate, request);
+                check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                      "dynamic replacement publishes a complete fresh DOM proof");
+                if (!proof.proved()) { continue; }
+                for (unsigned mutation = 0; mutation < 3; ++mutation) {
+                    mlir::OwningOpRef<mlir::ModuleOp> forged(candidate->clone());
+                    ctjs::CallOp replacement, lowercase;
+                    forged->walk([&](ctjs::CallOp call) {
+                        auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!read) { return; }
+                        if (ctjs::constantKey(read.getKey()) == "replace") { replacement = call; }
+                        if (ctjs::constantKey(read.getKey()) == "toLowerCase") { lowercase = call; }
+                    });
+                    if (!check(replacement && lowercase, "dynamic proof retains original calls")) {
+                        continue;
+                    }
+                    auto callback = replacement.getArgs()[1].getDefiningOp<ctjs::CreateClosureOp>();
+                    if (!check(static_cast<bool>(callback), "dynamic proof retains its callback")) {
+                        continue;
+                    }
+                    if (mutation == 0) {
+                        callback.getEnclosingClosureMutable().assign(
+                            callback->getParentOfType<ctjs::FuncOp>().getBody().front().getArgument(
+                                ctjs::arg_receiver));
+                    } else if (mutation == 1) {
+                        replacement->setOperand(1, callback.getEnclosingThis());
+                    } else {
+                        lowercase->setOperand(1, lowercase->getParentOfType<ctjs::FuncOp>()
+                                                     .getBody()
+                                                     .front()
+                                                     .getArgument(ctjs::arg_receiver));
+                    }
+                    auto fresh = request;
+                    fresh.moduleSha256 = ctnative::hostContractFingerprint(*forged);
+                    const ctnative::DOMEntryAnalysis rejected(*forged, fresh);
+                    check(!rejected.proved(),
+                          "fresh dynamic proof rejects forged callback provenance");
+                }
+            }
+        }
+    }
     using ctnative::lowering_detail::inspectSingleInvocationRegion;
     using ctnative::lowering_detail::normalizeDOMURI;
     auto module = import(context, R"js(
