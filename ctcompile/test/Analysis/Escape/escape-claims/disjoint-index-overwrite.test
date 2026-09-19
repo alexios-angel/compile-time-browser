@@ -38,7 +38,7 @@ function overlap() {
 function lateKeyReload() {
     var child = {}, a = [1, child];
     for (var i = 0; i < a.length; i++) {
-        a[0] = 1;
+        a[0] = 0;
         a[a[0]] = 0;
     }
     return a;
