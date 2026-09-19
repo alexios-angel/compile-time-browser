@@ -1507,10 +1507,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         // Check after every key and receiver was resolved: a later store can
         // reveal a reload overlapping an earlier write. Current-index writes
-        // remain conservative; fixed writes must miss every recursive reload.
+        // visit only start + n * stride below length; every reload is own/in-bounds.
         for (const auto position : guardReloads) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-            if (storesCurrentIndex || guardStores.contains(position)) { return unsupported; }
+            if (guardStores.contains(position) ||
+                (storesCurrentIndex && position >= *start && (position - *start) % *stride == 0)) {
+                return unsupported;
+            }
         }
         // SCF can eliminate an invariant array parameter. A direct allocation
         // already executed on this exact path needs no backedge transport;

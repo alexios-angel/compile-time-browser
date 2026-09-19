@@ -431,6 +431,52 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject("structured later stores invalidate earlier reloads",
            replace(disjointIndex,
                    "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
+    const auto visitedIndex =
+        replace(replace(disjointIndex, "%base[%one], %zero", "%base[%i], %zero"), "%index = %zero",
+                "%index = %one");
+    rows.push_back({.what = "structured reloads below the start survive current-index writes",
+                    .body = visitedIndex,
+                    .arrays = "a:[one,zero]",
+                    .reads = "a[1]=zero; a[0]=one",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "structured zero-trip overwrites preserve guard contents",
+                    .body = replace(replace(replace(visitedIndex, "  %finalIndex,",
+                                                    "  %two = ctjs.constant "
+                                                    "#ctjs.number<4611686018427387904>\n"
+                                                    "  %finalIndex,"),
+                                            "%index = %one", "%index = %two"),
+                                    "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[one,y]",
+                    .exit = "a -> {a,y}"});
+    const auto skippedIndex = replace(
+        replace(replace(replace(replace(visitedIndex, "%index = %one", "%index = %zero"), "  %a =",
+                                "  %two = ctjs.constant "
+                                "#ctjs.number<4611686018427387904> "
+                                "{storage_test_id = \"two\"}\n  %a ="),
+                        "[%one]", "[%y, %two, %y]"),
+                "  ctjs.append %y to %a\n", ""),
+        "%unit = ctjs.get_property %base[%zero]", "%unit = ctjs.get_property %base[%one]");
+    rows.push_back({.what = "structured reloads between stride positions survive overwrites",
+                    .body = skippedIndex,
+                    .arrays = "a:[zero,two,zero]",
+                    .reads = "a[0]=zero; a[1]=two; a[2]=zero; a[1]=two",
+                    .exit = "zero -> {}"});
+    rows.push_back(
+        {.what = "structured visited positions depend on the nonzero start",
+         .body = replace(replace(replace(skippedIndex, "%index = %zero", "%index = %one"),
+                                 "[%y, %two, %y]", "[%two, %y, %two, %y]"),
+                         "%unit = ctjs.get_property %base[%one]",
+                         "%unit = ctjs.get_property %base[%two]"),
+         .arrays = "a:[two,zero,two,zero]",
+         .reads = "a[1]=zero; a[2]=two; a[3]=zero; a[2]=two",
+         .exit = "zero -> {}"});
+    reject("a later structured visit invalidates an invariant reload",
+           replace(replace(skippedIndex, "[%y, %two, %y]", "[%y, %y, %two]"),
+                   "%unit = ctjs.get_property %base[%one]",
+                   "%unit = ctjs.get_property %base[%two]"));
+    reject("an unvisited structured slot still cannot overlap a fixed write",
+           replace(visitedIndex,
+                   "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
     const auto disjointReload =
         replace(replace(replace(reloaded, "  %finalIndex,",
                                 "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"

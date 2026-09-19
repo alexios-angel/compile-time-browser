@@ -164,6 +164,49 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .body = replace(disjointIndex,
                          "  %step =", "  ctjs.set_property %base[%zero], %two\n  %step ="),
          .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    const auto visitedIndex =
+        replace(replace(disjointIndex, "%base[%one], %zero", "%base[%i], %zero"),
+                "^header(%a, %zero, %zero", "^header(%a, %one, %zero");
+    run({.what = "a reload below the start survives current-index overwrites",
+         .body = visitedIndex,
+         .arrays = "a:[one,zero]",
+         .reads = "a[1]=zero; a[0]=one",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "zero-trip current-index overwrites preserve reloaded guard contents",
+         .body =
+             replace(replace(visitedIndex, "^header(%a, %one, %zero", "^header(%a, %two, %zero"),
+                     "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[one,x]",
+         .exit = "a -> {a,x}"});
+    const auto skippedIndex = replace(
+        replace(replace(visitedIndex, "^header(%a, %one, %zero", "^header(%a, %zero, %zero"),
+                "[%one, %x]", "[%x, %two, %x]"),
+        "%stride = ctjs.get_property %base[%zero]", "%stride = ctjs.get_property %base[%one]");
+    run({.what = "a reload between stride positions survives current-index overwrites",
+         .body = skippedIndex,
+         .arrays = "a:[zero,two,zero]",
+         .reads = "a[0]=zero; a[1]=two; a[2]=zero; a[1]=two",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "visited positions are relative to the nonzero start",
+         .body = replace(
+             replace(replace(skippedIndex, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+                     "[%x, %two, %x]", "[%two, %x, %two, %x]"),
+             "%stride = ctjs.get_property %base[%one]", "%stride = ctjs.get_property %base[%two]"),
+         .arrays = "a:[two,zero,two,zero]",
+         .reads = "a[1]=zero; a[2]=two; a[3]=zero; a[2]=two",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "a later visited position cannot supply an invariant reload",
+         .body = replace(replace(skippedIndex, "[%x, %two, %x]", "[%x, %x, %two]"),
+                         "%stride = ctjs.get_property %base[%one]",
+                         "%stride = ctjs.get_property %base[%two]"),
+         .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    run({.what = "an unvisited slot still cannot overlap a fixed overwrite",
+         .body = replace(visitedIndex,
+                         "  %step =", "  ctjs.set_property %base[%zero], %one\n  %step ="),
+         .failure = ArrayContentsFailure::UnsupportedControlFlow});
     const std::string reversed =
         replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
