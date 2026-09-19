@@ -1,16 +1,11 @@
 # The focused tests: unit/ one file per subsystem, js/ the language suites.
 #
-# `ctbrowser_test(<bucket>/<name>)` comes from cmake/modules/CTTest.cmake; the
-# ctest name is the BASENAME, so `ctest -R vm_` keeps working and a new test is
-# a new .cpp in one of the two directories - nothing to register here.
-file(GLOB tests RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS unit/*.cpp js/*.cpp)
-foreach(test IN LISTS tests)
-  string(REPLACE ".cpp" "" test "${test}")
-  ctbrowser_test(${test})
-endforeach()
-
-# Constructor and receiver cases remain part of the vm_functions executable.
-target_sources(ctbrowser-test-vm_functions PRIVATE js/vm_functions/constructors.cpp)
+# Preserve the executable paths consumed by test scripts and local workflows.
+if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+add_subdirectory(unit)
+add_subdirectory(js)
 
 # Public Core clients also run without the browser or interpreter.
 foreach(client core_basics core_text core_uri core_json)
@@ -41,19 +36,6 @@ target_include_directories(ctbrowser-test-vm_operators PRIVATE
   "${CTBROWSER_CTJS}/include"
   "${CTBROWSER_CTC}/include")
 
-# navigation drives run_app, which initialises SDL - and SDL reaches libdbus,
-# whose own lock order TSan reports as an inversion; its offscreen video driver
-# initialises EGL without releasing it, which LeakSanitizer reports. Both
-# suppressed by LIBRARY - see the files - so a real one in our code is still
-# caught.
-#
-# Set HERE rather than beside the corpus properties in test/: set_tests_properties
-# resolves a test name in the directory scope that created it, so a property for
-# a unittest belongs in this file. ENVIRONMENT is one property, so this REPLACES
-# the font path ctbrowser_test() set rather than adding to it.
-set_tests_properties(navigation PROPERTIES ENVIRONMENT
-  "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")
-
 # --- Precompiled header: parse the umbrella once, not once per test ----------
 #
 # `<ctbrowser.hpp>` is the one-include public API, and parsing it costs ~2.9 s
@@ -71,8 +53,10 @@ target_precompile_headers(${_pch_anchor} PRIVATE <ctbrowser.hpp>)
 set(_pch_excluded core_basics core_text core_uri core_json
                   dom_token_list dom_element dom_shadow dom_dataset
                   style_easing style_closest)
-foreach(test IN LISTS tests)
-  get_filename_component(_pch_name "${test}" NAME_WE)
+get_property(_unit_targets DIRECTORY unit PROPERTY BUILDSYSTEM_TARGETS)
+get_property(_js_targets DIRECTORY js PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_pch_target IN LISTS _unit_targets _js_targets)
+  string(REPLACE "ctbrowser-test-" "" _pch_name "${_pch_target}")
   if(_pch_name STREQUAL selectors OR _pch_name IN_LIST _pch_excluded)
     continue()
   endif()

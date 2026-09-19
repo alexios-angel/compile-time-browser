@@ -8,21 +8,17 @@ if(NOT CTBROWSER_BUILD_EXAMPLES)
   return()
 endif()
 
-# GLOB_RECURSE since the examples were foldered on 2026-08-09 into demos/ (the
-# engine showing what it draws) and corpus/ (somebody else's library, each with
-# a golden). cli/ was a third bucket until the monorepo split moved ctbrowse and
-# ctdrive to ../tools/, where a built executable belongs - which is also what
-# retired the three "and NOT example STREQUAL ctbrowse" exceptions below.
-#
-# Nothing downstream had to change: every use below derives from NAME_WE, so the
-# target names, the OUTPUT_NAMEs, the golden-examples and webgl-examples lists,
-# the -mwindows exclusions and the dist loop all still key on the bare name.
-file(GLOB_RECURSE example-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+# Child directories discover only their own sources. Preserve the executable
+# directory used by screenshots, packaging, and existing command lines.
+set(CTBROWSER_EXAMPLE_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
 
-foreach(source ${example-sources})
+function(ctbrowser_example source)
   get_filename_component(example "${source}" NAME_WE)
   add_executable(ctbrowser-example-${example} "${source}")
   target_link_libraries(ctbrowser-example-${example} PRIVATE ctbrowser::ctbrowser)
@@ -112,7 +108,8 @@ foreach(source ${example-sources})
                  -DGOLDEN=${PROJECT_SOURCE_DIR}/test/golden/${example}.ppm
                  -DWORKDIR=${PROJECT_SOURCE_DIR}
                  -DFRAMES=${render-frames}
-                 -P ${CTBROWSER_MONOREPO_ROOT}/tools/check/check-render.cmake)
+                 -P ${CTBROWSER_MONOREPO_ROOT}/tools/check/check-render.cmake
+                 WORKING_DIRECTORY "${CTBROWSER_EXAMPLE_BINARY_DIR}")
       endif()
 
       # AND THE SAME PAGE THROUGH ANGLE, where there is one. A SECOND GOLDEN
@@ -140,11 +137,16 @@ foreach(source ${example-sources})
                  -DWORKDIR=${PROJECT_SOURCE_DIR}
                  -DFRAMES=${render-frames}
                  -DBACKEND=angle
-                 -P ${CTBROWSER_MONOREPO_ROOT}/tools/check/check-render.cmake)
+                 -P ${CTBROWSER_MONOREPO_ROOT}/tools/check/check-render.cmake
+                 WORKING_DIRECTORY "${CTBROWSER_EXAMPLE_BINARY_DIR}")
       endif()
     endif()
   endif()
-endforeach()
+endfunction()
+
+set(example-sources)
+add_subdirectory(corpus)
+add_subdirectory(demos)
 
 # --- Windows cross builds -------------------------------------------------
 #
@@ -246,7 +248,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_CROSSCOMPILING)
             "${CMAKE_CURRENT_SOURCE_DIR}/pages" "${dist-dir}/examples/pages"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${dist-dir}/examples/assets")
 
-  # AND vendor/, AT THE DIST ROOT: the pages ask for `../../vendor/<lib>/<lib>.js`
+  # AND vendor/, AT THE DIST ROOT: the pages resolve the vendor bundle path
   # relative to the PAGE, so the only layout that finds anything mirrors the
   # repository - vendor/ beside examples/, not inside it.
   list(APPEND dist-commands
