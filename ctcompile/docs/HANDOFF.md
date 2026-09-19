@@ -15,6 +15,95 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Dynamic Bootstrap F and saved digit keys, 2026-09-19 UTC
+
+Resumed **1b93d242** and three dirty escape files from the **09:33 session**,
+explicitly abandoned at **09:36:29** in AGENT-SYNC. The native continuation was
+the full H/F boundary promised in this handoff and that session's journal.
+Both agents' histories and unmerged branches were reviewed; September 7 WIP is
+not pending. Three agents supplied fixtures and native/escape findings before
+service limits; root finished the implementation and focused gates.
+
+**995585be** finishes the interrupted saved digit String own-array key proof.
+The shared contents analysis now recognizes a saved canonical digit String in
+ordinary reads/writes and invariant reloads. It retains the original String
+identity and separate numeric conversion facts. String *indexing* still needs
+a Number key, the 256-byte ASCII ceiling, original provenance, bounded indices,
+read-only loop census and complete work budgets. CFG/SCF regressions and eight
+source functions cover saved/overwritten children, invalid keys and mutation.
+
+**84b3357a** proves original Bootstrap F on dynamically produced, proved Strings.
+The original `/[A-Z]/g` callback remains in the IR and emitted C++; a small
+ordinary String scan invokes it once per ASCII uppercase match and preserves
+all other bytes. Its lowercase call uses public Core helpers. Complete callback,
+String/RegExp intrinsic, receiver, enclosure and invocation proofs remain.
+Unknown/nullable/object inputs, changed callbacks, effects and mutated intrinsics
+still refuse. Iterator prefix analysis removes unreferenced callback bodies only
+from its temporary prefix; the original candidate retains every body for final
+proof. No browser/Script implementation or semantics changed.
+
+All **395 prior class bodies**, **17 raw C++ JS bodies** and **62 standalone
+RegExp case/refusal/matching bodies** are unchanged. Added four class positives,
+nine refusals, eight transaction controls and three refreshed-fingerprint IR
+forgeries per provider. The new DOM-write-inside-loop specimen remains a refusal;
+the added saved-result/write-after-loop specimen passes.
+
+Focused passes: arrays **1/1 (2.08s; total 2.09s)**; snapshot/index escape lit
+**2/2 (0.35s)**; transaction **1/1 (4.51s)**; host contract **1/1 (0.47s; total
+0.48s)**; class DOM **1/1 (251.87s)**, **584 Node/interpreter observations, eight
+GCC/Clang executions, 4,446 refusals**; RegExp **1/1 (12.93s)**, **24 observations,
+four executions, 169 source/provenance/budget checks**. New snapshot oracle:
+**24 sites / 8 sound / 8 of 14 confined precision**; prior index: **31 / 10 /
+10 of 20**. Zero violations, partial, pending or unclaimed sites. All **15**
+tested source/test hashes match the devbox. Emitted C++ inspection and
+Script/dispatch/link exclusions pass; existing pinned VM UTF-16 differences stay.
+
+**Next:** exact original `class_filter_full_h` still refuses at
+`native DOM class: DOM class method body: native DOM source: unused DOM helper
+body contains an unproved operation`. Dynamic String F is now proved; independent
+proof of the original unused parameterized H bodies remains before publication.
+Do not insert calls, assume missing parameter facts or erase unproved siblings.
+DOM writes inside the loop retain the backedge alias boundary. Part 25 ordinary
+object reloads still need real literal own-data definitions preserving assignment
+setters. General String indices, W operations, nested iterators, complex completion,
+broader ownership work and the application driver remain. No whole-Bootstrap
+admission gain or new WPT/test262 measurement is claimed.
+
+Exact validation, under `/tmp/ctbrowser-devbox-build.lock`:
+
+- Built escape targets with `tools/remote-build.sh
+  ctcompile-test-escape-analysis-arrays ctcompile-test-escape-claims
+  ctcompile-test-type-oracle`; native targets with `tools/remote-build.sh ctjs-opt
+  ctjs-translate ctcompile-test-native-reference ctcompile-test-exception-recovery
+  ctcompile-test-host-contract`. Fixture retries selected only the three native
+  tools; final RegExp retry required no C++ rebuild.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`; separate exact
+  selections `'^ctcompile_exception_recovery$'` and `'^ctcompile_host_contract$'`.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(invariant-string-snapshot|invariant-string-index)[.]test$'`.
+  The same generated-config command separately selected
+  `'^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'` and
+  `'^ctcompile :: CTNative/Browser/native-dom-regexp[.]test$'`.
+- Initial native build fixed a const `FuncOp` accessor. First transaction
+  **4.51s** exposed two new prefix-orphan callback failures; prefix cleanup fixed
+  them. Class retries **39.56s / 40.45s** exposed the missing callback enclosure
+  forwarding and the new DOM-write-inside-loop fixture; forwarding was fixed,
+  that source retained as a refusal, and a separate after-loop positive added.
+  RegExp **11.84s** exposed three diagnostic-stage expectations: factory/pattern/
+  flags mutations still refuse, now at DOM entry. Only RegExp was rerun after
+  correcting those expectations. Final passing measurements are above.
+- `tools/format.sh --check` retains **26 baseline diagnostics in nine
+  HEAD-identical files**. All changed C++ passes pinned clang-format; both changed
+  Python files pass `black --check`; added JS bodies, temporary gate scripts and
+  `git diff --check` pass syntax/whitespace checks. Docs need no build or CTest.
+
+Skipped: full CTest/compiler lit, complete DOM/String/Number/URI suites, separate
+lifetime matrices, broad corpus/native matrices, WPT/test262 and whole Bootstrap.
+Evidence: `/tmp/ctcompile-h-0944/`, including exact full-H diagnostic, source
+preservation, hashes and emitted C++. No push; native Bootstrap and the plan
+remain unfinished.
+
 ## Known matching F inputs and ASCII String indices, 2026-09-19 UTC
 
 Resumed **28aa6180** and the three dirty files from the **08:55 session**,

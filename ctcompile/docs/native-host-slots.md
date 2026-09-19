@@ -1,5 +1,26 @@
 # Checked host roots and publication-slot flow
 
+## Dynamic String replacement proof, 2026-09-19 UTC
+
+**84b3357a** retains original Bootstrap F callbacks for proved dynamic String
+inputs. Both DOM providers require initial String/RegExp authority, exact
+`/[A-Z]/g`, the entire original callback, matching receivers/enclosures and a
+complete invocation census. Emitted C++ uses ordinary String owners and public
+Core lowercase. Three refreshed-fingerprint forgeries per provider cover callback
+enclosure, replacement receiver and lowercase receiver; eight transaction controls
+per provider cover publication and unchanged source/contract on refusal.
+
+Temporary iterator prefixes remove only callbacks without numeric or symbolic
+uses there. The original candidate retains every body for final proof. No browser
+or Script behavior changed. Focused transaction **1/1 (4.51s)**, host **1/1 (0.48s
+total)**, class DOM **1/1 (251.87s; 584 observations/eight executions/4,446 refusals)**
+and RegExp **1/1 (12.93s; 24 observations/four executions/169 checks)** pass.
+Commands, baseline formatting, failures and skipped broad coverage are in HANDOFF.
+
+Original full H still refuses at the unused helper-body proof. Independent
+parameterized H-body proof remains before publication; dynamic F grants no facts
+about unknown parameters and does not permit erasing unproved siblings.
+
 ## Known matching replacement inputs, 2026-09-19 UTC
 
 **5b01f648** finishes the interrupted 08:55 F fixtures abandoned at 08:58:27.

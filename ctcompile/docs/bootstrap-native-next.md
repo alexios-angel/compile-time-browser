@@ -1,5 +1,31 @@
 # What native Bootstrap needs next
 
+## Dynamic Bootstrap F inputs, 2026-09-19 UTC
+
+**84b3357a** finishes the dynamic String F continuation from the abandoned 09:33
+session. Original ``t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)`` now runs on
+proved dynamic Strings from dataset iteration. Generated C++ keeps the original
+callback, uses public Core lowercase and ordinary String ownership, and preserves
+nonmatching bytes. Every receiver, callback use, enclosure and initial intrinsic
+remains proved; unknown/nullable/object inputs and changed callbacks still refuse.
+
+Focused transaction **1/1 (4.51s)**, host contract **1/1 (0.48s total)**, class DOM
+**1/1 (251.87s; 584 observations, eight executions, 4,446 refusals)**, RegExp
+**1/1 (12.93s; 24 observations, four executions, 169 checks)**. Parallel
+**995585be** completes saved digit String array-key escape proofs. All 15 tested
+hashes match devbox; emitted ownership and Script/dispatch/link exclusions pass.
+Formatting retains 26 baseline diagnostics/nine unchanged files; changed checks
+pass. Exact commands, failures and skipped coverage: HANDOFF and
+`/tmp/ctcompile-h-0944/`. Full suites and broad matrices were skipped.
+
+**Next:** unchanged original `class_filter_full_h` now refuses with `native DOM
+class: DOM class method body: native DOM source: unused DOM helper body contains
+an unproved operation`. Prove the unused parameterized H bodies independently;
+do not assume parameter facts, synthesize calls or remove unproved siblings.
+DOM writes inside iteration still need backedge alias proof; the saved F result
+survives a subsequent write after the loop. W, nested iterators, complex completion
+and the application driver remain. No whole-Bootstrap gain is claimed.
+
 ## Known matching Bootstrap F inputs, 2026-09-19 UTC
 
 **5b01f648** finishes the interrupted 08:55 F fixtures abandoned at 08:58:27.
