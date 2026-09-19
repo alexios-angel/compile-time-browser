@@ -631,6 +631,62 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"));
     reject("invariant subtraction cannot certify a zero stride",
            replace(invariantProduct, "mul %d, %one", "sub %d, %d"));
+    const auto invariantBits =
+        replace(invariantProduct, "binary mul %d, %one", "binary_static bitand %d, %one");
+    for (const std::string expression : {"bitand %d, %one", "bitor %d, %zero", "bitxor %d, %zero",
+                                         "shl %d, %zero", "shr %d, %zero", "ushr %d, %zero"}) {
+        const auto source = replace(invariantBits, "bitand %d, %one", expression);
+        rows.push_back({.what = "bitwise latches preserve reordered structured operand transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "invariant bitwise latches discharge only unreturned children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+        reject("structured bitwise latches preserve original backedge identity",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("structured bitwise latches cannot borrow a changing index",
+               replace(source, expression, replace(expression, "%d", "%i")));
+    }
+    const auto signedBits =
+        replace(replace(invariantBits, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
+                "bitand %d, %one", "shr %d, %d");
+    for (const auto & source :
+         {replace(signedBits, "binary add %i, %product", "binary sub %i, %product"),
+          replace(signedBits, "shr %d, %d", "ushr %d, %d")}) {
+        rows.push_back({.what = "structured signed shifts preserve String values and masked counts",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+    }
+    const auto nestedBits =
+        replace(invariantBits, "    %product = ctjs.binary_static bitand %d, %one",
+                "    %inner = ctjs.binary sub %d, %zero\n"
+                "    %product = ctjs.binary_static bitand %inner, %one");
+    rows.push_back({.what = "structured bitwise latches retain two exact invariant layers",
+                    .body = nestedBits,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject("structured bitwise latches retain the two-layer limit",
+           replace(nestedBits, "    %inner = ctjs.binary sub %d, %zero",
+                   "    %deep = ctjs.unary plus %d\n    %inner = ctjs.binary sub %deep, %zero"));
+    reject("structured bitwise latches cannot borrow a repeated property read",
+           replace(nestedBits, "ctjs.binary sub %d, %zero", "ctjs.get_property %base[%zero]"));
+    reject("structured bitwise latches cannot certify a zero stride",
+           replace(invariantBits, "bitand %d, %one", "bitxor %d, %d"));
+    reject("structured unsigned shifts still bound the final index",
+           replace(replace(signedBits, "shr %d, %d", "ushr %d, %zero"), "%index = %zero",
+                   "%index = %one"));
+    for (const std::string literal : {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">",
+                                      "#ctjs.undefined", "#ctjs.number<4602678819172646912>"}) {
+        reject("structured bitwise latches require bounded original Number conversion",
+               replace(invariantBits, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+    }
     const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
     for (const auto & source :
          {invariantPower, replace(invariantPower, "pow %d, %one", "pow %one, %d"),
@@ -1152,10 +1208,15 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            ArrayContentsFailure::UnknownValue);
     reject("Undefined cannot borrow the structured primitive bitwise proof",
            replace(primitiveBitwise, "#ctjs.null", "#ctjs.undefined"));
-    reject("repeated structured primitive bitwise producers need independent invariance",
-           replace(replace(primitiveBitwise, "    %step =",
-                           "    %repeated = ctjs.binary_static bitor %operand, %one\n    %step ="),
-                   "add %i, %d", "add %i, %repeated"));
+    rows.push_back(
+        {.what = "repeated structured bitwise producers preserve each original predecessor",
+         .body = replace(replace(primitiveBitwise, "    %step =",
+                                 "    %repeated = ctjs.binary_static bitor %operand, %one\n"
+                                 "    %step ="),
+                         "add %i, %d", "add %i, %repeated"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+         .exit = "y -> {y}; y -> {y}"});
     const std::string unsignedOperation = "  %count = ctjs.unary neg %one\n"
                                           "  %unit = ctjs.binary_static ushr %operand, %count\n";
     const auto unsignedCarried =

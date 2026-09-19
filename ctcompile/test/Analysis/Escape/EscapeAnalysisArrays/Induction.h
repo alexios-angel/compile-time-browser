@@ -683,6 +683,97 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                    "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"));
     reject("invariant subtraction cannot certify a zero stride",
            replace(invariantProduct, "mul %d, %one", "sub %d, %d"));
+    const auto invariantBits =
+        replace(invariantProduct, "binary mul %d, %one", "binary_static bitand %d, %one");
+    for (const std::string expression : {"bitand %d, %one", "bitor %d, %zero", "bitxor %d, %zero",
+                                         "shl %d, %zero", "shr %d, %zero", "ushr %d, %zero"}) {
+        const auto source = replace(invariantBits, "bitand %d, %one", expression);
+        for (const auto & body :
+             {source, replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"1\">\n")}) {
+            run({.what = "bitwise latches preserve invariant Number and canonical String operands",
+                 .body = body,
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
+        }
+        reject("bitwise operands retain original backedge identity even at an equal value",
+               replace(source, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        reject("bitwise latches cannot borrow a changing induction operand",
+               replace(source, expression, replace(expression, "%d", "%i")));
+        reject("bitwise latches refuse noncanonical String conversion",
+               replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
+    }
+    run({.what = "header-local bitwise latches retain original header transport",
+         .body = replace(
+             replace(invariantBits, "  %product = ctjs.binary_static bitand %d, %one\n", ""),
+             "  %key =", "  %product = ctjs.binary_static bitand %delta, %one\n  %key ="),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const auto maskedBits =
+        replace(replace(invariantBits, makeUnit,
+                        "  %count = ctjs.constant #ctjs.number<4629700416936869888>\n" + makeUnit),
+                "bitand %d, %one", "shl %d, %count");
+    run({.what = "repeated left shifts mask the original count to five bits",
+         .body = maskedBits,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    const auto negativeBits =
+        replace(invariantBits, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n");
+    for (const std::string kind : {"shr", "ushr"}) {
+        auto source = replace(negativeBits, "bitand %d, %one", kind + " %d, %d");
+        if (kind == "shr") {
+            source = replace(source, "binary add %i, %product", "binary sub %i, %product");
+        }
+        run({.what = "right shifts preserve signed String operands and mask negative counts",
+             .body = source,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
+    }
+    const auto wrappedBits =
+        replace(replace(replace(invariantBits, makeUnit,
+                                "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
+                        "bitand %d, %one", "shl %d, %one"),
+                "binary add %i, %product", "binary sub %i, %product");
+    run({.what = "left shifts wrap to an exact negative stride before subtraction",
+         .body = wrappedBits,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[2]=three",
+         .exit = "added -> {}"});
+    const auto maximumBits = replace(negativeBits, "bitand %d, %one", "ushr %d, %zero");
+    run({.what = "unsigned shifts permit the largest bounded final index",
+         .body = maximumBits,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one",
+         .exit = "added -> {}"});
+    reject("unsigned shift induction still bounds the final index update",
+           replace(maximumBits, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    const auto nestedBits =
+        replace(invariantBits, "  %product = ctjs.binary_static bitand %d, %one",
+                "  %inner = ctjs.binary sub %d, %zero\n"
+                "  %product = ctjs.binary_static bitand %inner, %one");
+    run({.what = "bitwise latches reuse the second exact invariant operation layer",
+         .body = nestedBits,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    reject("bitwise latches do not expand the two-layer proof limit",
+           replace(nestedBits, "  %inner = ctjs.binary sub %d, %zero",
+                   "  %deep = ctjs.unary plus %d\n  %inner = ctjs.binary sub %deep, %zero"));
+    reject("a repeated property read cannot borrow its previous bitwise operand snapshot",
+           replace(nestedBits, "ctjs.binary sub %d, %zero", "ctjs.get_property %base[%zero]"));
+    reject("a zero bitwise stride does not certify termination",
+           replace(invariantBits, "bitand %d, %one", "bitxor %d, %d"));
+    reject("a negative bitwise stride cannot make Add induction increase",
+           replace(negativeBits, "bitand %d, %one", "bitor %d, %zero"));
+    reject(
+        "bitwise conversion cannot change an original String property's key",
+        replace(replace(invariantBits, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
+                "%base[%i]", "%base[%d]"),
+        ArrayContentsFailure::UnknownIndex);
     const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
     for (const auto & source :
          {invariantPower, replace(invariantPower, "pow %d, %one", "pow %one, %d"),
@@ -1442,8 +1533,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("signed bitwise snapshots must remain identical on the backedge",
                replace(carried, "^header(%base, %step, %added, %d",
                        "^header(%base, %step, %added, %one"));
-        reject("repeated bitwise producers need independent invariance",
-               replace(replace(snapshot, operation, ""), "  %step =", operation + "  %step ="));
+        run({.what = "repeated bitwise producers preserve the original pre-shrink operand",
+             .body =
+                 replace(replace(snapshot, operation, ""), "  %step =", operation + "  %step ="),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("negative bitwise facts never become own indices",
                replace(snapshot, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
         reject("signed bitwise snapshots cannot borrow an unknown operand",
@@ -1600,8 +1695,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
         reject("primitive bitwise conversion cannot turn its original operand into an own key",
                replace(saved, "%base[%i]", "%base[%savedOperand]"),
                ArrayContentsFailure::UnknownIndex);
-        reject("repeated primitive bitwise producers still need independent invariance",
-               replace(replace(source, operation, ""), "  %step =", operation + "  %step ="));
+        run({.what = "repeated primitive bitwise producers retain their original operand",
+             .body = replace(replace(source, operation, ""), "  %step =", operation + "  %step ="),
+             .arrays = "a:[one,x]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         reject("primitive bitwise operands cannot borrow an unknown value",
                replace(source, operation, replace(operation, "%input,", "%p,")),
                ArrayContentsFailure::UnknownValue);

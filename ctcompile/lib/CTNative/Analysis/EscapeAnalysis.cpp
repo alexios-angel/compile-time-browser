@@ -944,6 +944,46 @@ void boundedNumberComplement(const ContentsValue & input, ContentsValue & result
     }
 }
 
+void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & right,
+                          ctjs::BinaryKind kind, ContentsValue & result) {
+    switch (kind) {
+    case ctjs::BinaryKind::BitAnd:
+    case ctjs::BinaryKind::BitOr:
+    case ctjs::BinaryKind::BitXor:
+    case ctjs::BinaryKind::Shl:
+    case ctjs::BinaryKind::Shr:
+    case ctjs::BinaryKind::UShr: break;
+    default: return;
+    }
+    const auto a = boundedConvertedNumber(left);
+    const auto b = boundedConvertedNumber(right);
+    const auto negativeA = boundedConvertedNumber(left, true);
+    const auto negativeB = boundedConvertedNumber(right, true);
+    // Original Boolean/null and canonical Strings convert exactly;
+    // signed Numbers wrap. Mask counts; C++23 signed right shift
+    // preserves the sign. Only UShr keeps an unsigned result;
+    // negative magnitudes never become own-index facts.
+    if ((a || negativeA) && (b || negativeB)) {
+        const auto x =
+            a ? static_cast<std::uint32_t>(*a) : 0U - static_cast<std::uint32_t>(*negativeA);
+        const auto y =
+            b ? static_cast<std::uint32_t>(*b) : 0U - static_cast<std::uint32_t>(*negativeB);
+        const auto bits =
+            kind == ctjs::BinaryKind::BitAnd   ? x & y
+            : kind == ctjs::BinaryKind::BitOr  ? x | y
+            : kind == ctjs::BinaryKind::BitXor ? x ^ y
+            : kind == ctjs::BinaryKind::Shl    ? static_cast<std::uint32_t>(x << (y & 31U))
+            : kind == ctjs::BinaryKind::Shr
+                ? static_cast<std::uint32_t>(static_cast<std::int32_t>(x) >> (y & 31U))
+                : x >> (y & 31U);
+        if (kind == ctjs::BinaryKind::UShr || bits < 2147483648ULL) {
+            result.integerNumber = bits;
+        } else {
+            result.negativeIntegerNumber = 4294967296ULL - bits;
+        }
+    }
+}
+
 void boundedNumberProduct(const ContentsValue & left, const ContentsValue & right,
                           ContentsValue & result) {
     auto a = boundedConvertedNumber(left);
@@ -1310,6 +1350,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
                                           result);
                 }
+            } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(definition)) {
+                const auto left = self(self, binary.getLhs(), depth + 1);
+                const auto right = self(self, binary.getRhs(), depth + 1);
+                if (!left || !right) { return std::nullopt; }
+                boundedNumberBitwise(*left, *right, binary.getKind(), result);
             } else {
                 return std::nullopt;
             }
@@ -1970,40 +2015,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
-                }
-                if (binary.getKind() == ctjs::BinaryKind::BitAnd ||
-                    binary.getKind() == ctjs::BinaryKind::BitOr ||
-                    binary.getKind() == ctjs::BinaryKind::BitXor ||
-                    binary.getKind() == ctjs::BinaryKind::Shl ||
-                    binary.getKind() == ctjs::BinaryKind::Shr ||
-                    binary.getKind() == ctjs::BinaryKind::UShr) {
-                    const auto a = boundedConvertedNumber(left);
-                    const auto b = boundedConvertedNumber(right);
-                    const auto negativeA = boundedConvertedNumber(left, true);
-                    const auto negativeB = boundedConvertedNumber(right, true);
-                    // Original Boolean/null and canonical Strings convert exactly;
-                    // signed Numbers wrap. Mask counts; C++23 signed right shift
-                    // preserves the sign. Only UShr keeps an unsigned result;
-                    // negative magnitudes never become own-index facts.
-                    if ((a || negativeA) && (b || negativeB)) {
-                        const auto x = a ? static_cast<std::uint32_t>(*a)
-                                         : 0U - static_cast<std::uint32_t>(*negativeA);
-                        const auto y = b ? static_cast<std::uint32_t>(*b)
-                                         : 0U - static_cast<std::uint32_t>(*negativeB);
-                        const auto bits = binary.getKind() == ctjs::BinaryKind::BitAnd   ? x & y
-                                          : binary.getKind() == ctjs::BinaryKind::BitOr  ? x | y
-                                          : binary.getKind() == ctjs::BinaryKind::BitXor ? x ^ y
-                                          : binary.getKind() == ctjs::BinaryKind::Shl
-                                              ? static_cast<std::uint32_t>(x << (y & 31U))
-                                          : binary.getKind() == ctjs::BinaryKind::Shr
-                                              ? static_cast<std::uint32_t>(
-                                                    static_cast<std::int32_t>(x) >> (y & 31U))
-                                              : x >> (y & 31U);
-                        if (binary.getKind() == ctjs::BinaryKind::UShr || bits < 2147483648ULL) {
-                            result.integerNumber = bits;
-                        } else {
-                            result.negativeIntegerNumber = 4294967296ULL - bits;
-                        }
+                } else {
+                    boundedNumberBitwise(left, right, binary.getKind(), result);
+                    if (result.integerNumber || result.negativeIntegerNumber) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
