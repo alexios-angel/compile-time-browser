@@ -1,5 +1,37 @@
 # What native Bootstrap needs next
 
+## Follow Bootstrap's actual H callers, 2026-09-19 UTC
+
+The unchanged `class_filter_full_h` calls only `H.getDataAttribute`. Under the
+complete-original-body rule its unused slots have no DOM/String parameter
+authority. More inert operations or fresh-allocation recognition cannot supply
+that authority. Both providers still refuse `fn$7 / ctjs.create_object` in a
+focused source probe with the existing one-million-step budget.
+
+The actual combined path is Dropdown `Qi` in
+`ctbrowser/vendor/bootstrap/bootstrap.bundle.js`:
+
+- Constructor at line 1989 calls `B` (line 300), whose `_getConfig` (line 309)
+  reaches `W._mergeConfigObj` (line 281). Its actual calls supply `e` and
+  `"config"` to `H.getDataAttribute`, and `e` to `H.getDataAttributes`.
+- `_getPopperConfig` (line 2063) calls `H.setDataAttribute(this._menu, "popper",
+  "static")` at line 2082 when navbar/static configuration selects that path.
+- `_completeHide` (line 2028) calls `H.removeDataAttribute(this._menu, "popper")`
+  at line 2032 after the hide-event guard.
+
+Continue with the original `Qi`/`B`/`W` source and actual receiver/configuration
+flow. Inheritance, selectors, event results and Popper remain proof boundaries;
+none is supplied by this call census. `W` alone calls only getters. The scrollbar
+class `un` (line 2257) calls set/get/remove, but never `getDataAttributes`.
+Keep the existing one-slot specimen as a refusal; do not insert calls, remove
+siblings or copy platform implementations to manufacture authority.
+
+Independent **75e341e0** admits bounded current-own-element overwrite loops in
+escape analysis. Focused arrays **1/1**, three selected oracles **3/3**, and the
+final cycle-extended oracle **1/1** pass; **37 sites, six sound, zero violations**.
+Exact commands, timings, limitations and skipped coverage are in `HANDOFF.md`.
+No whole-Bootstrap native gain or browser/runtime change is claimed.
+
 ## Confined unused local cells, 2026-09-19 UTC
 
 **6c877519** proves private local-cell identities and every operation on their

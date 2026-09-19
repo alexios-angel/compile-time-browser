@@ -15,6 +15,68 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Actual H callers and guarded array overwrites, 2026-09-19 UTC
+
+**75e341e0** continues clean **aa80f5b5** and the full-H authority boundary
+recorded in the 11:04 AGENT-SYNC closure. Both agents' histories and unmerged
+branches were reviewed; September 7 WIP is already an ancestor. Three agents
+supplied call-graph and escape findings before service limits; root implemented
+and validated the escape change. No predecessor edits were pending.
+
+Finite array loops now permit overwriting their current own element. The store
+must use the guard array and its transported induction index inside the guarded
+body. Resizing, other targets/keys, effects and element-reloading strides refuse.
+Existing exact replay retains saved values, bounds, every historical cycle edge
+and work limits. Three old refusal bodies are unchanged and now prove; added
+CFG/SCF rows and 12 source functions cover release, saved children, skipped/zero
+trips, changing strides, resizing and retained/transient cycles.
+
+Focused devbox validation, always under `/tmp/ctbrowser-devbox-build.lock`:
+
+- Built `ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle` with
+  `tools/remote-build.sh`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`: **1/1, 1.24s
+  (1.25s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(own-element-overwrite|invariant-reload|invariant-length-reload)[.]test$'`:
+  **3/3, 0.11s**. After adding the two cycle source controls, only
+  `own-element-overwrite.test` was rerun: **1/1, 0.10s**, no rebuild work.
+  Final new oracle: **37 sites / 6 sound / 6 of 15 confined precision**.
+  Existing reload: **33 / 15 / 15 of 24**; length: **38 / 16 / 16 of 27**.
+  All report zero violations, partial, pending and unclaimed sites.
+- The unchanged `class_filter_full_h` was imported and probed alone with both
+  DOM providers: both still refuse **fn$7 / ctjs.create_object**, without native
+  publication. Its first 100,000-step probe hit the work limit; the existing
+  1,000,000-step budget reaches the semantic refusal. No class suite was replayed.
+- Four tested file hashes match the devbox. Required `tools/format.sh --check`
+  retains **26 baseline diagnostics in nine HEAD-identical files**; changed
+  C++ formatting, source JS syntax/execution, gate shell syntax and whitespace
+  pass. The first arrays run failed five assertions from one stale refusal row
+  already updated locally after that sync; its original body was preserved.
+  Exact scripts and logs: `/tmp/ctcompile-h-1105/`.
+
+**Next native boundary:** stop treating the one-call full-H specimen as a
+positive waiting for more inert operations. It calls only `getDataAttribute`;
+the other original slots lack parameter authority under the complete-body rule.
+The authentic combined path is Bootstrap **Dropdown `Qi`**: its constructor goes
+through `B`/`W._mergeConfigObj` to both getters; `_getPopperConfig` supplies
+`this._menu`, `"popper"`, `"static"` to the setter; `_completeHide` supplies
+`this._menu`, `"popper"` to the remover. Start from those original callers and
+their real receiver/configuration flow, retaining all source bodies. This still
+requires class inheritance/configuration, DOM selection, events and Popper
+boundaries. Config alone and the scrollbar helper do not reach all four slots.
+See `bootstrap-native-next.md` for source coordinates. Never insert calls or
+guess unused parameter facts to make the smaller fixture pass.
+
+Next escape work remains real own-data definition provenance for ordinary
+objects and broader loop mutation/control flow. Full CTest/compiler lit, class
+DOM/transaction/host suites, lifetime/corpus/native matrices, WPT/test262 and
+whole Bootstrap were skipped. No native Bootstrap admission gain, browser/Script
+change or compliance measurement is claimed. The application driver and overall
+plan remain unfinished. No push.
+
 ## Confined unused local cells, 2026-09-19 UTC
 
 **6c877519** resumes clean **632bfc98** and the original unused-H thread claimed
