@@ -241,15 +241,19 @@ mutation-order proof. Class and holder identity uses remain separately checked.
 A constructor-only class or a class method composes with sequential original
 for-of loops in local H slots, including captured holders and stored DOM receivers.
 Each iterator reuses the complete snapshot-prefix proof in source order, retaining
-all prior loops, saved results and intervening effects.
+all prior loops, saved results and intervening effects. Iterators inside structured
+conditional arms keep the original condition producers and dominating operations
+in a private path-prefix proof. The final complete entry proof still checks both
+original arms and joined scalar state, including untaken effects and mutations.
 Constructor method-value checks distinguish unrelated SSA values from the closed
 instance; parameter aliases and prototype observations remain conservative.
 Original reached methods share a complete proof of their actual calls; only
 uncalled zero-argument methods receive synthetic proof invocations. Source loops
 use the existing exact completion proof even without a completion switch.
-Nested iterators, loops behind early returns, original H's Unicode normalization
-and unused slots remain separate boundaries; slots cannot borrow authority from
-another invocation. Prefix-stripped output keys retain their existing proof.
+Loop-nested iterators, original H's Unicode normalization and unused slots remain
+separate boundaries; slots cannot borrow authority from another invocation.
+The recorded direct helper called both before and after an early return still
+refuses at lifted closure bookkeeping. Prefix-stripped output keys retain their existing proof.
 
 With the declared initial `String` identity, a proved primitive String may use
 `charAt(0)` and `slice(1)`. Emission calls the public Core WTF-8/UTF-16 converters

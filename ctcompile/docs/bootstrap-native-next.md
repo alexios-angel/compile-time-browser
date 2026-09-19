@@ -1,5 +1,44 @@
 # What native Bootstrap needs next
 
+## Conditional dataset iterators and invariant bitwise latches, 2026-09-19 UTC
+
+Resumed **ce49f0dd** and the six dirty paths from the **04:59 conditional/bitwise
+threads**, explicitly abandoned at the **05:01:02 AGENT-SYNC loop exit**.
+**b290e7e0** admits original early-return class/helper iterators and new holder,
+inverse-guard and nested-conditional specimens. The private snapshot prefix
+retains condition producers and dominating operations; final entry proof still
+checks both arms, effects, snapshot epochs and joined scalar state. All **301
+prior class bodies are unchanged**; nine new bodies and six transaction controls
+cover the extension. Five preserved bodies are now positive cases.
+
+Parallel **470e4e82** reuses bounded bitwise/shift transfer for invariant loop
+latches under the existing two-operation limit. Original snapshots, masked
+counts, signed results, backedge identity, budget and final-index bounds remain
+checked; CFG/SCF coverage and a fourteen-function source oracle pass.
+
+Focused passes: transaction **1/1 (4.26s)**, contract **1/1 (0.46s)**, class DOM
+**1/1 (144.97s; 408 observations, 8 native executions, 3,108 refusals)**, arrays
+**1/1 (1.24s)** and four escape oracles **4/4 (0.15s)**. New oracle: **44 sites /
+14 sound / 14 of 28 precision**, zero violations. Seven tested hashes match;
+Script/dispatch exclusions pass. Required formatting retains **26 pre-existing
+diagnostics in nine unchanged files**; changed checks pass. Exact commands and
+limits are in `ctcompile/docs/HANDOFF.md`; evidence is under
+`/tmp/ctcompile-conditional-final/`.
+
+**Next:** full original H still needs Unicode lowercase and normalized-key
+collision/prototype proof. A proved `charAt(0)` result permits a bounded public
+Core casing primitive with pinned full-lower mappings, expanding U+0130 and
+unchanged surrogates; regex case folding and the VM's ASCII casing cannot supply
+it. Preserve dataset-key identity separately from output-key collisions and the
+`__proto__` unique-preimage check. The helper called before and after an early
+return (`class_dynamic_conditional_sequential`) still refuses at lifted closure
+bookkeeping. Loop-nested iterators, unused H slots, global publication, W's
+Object.entries/destructuring/original s/RegExp/TypeError/spread, deeper/reloaded
+induction, broader part 25, the application driver and native Bootstrap remain.
+Full suites, broad corpus/native matrices, WPT/test262 and whole Bootstrap were
+skipped; no full-suite or whole-bundle gain is claimed. Browser/Script semantics
+are unchanged. Temporary SSH access was removed; no push.
+
 ## Sequential dataset iterators and invariant Add/Sub, 2026-09-19 UTC
 
 Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC closure** and its

@@ -15,6 +15,83 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional dataset iterators and invariant bitwise latches, 2026-09-19 UTC
+
+Resumed **ce49f0dd** and the six dirty ctcompile paths left by the **04:59
+conditional/bitwise threads**, explicitly abandoned at the **05:01:02 AGENT-SYNC
+loop exit**. Both-agent history and unmerged branches were reviewed; September 7
+WIP is already an ancestor. Three parallel agents supplied escape completion,
+conditional-proof review and the next-H analysis. Two hit service limits after
+findings; root completed review, transaction coverage, validation and commits.
+
+**b290e7e0** admits the original early-return class parameter/helper bodies
+and new holder, inverse-guard and nested-conditional specimens. The private
+snapshot proof retains condition producers and dominating operations on the path
+reaching an iterator. Complete entry proof still checks both original arms,
+effects, snapshot epochs and joined scalar state. Folding stays inside the
+iterator's block; live opens are recollected after mutation. All **301 previous
+class source bodies are unchanged**; nine new bodies and six new transaction
+controls cover conditional success and refusal/rollback. Five bodies moved from
+refusals to positives without source edits.
+
+**470e4e82** reuses the existing bounded bitwise/shift transfer for invariant
+latches within the existing two-operation limit. Original primitive snapshots,
+masked shift counts, signed results, backedge identity, work budget and final
+index bounds remain checked. Existing repeated-bitwise bodies retain their
+expressions with newly proved outcomes. Added CFG/SCF rows and a fourteen-function
+source oracle cover all six operators and negative controls.
+
+Focused passes: transaction **1/1 (4.26s; total 4.27s)**, host contract **1/1
+(0.46s; total 0.47s)**, class DOM **1/1 (144.97s): 408 source observations,
+8 native executions, 3,108 refusals**. Arrays **1/1 (1.24s; total 1.25s)** and four selected escape oracles **4/4 (0.15s)** pass. New oracle:
+**44 observed sites / 14 sound / 14 of 28 precision**, zero violations, partial,
+pending or unclaimed sites. The existing 20 VM byte-index divergences remain
+explicit; native agrees with Node. All **seven tested source/test hashes** match
+the devbox. Inspected output uses
+`element_ref`, owning strings/vectors and existing browser helpers; source/binary
+Script and dispatch exclusions pass.
+
+**Next:** `class_dynamic_original` still refuses at the typed DOM member proof.
+Original H needs Unicode-correct lowercase and normalized output-key
+collision/prototype proof. The smallest identified casing seam is a proved
+`charAt(0)` result: zero or one UTF-16 unit, with pinned Unicode full-lower mappings
+(including expanding U+0130 and unchanged surrogates), using public Core
+converters. Regex case folding and Script's deliberately ASCII casing are not
+substitutes. Preserve the original dataset key; existing ordered object storage
+can handle output collisions, but `__proto__` still needs a unique-preimage proof.
+`class_dynamic_conditional_sequential` (direct helper called before and after an
+early return) still refuses at lifted closure bookkeeping. Loop-nested iterators,
+unused H slots, global publication and W's Object.entries/destructuring/original
+s/RegExp/TypeError/spread remain. Deeper/reloaded induction, broader part 25,
+the application driver and native Bootstrap remain unfinished.
+
+Exact validation and limits:
+
+- Devbox builds used `tools/remote-build.sh` under
+  `/tmp/ctbrowser-devbox-build.lock`. Native probe targets: `ctjs-opt
+  ctjs-translate ctcompile-test-native-reference` (**4 actions**); final native
+  build added `ctcompile-test-exception-recovery ctcompile-test-host-contract`
+  (**4 actions**). Exact CTests: `ctcompile_exception_recovery` and
+  `ctcompile_host_contract`, anchored `-R` with `--no-tests=error`. Generated
+  build-config lit selected only `CTNative/Lowering/Objects/class-dom.mlir`.
+- Escape targets: `ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle` (**5 actions**).
+  Exact CTest: `ctcompile_escape_analysis_arrays`. Generated-config lit selected
+  `Analysis/Escape/escape-claims/{invariant-bitwise-latch,primitive-bitwise,
+  signed-bitwise,invariant-add-sub-latch}.test`. All first focused attempts pass.
+- Required `tools/format.sh --check` reports **26 pre-existing diagnostics in
+  nine HEAD-identical files**. Changed C++/Python formatting, nine new JS syntax
+  checks and `git diff --check` pass. Test-description/doc edits need no build.
+- Evidence: `/tmp/ctcompile-conditional-final/` contains runnable gate scripts,
+  probe/native/escape/format logs, source-preservation inventory and hashes.
+  Full CTest/compiler lit, public-class replay, complete DOM/String/assignment
+  suites, broad corpus/native matrices, WPT/test262, whole Bootstrap and
+  independent dataset lifetime replays were skipped. No full-suite or
+  whole-bundle admission gain is claimed. Browser compliance counts remain
+  historical; no browser or Script semantics changed. The interrupted session's
+  temporary authorized key and local private key were removed, preserving other
+  keys. No push.
+
 ## Sequential dataset iterators and invariant Add/Sub, 2026-09-19 UTC
 
 Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC closure** and its
