@@ -1,4 +1,4 @@
-# The ctnative dialect's generators. Same wiring as ../../CTJS/IR, and
+# The ctnative dialect's generators. Same wiring as ctcompile/include/ctcompile/CTJS/IR, and
 # deliberately not a variation on it: every generator invocation gets an
 # add_public_tablegen_target, and every library consuming a generated header
 # DEPENDS on it, because omitting that "produces builds that succeed serially
@@ -8,7 +8,7 @@
 # LLVM's tablegen() reads INCLUDE_DIRECTORIES and turns each entry into a -I;
 # LLVM_TABLEGEN_FLAGS never becomes an include path. Without this line a .td
 # that includes a sibling by its PROJECT path does not resolve at all. The note
-# in ../../CTJS/IR/CMakeLists.txt says it cost a build to find out.
+# in ctcompile/include/ctcompile/CTJS/IR/CMakeLists.txt says it cost a build to find out.
 include_directories("${PROJECT_SOURCE_DIR}/include")
 
 # THE TYPES COME OUT OF THIS ONE CALL. add_mlir_dialect runs the op, dialect AND
@@ -28,3 +28,15 @@ set(LLVM_TARGET_DEFINITIONS CTNativeEnums.td)
 mlir_tablegen(CTNativeEnums.h.inc -gen-enum-decls)
 mlir_tablegen(CTNativeEnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(CTNativeEnumsIncGen)
+
+target_sources(CTNativeDialect PRIVATE
+  CTNativeBase.td
+  CTNativeDialect.h
+  CTNativeEnums.h
+  CTNativeEnums.td
+  CTNativeLattice.h
+  CTNativeOps.h
+  CTNativeOps.td
+  CTNativeTypes.h
+  CTNativeTypes.td
+)

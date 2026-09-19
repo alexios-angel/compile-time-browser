@@ -1,12 +1,7 @@
 add_library(ctcompile-html)
 target_sources(ctcompile-html
   PRIVATE
-    DocumentComparator.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
-      FILES
-        "${PROJECT_SOURCE_DIR}/include/ctcompile/HTML/DocumentComparator.hpp")
+    DocumentComparator.cpp)
 ctcompile_target(ctcompile-html)
 
 # Core for atoms and handles, DOM for the document itself. NOT the ctbrowser

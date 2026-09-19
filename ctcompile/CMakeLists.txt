@@ -35,7 +35,7 @@ project(ctcompile
   LANGUAGES CXX C)
 set(PROJECT_DESCRIPTION "Ahead-of-time compiler for ctbrowser applications.")
 
-get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)
+get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}" DIRECTORY)
 include(CTest)
 
 # THE ENGINE. Inside the monorepo its targets already exist and are used
@@ -153,37 +153,13 @@ if(CTCOMPILE_ENABLE_MLIR)
   include(AddMLIR)
 endif()
 
-# THE DIALECT, ITS PASSES AND ITS DRIVERS, only when MLIR is on. Everything
-# under CTJS/ and both tools include MLIR headers, so a runtime-only box must
-# not descend into them at all - which is gate item 4 of Phase 7 and Principle 8
-# underneath it.
-if(CTCOMPILE_ENABLE_MLIR)
-  add_subdirectory(include/ctcompile/CTJS/IR)
-  add_subdirectory(include/ctcompile/CTJS/Transforms)
-  add_subdirectory(lib/CTJS/IR)
-  add_subdirectory(lib/CTJS/Import)
-  add_subdirectory(lib/CTJS/Lowering)
-  # THE SECOND DIALECT, Phase 53. ctnative carries STATIC types where CTJS
-  # carries one boxed !ctjs.value; it is types only today, and the phases that
-  # bring its operations are told not to start until it lands, because "they
-  # would each invent a type lattice". Behind the same guard as CTJS for the
-  # same reason - it is MLIR all the way down.
-  add_subdirectory(include/ctcompile/CTNative/IR)
-  add_subdirectory(lib/CTNative/IR)
-  # Phase 54A's type inference. Separate from the IR library because it links
-  # CTJSDialect and that library must not: see lib/CTNative/Analysis/CMakeLists.txt.
-  add_subdirectory(lib/CTNative/Analysis)
-  # Phase 62½: the native lowering, ctnative's own passes (a second
-  # -gen-pass-decls, named CTNative so its registration does not collide).
-  add_subdirectory(include/ctcompile/CTNative/Transforms)
-  add_subdirectory(lib/CTNative/Lowering)
-  # The forked EmitC C++ emitter, for the same reason: it is MLIR all the way
-  # down. See lib/Target/Cpp/TranslateToCpp.cpp.
-  add_subdirectory(lib/Target/Cpp)
-endif()
-
+# Libraries create targets; their public include directories then register
+# headers and TableGen generators. Generated-header dependencies are explicit
+# target edges and resolve after all subdirectories have been configured.
 add_subdirectory(lib)
+add_subdirectory(include)
 add_subdirectory(tools)
+add_subdirectory(probes)
 
 if(BUILD_TESTING)
   add_subdirectory(test)

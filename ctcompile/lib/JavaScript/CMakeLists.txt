@@ -1,12 +1,7 @@
 add_library(ctcompile-javascript)
 target_sources(ctcompile-javascript
   PRIVATE
-    ProgramComparator.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
-      FILES
-        "${PROJECT_SOURCE_DIR}/include/ctcompile/JavaScript/ProgramComparator.hpp")
+    ProgramComparator.cpp)
 ctcompile_target(ctcompile-javascript)
 
 # Script for the program itself, Core for atoms and handles. Comparing two

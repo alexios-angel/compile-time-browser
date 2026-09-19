@@ -9,10 +9,7 @@
 #
 # ctcompile_target() gives it the project's flags and its C++23 floor, which is
 # what every other library here is built with.
-add_library(ctcompile-ctjs-import
-  BytecodeImport.cpp
-  Bytecode/Support.cpp
-  Bytecode/Instructions.cpp)
+add_library(ctcompile-ctjs-import BytecodeImport.cpp)
 ctcompile_target(ctcompile-ctjs-import)
 
 # THE GENERATED HEADERS IT READS, as a build edge rather than an assumption -
@@ -27,3 +24,5 @@ target_link_libraries(ctcompile-ctjs-import
     MLIRControlFlowDialect)
 
 add_library(ctcompile::ctjs-import ALIAS ctcompile-ctjs-import)
+
+add_subdirectory(Bytecode)
