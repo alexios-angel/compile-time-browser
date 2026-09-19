@@ -201,6 +201,32 @@ if(CTCOMPILE_ENABLE_MLIR)
     Analysis/Escape/EscapeAnalysisArrays/Objects.cpp
     Analysis/Escape/EscapeAnalysisArrays/Selectors.cpp
     Analysis/Escape/EscapeAnalysisArrays/Primitives.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Primitives/BigInt.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/Setup.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/OverwritesAndTransport.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/InvariantReads.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/SignedStrides.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/SignedArithmetic.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/PowersAndProducts.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/Validation.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/Finish.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Induction/Cases.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/Setup.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/Reloads.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/InvariantArithmetic.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/SignedArithmetic.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/PowersAndProducts.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/MutationRefusals.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/Finish.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Structured/Cases.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/Setup.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/IndexSnapshots.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/Arithmetic.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/ShrinkArithmetic.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/ShrinkRetention.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/LiveMutations.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/Finish.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Length/Cases.cpp
     Analysis/Escape/EscapeAnalysisArrays/BigIntErrors.cpp
     Analysis/Escape/EscapeAnalysisArrays/BigIntProducers.cpp
     Analysis/Escape/EscapeAnalysisArrays/BigIntStrings.cpp
@@ -320,12 +346,15 @@ if(CTCOMPILE_ENABLE_MLIR)
     Analysis/Ownership/OwnedGlobalSharedMap/CapturedDeleteSize.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/DefiniteAbsence.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbacks.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbacks/Mixed.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/LeafObjects.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/LeafObjects/Children.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/NestedCalls.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/ObjectKeyArguments.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
     Analysis/Ownership/OwnedGlobalSharedMap/DOMKeyInputs.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/SharedMap.cpp)
+    Analysis/Ownership/OwnedGlobalSharedMap/SharedMap.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/SharedMap/Captured.cpp)
   target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-shared-map)
   add_test(NAME ctcompile_owned_global_shared_map COMMAND ctcompile-test-owned-global-shared-map)

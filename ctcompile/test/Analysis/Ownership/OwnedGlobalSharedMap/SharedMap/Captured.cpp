@@ -1,0 +1,670 @@
+#include "Helpers.hpp"
+
+namespace ctcompile::test::owned_global_shared_map {
+
+void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string & source,
+                                  bool prepared) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map", "Array"};
+        return contract;
+    };
+    const auto subject = [&](const std::string & body) {
+        return replaced(source,
+                        "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                        "    %size = ctjs.get_property %state[%key]\n"
+                        "    ctjs.return %size",
+                        body);
+    };
+    const std::string head = R"MLIR(
+    %frame = ctjs.frame_enter 1
+    %zero = ctjs.constant #ctjs.number<0>
+    %prefix = ctjs.constant #ctjs.string<"<">
+    %suffix = ctjs.constant #ctjs.string<">">
+    %expected = ctjs.constant #ctjs.string<"<x>">
+)MLIR";
+    const std::string conversion = R"MLIR(    %text = ctjs.binary concat %prefix, %element
+    %message = ctjs.binary concat %text, %suffix
+    %matched = ctjs.compare strict_eq %message, %expected
+)MLIR";
+    const std::string snapshot = R"MLIR(
+    %array = ctjs.load_global "Array"
+    %fromKey = ctjs.constant #ctjs.string<"from">
+    %from = ctjs.get_property %array[%fromKey]
+    %keysKey = ctjs.constant #ctjs.string<"keys">
+    %keys = ctjs.get_property %state[%keysKey]
+    %iterator = ctjs.call %keys(%state)
+    ctjs.root %iterator in %frame
+    %copy = ctjs.call %from(%array, %iterator)
+    %element = ctjs.get_property %copy[%zero]
+    ctjs.root %element in %frame
+)MLIR" + conversion;
+    const auto normal = subject(head + snapshot +
+                                "    ctjs.frame_exit %frame\n"
+                                "    ctjs.return %matched\n");
+    const auto equality = [&](const std::string & program) {
+        return replaced(program, conversion,
+                        "    %matched = ctjs.compare strict_eq %element, %expected\n");
+    };
+    auto nested = subject(head + R"MLIR(
+    %outerKey = ctjs.constant #ctjs.number<0>
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %outerKey)
+    %condition = ctjs.truthy %found
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %readKey = ctjs.constant #ctjs.string<"get">
+      %reader = ctjs.get_property %state[%readKey]
+      %child = ctjs.call %reader(%state, %outerKey)
+)MLIR" +
+                          replaced(replaced(snapshot, "%keys = ctjs.get_property %state[%keysKey]",
+                                            "%keys = ctjs.get_property %child[%keysKey]"),
+                                   "%keys(%state)", "%keys(%child)") +
+                          R"MLIR(
+      scf.yield %matched : !ctjs.value
+    } else {
+      %missing = ctjs.constant #ctjs.boolean<false>
+      scf.yield %missing : !ctjs.value
+    }
+    ctjs.frame_exit %frame
+    ctjs.return %answer
+)MLIR");
+    nested = replaced(nested, "    %value = ctjs.constant #ctjs.number<4607182418800017408>",
+                      R"MLIR(
+    %childConstructor = ctjs.load_global "Map"
+    %value = ctjs.construct %childConstructor(%childConstructor)
+    %childSetter = ctjs.get_property %value[%setKey]
+    %payload = ctjs.constant #ctjs.number<4607182418800017408>
+    %seeded = ctjs.call %childSetter(%value, %entryKey, %payload)
+    %outerKey = ctjs.constant #ctjs.number<0>
+)MLIR");
+    nested = replaced(nested, "%setter(%state, %entryKey, %value)",
+                      "%setter(%state, %outerKey, %value)");
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & program, bool expected, bool outer = false,
+                             bool child = false, bool budgets = false) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured String snapshot fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (query.proved() != expected || query.exhausted()) {
+            std::fprintf(stderr, "String snapshot %s row %u expected %d: %s\n",
+                         prepared ? "prepared" : "source", rows, expected,
+                         query.reason().str().c_str());
+        }
+        check(query.proved() == expected && !query.exhausted(),
+              "only complete String insertion families authorize template snapshots");
+        if (!expected) {
+            check(empty(*module, query), "refused templates expose no partial ownership");
+        } else if (query.proved()) {
+            const auto & table = *query.roots().front().methodTable;
+            const auto & capture = *table.capturedMap;
+            check(capture.outerStringKeys == outer && capture.childStringKeys == child &&
+                      !capture.snapshotOperations.empty(),
+                  "outer and child key roles remain independent of snapshot equality");
+            for (const auto & edge : table.calls) {
+                check(edge.capturedMap && edge.capturedMap->outerStringKeys == outer &&
+                          edge.capturedMap->childStringKeys == child &&
+                          edge.capturedMap->snapshotOperations == capture.snapshotOperations,
+                      "every live call carries the complete independent String key census");
+            }
+            if (budgets) {
+                const unsigned completion = query.steps();
+                for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+                    OwnedGlobalRoots limited(*module, contract, budget);
+                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                              empty(*module, limited),
+                          "incomplete String key budgets expose no partial family");
+                }
+                OwnedGlobalRoots exact(*module, contract, completion);
+                check(exact.proved() && exact.steps() == completion,
+                      "the exact String key budget rederives the whole family");
+            }
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "String snapshot proofs preserve the original source");
+    };
+    variant(normal, true, true, false, true);
+    variant(nested, true, false, true, true);
+    variant(replaced(normal, "concat %prefix, %element", "concat %element, %prefix"), true, true);
+    variant(replaced(normal, "    %keysKey =", R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %zero)
+    %keysKey =)MLIR"),
+            true, true);
+    for (const auto & definition :
+         {"ctjs.constant #ctjs.number<0>", "ctjs.constant #ctjs.boolean<false>",
+          "ctjs.constant #ctjs.null", "ctjs.constant #ctjs.undefined", "ctjs.create_object"}) {
+        const auto unsafe = replaced(normal, "ctjs.constant #ctjs.string<\"x\">", definition);
+        variant(unsafe, false);
+        variant(equality(unsafe), true);
+    }
+    const auto numericChild = replaced(nested, "%actual = ctjs.constant #ctjs.string<\"x\">",
+                                       "%actual = ctjs.constant #ctjs.number<0>");
+    variant(numericChild, false);
+    variant(equality(numericChild), true);
+    auto wrongRole = replaced(nested, "%keys = ctjs.get_property %child[%keysKey]",
+                              "%keys = ctjs.get_property %state[%keysKey]");
+    wrongRole = replaced(wrongRole, "%keys(%child)", "%keys(%state)");
+    variant(wrongRole, false);
+    const auto later = [&](const std::string & definition) {
+        return replaced(normal, "    ctjs.store_global \"trace\", %answer",
+                        "    %later = ctjs.get_property %owned[%putKey]\n"
+                        "    %lateKey = " +
+                            definition + "\n" +
+                            (prepared ? "    %lateEnv = ctjs.load_upvalue %later[0]\n"
+                                        "    %lateCall = ctjs.call_direct @put$4(%owned, %u, "
+                                        "%later, %lateEnv, %lateKey)\n"
+                                      : "    %lateCall = ctjs.call %later(%owned, %lateKey)\n") +
+                            "    ctjs.store_global \"trace\", %answer");
+    };
+    variant(later("ctjs.constant #ctjs.string<\"\">"), true, true);
+    for (const char * definition : {"ctjs.constant #ctjs.null", "ctjs.create_object"}) {
+        const auto unsafe = later(definition);
+        variant(unsafe, false);
+        variant(equality(unsafe), true);
+    }
+    variant(later("ctjs.binary concat %actual, %actual"), false);
+    const auto poisoned = replaced(normal, "    %written = ctjs.call", R"MLIR(
+    %poisonKey = ctjs.constant #ctjs.number<0>
+    %never = ctjs.truthy %poisonKey
+    scf.if %never {
+      %poisoned = ctjs.call %setter(%state, %poisonKey, %value)
+    }
+    %written = ctjs.call)MLIR");
+    variant(poisoned, false);
+    variant(equality(poisoned), true);
+    variant(replaced(normal, "ctjs.binary concat %prefix", "ctjs.binary add %prefix"), false);
+    variant(replaced(normal, "ctjs.return %matched", "ctjs.return %element"), false);
+
+    const auto branch = subject(head +
+                                "    %condition = ctjs.truthy %zero\n"
+                                "    scf.if %condition {\n" +
+                                snapshot + R"MLIR(
+    } else {
+      %other = ctjs.binary concat %prefix, %suffix
+      ctjs.root %prefix in %frame
+    }
+    ctjs.frame_exit %frame
+    ctjs.return %zero
+)MLIR");
+    const auto foreign = replaced(normal, "    %setKey =",
+                                  "    %foreign = ctjs.constant #ctjs.string<\"foreign\">\n"
+                                  "    %setKey =");
+    unsigned mutations = 0;
+    for (const auto & program : {branch, foreign}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "String snapshot scope controls parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "complete inactive arms and sibling constants keep the String proof");
+        ctjs::BinaryOp first, other;
+        ctjs::RootOp root;
+        mlir::Value element, foreignValue;
+        module->walk([&](ctjs::BinaryOp binary) {
+            if (!first) { first = binary; }
+            other = binary;
+        });
+        module->walk([&](ctjs::RootOp candidate) {
+            if (candidate.getValue().getDefiningOp<ctjs::GetPropertyOp>()) {
+                element = candidate.getValue();
+            } else if (ctjs::constantKey(candidate.getValue()) == "<") {
+                root = candidate;
+            }
+        });
+        module->walk([&](ctjs::ConstantOp constant) {
+            if (ctjs::constantKey(constant.getResult()) == "foreign") {
+                foreignValue = constant.getResult();
+            }
+        });
+        check(first && element && (foreignValue || root), "scope operands remain identifiable");
+        if (!first || !element || (!foreignValue && !root)) { continue; }
+        const auto mutate = [&](mlir::Operation * operation, unsigned operand, mlir::Value value) {
+            ++mutations;
+            const auto saved = operation->getOperand(operand);
+            operation->setOperand(operand, value);
+            mlir::Builder attributes(&context);
+            (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.map_snapshot_string", attributes.getUnitAttr());
+            OwnedGlobalRoots stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "changed Concat or Root operands invalidate the old source report");
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+                  "fresh fingerprints and forged String facts cannot cross source scopes");
+            operation->setOperand(operand, saved);
+            check(OwnedGlobalRoots(*module, requested(*module)).proved(),
+                  "restored operands rederive ownership despite forged String reports");
+            operation->removeAttr("ctnative.map_snapshot_string");
+            check(hostContractFingerprint(*module) == contract.moduleSha256 &&
+                      OwnedGlobalRoots(*module, contract).proved(),
+                  "removing the forged marker restores the exact original proof");
+        };
+        if (foreignValue) {
+            mutate(first, 0, foreignValue);
+        } else {
+            mutate(other, 1, element);
+            mutate(first, 1, other.getResult());
+            mutate(root, 1, element);
+        }
+    }
+    std::printf("captured String snapshots %s: %u rows, %u scope mutations and budget controls\n",
+                prepared ? "prepared" : "source", rows, mutations);
+}
+
+void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & source,
+                            bool prepared) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map", "Array"};
+        return contract;
+    };
+    const auto subject = [&](const std::string & body) {
+        return replaced(source,
+                        "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                        "    %size = ctjs.get_property %state[%key]\n"
+                        "    ctjs.return %size",
+                        body);
+    };
+    const std::string head = R"MLIR(
+    %frame = ctjs.frame_enter 1
+    %zero = ctjs.constant #ctjs.number<0>
+    %expected = ctjs.constant #ctjs.string<"x">
+)MLIR";
+    const std::string snapshot = R"MLIR(
+    %array = ctjs.load_global "Array"
+    %fromKey = ctjs.constant #ctjs.string<"from">
+    %from = ctjs.get_property %array[%fromKey]
+    %keysKey = ctjs.constant #ctjs.string<"keys">
+    %keys = ctjs.get_property %state[%keysKey]
+    %iterator = ctjs.call %keys(%state)
+    ctjs.root %iterator in %frame
+    %copy = ctjs.call %from(%array, %iterator)
+    %element = ctjs.get_property %copy[%zero]
+    %matched = ctjs.compare strict_eq %element, %expected
+    %lengthKey = ctjs.constant #ctjs.string<"length">
+    %length = ctjs.get_property %copy[%lengthKey]
+    %lengthMatch = ctjs.compare strict_eq %length, %zero
+)MLIR";
+    const std::string tail = "    ctjs.frame_exit %frame\n    ctjs.return %matched\n";
+    const auto normal = subject(head + snapshot + tail);
+    for (const bool length : {false, true}) {
+        const auto program =
+            length ? replaced(normal, "ctjs.return %matched", "ctjs.return %lengthMatch") : normal;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured snapshot fixtures parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (!query.proved()) {
+            std::fprintf(stderr, "snapshot owner %s: %s\n", prepared ? "prepared" : "source",
+                         query.reason().str().c_str());
+        }
+        check(query.proved(), "length and strict index comparisons close the shared owner");
+        if (!query.proved()) { continue; }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        check(capture.snapshotOperations.size() == 5 && capture.calls.size() == 2,
+              "Array/from/copy/index/length evidence stays separate from Map effects");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap &&
+                      edge.capturedMap->snapshotOperations == capture.snapshotOperations &&
+                      edge.capturedMap->calls == capture.calls,
+                  "every current call retains the complete snapshot family evidence");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "snapshot ownership queries preserve every source operation");
+        const unsigned completion = query.steps();
+        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited),
+                  "snapshot proof cutoffs expose no partial owner or operation index");
+        }
+        OwnedGlobalRoots exact(*module, contract, completion);
+        check(exact.proved() && exact.steps() == completion,
+              "the exact snapshot completion budget reproduces the whole family");
+        auto missing = contract;
+        missing.initialIntrinsics = {"Map"};
+        OwnedGlobalRoots uncontracted(*module, missing);
+        check(!uncontracted.proved() && empty(*module, uncontracted),
+              "an Array spelling cannot supply its standard identity");
+    }
+    const auto refuse = [&](const std::string & program, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured snapshot refusal fixture parses");
+        if (!module) { return; }
+        OwnedGlobalRoots query(*module, requested(*module));
+        check(!query.proved() && !query.exhausted() && empty(*module, query), message);
+    };
+    refuse(replaced(normal, "%from(%array, %iterator)", "%from(%array, %zero)"),
+           "an unconsumed iterator cannot gain a snapshot proof");
+    refuse(replaced(normal, "    %element =",
+                    "    %again = ctjs.call %from(%array, %iterator)\n    %element ="),
+           "the same iterator cannot be consumed twice");
+    refuse(replaced(normal, "    %copy =", R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %expected)
+    %copy =)MLIR"),
+           "iterator consumption cannot cross a Map mutation");
+    for (const auto & literal :
+         {"#ctjs.number<9221120237041090560>", "#ctjs.number<4602678819172646912>",
+          "#ctjs.number<13830554455654793216>", "#ctjs.string<\"0\">"}) {
+        refuse(replaced(normal, "#ctjs.number<0>", literal),
+               "NaN, fractional, negative and String snapshot indexes stay refused");
+    }
+    refuse(replaced(normal, "ctjs.return %matched", "ctjs.return %copy"),
+           "the owning snapshot cannot escape through a method return");
+    refuse(replaced(normal, "ctjs.return %matched", "ctjs.return %element"),
+           "a snapshot key receives no primitive or returned-object authority");
+    refuse(replaced(normal, "    %element =",
+                    "    ctjs.set_property %copy[%zero], %expected\n    %element ="),
+           "snapshot element writes stay outside this read-only proof");
+
+    const auto branch = subject(head + R"MLIR(
+    %sizeKey = ctjs.constant #ctjs.string<"size">
+    %size = ctjs.get_property %state[%sizeKey]
+    %condition = ctjs.truthy %size
+    scf.if %condition {
+)MLIR" + snapshot + R"MLIR(
+    } else {
+      ctjs.root %zero in %frame
+    }
+    ctjs.frame_exit %frame
+    ctjs.return %zero
+)MLIR");
+    auto foreign =
+        replaced(normal, "    %setKey =", "    %otherFrame = ctjs.frame_enter 1\n    %setKey =");
+    foreign = replaced(foreign,
+                       "    %u = ctjs.constant #ctjs.undefined\n"
+                       "    ctjs.return %u\n  }\n}\n",
+                       "    %u = ctjs.constant #ctjs.undefined\n"
+                       "    ctjs.root %value in %otherFrame\n"
+                       "    ctjs.frame_exit %otherFrame\n"
+                       "    ctjs.return %u\n  }\n}\n");
+    for (const auto & program : {branch, foreign}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "snapshot scope controls parse before hostile edits");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "local iterator and scalar roots have a complete source owner");
+        mlir::Value iterator;
+        ctjs::RootOp root;
+        module->walk([&](ctjs::CallOp call) {
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (read && ctjs::constantKey(read.getKey()) == "keys") { iterator = call.getResult(); }
+        });
+        module->walk([&](ctjs::RootOp candidate) {
+            if (candidate->getOperand(1).getDefiningOp<ctjs::ConstantOp>()) { root = candidate; }
+        });
+        check(iterator && root, "scope controls locate the iterator and independent scalar root");
+        if (!iterator || !root) { continue; }
+        const auto saved = root->getOperand(1);
+        root->setOperand(1, iterator);
+        mlir::Builder attributes(&context);
+        (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        root->setAttr("ctnative.map_snapshot_copy", attributes.getUnitAttr());
+        OwnedGlobalRoots stale(*module, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
+              "foreign iterator roots invalidate the supplied source fingerprint");
+        OwnedGlobalRoots fresh(*module, requested(*module));
+        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
+              "fresh reports and forged snapshot facts cannot authorize a foreign iterator root");
+        root->setOperand(1, saved);
+        check(OwnedGlobalRoots(*module, requested(*module)).proved(),
+              "restored source rederives its snapshot proof despite forged reports");
+        root->removeAttr("ctnative.map_snapshot_copy");
+        check(hostContractFingerprint(*module) == contract.moduleSha256 &&
+                  OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the source also restores its original fingerprint and snapshot proof");
+    }
+    std::printf("captured snapshots %s: length/index, 10 refusals, scope/report/budget controls\n",
+                prepared ? "prepared" : "source");
+}
+
+void checkScalarCallbacks(mlir::MLIRContext & context, const std::string & source, bool prepared) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        contract.observations = {"trace", "traceErrorCount", "traceErrorMessage", "savedCount",
+                                 "savedMessage"};
+        return contract;
+    };
+    auto normal = replaced(source, "    %host = ctjs.create_object", R"MLIR(
+    %initialNumber = ctjs.constant #ctjs.number<0>
+    ctjs.store_global "traceErrorCount", %initialNumber
+    ctjs.store_global "traceErrorMessage", %initialNumber
+    %recorder = ctjs.create_object
+    %errorClosure = ctjs.create_closure %callee[5] this %u
+    %errorKey = ctjs.constant #ctjs.string<"error">
+    ctjs.set_property %recorder[%errorKey], %errorClosure
+    ctjs.store_global "console", %recorder
+    %host = ctjs.create_object)MLIR");
+    normal = replaced(normal, "    ctjs.store_global \"trace\", %answer", R"MLIR(
+    ctjs.store_global "trace", %answer
+    %observedCount = ctjs.load_global "traceErrorCount"
+    ctjs.store_global "savedCount", %observedCount
+    %observedMessage = ctjs.load_global "traceErrorMessage"
+    ctjs.store_global "savedMessage", %observedMessage
+)MLIR");
+    const std::string call = prepared ? "    %recorded = ctjs.call_direct @error$5(%console, "
+                                        "%callbackUndefined, %error, %message)\n"
+                                      : "    %recorded = ctjs.call %error(%console, %message)\n";
+    normal = replaced(normal, "    %written = ctjs.call", R"MLIR(
+    %console = ctjs.load_global "console"
+    %callbackKey = ctjs.constant #ctjs.string<"error">
+    %error = ctjs.get_property %console[%callbackKey]
+    %message = ctjs.constant #ctjs.string<"Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert.">
+    %callbackUndefined = ctjs.constant #ctjs.undefined
+)MLIR" + call + "    %written = ctjs.call");
+    normal = replaced(normal, "\n}\n", R"MLIR(
+  ctjs.func private @error$5(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %message: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 1
+    ctjs.root %message in %frame
+    %u = ctjs.constant #ctjs.undefined
+    %count = ctjs.load_global "traceErrorCount"
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %incremented = ctjs.binary add %count, %one
+    ctjs.store_global "traceErrorCount", %incremented
+    %expected = ctjs.constant #ctjs.string<"Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert.">
+    %matches = ctjs.compare strict_eq %message, %expected
+    %condition = ctjs.truthy %matches
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %matched = ctjs.constant #ctjs.number<4607182418800017408>
+      scf.yield %matched : !ctjs.value
+    } else {
+      %missed = ctjs.constant #ctjs.number<0>
+      scf.yield %missed : !ctjs.value
+    }
+    ctjs.store_global "traceErrorMessage", %answer
+    ctjs.frame_exit %frame
+    ctjs.return %u
+  }
+}
+)MLIR");
+    unsigned rows = 0;
+    const auto emptyEvidence = [](mlir::ModuleOp module, const OwnedGlobalRoots & query) {
+        bool result = empty(module, query) && scalarReadsEmpty(module, query);
+        module.walk([&](ctjs::LoadGlobalOp load) { result &= !query.mutableScalarRead(load); });
+        return result;
+    };
+    const auto variant = [&](const std::string & program, bool expected) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "scalar callback source/prepared fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (query.proved() != expected || query.exhausted()) {
+            std::fprintf(stderr, "scalar callback %s row %u expected %d: %s\n",
+                         prepared ? "prepared" : "source", rows, expected,
+                         query.reason().str().c_str());
+        }
+        check(query.proved() == expected && !query.exhausted(),
+              "every callback arm, global store and source use closes independently");
+        if (!expected) {
+            check(emptyEvidence(*module, query),
+                  "refused callbacks expose no partial owner or scalar proof");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "callback proofs preserve the complete source");
+    };
+    variant(normal, true);
+    variant(replaced(normal, "      scf.yield %matched",
+                     "      ctjs.store_global \"traceErrorCount\", %matched\n"
+                     "      scf.yield %matched"),
+            true);
+    variant(replaced(normal, call, call + replaced(call, "%recorded", "%recordedAgain")), true);
+    variant(replaced(normal,
+                     "%message = ctjs.constant #ctjs.string<\"Bootstrap doesn't allow "
+                     "more than one instance per element. Bound instance: bs.alert.\">",
+                     "%message = ctjs.constant #ctjs.string<\"different future message\">"),
+            true);
+    variant(replaced(normal, call,
+                     call + replaced(replaced(call, "%recorded", "%recordedLater"), "%message",
+                                     "%value")),
+            false);
+    if (prepared) {
+        variant(replaced(normal, "@error$5(%console,", "@get$3(%console,"), false);
+        variant(replaced(normal, "@error$5(%console, %callbackUndefined,",
+                         "@error$5(%console, %message,"),
+                false);
+    }
+    for (const char * definition :
+         {"ctjs.constant #ctjs.string<\"0\">", "ctjs.constant #ctjs.boolean<false>",
+          "ctjs.constant #ctjs.undefined", "ctjs.constant #ctjs.null", "ctjs.create_object"}) {
+        variant(replaced(normal, "ctjs.constant #ctjs.number<0>\n    ctjs.store_global",
+                         std::string(definition) + "\n    ctjs.store_global"),
+                false);
+    }
+    variant(replaced(normal, "    %initialNumber =",
+                     "    %tooEarly = ctjs.load_global \"traceErrorCount\"\n"
+                     "    %initialNumber ="),
+            false);
+    variant(replaced(normal, "    ctjs.store_global \"traceErrorCount\", %initialNumber\n", ""),
+            false);
+    variant(replaced(normal, "    ctjs.store_global \"console\", %recorder",
+                     "    ctjs.store_global \"console\", %recorder\n"
+                     "    ctjs.store_global \"console\", %recorder"),
+            false);
+    variant(replaced(normal, "    ctjs.store_global \"console\", %recorder",
+                     "    ctjs.set_property %recorder[%errorKey], %u\n"
+                     "    ctjs.store_global \"console\", %recorder"),
+            false);
+    variant(replaced(normal, "    %errorKey =",
+                     "    ctjs.store_global \"escaped\", %errorClosure\n    %errorKey ="),
+            false);
+    variant(replaced(normal, "    %error = ctjs.get_property %console[%callbackKey]",
+                     "    %error = ctjs.get_property %console[%callbackKey]\n"
+                     "    ctjs.store_global \"escaped\", %error"),
+            false);
+    variant(replaced(normal, prepared ? "@error$5(%console," : "%error(%console,",
+                     prepared ? "@error$5(%state," : "%error(%state,"),
+            false);
+    variant(replaced(normal,
+                     "%message = ctjs.constant #ctjs.string<\"Bootstrap doesn't allow "
+                     "more than one instance per element. Bound instance: bs.alert.\">",
+                     "%message = ctjs.constant #ctjs.number<0>"),
+            false);
+    for (const char * effect : {"      ctjs.store_global \"traceErrorCount\", %message\n",
+                                "      ctjs.store_global \"traceErrorMessage\", %message\n",
+                                "      %unknown = ctjs.call %callee(%u, %message)\n",
+                                "      %reentry = ctjs.load_global \"host\"\n"}) {
+        variant(replaced(normal, "      scf.yield %missed",
+                         std::string(effect) + "      scf.yield %missed"),
+                false);
+    }
+    variant(replaced(normal, "#ctjs.number<0>\n      scf.yield %missed",
+                     "#ctjs.string<\"unsafe\">\n      scf.yield %missed"),
+            false);
+
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(normal, &context);
+    if (!module) { return; }
+    const auto contract = requested(*module);
+    OwnedGlobalRoots query(*module, contract);
+    check(query.proved() && query.roots().size() == 2,
+          "the source callback has its own callable owner beside the exported Map table");
+    if (!query.proved() || query.roots().size() != 2) { return; }
+    const auto & table = *query.roots().front().methodTable;
+    const auto & capture = *table.capturedMap;
+    check(capture.scalarCallbacks.size() == 1, "the fixed source slot names exactly one callback");
+    if (capture.scalarCallbacks.size() != 1) { return; }
+    auto callback = capture.scalarCallbacks.front();
+    const auto & owner = query.roots()[1];
+    check(table.calls.size() == 2 && capture.calls.size() == 1 &&
+              capture.snapshotOperations.empty() && callback.calls.size() == 1 &&
+              callback.loads.size() == 1 && callback.reads.size() == 1 &&
+              callback.globals.size() == 2 && owner.scalarCallback == callback.function &&
+              owner.binding == "console" && owner.property == "error" && !owner.methodTable &&
+              query.lookup(callback.owner) == &owner &&
+              query.lookup(callback.reads.front()) == &owner,
+          "callback identity and effects stay separate from Map methods and snapshot operations");
+    for (const auto & edge : table.calls) {
+        check(edge.capturedMap && edge.capturedMap->scalarCallbacks == capture.scalarCallbacks,
+              "every family invocation carries the same completed callback and global evidence");
+    }
+    for (auto & global : callback.globals) {
+        check(global.initialization && global.writes.size() == 1 &&
+                  global.reads.size() ==
+                      (global.initialization.getName() == "traceErrorCount" ? 2u : 1u),
+              "mutable Number evidence names the initializer and all later reads and writes");
+        for (ctjs::LoadGlobalOp read : global.reads) {
+            check(query.mutableScalarRead(read) && !query.scalarRead(read),
+                  "mutable callback loads cannot acquire a sole-store scalar snapshot");
+        }
+    }
+    check(!query.mutableScalarRead(callback.loads.front()),
+          "callback ownership cannot supply a scalar category for its object");
+    const unsigned completion = query.steps();
+    for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
+        OwnedGlobalRoots limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  emptyEvidence(*module, limited),
+              "incomplete callback budgets expose no partial owner or scalar proof");
+    }
+    OwnedGlobalRoots exact(*module, contract, completion);
+    check(exact.proved() && exact.steps() == completion,
+          "the exact completion budget rederives all callback arms and effects");
+
+    ctjs::StoreGlobalOp countWrite;
+    callback.function.walk([&](ctjs::StoreGlobalOp store) {
+        if (store.getName() == "traceErrorCount") { countWrite = store; }
+    });
+    check(static_cast<bool>(countWrite), "the mutable counter store remains identifiable");
+    if (!countWrite) { return; }
+    const auto mutate = [&](mlir::Operation * operation, unsigned index, mlir::Value value) {
+        const auto saved = operation->getOperand(index);
+        operation->setOperand(index, value);
+        mlir::Builder attributes(&context);
+        (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        operation->setAttr("ctnative.scalar_callback_proved", attributes.getUnitAttr());
+        OwnedGlobalRoots stale(*module, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                  emptyEvidence(*module, stale),
+              "changed callback operands invalidate the old source fingerprint");
+        OwnedGlobalRoots fresh(*module, requested(*module));
+        check(
+            !fresh.proved() && !fresh.exhausted() && emptyEvidence(*module, fresh),
+            "fresh fingerprints and forged callbacks cannot authorize unsafe categories or scopes");
+        operation->setOperand(index, saved);
+        check(OwnedGlobalRoots(*module, requested(*module)).proved(),
+              "restoring source operands rederives callbacks despite forged reports");
+        operation->removeAttr("ctnative.scalar_callback_proved");
+        check(hostContractFingerprint(*module) == contract.moduleSha256 &&
+                  OwnedGlobalRoots(*module, contract).proved(),
+              "removing forged callback facts restores the original fingerprint and proof");
+    };
+    mutate(countWrite, 0, callback.function.getBody().front().getArgument(3));
+    mutate(callback.reads.front(), 1, callback.write.getKey());
+    std::printf("scalar callbacks %s: %u rows, 2 source mutations and exact budget controls\n",
+                prepared ? "prepared" : "source", rows);
+}
+
+} // namespace ctcompile::test::owned_global_shared_map

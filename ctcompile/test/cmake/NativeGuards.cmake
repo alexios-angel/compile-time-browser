@@ -42,6 +42,8 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-exception-recovery
     CTNative/ExceptionRecovery/Main.cpp
     CTNative/ExceptionRecovery/Completion.cpp
+    CTNative/ExceptionRecovery/Completion/DOMURI.cpp
+    CTNative/ExceptionRecovery/Completion/ClassTransactions.cpp
     CTNative/ExceptionRecovery/Guards.cpp)
   target_link_libraries(ctcompile-test-exception-recovery
     PRIVATE ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import
