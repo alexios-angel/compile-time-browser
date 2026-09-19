@@ -1199,7 +1199,7 @@ struct classInitialization {
             }
             definitions.push_back(write);
         }
-        llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions;
+        llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions;
         if (auto inherited = heritage.lookup(closure.getResult())) {
             auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
             if (base == inheritedMethods.end()) {
@@ -1208,8 +1208,11 @@ struct classInitialization {
             baseDefinitions = base->second;
             for (ctjs::SetPropertyOp definition : baseDefinitions) {
                 if (!step()) { return false; }
-                if (!methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
-                    return refuse("inherited method overrides require a separate target proof");
+                // Own definitions precede each ancestor's definitions. Only
+                // the nearest binding enters the leaf table; every shadowed
+                // body stays in baseDefinitions for the receiver/source census.
+                if (methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
+                    selectedBaseDefinitions.push_back(definition);
                 }
             }
         }
@@ -1268,7 +1271,7 @@ struct classInitialization {
             // Recheck inherited receiver uses against the final method table:
             // a base field write must not shadow a method added by the leaf.
             // ponytail: DOM and receiver-selected getters need per-leaf body
-            // proofs; lexical super and overrides remain separate boundaries.
+            // proofs; lexical super remains a separate boundary.
             if (domEntry && !methodKeys.empty()) {
                 return refuse("inherited DOM methods require per-leaf body proof");
             }
@@ -1324,7 +1327,7 @@ struct classInitialization {
             setup.insert(attachment);
         } else {
             retainedSetup.insert(attachment);
-            for (ctjs::SetPropertyOp definition : baseDefinitions) {
+            for (ctjs::SetPropertyOp definition : selectedBaseDefinitions) {
                 if (!step()) { return false; }
                 inheritedSlots.emplace_back(heritage.lookup(closure.getResult()), definition);
             }
@@ -2239,21 +2242,24 @@ struct classInitialization {
                 getter.erase();
             }
         }
-        // An unconstructed base now exists only in the proved derived bodies.
-        // Its complete original body passed the census before this dead-identity
-        // check; a direct construction or symbol reference keeps it alive.
-        for (auto value : baseClasses) {
-            auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
+        // Unconstructed bases and shadowed methods can lose their last setup
+        // use. Complete original bodies passed the census before this check;
+        // a remaining callable or symbol reference keeps them alive.
+        // Erase all closures before bodies that might contain another closure.
+        llvm::SmallVector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> unusedCallables;
+        module.walk([&](ctjs::CreateClosureOp closure) {
             auto function = target(closure);
-            if (!llvm::all_of(closure->getUsers(),
+            if ((!baseClasses.contains(closure.getResult()) && !methods.contains(function)) ||
+                !llvm::all_of(closure->getUsers(),
                               [](mlir::Operation * use) { return llvm::isa<ctjs::RootOp>(use); }) ||
                 !mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) ||
                 !mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
-                continue;
+                return;
             }
-            eraseRooted(closure);
-            function.erase();
-        }
+            unusedCallables.emplace_back(closure, function);
+        });
+        for (auto & callable : unusedCallables) { eraseRooted(callable.first); }
+        for (auto & callable : unusedCallables) { callable.second.erase(); }
         module.walk([&](ctjs::LoadGlobalOp load) {
             if ((load.getName() == host_detail::classDefinedIntrinsic ||
                  load.getName() == "__ctbrowser_class_heritage") &&

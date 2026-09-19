@@ -16,6 +16,15 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "override-constructor": (15, 15),
+    "override-middle": (21, 21),
+    "override-leaf": (28, 28),
+    "override-distinct": (27, 27),
+    "override-ambient": (7, 7),
+    "override-shadowed-receiver": (7, 7),
+    "override-hidden-ancestor": (7, 7),
+    "override-different-leaves": (44, 44),
+    "override-unused-constructor": (7, 7),
     "inherited-method-leaf": (14, 14),
     "inherited-method-unused-constructor": (7, 7),
     "inherited-method-leaf-shadow": (7, 7),
@@ -203,6 +212,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "override-constructor",
+    "override-middle",
+    "override-leaf",
+    "override-distinct",
+    "inherited-method-override",
     "inherited-method-leaf",
     "inherited-method",
     "inherited-method-chain",
@@ -257,6 +271,7 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "override-different-leaves",
     "bootstrap-r",
     "method-dispatch-throw",
     "method-throw-default",
@@ -943,7 +958,7 @@ def main():
                 # Generic assembly preserves every operation and operand.
                 *(
                     ["--mlir-print-op-generic"]
-                    if name.startswith("inherited-") or name == "bootstrap-base"
+                    if name.startswith(("inherited-", "override-")) or name == "bootstrap-base"
                     else []
                 ),
                 "-o",
@@ -954,7 +969,7 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
-        if name.startswith("inherited") or name == "bootstrap-base":
+        if name.startswith(("inherited", "override-")) or name == "bootstrap-base":
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
             manifest["initial_intrinsics"] += [
@@ -998,11 +1013,14 @@ def main():
         diagnostic = {
             "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
-            "inherited-dispatch": "inherited method overrides require a separate target proof",
+            "inherited-dispatch": "super initialization contains an unproved call",
+            "override-ambient": "unknown call, binding or reflective effect",
+            "override-shadowed-receiver": "class method is observed or shadowed",
+            "override-hidden-ancestor": "class method is observed or shadowed",
+            "override-unused-constructor": "inherited receiver getters require per-leaf target proof",
             "inherited-method-unused-constructor": "inherited receiver getters require per-leaf target proof",
             "inherited-method-leaf-shadow": "class method is observed or shadowed",
             "inherited-method-base-shadow": "class method is observed or shadowed",
-            "inherited-method-override": "inherited method overrides require a separate target proof",
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
@@ -1073,7 +1091,9 @@ def main():
                 preparation_refusals += 1
         if name in PREPARED_ONLY | GLOBAL_HOLDERS:
             before, after = structured.read_text(), prepared.read_text()
-            if name in GLOBAL_HOLDERS:
+            if name == "override-different-leaves":
+                operations = ()
+            elif name in GLOBAL_HOLDERS:
                 operations = ()
                 for operation in ('ctjs.load_global "H"', 'ctjs.store_global "H"'):
                     if operation not in before or operation in after:

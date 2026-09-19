@@ -1,6 +1,137 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/class_initialization.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --fixtures %t --work %t.controls
 
+//--- override-constructor.js
+function override_constructor() {
+    class Base {
+        constructor(n) { this.n = n; this.n = this.read() + 1; }
+        read() { return this.n; }
+    }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 2; }
+    }
+    return new Derived(7).n;
+}
+var a = override_constructor();
+
+//--- override-middle.js
+function override_middle() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return 999; }
+        forward() { return this.read() + this.n; }
+    }
+    class Middle extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 2; }
+    }
+    class Derived extends Middle { constructor(n) { super(n); } }
+    return new Derived(7).forward();
+}
+var a = override_middle();
+
+//--- override-leaf.js
+function override_leaf() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return 999; }
+        forward() { return this.read() + this.n; }
+    }
+    class Middle extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 2; }
+    }
+    class Derived extends Middle {
+        constructor(n) { super(n); }
+        read() { return this.n * 3; }
+    }
+    return new Derived(7).forward();
+}
+var a = override_leaf();
+
+//--- override-distinct.js
+function override_distinct() {
+    class Base { constructor(n) { this.n = n; } read() { return this.n; } }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 2; }
+    }
+    return new Base(7).read() + new Derived(10).read();
+}
+var a = override_distinct();
+
+//--- override-ambient.js
+function override_ambient() {
+    class Base { constructor(n) { this.n = n; } read() { return ambient(); } }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n; }
+    }
+    return new Derived(7).read();
+}
+var a = override_ambient();
+
+//--- override-shadowed-receiver.js
+function override_shadowed_receiver() {
+    class Base { constructor(n) { this.n = n; } read() { this.leaf = 9; } }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n; }
+        leaf() { return 1; }
+    }
+    return new Derived(7).read();
+}
+var a = override_shadowed_receiver();
+
+//--- override-hidden-ancestor.js
+function override_hidden_ancestor() {
+    class Base { constructor(n) { this.n = n; } read() { this.leaf = 9; } }
+    class Middle extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n; }
+    }
+    class Derived extends Middle {
+        constructor(n) { super(n); }
+        leaf() { return 1; }
+    }
+    return new Derived(7).read();
+}
+var a = override_hidden_ancestor();
+
+//--- override-different-leaves.js
+function override_different_leaves() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { return this.n; }
+        forward() { return this.read(); }
+    }
+    class Left extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 2; }
+    }
+    class Right extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n * 3; }
+    }
+    return new Left(7).forward() + new Right(10).forward();
+}
+var a = override_different_leaves();
+
+//--- override-unused-constructor.js
+function override_unused_constructor() {
+    class Base {
+        constructor(n) { this.n = n; }
+        read() { this.constructor; return this.n; }
+    }
+    class Derived extends Base {
+        constructor(n) { super(n); }
+        read() { return this.n; }
+    }
+    return new Derived(7).read();
+}
+var a = override_unused_constructor();
+
 //--- inherited-method-leaf.js
 function inherited_method_leaf() {
     class Base { constructor(n) { this.n = n; } read() { return this.n; } }
