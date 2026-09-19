@@ -1,5 +1,31 @@
 # What native Bootstrap needs next
 
+## Explicit inheritance refusal and preserved source, 2026-09-19 UTC
+
+**6d42e0e8** diagnoses the existing constructor-use refusal as `class inheritance
+requires proved heritage, receiver and super initialization`. Complete original
+Bootstrap W/B classes and r/a helpers execute B's missing-element early exit in
+a new regression; a separate three-level source preserves dynamic versus lexical
+dispatch. Native still refuses both. The focused class-initialization case passes
+**1/1 (196.14s)** with 156 source observations and 380 main native executions.
+No inheritance or whole-Bootstrap admission is claimed. Commands, additional
+control counts, intermediate parser failure and skipped checks are in HANDOFF.
+
+The importer emits `__ctbrowser_class_heritage(derived, base, prototype)` before
+ordinary class attachments. Continue on the existing private candidate: prove
+helper identity, completed base setup, immutable prototype/home relationships,
+super guards/rebinding/field initialization, constructor returns, actual
+new.target and argument/effect order. Default derived constructors also need
+rest/apply proof. Distinguish declaring class from final receiver: B constructor
+-> Qi._getConfig; lexical super -> B._getConfig; same-this merge -> W._mergeConfigObj.
+Inherited static getters use Qi as receiver. Shadowed W bodies remain unproved
+without their own facts; never erase them or synthesize H calls. Real
+configuration, selectors, events, Popper and the application driver remain.
+
+Parallel **c27bd349** completes exact receiver aliases for guarded own-array
+overwrites; arrays and three selected escape oracles pass. No browser/Script
+source changed. Full suites and broad matrices were skipped.
+
 ## Constructor-origin calls are proved, 2026-09-19 UTC
 
 **a0644324** closes a real prerequisite of B's constructor: native method

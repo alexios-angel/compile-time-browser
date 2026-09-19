@@ -15,6 +15,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Aliased overwrite receivers and inheritance boundary, 2026-09-19 UTC
+
+Resumed **6034e970** and the inheritance/escape threads abandoned at 11:59:25
+in AGENT-SYNC. The two dirty escape files were preserved and completed first.
+Three agents investigated independent work; two hit service limits before edits,
+and root completed implementation, focused gates and commits.
+
+**c27bd349** proves invariant overwrite receivers that retain the guard array's
+exact allocation identity, including saved aliases and reloads through disjoint
+containers. Changing/unrelated receivers and reads from overwritten storage still
+refuse. Original replay, saved-child retention, historical cycles and work limits
+remain. Added CFG/SCF controls and nine source functions; earlier bodies remain.
+
+Focused devbox validation under `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`: **1/1, 1.26s
+  (1.27s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(aliased-element-overwrite|disjoint-element-reload|own-element-overwrite)[.]test$'`:
+  **3/3, 0.50s**. New oracle: **37 sites / 10 sound / 10 of 16 confined
+  precision**. Disjoint reload: **45 / 12 / 12 of 21**; original overwrite:
+  **37 / 6 / 6 of 15**. All have zero violations, partial, pending and unclaimed
+  sites. First arrays run failed one predecessor expectation: the returned array
+  cannot be discharged. Only that expectation changed; its source was retained.
+
+**6d42e0e8** gives unsupported class heritage calls a precise refusal:
+`class inheritance requires proved heritage, receiver and super initialization`.
+The source regressions retain complete original Bootstrap W/B classes and r/a
+helpers, executing B's real missing-element early exit. A separate three-level
+fixture distinguishes dynamic receiver dispatch from lexical super dispatch.
+Node/interpreter observe **7** for the base specimen and **118** for the
+three-level dispatch case.
+All 162 earlier split-file JavaScript bodies remain unchanged apart from comments.
+The inherited-static-getter comment now reflects its existing agreeing Node/VM
+expectations. This is diagnostic and regression work, **no inheritance admission**.
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-initialization[.]mlir$'`:
+  **1/1, 196.14s; 156 source observations, 380 main native executions,
+  312 unprepared and 192 preparation refusals**. Existing constructed-method,
+  r-helper and prototype-key controls add **28 executions / 30 refusals**;
+  **11 prepared-source refusals** retain original calls/exits.
+
+The first native lit attempt failed after 139.42s before class proof: custom
+`cf.switch` parsing rejected a grouped SCF default operand in the explicit-super
+fixture. The two new fixtures now use standard `--mlir-print-op-generic`; source
+programs and every IR operation/operand are preserved. An intermediate replay
+passed in 196.06s; the final gate repeated after moving the diagnostic into the
+existing constructor-use refusal branch, preserving admission behavior.
+
+All seven tested source/test hashes match the devbox. Required
+`tools/format.sh --check` retains **26 baseline diagnostics in nine HEAD-identical
+files**; changed C++/Python formatting, JavaScript and shell syntax, source
+execution and whitespace checks pass. Exact scripts/logs/hashes:
+`/tmp/ctcompile-inheritance-1215/`. No browser/Script source or semantics changed.
+
+**Next native:** normalize one proved original ancestry chain on the existing
+private candidate. Prove the mutable heritage, receiver-binding and field-init
+helper identities; completed base setup, immutable prototypes/homes, exact
+new.target, super guards/rebinding, constructor returns and argument/effect order.
+Default derived constructors additionally need rest/apply proof. Keep declaring
+class and effective receiver distinct: B's constructor calls Qi._getConfig;
+Qi's super call selects B._getConfig; B's same-this merge selects W._mergeConfigObj.
+Inherited getters retain Qi as receiver. W's shadowed method is still a complete
+original body and gains no parameter facts from B's similarly named method.
+Then follow real configuration, selectors, events and Popper. Never manufacture
+H calls or delete unproved siblings. Part 25 own-data definition provenance,
+broader loop mutation/control flow, ownership and the application driver remain.
+
+Full CTest/compiler lit, class DOM/transaction/host cases, separate lifetime and
+broad native/corpus matrices, WPT/test262 and whole Bootstrap were skipped.
+No whole-suite pass, native Bootstrap admission gain or compliance count is
+claimed. The overall plan remains unfinished. No push.
+
 ## Constructor-origin DOM calls, 2026-09-19 UTC
 
 **a0644324** resumes clean **2f279dc4** and the actual Dropdown caller thread
