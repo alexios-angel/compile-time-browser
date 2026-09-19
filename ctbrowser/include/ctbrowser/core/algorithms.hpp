@@ -226,6 +226,11 @@ inline void join_surrogates(std::string & text) {
 // four-byte code point, while lone surrogates use their three-byte encoding.
 [[nodiscard]] std::string utf16_to_wtf8(std::u16string_view units);
 
+// Unicode 17.0.0 default full lowercase of exactly one UTF-16 code unit.
+// U+0130 expands to i + U+0307; lone surrogates remain unchanged. This is an
+// isolated unit, so contextual Final_Sigma cannot apply. Not whole-text casing.
+[[nodiscard]] std::u16string unicode_lowercase_unit(char16_t unit);
+
 // --- base64 ---------------------------------------------------------------
 
 // Bytes, not text: the result is a "binary string" of 0-255, which is what
