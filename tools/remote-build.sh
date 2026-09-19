@@ -98,6 +98,8 @@ repo_root=$(git rev-parse --show-toplevel)
 # the protect filter `--delete` removed it on the next sync, and the failure lands
 # nowhere near the cause: the build succeeds and then css-parity.py says
 # "playwright not installed" about a venv that was there a minute ago.
+# Windows toolchains and packaged executables are cached build assets too.
+# Preserve each machine's copies when syncing sources from another worktree.
 # Content can change to a version older than the last build when switching
 # worktrees. Give changed files fresh destination mtimes so Ninja rebuilds;
 # checksums leave identical files (and their mtimes) alone.
@@ -106,12 +108,15 @@ rsync -az --checksum --no-times --delete \
   --exclude '.claude/' \
   --exclude 'build*/' \
   --exclude 'tools/clang-std-embed/' \
+  --exclude 'tools/llvm-mingw/' \
+  --exclude 'examples-windows/' \
   --exclude 'tools/.venv/' \
   --exclude 'third-party/angle/' \
   --exclude '*.d' \
   --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build*/' \
   --filter 'protect tools/clang-std-embed/' --filter 'protect third-party/angle/' \
   --filter 'protect tools/.venv/' \
+  --filter 'protect tools/llvm-mingw/' --filter 'protect examples-windows/' \
   --filter 'protect *.d' \
   "$repo_root"/ "$host:$remote_dir/"
 
