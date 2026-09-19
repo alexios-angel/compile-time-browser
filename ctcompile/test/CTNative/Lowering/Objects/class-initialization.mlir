@@ -115,8 +115,28 @@ function inherited() {
 }
 var a = inherited();
 
-// Preserve the independently measured Button static-inheritance discrepancy:
-// Node observes the inherited getter using Derived as this; the VM does not.
+// B's constructor dispatches through the leaf receiver, while super dispatches
+// through the declaring method's lexical home. Keep the shadowed W method too.
+//--- inherited-dispatch.js
+function inherited_dispatch() {
+    class W {
+        _mergeConfigObj(t) { return t + 1; }
+        _getConfig(t) { return 999; }
+    }
+    class B extends W {
+        constructor(t) { super(); this.value = this._getConfig(t); }
+        _getConfig(t) { return this._mergeConfigObj(t) * 2; }
+    }
+    class Qi extends B {
+        constructor(t) { super(t); this.value += 10; }
+        _getConfig(t) { return super._getConfig(t) + 100; }
+    }
+    return new Qi(3).value;
+}
+var a = inherited_dispatch();
+
+// Preserve the formerly differing Button static-inheritance observation:
+// both Node and the VM now use Derived as the inherited getter's receiver.
 // Explicit linkage isolates accessor lookup from constructor linkage.
 //--- static-getter.js
 class Base { static get k() { return this.n; } }

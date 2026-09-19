@@ -119,6 +119,8 @@ OBSERVATIONS = {
     "prototype-alias": (11, 11),
     "field-initializer": (7, 7),
     "inherited": (7, 7),
+    "inherited-dispatch": (118, 118),
+    "bootstrap-base": (7, 7),
     "static-getter": (1, 1),
     "constructor-identity": (1, 1),
     "descriptor": (0, 0),
@@ -731,6 +733,20 @@ def main():
     # Include the original helper separately; retain the W-only refusal above.
     helper = bootstrap.split("        r = ", 1)[1].split(",\n        a = ", 1)[0]
     declaration = "const r = " + helper + ";\n"
+    # Keep the complete original W/B classes and helpers. A missing element
+    # exercises B's real early exit after super, without invented H calls.
+    element = bootstrap.split("        a = ", 1)[1].split(",\n        l = ", 1)[0]
+    base_end = bootstrap.index("    const z = t => {", end)
+    (args.fixtures / "bootstrap-base.js").write_text(
+        "function bootstrapBase() {\n"
+        + declaration
+        + "const a = "
+        + element
+        + ";\n"
+        + bootstrap[start:base_end]
+        + "\n    var instance = new B(null, null);\n"
+        "    return instance._element === undefined ? 7 : 9;\n}\nvar a = bootstrapBase();\n"
+    )
     (args.fixtures / "bootstrap-config-r-defaults.js").write_text(
         declaration + (args.fixtures / "bootstrap-config-defaults.js").read_text()
     )
@@ -780,6 +796,14 @@ def main():
                 str(raw),
                 "--ctjs-resolve-globals",
                 "--ctjs-lift-to-scf",
+                # Explicit super guards can put grouped SCF results in a
+                # cf.switch default edge; its custom parser rejects %n#i there.
+                # Generic assembly preserves every operation and operand.
+                *(
+                    ["--mlir-print-op-generic"]
+                    if name in ("inherited-dispatch", "bootstrap-base")
+                    else []
+                ),
                 "-o",
                 str(structured),
             ]
@@ -820,6 +844,9 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited": "class inheritance requires proved heritage, receiver and super initialization",
+            "inherited-dispatch": "class inheritance requires proved heritage, receiver and super initialization",
+            "bootstrap-base": "class inheritance requires proved heritage, receiver and super initialization",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",

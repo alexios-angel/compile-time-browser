@@ -764,6 +764,13 @@ struct classInitialization {
             }
             auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
             if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+                auto invocation = llvm::dyn_cast<ctjs::CallOp>(op);
+                auto load = invocation ? invocation.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()
+                                       : ctjs::LoadGlobalOp{};
+                if (load && load.getName() == "__ctbrowser_class_heritage") {
+                    return refuse("class inheritance requires proved heritage, receiver and "
+                                  "super initialization");
+                }
                 return refuse("class constructor has an observable use outside its setup");
             }
             const auto key = ctjs::constantKey(write.getKey());
