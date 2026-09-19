@@ -9,16 +9,27 @@
 # naming both dialects is its entire job.
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
+  Inference/Initialization.cpp
   ClosedCallable.cpp
   OwnedMethodTableSlots.cpp
   OwnedGlobalRoots.cpp
   OwnedGlobalMethods.cpp
   ../HostContract/Contract.cpp
   ../HostContract/DOMEntry.cpp
+  ../HostContract/DOMEntry/Body.cpp
+  ../HostContract/DOMEntry/ControlFlow.cpp
+  ../HostContract/DOMEntry/BrowserOperations.cpp
   ../HostContract/DOMSource.cpp
+  ../HostContract/DOMSource/Captures.cpp
+  ../HostContract/DOMSource/Entry.cpp
+  ../HostContract/DOMSource/Completion.cpp
+  ../HostContract/DOMSource/Bodies.cpp
+  ../HostContract/DOMSource/Expansion.cpp
   ../HostContract/DOMIteration.cpp
   ../HostContract/Values.cpp
+  ../HostContract/Values/CapturedMap.cpp
   ../HostContract/CapturedMapBody.cpp
+  ../HostContract/CapturedMapBody/Walk.cpp
   ../HostContract/ScalarCallbacks.cpp
   ../HostContract/Slots.cpp
   ../HostContract/Analysis.cpp
@@ -42,6 +53,9 @@ add_mlir_library(CTNativeAnalysis
   Inference/Exceptions.cpp
   Inference/Shapes.cpp
   EscapeAnalysis.cpp
+  EscapeAnalysis/ArrayContents.cpp
+  EscapeAnalysis/Primitives.cpp
+  EscapeAnalysis/LoopProof.cpp
   NativeMap.cpp
   NativeMap/Presence.cpp
   NativeMap/SnapshotCopies.cpp

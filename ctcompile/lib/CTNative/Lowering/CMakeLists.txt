@@ -26,6 +26,10 @@ add_library(ctcompile-ctnative-lowering
   ../BindingTime/Pass.cpp
   ../HostContract/Pass.cpp
   ../HostContract/ClassInitialization.cpp
+  ../HostContract/ClassInitialization/Sources.cpp
+  ../HostContract/ClassInitialization/Inheritance.cpp
+  ../HostContract/ClassInitialization/Proof.cpp
+  ../HostContract/ClassInitialization/Rewrite.cpp
   ../HostContract/DOMPreparation.cpp
   ../HostContract/PrefixPass.cpp
   ../PartialEvaluation/Evaluator.cpp
