@@ -485,6 +485,45 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("String length refuses zero strides, Unicode and its scan ceiling",
                replace(stringLength, "#ctjs.string<\"a\">", "#ctjs.string<\"" + text + "\">"));
     }
+    const auto stringIndex =
+        replace(replace(stringLength, "#ctjs.string<\"a\">", "#ctjs.string<\"1\">"),
+                "    %unit = ctjs.get_property %text[%name]",
+                "    %character = ctjs.get_property %text[%zero]\n"
+                "    %unit = ctjs.unary plus %character");
+    rows.push_back({.what = "original ASCII Number-key reads supply invariant digit strides",
+                    .body = stringIndex,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "String index strides discharge only discarded children",
+                    .body = replace(stringIndex, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "indexed String snapshots retain their own length",
+                    .body = replace(stringIndex, "ctjs.unary plus %character",
+                                    "ctjs.get_property %character[%name]"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    for (const std::string key : {"#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">",
+                                  "#ctjs.boolean<false>", "#ctjs.number<4607182418800017408>"}) {
+        reject("String reads require an in-range original Number key",
+               replace(replace(stringIndex, "    %character =",
+                               "    %bad = ctjs.constant " + key + "\n    %character ="),
+                       "%text[%zero]", "%text[%bad]"));
+    }
+    for (const std::string & text : {std::string{}, std::string{"é"}, std::string(257, '1')}) {
+        reject("String indexed snapshots retain ASCII and size ceilings",
+               replace(stringIndex, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("String indices cannot borrow a changing induction value",
+           replace(stringIndex, "%text[%zero]", "%text[%i]"));
+    reject("String character conversion cannot turn String Add into Number Add",
+           replace(stringIndex, "add %i, %unit", "add %i, %character"));
+    reject("String index proof cannot bypass loop mutation",
+           replace(stringIndex, "    %character =",
+                   "    ctjs.set_property %base[%zero], %one\n    %character ="));
     reject("String length requires its original exact key",
            replace(stringLength, "%text[%name]", "%text[%zero]"));
     reject("computed Strings cannot borrow literal length provenance",

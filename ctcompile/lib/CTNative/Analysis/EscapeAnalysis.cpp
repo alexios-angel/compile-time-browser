@@ -886,6 +886,8 @@ struct ContentsValue {
     std::optional<std::size_t> integerNumber = std::nullopt;
     // A negative Number's magnitude is never an own index or nonnegative start.
     std::optional<std::size_t> negativeIntegerNumber = std::nullopt;
+    // An indexed ASCII String read keeps its character and its own SSA identity.
+    std::optional<unsigned char> asciiCharacter = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {
@@ -895,22 +897,32 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
-std::optional<std::size_t> boundedStringLength(const ContentsValue & base,
-                                               const ContentsValue & key) {
+std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
+                                               const ContentsValue & key, mlir::Value result) {
     if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }
-    const auto name = ownObjectKey(key.origin());
-    if (!name || name.getValue() != "length") { return std::nullopt; }
     auto literal = base.origin().getDefiningOp<ctjs::ConstantOp>();
     auto string =
         literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-    if (!string) { return std::nullopt; }
-    const auto text = string.getValue();
+    if (!string && !base.asciiCharacter) { return std::nullopt; }
+    const auto text = string ? string.getValue() : llvm::StringRef{};
     // ponytail: bound the scan to 256 original ASCII bytes. Wider/computed Strings
     // need charged provenance; Unicode needs agreement with Script's byte length.
     if (text.size() > 256 || !llvm::all_of(text, [](unsigned char c) { return c < 128; })) {
         return std::nullopt;
     }
-    return text.size();
+    const auto size = base.asciiCharacter ? 1 : text.size();
+    const auto name = ownObjectKey(key.origin());
+    if (name && name.getValue() == "length") {
+        return ContentsValue{result, ContentsKind::NonBigInt, size};
+    }
+    // Script's lookup_index exposes characters only for Number keys. Its String
+    // and BigInt property lookups disagree with JS, so do not coerce their keys.
+    const auto index = key.integerNumber ? key.integerNumber : boundedNumber(key.origin());
+    if (!index || *index >= size) { return std::nullopt; }
+    ContentsValue character{result, ContentsKind::String};
+    character.asciiCharacter =
+        base.asciiCharacter ? *base.asciiCharacter : static_cast<unsigned char>(text[*index]);
+    return character;
 }
 
 // One signed magnitude of an exact primitive Number conversion. Facts attach
@@ -923,6 +935,11 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input,
     if (!origin) { return std::nullopt; }
     if (auto number = boundedNumber(origin, negate)) { return number; }
     if (input.string()) {
+        if (input.asciiCharacter) {
+            const auto character = *input.asciiCharacter;
+            if (!negate && character >= '0' && character <= '9') { return character - '0'; }
+            return std::nullopt;
+        }
         if (!negate) { return ownArrayIndex(origin); }
         auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
         auto string =
@@ -1331,10 +1348,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const auto base = self(self, load.getObject(), depth + 1);
                 const auto key = self(self, load->getOperand(1), depth + 1);
                 if (!base || !key || !base->origin() || !key->origin()) { return std::nullopt; }
-                if (const auto length = boundedStringLength(*base, *key)) {
-                    result.integerNumber = length;
-                    return result;
-                }
+                if (const auto string = boundedStringRead(*base, *key, operand)) { return string; }
                 const auto array = state.arrays.find(base->origin().getDefiningOp());
                 if (array == state.arrays.end()) { return std::nullopt; }
                 // The complete loop census below rejects mutations and effects.
@@ -2150,11 +2164,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
             if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
                 if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(&op)) {
-                    if (const auto length =
-                            boundedStringLength(held(load.getObject()), held(op.getOperand(1)))) {
+                    if (const auto string = boundedStringRead(
+                            held(load.getObject()), held(op.getOperand(1)), load.getResult())) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        state.values[load.getResult()] = {load.getResult(), ContentsKind::NonBigInt,
-                                                          length};
+                        state.values[load.getResult()] = *string;
                         continue;
                     }
                 }
