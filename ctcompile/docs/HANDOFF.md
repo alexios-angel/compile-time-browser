@@ -15,6 +15,91 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Sequential dataset iterators and invariant Add/Sub, 2026-09-19 UTC
+
+Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC closure** and its
+recorded repeated-iterator boundary. Both-agent logs and unmerged branches were
+reviewed; September 7 WIP is already an ancestor. No predecessor edits were
+pending. Three agents worked in parallel: the escape agent completed its draft
+and fixture corrections, and two read-only audits hit service limits after
+iterator findings. Root reviewed, integrated and gated the work.
+
+**56a37fd8** admits the unchanged repeated holder, class-method and direct
+helper specimens. Sequential top-level iterators normalize in source order;
+each snapshot-prefix proof retains all earlier loops and intervening operations.
+The final typed DOM proof still covers the entire entry. All **293 prior class
+source bodies remain unchanged**. Eight new bodies cover three calls, saved
+String results, intervening writes, invalid later calls, effects, nested loops
+and stale snapshots. The original repeated-object transaction is now a positive;
+two added late-failure transactions preserve source and contract on refusal.
+
+**80849b2d** reuses bounded addition and extracts the existing signed
+subtraction transfer for invariant Add/Sub latches within the existing two-layer
+limit. Original primitive snapshots, String concatenation versus numeric
+conversion, backedge identity, budget charging and final-index bounds remain
+checked. Twenty-nine older CFG/SCF expression rows retain their bodies with new
+proved outcomes; 70 added rows and a thirteen-function source oracle cover the
+extension. No previous source-oracle body changed.
+
+Focused passes: transaction **1/1 (4.49s; total 4.50s)**, host contract **1/1
+(0.47s)**, class DOM **1/1 (133.81s)**: **388 source observations, 8 combined native
+executions, 2,942 refusals**. The existing 20 VM byte-index divergences remain
+explicit; native agrees with Node. Arrays **1/1 (1.19s; total 1.20s)** and six
+selected escape oracles **6/6 (0.19s)** pass. New oracle: **41 observed sites /
+12 sound / 12 of 26 precision**, zero violations, partial, pending or unclaimed
+sites. Sixteen existing assignment refusal checks pass. All **eight tested
+source/test hashes** match the devbox. Inspected output uses ordinary owning
+strings/vectors and public browser helpers; Script/dispatch exclusions pass.
+
+**Next:** original H still needs Unicode-correct `toLowerCase` and normalized
+output-key collision/prototype proof; dataset suffixes can be non-ASCII and
+Script's intentionally ASCII casing stays unchanged. Early-return and nested
+iterators need a conditional-prefix/scalar-state proof. Unused H slots, global
+publication and W's Object.entries/destructuring/original s/RegExp/TypeError/
+spread remain before inheritance. Deeper/reloaded induction, broader part 25,
+the application driver and native Bootstrap remain unfinished. No whole-bundle
+admission gain or full-suite pass is claimed.
+
+Exact validation and limits:
+
+- Native targets: `ctjs-opt ctjs-translate ctcompile-test-native-reference`,
+  then `ctcompile-test-exception-recovery ctcompile-test-host-contract` too.
+  Probe build **4 actions**, first transaction build **2**, corrected transaction
+  build **2**. Exact CTests: `ctcompile_exception_recovery` and
+  `ctcompile_host_contract`. Generated-config lit filter:
+  `^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$`.
+- First transaction attempt **4.38s** failed four assertions because preserved
+  control 141 now admits. Its expected verdict was corrected; no production
+  change followed. The class probe admits all three original repeated sources;
+  early returns retain the top-level-iterator refusal and full original H
+  retains the typed DOM member refusal.
+- Escape targets: `ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`. Builds **3 actions**,
+  then **2** for corrected fixtures. Exact CTest:
+  `ctcompile_escape_analysis_arrays`. Generated-config lit filter:
+  `^ctcompile :: Analysis/Escape/escape-claims/(invariant-add-sub-latch|nested-invariant-latch|primitive-addition|primitive-subtraction|signed-subtraction|negative-add)[.]test$`.
+  First arrays attempt **1.26s** failed 18 assertions: three older outcomes now
+  prove, and six new SCF specimens lacked `%two`. Older source expressions were
+  retained; the new cases reuse the existing fixture declaring `%two`. No
+  production change followed.
+- Existing assignment refusal bodies selected independently:
+  `dynamic_repeated_loop`, `dynamic_nested_loop`, `dynamic_second_writer`,
+  `dynamic_stale_keys`, for both providers and both optimization settings.
+  Each still refuses. All devbox actions held `/tmp/ctbrowser-devbox-build.lock`;
+  builds used `tools/remote-build.sh` with explicit targets, CTests used anchored
+  exact-name `-R` and `--no-tests=error`. Eight new JS syntax checks pass.
+- Evidence: `/tmp/ctcompile-sequential-iterators/` contains probe, native,
+  native-final, escape, escape-final, boundary, evidence and final-format logs,
+  runnable commands and source hashes. Required `tools/format.sh --check`
+  retains **26 pre-existing diagnostics in nine HEAD-identical files**; changed
+  C++/Python formatting and `git diff --check` pass.
+- Full CTest/compiler lit, public-class replay, complete DOM/String/assignment
+  suites, broad corpus/native matrices, WPT/test262, whole Bootstrap and
+  independent dataset lifetime replays were skipped. Browser compliance counts
+  remain historical; no browser implementation or Script semantics changed.
+  Temporary task SSH access was removed after verification, preserving other
+  keys. No push.
+
 ## Direct dataset helpers and nested invariant latches, 2026-09-19 UTC
 
 Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC closure** and the

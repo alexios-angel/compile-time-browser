@@ -1,5 +1,39 @@
 # What native Bootstrap needs next
 
+## Sequential dataset iterators and invariant Add/Sub, 2026-09-19 UTC
+
+Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC closure** and its
+recorded repeated-iterator boundary; no predecessor edits were pending and
+September 7 WIP is already an ancestor. **56a37fd8** admits the original repeated
+holder, class-method and direct-helper sources. Each sequential top-level
+iterator reuses the complete proof of its prefix, including earlier loops and
+intervening operations. All 293 prior class bodies remain unchanged; eight new
+bodies cover saved results, writes, three calls and refusals.
+
+Parallel **80849b2d** reuses bounded Add and signed Sub for invariant loop latches
+within the existing two-layer limit. Twenty-nine older expression rows retain
+their source bodies with newly proved outcomes; 70 added CFG/SCF rows and a
+thirteen-function source oracle cover primitive coercion, snapshots and refusals.
+
+Focused passes: transaction **1/1 (4.49s)**, contract **1/1 (0.47s)**, class DOM
+**1/1 (133.81s; 388 source observations, 8 native executions, 2,942 refusals)**,
+arrays **1/1 (1.19s)**, six escape oracles **6/6 (0.19s)** and 16 existing assignment
+refusals. New escape oracle: **41 sites / 12 sound / 12 of 26 precision**, zero
+violations. Eight tested hashes match; Script/dispatch gates pass. Formatting
+retains 26 pre-existing diagnostics in nine unchanged files; changed checks pass.
+Exact commands, fixture corrections and skipped coverage are in
+`ctcompile/docs/HANDOFF.md`; evidence: `/tmp/ctcompile-sequential-iterators/`.
+
+**Next:** original H still needs Unicode-correct lowercase and normalized-key
+collision/prototype proof; keep Script's ASCII casing unchanged. Early-return
+and nested iterators need a conditional-prefix/scalar-state proof. Unused H
+slots, global publication and W's Object.entries/destructuring/original s/RegExp/
+TypeError/spread remain before inheritance. Deeper/reloaded induction, broader
+part 25, the application driver and native Bootstrap remain unfinished. Full
+CTest/compiler lit, broad corpus/native matrices and WPT/test262 were skipped;
+no full-suite or whole-bundle admission gain is claimed. No browser changes or
+push; temporary SSH access was removed after verification.
+
 ## Direct dataset helpers and nested invariant latches, 2026-09-19 UTC
 
 Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC closure** and the
