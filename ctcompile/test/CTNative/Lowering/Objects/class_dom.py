@@ -1141,6 +1141,61 @@ DYNAMIC_REFUSALS = {
         "read() {", "unused() { return this.element[this.element]; } read() {"
     ),
 }
+DYNAMIC_CASES.update(
+    {
+        "class_dynamic_method": (DYNAMIC_REFUSALS.pop("class_dynamic_method"), "1000"),
+        "class_dynamic_capture": (DYNAMIC_REFUSALS.pop("class_dynamic_capture"), "1000"),
+        "class_dynamic_method_alias": (
+            DYNAMIC_METHOD.replace(
+                "const t = this.element;", "const self = this; const t = self.element;"
+            ),
+            "1000",
+        ),
+        "class_dynamic_parameter": (
+            "class Shape { read(t) { " + DYNAMIC_BODY + "} } const shape = new Shape(); "
+            "return shape.read(element) === 'value|' && element.getAttribute('x') === null;",
+            "1000",
+        ),
+        "class_dynamic_method_branch": (
+            DYNAMIC_METHOD.replace(
+                "joined = joined + t.dataset[n] + '|';",
+                "if (n.startsWith('bs')) { joined = joined + t.dataset[n] + '|'; }",
+            ),
+            "1000",
+        ),
+    }
+)
+DYNAMIC_REFUSALS.update(
+    {
+        "class_dynamic_method_changing": DYNAMIC_METHOD.replace("const t =", "let t =").replace(
+            "joined = joined +", "t = {}; joined = joined +"
+        ),
+        "class_dynamic_method_later_write": DYNAMIC_METHOD.replace("const t =", "let t =").replace(
+            "return joined;", "t = {}; return joined;"
+        ),
+        "class_dynamic_method_callback_this": DYNAMIC_METHOD.replace(
+            FILTER_PREDICATE, "t => this.element"
+        ),
+        "class_dynamic_method_callback_identity": DYNAMIC_METHOD.replace(
+            FILTER_PREDICATE, "function callback(t) { return callback; }"
+        ),
+        "class_dynamic_method_repeated": DYNAMIC_METHOD.replace(
+            "return new Shape(element).read()",
+            "const shape = new Shape(element); shape.read(); return shape.read()",
+        ),
+        "class_dynamic_method_detached": DYNAMIC_METHOD.replace(
+            "return new Shape(element).read()",
+            "const shape = new Shape(element); const read = shape.read; return read()",
+        ),
+        "class_dynamic_method_unknown": DYNAMIC_METHOD.replace("t.dataset[n]", "t.unknown(n)"),
+        "class_dynamic_method_unused_loop": DYNAMIC_METHOD.replace(
+            "read() {", "unused(t) { " + DYNAMIC_BODY + "} read() {"
+        ),
+        "class_dynamic_parameter_early": DYNAMIC_CASES["class_dynamic_parameter"][0].replace(
+            "const keys =", "if (t.getAttribute('x') !== null) return ''; const keys ="
+        ),
+    }
+)
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
 # Retain the entire original method as the next boundary, including M, for-of

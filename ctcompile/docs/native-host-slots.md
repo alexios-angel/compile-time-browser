@@ -208,7 +208,9 @@ DOM class methods use the same confined-callback proof when an arrow saves
 lexical `this` but its original body never reads it. Only after the complete
 source census does normalization clear that inert receiver operand. Fixed local
 method cells reuse the ordered cell proof; earlier reads cannot borrow later
-writes. Cell and callback identities are remapped through private method clones,
+writes. Reads may cross later branches, loops and completion switches; writes
+and captures still require their original ordered block. Cell and callback
+identities are remapped through private method clones,
 so early-return normalization preserves the original witnesses. This adds no
 receiver-capture or parameter authority: actual calls, every callback use and
 every unused method still require complete typed DOM proof.
@@ -229,11 +231,16 @@ Dynamic property operations in DOM entries, methods and retained local helpers
 stay intact for the shared typed DOM proof. Dataset reads require a live member
 key from the same element; fresh-result writes retain their existing key and
 mutation-order proof. Class and holder identity uses remain separately checked.
-A constructor-only class composes with one original for-of loop in a local H
-slot, including prefix-stripped output keys. Source loops use the existing exact
-completion proof even without a completion switch. Generic class-method alias
-checks, repeated iterators, original H's Unicode normalization and unused slots
-remain separate boundaries; slots cannot borrow authority from another invocation.
+A constructor-only class or a class method composes with one original for-of
+loop in a local H slot, including captured holders and stored DOM receivers.
+Constructor method-value checks distinguish unrelated SSA values from the closed
+instance; parameter aliases and prototype observations remain conservative.
+Original reached methods share a complete proof of their actual calls; only
+uncalled zero-argument methods receive synthetic proof invocations. Source loops
+use the existing exact completion proof even without a completion switch.
+Repeated iterators, loops behind early returns, original H's Unicode normalization
+and unused slots remain separate boundaries; slots cannot borrow authority from
+another invocation. Prefix-stripped output keys retain their existing proof.
 
 With the declared initial `String` identity, a proved primitive String may use
 `charAt(0)` and `slice(1)`. Emission calls the public Core WTF-8/UTF-16 converters

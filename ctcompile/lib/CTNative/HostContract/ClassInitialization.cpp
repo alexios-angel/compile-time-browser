@@ -97,7 +97,8 @@ struct classInitialization {
             const auto readPosition = [&](mlir::Operation * op) {
                 if (llvm::isa<ctjs::CellGetOp>(op)) {
                     while (op->getBlock() != cell->getBlock() &&
-                           llvm::isa_and_nonnull<mlir::scf::IfOp>(op->getParentOp())) {
+                           llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp,
+                                                 mlir::scf::IndexSwitchOp>(op->getParentOp())) {
                         if (!step()) { break; }
                         op = op->getParentOp();
                     }
@@ -126,7 +127,7 @@ struct classInitialization {
                     cellOperations.insert(op);
                     continue;
                 }
-                // A fixed cell may be read in a later short-circuit arm. All
+                // A fixed cell may be read in a later arm or loop. All
                 // writes/captures still belong to its original ordered block.
                 if (first && !first->isBeforeInBlock(readPosition(op))) {
                     return refuse("class local cell is observed before initialization");
@@ -1356,13 +1357,12 @@ struct classInitialization {
             auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             const bool hasParameters =
                 fn.getBody().front().getNumArguments() != ctjs::implicit_arguments;
-            if (hasParameters) {
-                if (!calledFromEntry(made, fn)) {
-                    return refuse("DOM class method parameters require original entry-call "
-                                  "reachability for each instance");
-                }
-                if (provedOriginalCalls) { continue; }
+            const bool hasOriginalCall = calledFromEntry(made, fn);
+            if (hasParameters && !hasOriginalCall) {
+                return refuse("DOM class method parameters require original entry-call "
+                              "reachability for each instance");
             }
+            if (hasOriginalCall && provedOriginalCalls) { continue; }
             // Reserve the clone's operation/operand walk before allocating it.
             auto counted = module.walk([&](mlir::Operation * op) {
                 const uint64_t cost = uint64_t(1) + op->getNumOperands();
@@ -1381,7 +1381,9 @@ struct classInitialization {
             // them only from this proof copy so the existing lift sees exactly
             // the method under test and all original reachable method calls.
             if (!omitUnused(*probe, &mapping, definition)) { return false; }
-            if (!hasParameters) {
+            // Existing calls prove their complete bodies together. Only an
+            // uncalled zero-argument method needs a synthetic invocation.
+            if (!hasOriginalCall) {
                 auto instance = llvm::cast<ctjs::ConstructOp>(mapping.lookup(made.getOperation()));
                 mlir::OpBuilder at(instance);
                 at.setInsertionPointAfter(instance);
@@ -1402,7 +1404,7 @@ struct classInitialization {
             if (auto error = prepareDOMEntry(*probe, checked, remaining)) {
                 return refuse("DOM class method body: " + llvm::toString(std::move(error)));
             }
-            provedOriginalCalls |= hasParameters;
+            provedOriginalCalls |= hasOriginalCall;
         }
         // Only now have all unused bodies passed the same typed source proof.
         // The original no-read census makes removing their definitions inert.

@@ -65,3 +65,9 @@
 // Fixed method-local cells use the existing ordered transport proof; later writes
 // cannot replace an earlier read. Observed this,
 // callback effects, receiver escape, invalid later arguments and unused effects refuse.
+// Fixed cells remain ordered through loop/switch reads. Constructor method-value
+// checks follow fresh instances and possible parameter aliases; prototype reads
+// retain the conservative census. Original called methods share their complete
+// DOM proof without synthetic duplicate iterators. Captured H, stored receivers,
+// aliases, parameters and loop branches preserve dynamic dataset reads; changing
+// cells, callback identity/this, detached methods and repeated iterators refuse.
