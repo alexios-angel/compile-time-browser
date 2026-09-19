@@ -29,8 +29,18 @@
 
 int main() {
     const std::string bundle = read_file("vendor/phaser/phaser.js");
-    const std::string probes = read_file("test/corpus/phaser/phaser-api-probe.js");
-    if (bundle.empty() || probes.empty()) {
+    std::string probes = "globalThis.__probes = [];\n";
+    bool missing_probes = false;
+    for (const char * path : {
+             "test/corpus/phaser/phaser-api-probe/01-scene-and-rendering.js",
+             "test/corpus/phaser/phaser-api-probe/02-utilities-and-plugins.js",
+             "test/corpus/phaser/phaser-api-probe.js",
+         }) {
+        const std::string part = read_file(path);
+        missing_probes |= part.empty();
+        probes += part;
+    }
+    if (bundle.empty() || missing_probes) {
         std::printf(
             "FAIL vendor/phaser/phaser.js or test/corpus/phaser/phaser-api-probe.js is missing\n");
         ++ctbrowser_test_failures;
