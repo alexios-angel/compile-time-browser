@@ -204,6 +204,15 @@ Saving the helper's lexical receiver in that callback is inert. The original
 callback and helper-local cells survive for the existing DOM source proof.
 This admits original Bootstrap F for proved lowercase inputs, with the reserved
 RegExp factory explicitly declared; matching or unknown inputs still refuse.
+DOM class methods use the same confined-callback proof when an arrow saves
+lexical `this` but its original body never reads it. Only after the complete
+source census does normalization clear that inert receiver operand. Fixed local
+method cells reuse the ordered cell proof; earlier reads cannot borrow later
+writes. Cell and callback identities are remapped through private method clones,
+so early-return normalization preserves the original witnesses. This adds no
+receiver-capture or parameter authority: actual calls, every callback use and
+every unused method still require complete typed DOM proof.
+
 A confined filter callback instead survives direct-helper expansion. After
 checking its original enclosure, expansion rebinds its inert metadata to the
 caller's enclosing function while retaining its source position and branch.

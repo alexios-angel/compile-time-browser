@@ -59,3 +59,9 @@
 // survive DOM writes, and concatenation rejoins surrogate halves. Node/native
 // expectations retain the VM's separately pinned byte-indexing divergence.
 // Other indices/coercions, detached methods, replacement and lowercase still refuse.
+// Direct class methods retain the original filter predicate and its lexical-this
+// enclosure when that callback never reads this. Constructor fields, actual
+// parameters, early-return branches and repeated calls retain their source order.
+// Fixed method-local cells use the existing ordered transport proof; later writes
+// cannot replace an earlier read. Observed this,
+// callback effects, receiver escape, invalid later arguments and unused effects refuse.

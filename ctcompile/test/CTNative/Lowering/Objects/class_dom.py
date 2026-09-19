@@ -1232,6 +1232,90 @@ UTF16_REFUSALS = {
 CLASS_CASES.update(UTF16_CASES)
 UTF16_REFUSALS.update(UTF16_EARLY_REFUSALS)
 CLASS_REFUSALS.update(UTF16_REFUSALS)
+# The arrow saves lexical this, but its original Bootstrap predicate never reads it.
+DIRECT_FILTER_EQUALITY_CLASS = (
+    "class Shape { constructor(t) { this.element = t; } read() { return "
+    "Object.keys(this.element.dataset).filter(" + FILTER_PREDICATE + ").length; } }\n"
+    "const shape = new Shape(element);\n"
+    "return shape.read() === 1 && element.getAttribute('x') === null;\n"
+)
+DIRECT_FILTER_CLASS = DIRECT_FILTER_EQUALITY_CLASS.replace(
+    "return shape.read() === 1", "const count = shape.read(); return 0 < count && count < 2"
+)
+DIRECT_FILTER_CASES = {
+    "class_filter_direct_receiver": (DIRECT_FILTER_CLASS, "1000"),
+    "class_filter_direct_alias": (
+        DIRECT_FILTER_CLASS.replace("read() {", "read() { const alias = this;").replace(
+            "this.element.dataset", "alias.element.dataset"
+        ),
+        "1000",
+    ),
+    "class_filter_direct_branch": (
+        DIRECT_FILTER_CLASS.replace(
+            "read() {", "read() { if (this.element.hasAttribute('x')) return 2;"
+        ),
+        "1000",
+    ),
+    "class_filter_direct_parameter": (
+        DIRECT_FILTER_CLASS.replace("read() {", "read(t) {")
+        .replace("this.element.dataset", "t.dataset")
+        .replace("shape.read()", "shape.read(element)"),
+        "1000",
+    ),
+    "class_filter_direct_repeated": (
+        DIRECT_FILTER_CLASS.replace("const count =", "shape.read(); const count ="),
+        "1000",
+    ),
+}
+DIRECT_FILTER_PARAMETER_FIELD = DIRECT_FILTER_CASES["class_filter_direct_parameter"][0]
+DIRECT_FILTER_CASES["class_filter_direct_parameter"] = (
+    DIRECT_FILTER_PARAMETER_FIELD.replace(
+        "constructor(t) { this.element = t; }", "constructor() {}"
+    ).replace("new Shape(element)", "new Shape()"),
+    "1000",
+)
+DIRECT_FILTER_CASES["class_filter_parameter_branch"] = (
+    DIRECT_FILTER_CASES["class_filter_direct_parameter"][0].replace(
+        "read(t) {", "read(t) { if (t.hasAttribute('x')) return 2;"
+    ),
+    "1000",
+)
+FILTER_CASES.update(DIRECT_FILTER_CASES)
+FILTER_REFUSALS.update(
+    {
+        "class_filter_parameter_unused_field": DIRECT_FILTER_PARAMETER_FIELD,
+        "class_filter_parameter_branch_unused_field": DIRECT_FILTER_PARAMETER_FIELD.replace(
+            "read(t) {", "read(t) { if (t.hasAttribute('x')) return 2;"
+        ),
+        "class_filter_direct_numeric_equality": DIRECT_FILTER_EQUALITY_CLASS,
+        "class_filter_parameter_numeric_equality": DIRECT_FILTER_EQUALITY_CLASS.replace(
+            "read() {", "read(t) {"
+        )
+        .replace("this.element.dataset", "t.dataset")
+        .replace("shape.read()", "shape.read(element)"),
+        "class_filter_repeated_numeric_equality": DIRECT_FILTER_EQUALITY_CLASS.replace(
+            "return shape.read()", "shape.read(); return shape.read()"
+        ),
+        "class_filter_direct_this": DIRECT_FILTER_CLASS.replace(
+            FILTER_PREDICATE, "t => this.element"
+        ),
+        "class_filter_direct_effect": DIRECT_FILTER_CLASS.replace(
+            FILTER_PREDICATE, "t => unknown(t)"
+        ),
+        "class_filter_direct_escape": DIRECT_FILTER_CLASS.replace(
+            "return Object.keys", "this.element.setAttribute('leak', this); return Object.keys"
+        ),
+        "class_filter_direct_changed_cell": DIRECT_FILTER_PARAMETER_FIELD.replace(
+            "read(t) {", "read(t) { t.hasAttribute('x'); t = this.element;"
+        ),
+        "class_filter_direct_later_input": DIRECT_FILTER_CASES["class_filter_direct_parameter"][
+            0
+        ].replace("const count =", "shape.read({}); const count ="),
+        "class_filter_direct_unused": DIRECT_FILTER_CLASS.replace(
+            "read() {", "unused() { return unknown(this); } read() {"
+        ),
+    }
+)
 FILTER_IDENTITIES = ["Object", "Array", "String"]
 DYNAMIC_ITERATION = ["__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"]
 CLASS_CASES.update(FILTER_CASES)

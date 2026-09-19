@@ -57,6 +57,7 @@ struct classInitialization {
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
     llvm::SetVector<mlir::Operation *> capturedHelpers;
     llvm::SmallVector<ctjs::CreateClosureOp> capturedClosures;
+    llvm::SmallVector<ctjs::CreateClosureOp> inertReceiverClosures;
     llvm::SetVector<mlir::Operation *> dispatchMethods;
     llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
 
@@ -500,6 +501,14 @@ struct classInitialization {
             if (!step()) { return false; }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                closure && use.getOperandNumber() == 1 && helpers.contains(target(closure)) &&
+                target(closure).getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+                // The confined helper was checked before this receiver census.
+                // Saving lexical this is inert when its body never reads it.
+                inertReceiverClosures.push_back(closure);
+                continue;
+            }
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
                 read && use.getOperandNumber() == 0 &&
                 ctjs::constantKey(read.getKey()) == "constructor") {
@@ -822,6 +831,7 @@ struct classInitialization {
                 methodHome = write;
             }
             auto & block = fn.getBody().front();
+            if (domEntry && !proveCells(fn)) { return false; }
             if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
                 !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
                 return refuse("class method observes its identity, home or an unproved receiver");
@@ -1438,6 +1448,24 @@ struct classInitialization {
                     read = llvm::cast<ctjs::GetPropertyOp>(mapped);
                 }
             }
+            for (ctjs::CellGetOp & read : cellReads) {
+                if (!step()) { return false; }
+                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                    read = llvm::cast<ctjs::CellGetOp>(mapped);
+                }
+            }
+            llvm::MapVector<mlir::Value, mlir::Value> mappedCells;
+            for (auto [cell, value] : cells) {
+                if (!step()) { return false; }
+                mappedCells[mapping.lookupOrDefault(cell)] = mapping.lookupOrDefault(value);
+            }
+            cells.swap(mappedCells);
+            for (ctjs::CreateClosureOp & closure : inertReceiverClosures) {
+                if (!step()) { return false; }
+                if (auto * mapped = mapping.lookupOrNull(closure.getOperation())) {
+                    closure = llvm::cast<ctjs::CreateClosureOp>(mapped);
+                }
+            }
             for (ctjs::LoadUpvalueOp & read : captureReads) {
                 if (!step()) { return false; }
                 if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
@@ -1557,6 +1585,11 @@ struct classInitialization {
         for (auto & [function, copy] : normalizedMethods) {
             (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
             function.getBody().takeBody(copy->getBody());
+        }
+        for (ctjs::CreateClosureOp closure : inertReceiverClosures) {
+            mlir::OpBuilder at(closure);
+            closure.getEnclosingThisMutable().assign(ctjs::ConstantOp::create(
+                at, closure.getLoc(), ctjs::UndefinedAttr::get(module.getContext())));
         }
         // Holder expansion erases its slot closures. Clear their proved capture
         // metadata first; the retained bodies still own all recorded reads.
