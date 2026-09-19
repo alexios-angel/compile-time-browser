@@ -488,6 +488,65 @@ CLASS_REFUSALS = {
         "read(key = 'x')", "read(key = (this.element = {}, 'x'))"
     ),
 }
+CONSTRUCTOR_CALL = """class Reader {
+    constructor(target, key) { this.value = this.read(target, key); }
+    read(target, key) { return target.getAttribute(key); }
+  }
+  const reader = new Reader(element, 'x');
+  return reader.value === null;
+"""
+CONSTRUCTOR_CHAIN = """class Reader {
+    constructor(target, key) { this.element = target; this.value = this.forward(key); }
+    read(key) {
+      const saved = this.element.getAttribute(key);
+      this.element.setAttribute(key, 'after');
+      return saved;
+    }
+    forward(key) { return this.read(key); }
+  }
+  const first = new Reader(element, 'x');
+  const second = new Reader(element, 'x');
+  return first.value === null && second.value === 'after';
+"""
+CLASS_CASES.update(
+    {
+        "class_constructor_call": (CONSTRUCTOR_CALL, "1000"),
+        "class_constructor_chain": (CONSTRUCTOR_CHAIN, "1000"),
+        "class_constructor_then_call": (
+            CONSTRUCTOR_CALL.replace(
+                "  return reader.value === null;",
+                "  element.setAttribute('x', 'after');\n"
+                "  return reader.value === null && reader.read(element, 'x') === 'after';",
+            ),
+            "1000",
+        ),
+    }
+)
+CLASS_REFUSALS.update(
+    {
+        "constructor_call_bad_key": CONSTRUCTOR_CALL.replace(
+            "this.read(target, key)", "this.read(target, {})"
+        ),
+        "constructor_call_bad_target": CONSTRUCTOR_CALL.replace(
+            "new Reader(element, 'x')", "new Reader({}, 'x')"
+        ),
+        "constructor_call_unused_parameter": CONSTRUCTOR_CALL.replace(
+            "    read(target, key)",
+            "    unused(target) { return target.getAttribute('x'); }\n    read(target, key)",
+        ),
+        "constructor_call_dead_bad_key": CONSTRUCTOR_CALL.replace(
+            "read(target, key) { return",
+            "read(target, key) { if (false) target.getAttribute({}); return",
+        ),
+        "constructor_chain_bad_second_instance": CONSTRUCTOR_CHAIN.replace(
+            "const second = new Reader(element, 'x')", "const second = new Reader({}, 'x')"
+        ),
+        "constructor_chain_read_before_field": CONSTRUCTOR_CHAIN.replace(
+            "this.element = target; this.value = this.forward(key)",
+            "this.value = this.forward(key); this.element = target",
+        ),
+    }
+)
 NUMBER_CLASS = """class Shape {
     constructor(element) { this.element = element; }
     read() { return Number(this.element.getAttribute('x')).toString() === '0'; }
@@ -2087,6 +2146,9 @@ FIELD_CHECKS = {
     "field_unused_effect": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");',
 }
 FIELD_CHECKS["class_order"] = FIELD_CHECKS["field_order"]
+FIELD_CHECKS["class_constructor_chain"] = FIELD_CHECKS["class_constructor_then_call"] = (
+    'assert(doc.read().attribute_value(node, state) == "after");'
+)
 FIELD_CHECKS["class_method_key"] = FIELD_CHECKS["class_method_transitive"] = FIELD_CHECKS[
     "method_transitive_only"
 ] = 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");'

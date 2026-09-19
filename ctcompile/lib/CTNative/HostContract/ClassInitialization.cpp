@@ -1344,6 +1344,12 @@ struct classInitialization {
                         record(call, made.getResult());
                     }
                 }
+                // Construction is an original call too: its same-this method
+                // calls retain their actual arguments and initialization order.
+                auto constructor =
+                    target(sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>());
+                if (!constructor) { return refuse("DOM class construction lost its source body"); }
+                reached.insert(constructor);
                 // ponytail: only exact same-this edges; aliases need their own
                 // receiver proof. A visited set bounds recursive source graphs.
                 for (size_t i = 0; i < reached.size(); ++i) {

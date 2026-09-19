@@ -389,9 +389,10 @@ probed, including unused and transitive callers that can replace a receiver fiel
 constructor/getter and other helper effect censuses remain unchanged. Probe
 eligibility is checked before normalization can replace method bodies.
 
-Parameterized methods require reachability from an original direct entry call
-on each actual instance. The bounded census follows exact `this.method(...)`
-calls through that instance's own method definitions; synthetic unused-body
+Parameterized methods require reachability from original entry calls or the
+original constructor body for each actual instance. The bounded census follows
+exact `this.method(...)` calls through that instance's own method definitions,
+including calls made during initialization; synthetic unused-body
 probes cannot establish reachability. One private proof retains all original
 calls, arguments and field state in source order. Unused parameterized methods,
 missing host authority, bad later calls, uncalled second instances, recursion and
