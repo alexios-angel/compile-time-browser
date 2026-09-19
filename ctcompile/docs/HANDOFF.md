@@ -15,6 +15,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Repeated helpers across entry exits and budgeted invariant depth, 2026-09-19 UTC
+
+Resumed **41527341** and the two dirty class fixture files from the **05:21/05:25
+conditional-callee threads**, explicitly abandoned in AGENT-SYNC at **05:26:57**.
+September 7 WIP exists and is already an ancestor. Three agents started fixture,
+escape and proof-review work; all hit service limits. Root preserved the fixture
+draft and completed implementation, review and focused gates.
+
+**5c912e13** admits the unchanged repeated-helper source across an entry early
+return. Both original call shapes use the existing callback/receiver proof;
+arguments remain evaluated, missing formals are padded and excess arguments
+refuse. Conditional arms independently check and join frame state; missing,
+repeated and loop-nested exits refuse. All **310 prior source bodies and ten
+inherited draft bodies are unchanged**; 13 added bodies and eight transaction
+controls cover the boundary, with two additional malformed-frame checks per
+provider. Ten prior refusals are now positives, including nine UTF-16 early-return
+bodies. The **40 VM byte-index divergence observations** are explicitly pinned;
+Node and native agree. No browser or Script semantics changed.
+
+**c6fa3d11** lets the existing invariant arithmetic proof use its charged work
+budget beyond two operation layers, retaining a **64-layer stack ceiling**.
+Original primitive identity, backedges, conversions, overflow, reload and index
+checks remain. CFG/SCF tests cover deeper arithmetic/bitwise expressions,
+returned/unreturned children, mutation, the depth boundary and every incomplete
+budget prefix. All source bodies in the three existing escape oracles remain
+unchanged; four older C++ expression rows now have proved outcomes.
+
+Focused passes: transaction **1/1 (4.39s; total 4.40s)**, host contract **1/1
+(0.45s; total 0.46s)**, class DOM **1/1 (167.60s; 464 source observations,
+8 native executions, 3,398 refusals)**, arrays **1/1 (1.25s; total 1.26s)** and
+three escape oracles **3/3 (0.13s)**. Their measured sites / sound / confined
+precision are **nested: 35 / 10 / 10 of 23**, **Add/Sub: 41 / 14 / 14 of 26**,
+**bitwise: 44 / 16 / 16 of 28**; zero violations, partial, pending or unclaimed
+sites. All **11 tested source/test hashes** match the devbox. Inspected output
+uses `element_ref`, owning strings/vectors and public browser helpers;
+source/binary Script and dynamic-dispatch exclusions pass.
+
+**Next:** original H still needs Unicode-correct lowercase for the proved
+`charAt(0)` result and normalized output-key collision/prototype proof. Use the
+public Core UTF-16 converters, full-lower mappings (including expanding U+0130
+and unchanged surrogates), and keep the original dataset key separate from its
+output key. Script's ASCII casing is not that implementation. The new preserved
+`class_dynamic_conditional_nested_calls` body refuses at class completion
+arithmetic (`arith.constant`); loop-nested iterators, unused H slots, global
+publication, W's Object.entries/destructuring/original s/RegExp/TypeError/spread,
+reloaded induction, broader part 25 and the application driver remain. Native
+Bootstrap and the overall plan are unfinished; no whole-bundle gain is claimed.
+
+Exact validation and limits:
+
+- All builds used explicit `tools/remote-build.sh` targets under
+  `/tmp/ctbrowser-devbox-build.lock`. Native targets: `ctjs-opt ctjs-translate
+  ctcompile-test-native-reference ctcompile-test-exception-recovery
+  ctcompile-test-host-contract`. Final class-only replay needed the first three.
+  Exact CTests: `ctcompile_exception_recovery`, `ctcompile_host_contract`, each
+  with anchored `-R`, `--output-on-failure --no-tests=error`.
+- Escape targets: `ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`. Exact CTest:
+  `ctcompile_escape_analysis_arrays`. Generated `build/ctcompile/test` lit
+  selections: `CTNative/Lowering/Objects/class-dom.mlir` and
+  `Analysis/Escape/escape-claims/{nested-invariant-latch,invariant-add-sub-latch,
+  invariant-bitwise-latch}.test`. The final oracle replay rebuilt no targets.
+- First transaction attempts failed at frame handling (**4.47s**, **4.40s**).
+  The first class replay (**34.69s**) found the newly admitted UTF-16 early-return
+  source. First arrays (**1.25s**) found two older bitwise depth expectations;
+  the next oracle selection (**1/3, 0.12s**) found two older deep-expression
+  expectations. Those sources were preserved and expectations corrected; final
+  relevant checks pass. No production change followed the final transaction pass.
+- Required `tools/format.sh --check` reports **26 pre-existing diagnostics in
+  nine HEAD-identical files**. Changed C++/Python formatting, all 13 added JS
+  syntax checks, source preservation and `git diff --check` pass. Documentation
+  needs no build. Evidence and runnable commands: `/tmp/ctcompile-callee-finish/`.
+- Skipped: full CTest/compiler lit, public-class replay, complete DOM/String/
+  assignment suites, broad corpus/native matrices, WPT/test262, whole Bootstrap
+  and separate lifetime matrices. These are focused results, not a full-suite
+  pass. Browser compliance counts remain historical. The predecessor temporary
+  authorized SSH key and local private key were removed, preserving other keys.
+  No push.
+
+
 ## Conditional dataset iterators and invariant bitwise latches, 2026-09-19 UTC
 
 Resumed **ce49f0dd** and the six dirty ctcompile paths left by the **04:59

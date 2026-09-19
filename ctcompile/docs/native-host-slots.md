@@ -177,7 +177,9 @@ census because unused slots can be removed earlier. Original helper exception
 CFGs stay intact for the existing URI/JSON normalization and final typed proof.
 Before checking a direct entry helper's receiver, the census proves every
 original callee use as an inert replacement/filter callback enclosure. Only
-then may its resolved call drop the unobserved callee operand; the existing
+then may either call shape become a direct call with an unobserved callee operand;
+ordinary calls retain their arguments, pad missing formals and refuse excess
+arguments. The existing
 captured-helper cleanup removes a closure only when no observable use remains.
 Callback bodies and actual arguments still pass complete DOM proof. This lets
 an entry-local dataset loop compose with class methods without weakening the
@@ -252,8 +254,11 @@ uncalled zero-argument methods receive synthetic proof invocations. Source loops
 use the existing exact completion proof even without a completion switch.
 Loop-nested iterators, original H's Unicode normalization and unused slots remain
 separate boundaries; slots cannot borrow authority from another invocation.
-The recorded direct helper called both before and after an early return still
-refuses at lifted closure bookkeeping. Prefix-stripped output keys retain their existing proof.
+Direct helpers called before and after an entry early return share this proof.
+Each conditional arm checks its own frame state; both must reach the same state
+at the join. Missing, repeated or loop-nested frame exits refuse. More complex
+entry completion arithmetic remains outside the class census.
+Prefix-stripped output keys retain their existing proof.
 
 With the declared initial `String` identity, a proved primitive String may use
 `charAt(0)` and `slice(1)`. Emission calls the public Core WTF-8/UTF-16 converters

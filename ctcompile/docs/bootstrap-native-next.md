@@ -1,5 +1,39 @@
 # What native Bootstrap needs next
 
+## Repeated helpers across entry exits and budgeted invariant depth, 2026-09-19 UTC
+
+**5c912e13** finishes the interrupted conditional-callee thread at **41527341**
+(two dirty fixtures; AGENT-SYNC abandonment **05:26:57**). Original helpers called
+before and after an entry early return now share the original-body proof; both
+conditional arms must join the same frame state. All 310 previous bodies and ten
+inherited bodies are preserved; ten prior refusals now admit, including nine
+UTF-16 early returns. Thirteen new bodies and transactional frame/refusal checks
+pass. Forty VM byte-index divergences remain explicit; native agrees with Node.
+
+**c6fa3d11** extends invariant expression depth using the existing work budget
+and a 64-layer stack limit. Primitive snapshots, backedges, conversions, bounds
+and reload refusals remain. Three source oracles retain all original bodies.
+Three parallel agents hit service limits; root completed their remaining work.
+
+Focused passes: transaction **1/1 (4.39s)**, contract **1/1 (0.45s)**, class DOM
+**1/1 (167.60s; 464 observations, 8 native executions, 3,398 refusals)**, arrays
+**1/1 (1.25s)** and escape oracles **3/3 (0.13s)**, zero soundness violations.
+All 11 tested hashes match. Changed checks pass; required formatting retains
+26 baseline diagnostics in nine unchanged files. Exact commands, earlier failed
+attempts and oracle measurements are in `ctcompile/docs/HANDOFF.md`; evidence:
+`/tmp/ctcompile-callee-finish/`.
+
+**Next:** original H's Unicode lowercase and normalized-key collision/prototype
+proof. Keep dataset-key identity separate from output keys, including the
+`__proto__` unique-preimage check; Script's ASCII casing remains unchanged.
+`class_dynamic_conditional_nested_calls` still refuses at class completion
+arithmetic. Loop-nested iterators, unused H slots/publication, W operations,
+reloaded induction, broader part 25 and the application driver remain. Full
+suites, broad corpus/native matrices, WPT/test262 and whole Bootstrap were
+skipped; no full-suite or whole-bundle gain is claimed. No browser/Script changes
+or push. Native Bootstrap and the overall plan remain unfinished.
+
+
 ## Conditional dataset iterators and invariant bitwise latches, 2026-09-19 UTC
 
 Resumed **ce49f0dd** and the six dirty paths from the **04:59 conditional/bitwise
