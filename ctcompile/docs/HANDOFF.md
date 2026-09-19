@@ -15,6 +15,98 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared UTF-16 indexing and invariant products, 2026-09-19 UTC
+
+Resumed clean **fb55eb20** and its original H Unicode boundary. The branch census
+also found **ecca5b66**, a public UTF-16 extraction committed and gated on September
+18 but never merged (AGENT-SYNC 02:05:29/02:11:42). **0eadd9a0** finishes that
+interrupted thread by atomic merge from an isolated current-tip worktree. Existing
+CharacterData conversion bodies now live in public Core; the binding calls those
+same functions. Browser behavior and Script implementation are unchanged.
+
+**aeb877ee** proves original `charAt(0)` and `slice(1)` calls on known Strings,
+with explicit initial String identity and the same method receiver. Generated C++
+uses `ctbrowser::wtf8_to_utf16`, ordinary `std::u16string::substr`, and
+`ctbrowser::utf16_to_wtf8`. Empty suffixes, NULs, BMP text, surrogate halves and
+rejoining are checked. Strict null comparisons now refine the original optional
+String in the non-null arm through the existing predicate mechanism. Other
+indices/coercions, wrong receivers, replacement and unproved null arms refuse.
+All previous fixture entries remain unchanged; nine new early-return specimens
+remain refused at the existing shadow-frame boundary.
+
+Parallel **677f73ec** proves one product latch over literal or unchanged saved
+primitive operands through the shared signed-product transfer. Nested/recomputed
+operands, changing transport, unknown/noncanonical/zero strides and final-index
+bounds retain their checks. Four older source expressions are preserved; 31
+CFG/SCF rows and an eleven-function source oracle cover the increment.
+
+Focused passes: Core/CharacterData **2/2 (0.67s)**; transaction **1/1 (4.32s)**,
+host contract **1/1 (0.47s)**, class DOM **1/1 (106.62s)**, public class
+**1/1 (201.81s)**. Class DOM checks **304 source observations, 8 native executions
+and 2,228 refusals**. **20 Node/VM observations intentionally differ** because the
+VM indexes bytes; each engine's expected result is explicit and native matches
+Node. Existing nullable URI checks pass **44 positive lowerings / 64 refusals**.
+Arrays **1/1 (1.96s; total 1.97s)** and four escape oracles **4/4 (0.93s)** pass;
+new oracle **34 sites / 6 sound / 6 of 22 precision**, zero violations. All **13
+tested hashes** match the devbox. Required formatting retains 26 diagnostics in
+nine unchanged files; changed checks pass. Exact targets, preliminary failures
+and skipped coverage are in HANDOFF; evidence: `/tmp/ctcompile-utf16-resume/`.
+
+**Next:** original H still needs Unicode-correct `toLowerCase`, then proof for its
+normalized assignment keys. Lowercasing can collide (`bsFoo` / `bsfoo`), so it
+cannot inherit the injective prefix-removal proof; preserve insertion/overwrite
+order and the `__proto__` setter constraint. Transformed keys must never gain
+dataset-membership authority. Class-method aliases, receiver captures, repeated
+iterators, every unused H slot and global wrapper publication remain. W still
+needs Object.entries/destructuring/original s/RegExp/TypeError/spread before
+inheritance. Full H and W/W+r/W+r+H remain refused. Broader induction and part-25
+backlog, the application driver and native Bootstrap remain unfinished. No broad
+suite, whole-Bootstrap replay, bundle-admission gain or push is claimed.
+
+Exact validation and limits:
+
+- Escape build: `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **5 actions**.
+  CTest: `ctcompile_escape_analysis_arrays`. Lit:
+  `Analysis/Escape/escape-claims/{invariant-product-latch,invariant-unary-latch,signed-product,bitnot-latch}.test`.
+- Browser build: `ctbrowser-test-core_basics`, `ctbrowser-test-character_data`:
+  **223 affected actions**. Exact CTests `character_data` **0.11s**, `core_basics`
+  **0.56s**. Core binary has both new helper symbols and no Script symbol. No
+  native callers existed at that extraction gate; native use is checked below.
+- Native build: `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`,
+  `ctcompile-test-exception-recovery`, `ctcompile-test-host-contract`: **71 actions**.
+  The fixture-only retry rebuilt nothing; the final DOMEntry fix rebuilt the
+  three affected compiler/contract targets in **5 actions**. Exact CTests:
+  `ctcompile_exception_recovery`, `ctcompile_host_contract`. Lit:
+  `CTNative/Lowering/Objects/{class-dom,class-initialization}.mlir`.
+- The existing nullable-URI module's Node/VM observations, 44 positive lowerings
+  and 64 refusal checks ran separately through `nullable-check.py`, to check the
+  shared refinement without replaying the whole String matrix. Original source
+  bodies and expectations are unchanged. Public class controls record 154 source
+  observations, 380 native executions, 308 unprepared and 190 preparation refusals.
+- First class attempt **14.10s** hit the existing early shadow-frame boundary;
+  its nine new source bodies are retained as refusals, with guarded positives.
+  Second attempt **13.90s** exposed the missing strict-null predicate. The shared
+  refinement fixes that cause; reversed comparisons, else arms and a null-arm
+  refusal are checked. Earlier transaction/contract passes were **4.31s/0.47s**;
+  the results above come from the final source. All old fixture dictionary entries
+  were compared against the initial snapshot and preserved.
+- Logs: `core-retry.log`, `escape-gate.log`, `native-null-gate.log`,
+  `nullable-gate.log`, `evidence.log`, and `final-format.log`. Earlier failures
+  remain in `native-gate.log` and `native-retry.log`. Inspected native output uses
+  owning strings/optionals, the public converters and existing concatenation;
+  generated-source and binary Script/dispatch exclusions pass.
+- The original SSH agent was unloaded. Authenticated Azure run-command installed
+  a temporary task key; start/ssh-config/allow-ip restored access after the first
+  core attempt failed before building. The temporary authorized key and local
+  private key were removed after verification; other keys were preserved. The
+  isolated worktree's unpublished ctjs pin was fetched from the original local
+  submodule, with no pin or source change.
+- Full CTest/compiler lit, complete DOM/String suites, broad corpus/native matrix
+  replays, WPT/test262, whole Bootstrap and independent dataset lifetime replays
+  were skipped. Historical browser compliance counts were retained without replay. No full-suite
+  pass, whole-bundle admission gain, Script semantics change or push is claimed.
+
 ## Dataset loops beside native class construction, 2026-09-19 UTC
 
 Resumed clean **4167e94c** from the **19:35:36 AGENT-SYNC closure** and its

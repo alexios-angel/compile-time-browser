@@ -1,5 +1,54 @@
 # What native Bootstrap needs next
 
+## Shared UTF-16 indexing and invariant products, 2026-09-19 UTC
+
+Resumed clean **fb55eb20** and its original H Unicode boundary. The branch census
+also found **ecca5b66**, a public UTF-16 extraction committed and gated on September
+18 but never merged (AGENT-SYNC 02:05:29/02:11:42). **0eadd9a0** finishes that
+interrupted thread by atomic merge from an isolated current-tip worktree. Existing
+CharacterData conversion bodies now live in public Core; the binding calls those
+same functions. Browser behavior and Script implementation are unchanged.
+
+**aeb877ee** proves original `charAt(0)` and `slice(1)` calls on known Strings,
+with explicit initial String identity and the same method receiver. Generated C++
+uses `ctbrowser::wtf8_to_utf16`, ordinary `std::u16string::substr`, and
+`ctbrowser::utf16_to_wtf8`. Empty suffixes, NULs, BMP text, surrogate halves and
+rejoining are checked. Strict null comparisons now refine the original optional
+String in the non-null arm through the existing predicate mechanism. Other
+indices/coercions, wrong receivers, replacement and unproved null arms refuse.
+All previous fixture entries remain unchanged; nine new early-return specimens
+remain refused at the existing shadow-frame boundary.
+
+Parallel **677f73ec** proves one product latch over literal or unchanged saved
+primitive operands through the shared signed-product transfer. Nested/recomputed
+operands, changing transport, unknown/noncanonical/zero strides and final-index
+bounds retain their checks. Four older source expressions are preserved; 31
+CFG/SCF rows and an eleven-function source oracle cover the increment.
+
+Focused passes: Core/CharacterData **2/2 (0.67s)**; transaction **1/1 (4.32s)**,
+host contract **1/1 (0.47s)**, class DOM **1/1 (106.62s)**, public class
+**1/1 (201.81s)**. Class DOM checks **304 source observations, 8 native executions
+and 2,228 refusals**. **20 Node/VM observations intentionally differ** because the
+VM indexes bytes; each engine's expected result is explicit and native matches
+Node. Existing nullable URI checks pass **44 positive lowerings / 64 refusals**.
+Arrays **1/1 (1.96s; total 1.97s)** and four escape oracles **4/4 (0.93s)** pass;
+new oracle **34 sites / 6 sound / 6 of 22 precision**, zero violations. All **13
+tested hashes** match the devbox. Required formatting retains 26 diagnostics in
+nine unchanged files; changed checks pass. Exact targets, preliminary failures
+and skipped coverage are in HANDOFF; evidence: `/tmp/ctcompile-utf16-resume/`.
+
+**Next:** original H still needs Unicode-correct `toLowerCase`, then proof for its
+normalized assignment keys. Lowercasing can collide (`bsFoo` / `bsfoo`), so it
+cannot inherit the injective prefix-removal proof; preserve insertion/overwrite
+order and the `__proto__` setter constraint. Transformed keys must never gain
+dataset-membership authority. Class-method aliases, receiver captures, repeated
+iterators, every unused H slot and global wrapper publication remain. W still
+needs Object.entries/destructuring/original s/RegExp/TypeError/spread before
+inheritance. Full H and W/W+r/W+r+H remain refused. Broader induction and part-25
+backlog, the application driver and native Bootstrap remain unfinished. No broad
+suite, whole-Bootstrap replay, bundle-admission gain or push is claimed.
+
+
 ## Dataset loops beside class construction, 2026-09-19 UTC
 
 **c1768e78** composes constructor-only classes with a local H slot's original
