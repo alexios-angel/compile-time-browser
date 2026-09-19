@@ -15,6 +15,85 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inheritance helper declarations and invariant overwrites, 2026-09-19 UTC
+
+Resumed clean **57d8d421** and the W/B/Qi thread in the latest handoff and
+12:40 AGENT-SYNC closure. Both agents' histories and unmerged branches were read;
+September 7 WIP is absent and already recorded as merged. The predecessor's dirty
+escape work was already committed. Three parallel agents returned findings before
+service limits; none left edits. Root completed both changes and focused gates.
+
+**1d0c953a** declares the mutable helpers emitted by original inheritance:
+`__ctbrowser_class_heritage` (three arguments), `__ctbrowser_bind_this` (one),
+`__ctbrowser_init_fields` (two), and `__ctbrowser_super_get` (three). The existing
+manifest/binding proof accepts only their exact direct invocation shape with an
+undefined receiver. Replacement, reflection, passing the callable itself, invalid
+arity and conflicting declarations refuse. Identity supplies no argument or
+effect proof; unknown helper effects still refuse, and DOM declarations remain
+until their operations receive semantic normalization. Original W/B and dispatch
+sources now declare the helpers and retain their precise inheritance refusal.
+No source bodies or runtime operations were removed; this adds **no inheritance
+or whole-Bootstrap admission**.
+
+**2a00a6de** proves finite loops that overwrite an invariant existing index of
+the guard array. It reuses exact allocation identity, original length and the
+bounded invariant resolver. Changing keys, growth, guard-element-dependent
+strides/keys/receivers and unsupported effects still refuse. Original replay
+preserves saved children, remaining aliases and historical cycles. Five CFG/four
+SCF controls and nine source functions were added; seven historical refusal
+bodies were preserved and promoted to exact contents/read/return expectations.
+
+Focused devbox validation, always under `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+  ctcompile-test-native-reference`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_host_contract$'`: **1/1, 0.48s**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-initialization[.]mlir$'`:
+  **1/1, 196.32s; 156 source observations, 380 main native executions,
+  312 unprepared and 192 preparation refusals**. Existing additional controls:
+  **28 native executions / 30 refusals**, plus **11 prepared-source refusals**.
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- Same CTest command with `-R '^ctcompile_escape_analysis_arrays$'`:
+  **1/1, 1.25s (1.26s total)**.
+- Same lit command with
+  `--filter='^ctcompile :: Analysis/Escape/escape-claims/(invariant-element-overwrite|aliased-element-overwrite|own-element-overwrite)[.]test$'`:
+  **3/3, 0.11s**. New oracle: **28 sites / 5 sound / 5 of 7 confined precision**;
+  alias oracle **37 / 10 / 10 of 16**; current-element oracle **37 / 6 / 6 of 15**.
+  All have zero violations, partial, pending and unclaimed sites.
+
+The first native build caught a test-only StringLiteral/std::string mismatch;
+corrected before tests. An intermediate host **1/1, 0.47s** and class case
+**1/1, 196.41s** passed before the final unknown-effect control and preserving
+unconsumed DOM declarations. The first arrays run failed **23 assertions in seven
+old refusal rows (1.28s)**; source bodies were unchanged, and the final expectations
+check the newly proved contents instead. The recorded failures required only test fixes.
+All ten final tested hashes match the devbox. All original class split-file source
+bytes are unchanged. Required `tools/format.sh --check` retains **26 baseline
+diagnostics in nine HEAD-identical files**; changed C++/Python formatting, Python
+and source-JavaScript syntax/execution, gate shell syntax and whitespace checks pass.
+Exact scripts, logs and hash evidence: `/tmp/ctcompile-inheritance-1243/`.
+
+**Next native:** normalize an original ancestry chain on the private candidate.
+The helper identities are now expressible; they are not semantic authority.
+`ClassInitialization.cpp::examine` still needs completed base setup without direct
+base construction, immutable prototype/home relationships, exact final receiver
+and new.target, super guards/rebinding/field initialization, constructor returns
+and argument/effect order. Start with explicit super; default derived constructors
+also require rest/apply proof. Keep B -> Qi._getConfig dynamic dispatch distinct
+from Qi's lexical super -> B._getConfig and B -> W._mergeConfigObj. Preserve every
+original body, including shadowed W methods, without invented H calls or parameter
+facts. Real configuration/selectors/events/Popper, Part 25 own-data definition
+provenance and broader control flow/ownership, and the application driver remain.
+
+Full CTest/compiler lit, class DOM/transaction cases, standalone lifetime and broad
+native/corpus matrices, WPT/test262 and whole Bootstrap were skipped. No full-suite
+pass or browser compliance gain is claimed. Browser/Script sources and behavior
+are unchanged. The plan remains unfinished. No push.
+
+
 ## Aliased overwrite receivers and inheritance boundary, 2026-09-19 UTC
 
 Resumed **6034e970** and the inheritance/escape threads abandoned at 11:59:25

@@ -1,5 +1,37 @@
 # What native Bootstrap needs next
 
+## Inheritance helper declarations and invariant overwrites, 2026-09-19 UTC
+
+**1d0c953a** declares the mutable helpers emitted by original inheritance:
+`__ctbrowser_class_heritage` (three arguments), `__ctbrowser_bind_this` (one),
+`__ctbrowser_init_fields` (two), and `__ctbrowser_super_get` (three). The existing
+manifest/binding proof accepts only their exact direct invocation shape with an
+undefined receiver. Replacement, reflection, passing the callable itself, invalid
+arity and conflicting declarations refuse. Identity supplies no argument or
+effect proof; unknown helper effects still refuse, and DOM declarations remain
+until their operations receive semantic normalization. Original W/B and dispatch
+sources now declare the helpers and retain their precise inheritance refusal.
+No source bodies or runtime operations were removed; this adds **no inheritance
+or whole-Bootstrap admission**.
+
+**Next native:** normalize an original ancestry chain on the private candidate.
+The helper identities are now expressible; they are not semantic authority.
+`ClassInitialization.cpp::examine` still needs completed base setup without direct
+base construction, immutable prototype/home relationships, exact final receiver
+and new.target, super guards/rebinding/field initialization, constructor returns
+and argument/effect order. Start with explicit super; default derived constructors
+also require rest/apply proof. Keep B -> Qi._getConfig dynamic dispatch distinct
+from Qi's lexical super -> B._getConfig and B -> W._mergeConfigObj. Preserve every
+original body, including shadowed W methods, without invented H calls or parameter
+facts. Real configuration/selectors/events/Popper, Part 25 own-data definition
+provenance and broader control flow/ownership, and the application driver remain.
+
+Focused host **1/1 (0.48s)** and class initialization **1/1 (196.32s)** pass.
+Parallel **2a00a6de** proves invariant own-index overwrite loops; arrays and three
+escape cases pass with zero oracle violations. Exact commands, counts, initial
+test failures and skipped coverage are in HANDOFF. No browser/Script change.
+
+
 ## Explicit inheritance refusal and preserved source, 2026-09-19 UTC
 
 **6d42e0e8** diagnoses the existing constructor-use refusal as `class inheritance
