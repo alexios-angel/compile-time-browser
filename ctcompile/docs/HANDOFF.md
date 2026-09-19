@@ -15,6 +15,81 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor-origin DOM calls, 2026-09-19 UTC
+
+**a0644324** resumes clean **2f279dc4** and the actual Dropdown caller thread
+in the preceding handoff and 11:17 AGENT-SYNC closure. Both agents' histories and
+unmerged branches were reviewed; September 7 WIP is already an ancestor.
+Parallel agents identified the constructor-call gap and completed a separate
+escape proposal; root integrated the native change and owns validation/commits.
+
+Bootstrap B's constructor calls `this._getConfig(i)`. The native reachability
+census now starts from each proved original constructor as well as subsequent
+entry calls. Exact same-`this` edges retain actual arguments, instance identity,
+initialization and DOM-write order. Reachability supplies no parameter types:
+the complete private DOM proof still checks every body and original call.
+Three positive and six refusal source cases cover direct/transitive calls,
+repeated construction, later entry calls, invalid inputs, missing field state,
+dead invalid operations and unused parameterized siblings. All earlier source
+bodies are unchanged. Both DOM providers reproduced the old reachability refusal
+on the constructor-only source before the fix.
+
+Focused devbox checks under `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference
+  ctcompile-test-exception-recovery ctcompile-test-host-contract`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_exception_recovery$'`: **1/1, 4.55s**.
+- Same CTest command with `-R '^ctcompile_host_contract$'`: **1/1, 0.48s**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'`:
+  **1/1, 286.13s; 632 Node/interpreter observations, eight GCC/Clang native
+  executions, 4,910 refusal checks**. Ownership and Script/dispatch/link
+  exclusions pass; existing pinned VM differences remain.
+
+**Next native:** follow original `W -> B -> Qi` inheritance and configuration.
+Constructor-origin reachability is a prerequisite, not inheritance admission.
+Class initialization still needs exact base/derived constructor, prototype,
+lexical-home and receiver proofs; W and B are not directly constructed in that
+path. Keep complete original source and real configuration, selector, event and
+Popper dependencies. The one-slot full-H source still refuses in the class gate;
+never insert helper calls or guess its unused parameters. No whole-Bootstrap
+admission gain or browser/Script behavior change is claimed.
+
+**1d0d2a65** independently completes disjoint stride reloads during guarded
+own-element overwrite loops. Every recursive element read is compared with the
+actual guard-array allocation. Disjoint arrays remain invariant; saved, nested
+and cyclic aliases of the overwritten array still refuse. Original length reads,
+exact replay, historical cycle checks and work limits remain. Seven CFG rows,
+five SCF rows and 11 source functions were added; earlier bodies are unchanged.
+
+Focused escape validation under the same devbox lock:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`: **1/1, 1.25s
+  (1.26s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(disjoint-element-reload|own-element-overwrite|invariant-reload)[.]test$'`:
+  **3/3, 0.11s**. New oracle: **45 sites / 12 sound / 12 of 21 confined
+  precision**. Existing overwrite: **37 / 6 / 6 of 15**; invariant reload:
+  **33 / 15 / 15 of 24**. All report zero violations, partial, pending and
+  unclaimed sites. Broader mutations/control flow and actual own-data definition
+  provenance for ordinary objects remain open.
+
+No focused build or test failed. All six tested source/test hashes match the
+devbox. Required `tools/format.sh --check` reports **26 baseline diagnostics in
+nine HEAD-identical files**; changed C++/Python formatting, source JavaScript
+syntax/execution, gate shell syntax and whitespace checks pass. The native driver
+preserves all earlier sources (1,444 recorded source/check entries compared).
+Exact scripts, logs and hashes: `/tmp/ctcompile-h-1119/`.
+
+Full CTest/compiler lit, separate lifetime and broad native/corpus matrices,
+standalone RegExp/broad DOM-String cases, WPT/test262 and whole Bootstrap were
+skipped. No whole-suite, whole-Bootstrap admission or new browser compliance
+claim. The application driver and overall plan remain unfinished. No push.
+
 ## Actual H callers and guarded array overwrites, 2026-09-19 UTC
 
 **75e341e0** continues clean **aa80f5b5** and the full-H authority boundary

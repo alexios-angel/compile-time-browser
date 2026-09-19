@@ -1,5 +1,24 @@
 # What native Bootstrap needs next
 
+## Constructor-origin calls are proved, 2026-09-19 UTC
+
+**a0644324** closes a real prerequisite of B's constructor: native method
+reachability now includes original `this.method(...)` calls made during
+construction, then follows same-receiver transitive calls. Actual arguments,
+instance state, initialization/write order and complete typed body proof remain.
+Both providers reproduced the old constructor-only refusal before this change.
+Focused transaction/host/class DOM checks pass; the class case measured 632
+Node/interpreter observations, eight native executions and 4,910 refusals.
+
+Continue with **original W/B/Qi inheritance**. Class initialization still requires
+exact base/derived constructor, prototype, lexical-home and receiver provenance;
+W and B have no direct construction on this path. Preserve original configuration,
+selector, event and Popper dependencies and all H bodies. Constructor reachability
+is not full inheritance or whole-Dropdown admission. The one-slot full-H specimen
+remains refused. Independent **1d0d2a65** closes disjoint-array stride reloads;
+focused arrays and three oracles pass. Commands, timings, formatting baseline and
+skipped coverage are in HANDOFF. No browser/Script behavior changed.
+
 ## Follow Bootstrap's actual H callers, 2026-09-19 UTC
 
 The unchanged `class_filter_full_h` calls only `H.getDataAttribute`. Under the
