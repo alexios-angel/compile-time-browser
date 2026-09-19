@@ -15,6 +15,114 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Dataset loops beside native class construction, 2026-09-19 UTC
+
+Resumed clean **4167e94c** from the **19:35:36 AGENT-SYNC closure** and its
+original H dynamic-key thread. Both agents' logs and unmerged branches were
+reviewed; the September 7 WIP is already an ancestor. No predecessor edits
+remained. Two parallel agents supplied native recommendations before service
+limits; another completed the escape draft. Root integrated and gated both areas.
+No browser implementation or runtime semantics changed.
+
+**c1768e78** retains dynamic properties and iterable materialization for
+complete typed DOM proof. Constructor-only classes now compose with a local H
+slot's original filter predicate and for-of loop, including dataset member reads,
+fresh-result writes and prefix-stripped output keys. Receiver, membership,
+mutation order, callback bodies and every original identity use remain checked.
+The completion normalizer also handles inactive poison slots without a switch;
+MLIR folds exact integer dispatch before continuation selection. Every original
+operation must still be visited across source paths before publication. All
+**229 prior source entries and 14 effect checks** are unchanged.
+
+**cf0ef348** proves one Plus/Neg/BitNot latch over an unchanged saved primitive.
+Shared CFG/SCF checks preserve operand identity, original property keys, final
+bounds and returned-child escape. Changing/recomputed operands, unknown or
+noncanonical conversion and zero strides still refuse. Thirty new CFG/SCF rows,
+ten source functions and seven preserved older expressions cover the change.
+
+**c420b0ae** corrects one stale assignment refusal found by the focused regression.
+A controlled build with both changed production files restored to **4167e94c**
+already emits `member_read`; a check of all **40 original refusal sources** finds
+only that admission. Its exact body now runs as a positive value/ownership test.
+All nine prior positive sources/input sets and 39 remaining refusals are unchanged;
+object key-order checks remain intact alongside scalar/array result comparisons.
+This corrects coverage and is not a new native admission gain.
+
+Focused devbox results: transaction **1/1 (4.55s; total 4.56s)**, host contract
+**1/1 (0.49s; total 0.50s)**, class DOM **1/1 (90.75s): 260 Node/interpreter
+observations, 8 native executions, 1,968 refusals**, public class initialization
+**1/1 (210.85s)**, DOM assignment **1/1 (197.44s): 10 sources, 225 Node/VM
+observations plus Node accessor traces, 8 GCC/Clang binaries, lifetime sanitizer
+and 192 refusals**. Escape arrays
+**1/1 (1.21s; total 1.22s)** and four selected escape oracles **4/4 (0.58s)**
+pass, zero violations. New oracle: **31 observed sites / 8 sound / 8 of 20
+precision**, no partial, pending or unclaimed sites. All **ten final tested
+source/test hashes** match the devbox.
+
+Required formatter retains **26 existing diagnostics in nine HEAD-identical
+files**. Changed C++/Black checks, **18 new source syntax checks**, **12 Node
+observations** and `git diff --check` pass. Evidence:
+`/tmp/ctcompile-dynamic-dom-keys/`, particularly `completion-poison-gate.log`,
+`remaining-gate.log`, `escape-evidence.log`, `native-evidence.log`,
+`commit-format.log`, `assignment-replay.log`, `baseline-member.log`,
+`baseline-refusals.log`, `assignment-format.log` and `final-access.log`.
+Inspected output uses owning strings, vectors and JSON values, direct predicates
+and existing ctbrowser dataset/attribute helpers; Script and dynamic-dispatch
+gates pass.
+
+**Exact next:** the retained `class_dynamic_original` contains the complete
+original H.getDataAttributes method, including M, for-of and Unicode key
+normalization. It now reaches
+`native DOM entry: DOM property read lacks a proved receiver and supported member`.
+Its `i.charAt(0).toLowerCase() + i.slice(1)` key chain still needs Unicode-correct
+proof.
+The generic closure lifter still treats unrelated dynamic properties as possible
+class-method identity uses; preserve `class_dynamic_capture` while proving that
+alias boundary. Direct method filter closures and repeated iterators retain
+separate refusals. Full H also needs every unused slot proved without invented
+parameter authority, then global wrapper publication. W's Object.entries,
+destructuring, original s, RegExp/TypeError/spread and inheritance remain. Preserve
+full-H and W/W+r/W+r+H refusals (last omits s). Recomputed induction operands,
+broader conversions and part 25's backlog remain. Native Bootstrap, the application
+driver and the overall plan are unfinished.
+
+Exact validation and limits:
+
+- Initial explicit build: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **11 actions**.
+  Native acceptance build: `ctjs-opt`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`: **5 actions**. Intermediate builds used subsets
+  of those targets; none failed compilation. The controlled baseline used
+  `ctjs-opt` (**5 actions**); restoring the final source used the three native
+  targets above (**7 actions**), followed only by the affected assignment replay.
+- Exact CTests: `ctcompile_exception_recovery`, `ctcompile_host_contract`,
+  `ctcompile_escape_analysis_arrays`. Exact lit cases:
+  `CTNative/Lowering/Objects/{class-dom,class-initialization}.mlir`,
+  `CTNative/Browser/native-dom-assignment.test`, and
+  `Analysis/Escape/escape-claims/{invariant-unary-latch,bitnot-latch,primitive-unary-latch,negative-string}.test`.
+- Earlier native transaction/class-DOM runs failed during diagnosis of generic
+  class-method aliases, lexical receiver captures and inactive loop completion.
+  A later host-contract check caught mutation of an already-refused loop callback;
+  narrowing normalization to actual completion values fixed it. That test and the
+  native class refusals were retained. All debug instrumentation and experimental
+  iterator-prefix cleanup were removed; DOMIteration.cpp is unchanged.
+- The first assignment run failed **184.40s** at the stale `member_read`
+  refusal after its positive executions. The baseline comparison above established
+  that this predated the session; the focused replay passes **197.44s**.
+- Initial SSH failed because the original agent was unloaded; authenticated Azure
+  access installed a temporary task key. `start`, `ssh-config` and `allow-ip` were
+  used; a later timeout recovered after lifecycle/IP refresh. The temporary
+  authorized key and local private key were removed after final hash verification;
+  other authorized keys were preserved. The original SSH agent remains unloaded.
+  The first combined shell invocation consumed the following test commands from
+  stdin; only its build is counted. Subsequent remote commands use `</dev/null`.
+- Full CTest/compiler lit, complete DOM suites, broad corpus/native matrices,
+  WPT/test262, whole Bootstrap and independent dataset lifetime replay were skipped.
+  No browser implementation/runtime change, bundle admission gain, full-suite pass
+  or push is claimed.
+
 ## Combined helper captures and literal BitNot latches, 2026-09-18 UTC
 
 Resumed clean **2c17b381** from the **19:20:02 AGENT-SYNC closure** and

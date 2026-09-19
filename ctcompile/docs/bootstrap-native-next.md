@@ -1,5 +1,34 @@
 # What native Bootstrap needs next
 
+## Dataset loops beside class construction, 2026-09-19 UTC
+
+**c1768e78** composes constructor-only classes with a local H slot's original
+filter/for-of, dataset member reads and fresh-result writes, including
+prefix-stripped keys. Dynamic operations retain complete typed DOM proof;
+inactive loop completion uses exact continuation selection and MLIR arithmetic
+folding. All 229 prior source entries and 14 effect checks remain unchanged.
+Parallel **cf0ef348** proves unary latches over unchanged saved primitives.
+
+Focused transaction/contract/class-DOM/public-class/assignment checks pass.
+Class DOM records **260 source observations / 8 native executions / 1,968 refusals**;
+assignment records **10 sources / 225 observations plus accessor traces / 8
+binaries / lifetime sanitizer / 192 refusals**. **c420b0ae** repairs its one stale
+member-read refusal, confirmed against the starting-source baseline. Arrays and
+four escape oracles pass with zero violations; the new oracle has **31 sites /
+8 sound / 8 of 20 precision**. All ten tested hashes match; formatting retains
+26 existing diagnostics in nine unchanged files. Exact targets, timings,
+preliminary failures and skipped coverage are in [HANDOFF](HANDOFF.md).
+
+**Next:** the complete original `class_dynamic_original` H.getDataAttributes
+fixture now reaches the typed DOM member boundary. Prove the Unicode-correct
+`charAt(0).toLowerCase() + slice(1)` key chain. In parallel, prove class-method
+identity aliases without treating unrelated dynamic properties as method reads;
+retain receiver-capture, helper-call-shape and repeated-iterator refusals. Then
+complete unused H slots without invented authority, global wrapper publication,
+and W's Object.entries/destructuring/original s/RegExp/TypeError/spread before
+inheritance. Full H and W/W+r/W+r+H remain refused. Native Bootstrap and the
+application driver are unfinished; no whole-bundle gain was measured.
+
 ## Combined M/filter callbacks, 2026-09-18 UTC
 
 **bb96fa31** completes the combined callee-use proof from the previous handoff:
